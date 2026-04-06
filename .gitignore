@@ -1,0 +1,2 @@
+# Installed agent skills (reproduced via `npx skills add` from skills-lock.json)
+.agents/
