@@ -49,8 +49,6 @@ class Settings(BaseSettings):
     debug: bool = False
 ```
 
-Singleton via `@lru_cache`: `def get_settings() -> Settings: return Settings()`
-
 ## Dependency Injection with Depends()
 
 FastAPI's `Depends()` is **parameter injection** — it inspects signatures, resolves the dependency tree per-request, and provides results as arguments.
