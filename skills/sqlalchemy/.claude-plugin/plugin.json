@@ -1,0 +1,6 @@
+{
+  "name": "sqlalchemy",
+  "version": "4.0.0",
+  "description": "SQLAlchemy v2 best practices and conventions for ORM, Core, and migrations",
+  "keywords": ["sqlalchemy", "orm", "database", "python", "migrations"]
+}

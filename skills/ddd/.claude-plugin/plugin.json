@@ -1,0 +1,6 @@
+{
+  "name": "ddd",
+  "version": "2.0.0",
+  "description": "Domain-Driven Design with Hexagonal Architecture (Ports & Adapters) for Python",
+  "keywords": ["ddd", "hexagonal", "architecture", "python", "domain-driven-design"]
+}

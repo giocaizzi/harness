@@ -1,0 +1,6 @@
+{
+  "name": "fastapi",
+  "version": "4.0.0",
+  "description": "FastAPI best practices with Pydantic v2 for production REST APIs",
+  "keywords": ["fastapi", "pydantic", "rest", "api", "python"]
+}

@@ -1,5 +1,5 @@
 ---
-name: sqlachemy
+name: sqlalchemy
 description: >-
   SQLAlchemy v2 best practices and conventions.
   Use when working with SQLAlchemy ORM or Core, database models, queries, sessions,

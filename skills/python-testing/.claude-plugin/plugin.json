@@ -1,0 +1,6 @@
+{
+  "name": "python-testing",
+  "version": "1.0.0",
+  "description": "Python testing best practices and conventions",
+  "keywords": ["python", "testing", "pytest", "best-practices"]
+}

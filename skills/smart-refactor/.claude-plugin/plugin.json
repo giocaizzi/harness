@@ -1,0 +1,6 @@
+{
+  "name": "smart-refactor",
+  "version": "1.0.0",
+  "description": "Smart refactoring across multiple files and large codebases",
+  "keywords": ["refactor", "codemod", "rename", "restructure"]
+}

@@ -1,5 +1,5 @@
 ---
-name: python-developement
+name: python-development
 description: python development best practices and conventions. Use this skill whenever you are developing Python code. You must follow these guidelines always.
 metadata:
   version: "2.0"
