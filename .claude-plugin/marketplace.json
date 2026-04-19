@@ -11,7 +11,7 @@
   "plugins": [
     {
       "name": "python",
-      "source": ".",
+      "source": "./",
       "description": "Python development and testing best practices",
       "version": "1.0.0",
       "keywords": ["python", "development", "testing", "pytest"],
@@ -19,7 +19,7 @@
     },
     {
       "name": "api",
-      "source": ".",
+      "source": "./",
       "description": "API development with FastAPI, SQLAlchemy and DDD patterns",
       "version": "1.0.0",
       "keywords": ["fastapi", "sqlalchemy", "ddd", "api", "python"],
@@ -27,7 +27,7 @@
     },
     {
       "name": "javascript",
-      "source": ".",
+      "source": "./",
       "description": "JavaScript, TypeScript, React and Next.js development",
       "version": "1.0.0",
       "keywords": ["javascript", "typescript", "react", "nextjs", "frontend"],
