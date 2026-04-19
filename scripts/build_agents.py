@@ -2,13 +2,13 @@
 """Generate dual-format agent files from source.
 
 Source layout (edit here):
-  agents/_src/<name>/body.md        shared system prompt
-  agents/_src/<name>/copilot.yaml   Copilot CLI frontmatter fields
-  agents/_src/<name>/claude.yaml    Claude Code frontmatter fields
+  agents/<name>/body.md             shared system prompt
+  agents/<name>/copilot.yaml        Copilot CLI frontmatter fields
+  agents/<name>/claude.yaml         Claude Code frontmatter fields
 
 Generated output (do not edit):
-  agents/<name>.agent.md            Copilot CLI format
-  agents/<name>.md                  Claude Code format
+  agents/dist/<name>.agent.md       Copilot CLI format
+  agents/dist/<name>.md             Claude Code format
 """
 
 from __future__ import annotations
@@ -18,15 +18,15 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent
-AGENTS_SRC = REPO_ROOT / "agents" / "_src"
-AGENTS_OUT = REPO_ROOT / "agents"
+AGENTS_ROOT = REPO_ROOT / "agents"
+AGENTS_OUT = AGENTS_ROOT / "dist"
 
 def _render(frontmatter_yaml: str, body: str) -> str:
     return f"---\n{frontmatter_yaml.strip()}\n---\n\n{body.strip()}\n"
 
 
 def build_agent(name: str, *, check: bool = False) -> bool:
-    src = AGENTS_SRC / name
+    src = AGENTS_ROOT / name
     missing = [f for f in ("body.md", "copilot.yaml", "claude.yaml") if not (src / f).exists()]
     if missing:
         print(f"ERROR: {name}: missing source files: {missing}", file=sys.stderr)
@@ -59,13 +59,15 @@ def main() -> None:
     parser.add_argument("--check", action="store_true", help="Validate generated files are up to date (exit 1 if not)")
     args = parser.parse_args()
 
-    if not AGENTS_SRC.is_dir():
-        print(f"ERROR: source directory not found: {AGENTS_SRC}", file=sys.stderr)
-        sys.exit(1)
+    AGENTS_OUT.mkdir(exist_ok=True)
 
-    agents = sorted(d.name for d in AGENTS_SRC.iterdir() if d.is_dir() and not d.name.startswith("."))
+    agents = sorted(
+        d.name for d in AGENTS_ROOT.iterdir()
+        if d.is_dir() and not d.name.startswith(".") and d.name != "dist"
+        and (d / "body.md").exists()
+    )
     if not agents:
-        print(f"ERROR: no agents found in {AGENTS_SRC}", file=sys.stderr)
+        print(f"ERROR: no agents found in {AGENTS_ROOT}", file=sys.stderr)
         sys.exit(1)
 
     verb = "Checking" if args.check else "Building"
