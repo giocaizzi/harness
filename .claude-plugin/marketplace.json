@@ -6,71 +6,32 @@
   },
   "metadata": {
     "description": "Personal collection of agent skills for AI coding assistants",
-    "version": "1.0.0"
+    "version": "2.0.0"
   },
   "plugins": [
     {
-      "name": "ddd",
-      "source": "./skills/ddd",
-      "description": "Domain-Driven Design with Hexagonal Architecture (Ports & Adapters) for Python",
-      "version": "2.0.0",
-      "keywords": ["ddd", "hexagonal", "architecture", "python"]
-    },
-    {
-      "name": "fastapi",
-      "source": "./skills/fastapi",
-      "description": "FastAPI best practices with Pydantic v2 for production REST APIs",
-      "version": "4.0.0",
-      "keywords": ["fastapi", "pydantic", "rest", "api", "python"]
-    },
-    {
-      "name": "sqlalchemy",
-      "source": "./skills/sqlalchemy",
-      "description": "SQLAlchemy v2 best practices and conventions for ORM, Core, and migrations",
-      "version": "4.0.0",
-      "keywords": ["sqlalchemy", "orm", "database", "python"]
-    },
-    {
-      "name": "python-development",
-      "source": "./skills/python-development",
-      "description": "Python development best practices and conventions",
-      "version": "2.0.0",
-      "keywords": ["python", "development", "best-practices"]
-    },
-    {
-      "name": "python-testing",
-      "source": "./skills/python-testing",
-      "description": "Python testing best practices and conventions",
+      "name": "python",
+      "source": ".",
+      "description": "Python development and testing best practices",
       "version": "1.0.0",
-      "keywords": ["python", "testing", "pytest"]
+      "keywords": ["python", "development", "testing", "pytest"],
+      "skills": ["./skills/python-development", "./skills/python-testing"]
     },
     {
-      "name": "react",
-      "source": "./skills/react",
-      "description": "ReactJS development standards and best practices",
+      "name": "api",
+      "source": ".",
+      "description": "API development with FastAPI, SQLAlchemy and DDD patterns",
       "version": "1.0.0",
-      "keywords": ["react", "reactjs", "javascript", "frontend"]
+      "keywords": ["fastapi", "sqlalchemy", "ddd", "api", "python"],
+      "skills": ["./skills/fastapi", "./skills/sqlalchemy", "./skills/ddd"]
     },
     {
-      "name": "nextjs",
-      "source": "./skills/nextjs",
-      "description": "Next.js best practices and conventions",
+      "name": "javascript",
+      "source": ".",
+      "description": "JavaScript, TypeScript, React and Next.js development",
       "version": "1.0.0",
-      "keywords": ["nextjs", "react", "javascript", "typescript"]
-    },
-    {
-      "name": "javascript-typescript",
-      "source": "./skills/javascript-typescript",
-      "description": "JavaScript and TypeScript development with ES6+ and Node.js",
-      "version": "1.0.0",
-      "keywords": ["javascript", "typescript", "es6", "nodejs"]
-    },
-    {
-      "name": "smart-refactor",
-      "source": "./skills/smart-refactor",
-      "description": "Smart refactoring across multiple files and large codebases",
-      "version": "1.0.0",
-      "keywords": ["refactor", "codemod", "rename"]
+      "keywords": ["javascript", "typescript", "react", "nextjs", "frontend"],
+      "skills": ["./skills/javascript-typescript", "./skills/react", "./skills/nextjs"]
     },
     {
       "name": "agents",

@@ -23,7 +23,6 @@ My personal collection of skills and agents for AI coding assistants.
 | `react` | 1.0 | ReactJS development standards and best practices |
 | `nextjs` | 1.0 | Next.js best practices and conventions |
 | `javascript-typescript` | 1.0 | JavaScript and TypeScript development with ES6+ and Node.js |
-| `smart-refactor` | 1.0 | Smart refactoring across multiple files and large codebases |
 
 ## Installation
 
@@ -33,7 +32,7 @@ Install everything at once as a single plugin:
 
 ```bash
 # Claude Code
-/plugin install giocaizzi/skills
+/plugin marketplace add giocaizzi/skills
 
 # Copilot CLI
 copilot plugin install giocaizzi/skills
@@ -45,8 +44,11 @@ copilot plugin install giocaizzi/skills
 # Add this repo as a marketplace
 /plugin marketplace add giocaizzi/skills
 
-# Install a skill
-/plugin install <skill_name>@giocaizzi-skills
+# Install a plugin group
+/plugin install python@giocaizzi-skills
+/plugin install api@giocaizzi-skills
+/plugin install javascript@giocaizzi-skills
+/plugin install agents@giocaizzi-skills
 ```
 
 ### Copilot CLI (marketplace — individual installs)
