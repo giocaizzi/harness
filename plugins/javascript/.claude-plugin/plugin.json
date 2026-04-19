@@ -1,0 +1,12 @@
+{
+  "name": "javascript",
+  "version": "1.0.0",
+  "description": "JavaScript, TypeScript, React and Next.js development",
+  "author": {
+    "name": "giocaizzi",
+    "url": "https://github.com/giocaizzi"
+  },
+  "repository": "https://github.com/giocaizzi/skills",
+  "license": "MIT",
+  "keywords": ["javascript", "typescript", "react", "nextjs", "frontend"]
+}

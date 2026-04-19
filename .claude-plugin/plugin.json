@@ -1,14 +1,12 @@
 {
   "name": "giocaizzi",
   "description": "Personal collection of skills and agents for AI coding assistants",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "author": {
     "name": "giocaizzi",
     "url": "https://github.com/giocaizzi"
   },
   "license": "MIT",
   "repository": "https://github.com/giocaizzi/skills",
-  "keywords": ["skills", "agents", "ai", "copilot", "claude"],
-  "skills": "skills/",
-  "agents": "agents/dist/claude/"
+  "keywords": ["skills", "agents", "ai", "copilot", "claude"]
 }

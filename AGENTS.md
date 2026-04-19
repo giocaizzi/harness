@@ -5,9 +5,153 @@ This file instructs AI agents (Claude Code, Copilot CLI, etc.) on how to work in
 ## Repository purpose
 
 Personal collection of **skills** and **agents** for AI coding assistants. Distributed as:
-- An [Agent Skills](https://agentskills.io) marketplace (`npx skills`)
+- A Claude Code / Copilot CLI **marketplace** (individual plugin installs) via `.claude-plugin/marketplace.json`
 - A Claude Code / Copilot CLI **plugin** (single install) via `.claude-plugin/plugin.json`
-- A Claude Code / Copilot CLI **marketplace** (individual skill installs) via `.claude-plugin/marketplace.json`
+
+## Directory structure
+
+```
+.
+├── .claude-plugin/
+│   ├── marketplace.json    ← marketplace manifest (lists all plugins)
+│   └── plugin.json         ← root plugin manifest (single-install)
+├── agents/
+│   └── <name>/             ← SOURCE (edit here)
+│       ├── body.md             shared system prompt
+│       ├── copilot.yaml        Copilot CLI frontmatter
+│       └── claude.yaml         Claude Code frontmatter (may include 'plugin: <name>')
+├── plugins/
+│   └── <plugin>/           ← GENERATED agents + hand-authored skills
+│       ├── .claude-plugin/
+│       │   └── plugin.json
+│       ├── skills/
+│       │   └── <skill-name>/
+│       │       ├── SKILL.md
+│       │       └── references/   optional extended docs
+│       └── agents/         ← GENERATED — do not edit
+│           ├── <name>.md           Claude Code format
+│           └── <name>.agent.md     Copilot CLI format
+├── scripts/
+│   └── build_agents.py     ← agent build script
+├── Makefile
+├── README.md
+└── skills-lock.json
+```
+
+## Plugins
+
+| Plugin | Skills | Agents |
+|---|---|---|
+| `python` | python-development, python-testing | — |
+| `api` | fastapi, sqlalchemy, ddd | api-reviewer |
+| `javascript` | javascript-typescript, react, nextjs | — |
+
+## Build system
+
+| Command | What it does |
+|---|---|
+| `make build` | Generate `plugins/<plugin>/agents/*.md` and `*.agent.md` from `agents/<name>/` |
+| `make validate` | Exit 1 if generated files are out of sync with source |
+
+**Always run `make build` after editing anything in `agents/<name>/`.** Commit both the source and generated files.
+
+## Agent plugin routing convention
+
+The target plugin for each agent is resolved in this order:
+1. `plugin: <name>` field in `claude.yaml` — explicit override
+2. First segment before `-` in the agent dir name — e.g. `api-reviewer` → plugin `api`
+
+## File ownership
+
+| Path | Owner | Rule |
+|---|---|---|
+| `agents/<name>/` | Human / agent | Edit freely |
+| `plugins/<plugin>/agents/` | **Generated** | Never edit directly |
+| `plugins/<plugin>/skills/<name>/SKILL.md` | Human / agent | Edit freely |
+| `.claude-plugin/marketplace.json` | Human / agent | Update when adding/removing plugins |
+| `.claude-plugin/plugin.json` | Human / agent | Update version on releases |
+| `plugins/<plugin>/.claude-plugin/plugin.json` | Human / agent | Update version when plugin changes |
+
+## How to add a new skill
+
+1. Identify the target plugin (`python`, `api`, or `javascript`).
+2. Create `plugins/<plugin>/skills/<name>/SKILL.md`.
+3. Optionally add a `references/` directory alongside `SKILL.md`.
+4. Bump the version in `plugins/<plugin>/.claude-plugin/plugin.json` and in `.claude-plugin/marketplace.json`.
+5. Add a row to the **Available Skills** table in `README.md`.
+6. Run `make validate` to confirm nothing is broken.
+
+## How to add a new agent
+
+1. Create `agents/<name>/body.md` — the shared system prompt (plain markdown, no frontmatter).
+2. Create `agents/<name>/copilot.yaml` — Copilot CLI frontmatter fields only (no `---` delimiters):
+   ```yaml
+   name: "Agent Name"
+   description: Short description for Copilot CLI.
+   tools: ['vscode', 'execute', 'read', 'edit', 'search', 'web', 'agent']
+   ```
+3. Create `agents/<name>/claude.yaml` — Claude Code frontmatter fields only:
+   ```yaml
+   name: agent-name
+   description: Short description. Include "Use when..." trigger phrase.
+   tools: Read, Edit, Bash, Grep, Glob, WebSearch
+   model: sonnet
+   plugin: api   # optional: override plugin routing (default: first segment of dir name)
+   ```
+4. Run `make build` to generate both formats into `plugins/<plugin>/agents/`.
+5. Add a row to the **Available Agents** table in `README.md`.
+6. Commit everything: agent source dir, generated files, updated `README.md`.
+
+## How to update an existing agent
+
+1. Edit the relevant file(s) in `agents/<name>/`.
+2. Run `make build`.
+3. Commit source changes + regenerated plugin agent files together.
+4. If the description changed, update `README.md`.
+
+## How to update an existing skill
+
+1. Edit `plugins/<plugin>/skills/<name>/SKILL.md` and/or files in `references/`.
+2. Bump the version in `plugins/<plugin>/.claude-plugin/plugin.json` and in `.claude-plugin/marketplace.json`.
+3. Update the version in `README.md` if it changed.
+4. Run `make validate`.
+
+## Version bumping
+
+| What changed | Where to bump version |
+|---|---|
+| A skill's content | `plugins/<plugin>/.claude-plugin/plugin.json` + marketplace entry |
+| An agent's content | source in `agents/<name>/`, then `make build` |
+| Root plugin release | `.claude-plugin/plugin.json` |
+
+Use semantic versioning (MAJOR.MINOR.PATCH).
+
+## Plugin install reference
+
+| Method | Command |
+|---|---|
+| Claude Code — marketplace | `/plugin marketplace add giocaizzi/skills` |
+| Claude Code — install plugin | `/plugin install python@giocaizzi-skills` |
+| Copilot CLI — marketplace | `copilot plugin marketplace add giocaizzi/skills` |
+
+## Commit conventions
+
+Follow [Conventional Commits](https://www.conventionalcommits.org/):
+- `feat(agents): add <name> agent`
+- `feat(skills/<plugin>): add <name> skill`
+- `fix(agents): fix <name> agent body`
+- `chore: bump versions`
+
+## README update rules
+
+Update `README.md` when:
+- Adding or removing a skill → update the **Available Skills** table
+- Adding or removing an agent → update the **Available Agents** table
+- A skill's version changes → update the version in the table
+- Installation instructions change
+
+Do not update `README.md` for internal refactors that don't affect the public interface.
+
 
 ## Directory structure
 
