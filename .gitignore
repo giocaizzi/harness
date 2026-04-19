@@ -1,2 +1,4 @@
-# Installed agent skills (reproduced via `npx skills add` from skills-lock.json)
+# Project-specific installed agent skills (reproduced via `npx skills add` from skills-lock.json)
 .agents/
+# Claude code
+.claude/
