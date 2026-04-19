@@ -10,5 +10,5 @@
   "repository": "https://github.com/giocaizzi/skills",
   "keywords": ["skills", "agents", "ai", "copilot", "claude"],
   "skills": "skills/",
-  "agents": "agents/dist/"
+  "agents": "agents/dist/claude/"
 }

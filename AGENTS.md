@@ -22,9 +22,11 @@ Personal collection of **skills** and **agents** for AI coding assistants. Distr
 │   │   ├── copilot.yaml        Copilot CLI frontmatter
 │   │   └── claude.yaml         Claude Code frontmatter
 │   ├── dist/               ← GENERATED — do not edit
-│   │   ├── <name>.agent.md     Copilot CLI format
-│   │   └── <name>.md           Claude Code format
-│   └── plugin.json         ← agents-only sub-plugin manifest
+│   │   ├── claude/
+│   │   │   └── <name>.md           Claude Code format
+│   │   └── copilot/
+│   │       └── <name>.agent.md     Copilot CLI format
+│   └── plugin.json         ← agents-only sub-plugin manifest (Copilot CLI)
 ├── skills/
 │   └── <name>/
 │       ├── .claude-plugin/
@@ -42,7 +44,7 @@ Personal collection of **skills** and **agents** for AI coding assistants. Distr
 
 | Command | What it does |
 |---|---|
-| `make build` | Generate `agents/dist/*.agent.md` and `agents/dist/*.md` from `agents/<name>/` |
+| `make build` | Generate `agents/dist/claude/*.md` and `agents/dist/copilot/*.agent.md` from `agents/<name>/` |
 | `make validate` | Exit 1 if generated files are out of sync with source |
 
 **Always run `make build` after editing anything in `agents/<name>/`.** Commit both the source and generated files.
@@ -52,8 +54,8 @@ Personal collection of **skills** and **agents** for AI coding assistants. Distr
 | Path | Owner | Rule |
 |---|---|---|
 | `agents/<name>/` | Human / agent | Edit freely |
-| `agents/dist/<name>.agent.md` | **Generated** | Never edit directly |
-| `agents/dist/<name>.md` | **Generated** | Never edit directly |
+| `agents/dist/claude/<name>.md` | **Generated** | Never edit directly |
+| `agents/dist/copilot/<name>.agent.md` | **Generated** | Never edit directly |
 | `skills/<name>/SKILL.md` | Human / agent | Edit freely |
 | `.claude-plugin/marketplace.json` | Human / agent | Update when adding/removing skills or agents |
 | `.claude-plugin/plugin.json` | Human / agent | Update version on releases |
@@ -109,7 +111,7 @@ Personal collection of **skills** and **agents** for AI coding assistants. Distr
    tools: Read, Edit, Bash, Grep, Glob, WebSearch
    model: sonnet
    ```
-4. Run `make build` to generate `agents/dist/<name>.agent.md` and `agents/dist/<name>.md`.
+4. Run `make build` to generate `agents/dist/claude/<name>.md` and `agents/dist/copilot/<name>.agent.md`.
 5. Add an entry to `.claude-plugin/marketplace.json` if exposing as a standalone installable agent.
 6. Add a row to the **Available Agents** table in `README.md`.
 7. Commit everything: agent source dir, `agents/dist/`, updated `marketplace.json`, updated `README.md`.

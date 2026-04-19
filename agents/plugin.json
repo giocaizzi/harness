@@ -6,5 +6,5 @@
     "name": "giocaizzi",
     "url": "https://github.com/giocaizzi"
   },
-  "agents": "./dist/"
+  "agents": "./dist/copilot/"
 }
