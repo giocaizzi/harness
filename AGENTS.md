@@ -26,7 +26,6 @@ Personal collection of **skills** and **agents** for AI coding assistants. Distr
 │   │   │   └── <name>.md           Claude Code format
 │   │   └── copilot/
 │   │       └── <name>.agent.md     Copilot CLI format
-│   └── plugin.json         ← agents-only sub-plugin manifest (Copilot CLI)
 ├── skills/
 │   └── <name>/
 │       ├── .claude-plugin/
@@ -59,7 +58,6 @@ Personal collection of **skills** and **agents** for AI coding assistants. Distr
 | `skills/<name>/SKILL.md` | Human / agent | Edit freely |
 | `.claude-plugin/marketplace.json` | Human / agent | Update when adding/removing skills or agents |
 | `.claude-plugin/plugin.json` | Human / agent | Update version on releases |
-| `agents/plugin.json` | Human / agent | Update version on releases |
 
 ## How to add a new skill
 
@@ -135,8 +133,7 @@ Personal collection of **skills** and **agents** for AI coding assistants. Distr
 | What changed | Where to bump version |
 |---|---|
 | A skill's content | `skills/<name>/.claude-plugin/plugin.json` + marketplace entry |
-| An agent's content | `agents/plugin.json` + marketplace `agents` entry |
-| Any content | `agents/plugin.json` or per-skill plugin when relevant |
+| An agent's content | marketplace `agents` entry |
 | Root plugin release | `.claude-plugin/plugin.json` |
 
 Use semantic versioning (MAJOR.MINOR.PATCH).
@@ -145,7 +142,7 @@ Use semantic versioning (MAJOR.MINOR.PATCH).
 
 | Method | Command |
 |---|---|
-| Claude Code — all skills + agents | `/plugin install giocaizzi/skills` (uses `.claude-plugin/plugin.json`) |
+| Claude Code — all skills + agents | `/plugin install giocaizzi/skills` |
 | Copilot CLI — all skills + agents | `copilot plugin install giocaizzi/skills` |
 | Claude Code — marketplace browse | `/plugin marketplace add giocaizzi/skills`, then install individual items |
 | Copilot CLI — individual skill | `copilot plugin install giocaizzi/skills:skills/<name>` |
