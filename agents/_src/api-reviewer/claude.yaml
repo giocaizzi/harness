@@ -1,0 +1,4 @@
+name: api-reviewer
+description: Scans the API for vulnerabilities, RBAC leaks and compliance issues. Use when asked to review API security, audit endpoints, or check RBAC. Use the API Reviewer subagent to scan the API.
+tools: Read, Edit, Bash, Grep, Glob, WebSearch
+model: sonnet

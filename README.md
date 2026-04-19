@@ -1,8 +1,15 @@
-# Agent Skills
+# Skills & Agents
 
-My personal set of skills for AI Agents following the [Agent Skills](https://agentskills.io) open standard.
+My personal collection of skills and agents for AI coding assistants.
 
-Also available as a [Claude Code plugin marketplace](https://code.claude.com/docs/en/discover-plugins).
+- Skills follow the [Agent Skills](https://agentskills.io) open standard
+- Distributed as a [Claude Code / Copilot CLI plugin](https://code.claude.com/docs/en/plugins) (single-install) and marketplace (individual installs)
+
+## Available Agents
+
+| Agent | Version | Description |
+|-------|---------|-------------|
+| `api-reviewer` | 1.1 | Scans the API for vulnerabilities, RBAC leaks and compliance issues |
 
 ## Available Skills
 
@@ -20,7 +27,19 @@ Also available as a [Claude Code plugin marketplace](https://code.claude.com/doc
 
 ## Installation
 
-### Claude Code (plugin marketplace)
+### Claude Code / Copilot CLI (all skills + agents)
+
+Install everything at once as a single plugin:
+
+```bash
+# Claude Code
+/plugin install giocaizzi/skills
+
+# Copilot CLI
+copilot plugin install giocaizzi/skills
+```
+
+### Claude Code (marketplace — individual installs)
 
 ```bash
 # Add this repo as a marketplace
@@ -28,6 +47,16 @@ Also available as a [Claude Code plugin marketplace](https://code.claude.com/doc
 
 # Install a skill
 /plugin install <skill_name>@giocaizzi-skills
+```
+
+### Copilot CLI (marketplace — individual installs)
+
+```bash
+# Add this repo as a marketplace
+copilot plugin marketplace add giocaizzi/skills
+
+# Install a single skill
+copilot plugin install giocaizzi/skills:skills/<skill_name>
 ```
 
 ### npx skills (agentskills.io)

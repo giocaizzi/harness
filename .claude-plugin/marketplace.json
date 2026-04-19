@@ -71,6 +71,13 @@
       "description": "Smart refactoring across multiple files and large codebases",
       "version": "1.0.0",
       "keywords": ["refactor", "codemod", "rename"]
+    },
+    {
+      "name": "agents",
+      "source": "./agents",
+      "description": "Custom agents: API security reviewer and more",
+      "version": "1.0.0",
+      "keywords": ["agents", "security", "api", "review"]
     }
   ]
 }

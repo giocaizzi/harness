@@ -1,0 +1,10 @@
+{
+  "name": "giocaizzi-agents",
+  "description": "Personal collection of custom agents for AI coding assistants",
+  "version": "1.0.0",
+  "author": {
+    "name": "giocaizzi",
+    "url": "https://github.com/giocaizzi"
+  },
+  "agents": "./"
+}
