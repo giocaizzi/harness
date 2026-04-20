@@ -20,7 +20,7 @@
       "name": "api",
       "source": "./plugins/api",
       "description": "API development with FastAPI, SQLAlchemy and DDD patterns",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "keywords": ["fastapi", "sqlalchemy", "ddd", "api", "python"]
     },
     {
