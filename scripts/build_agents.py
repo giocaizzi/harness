@@ -13,7 +13,7 @@ Plugin routing convention:
 
 Generated output (do not edit):
   plugins/<plugin>/agents/<name>.md          Claude Code format
-  plugins/<plugin>/agents/<name>.agent.md    Copilot CLI format
+  plugins/<plugin>/copilot/<name>.agent.md   Copilot CLI format
 """
 
 from __future__ import annotations
@@ -61,11 +61,11 @@ def build_agent(name: str, *, check: bool = False) -> bool:
     claude_fm = (src / "claude.yaml").read_text()
 
     plugin = _resolve_plugin(name, claude_fm)
-    agents_dir = PLUGINS_ROOT / plugin / "agents"
+    plugin_dir = PLUGINS_ROOT / plugin
 
     targets = {
-        agents_dir / f"{name}.md": _render(claude_fm, body),
-        agents_dir / f"{name}.agent.md": _render(copilot_fm, body),
+        plugin_dir / "agents" / f"{name}.md": _render(claude_fm, body),
+        plugin_dir / "copilot" / f"{name}.agent.md": _render(copilot_fm, body),
     }
 
     ok = True
@@ -106,10 +106,6 @@ def main() -> None:
         else:
             print("\nRun `make build` to regenerate.", file=sys.stderr)
             sys.exit(1)
-
-
-if __name__ == "__main__":
-    main()
 
 
 if __name__ == "__main__":

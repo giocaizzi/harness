@@ -28,9 +28,10 @@ Personal collection of **skills** and **agents** for AI coding assistants. Distr
 │       │   └── <skill-name>/
 │       │       ├── SKILL.md
 │       │       └── references/   optional extended docs
-│       └── agents/         ← GENERATED — do not edit
-│           ├── <name>.md           Claude Code format
-│           └── <name>.agent.md     Copilot CLI format
+│       └── agents/         ← GENERATED — do not edit (Claude Code only)
+│           └── <name>.md
+│       └── copilot/        ← GENERATED — do not edit (Copilot CLI only)
+│           └── <name>.agent.md
 ├── scripts/
 │   └── build_agents.py     ← agent build script
 ├── Makefile
