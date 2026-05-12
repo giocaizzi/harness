@@ -1,8 +1,6 @@
 ---
 name: react
 description: 'ReactJS development standards and best practices. Use this skill whenever working with reactJS.'
-metadata:
-  version: "1.0"
 ---
 
 # ReactJS Development Instructions

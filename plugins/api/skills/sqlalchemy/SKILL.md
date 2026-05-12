@@ -5,8 +5,6 @@ description: >-
   Use when working with SQLAlchemy ORM or Core, database models, queries, sessions,
   or migrations. Activate when code imports sqlalchemy, uses Mapped, mapped_column,
   select, or session operations. Follow these guidelines always.
-metadata:
-  version: "4.0"
 compatibility: "SQLAlchemy >=2.0, Python >=3.10"
 ---
 

@@ -5,8 +5,6 @@ description: >-
   Use when building APIs with FastAPI, handling routes, schemas, dependencies,
   middleware, or configuration. Activate when code imports fastapi or uses
   APIRouter, Depends, BaseModel, or BaseSettings. Follow these guidelines always.
-metadata:
-  version: "4.0"
 compatibility: "Python >=3.10, Pydantic >=2.9.0, Starlette >=1.0.0"
 ---
 

@@ -1,8 +1,6 @@
 ---
 name: javascript-typescript
 description: JavaScript and TypeScript development with ES6+ and Node.js. Use this skill whenever you are writing JavaScript or TypeScript code. You must follow these guidelines always.
-metadata:
-  version: "1.0"
 ---
 
 # JavaScript/TypeScript Development

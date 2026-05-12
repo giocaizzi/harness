@@ -1,8 +1,6 @@
 ---
 name: nextjs
 description: Next.js best practices and conventions. Use this skill whenever you are working with Next.js projects. You must follow these guidelines always.
-metadata:
-  version: "1.0"
 ---
 
 # Next.js Best Practices

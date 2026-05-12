@@ -6,28 +6,28 @@
   },
   "metadata": {
     "description": "Personal collection of agent skills for AI coding assistants",
-    "version": "2.0.0"
+    "version": "2.1.0"
   },
   "plugins": [
     {
       "name": "python",
       "source": "./plugins/python",
       "description": "Python development and testing best practices",
-      "version": "1.0.0",
+      "version": "1.1.0",
       "keywords": ["python", "development", "testing", "pytest"]
     },
     {
       "name": "api",
       "source": "./plugins/api",
       "description": "API development with FastAPI, SQLAlchemy and DDD patterns",
-      "version": "1.0.1",
+      "version": "1.1.0",
       "keywords": ["fastapi", "sqlalchemy", "ddd", "api", "python"]
     },
     {
       "name": "javascript",
       "source": "./plugins/javascript",
       "description": "JavaScript, TypeScript, React and Next.js development",
-      "version": "1.0.0",
+      "version": "1.1.0",
       "keywords": ["javascript", "typescript", "react", "nextjs", "frontend"]
     }
   ]

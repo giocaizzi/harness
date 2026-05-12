@@ -6,8 +6,6 @@ description: >-
   or working within a DDD/clean/hexagonal architecture. Activate when code touches
   domain models, repositories, use cases, commands, queries, ports, adapters, or
   context mapping. Follow these guidelines always.
-metadata:
-  version: "2.0"
 ---
 
 # Domain-Driven Design (DDD) with Hexagonal Architecture
