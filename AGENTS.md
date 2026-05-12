@@ -1,312 +1,248 @@
-# AGENTS.md — Working with this repository
+# AGENTS.md — contributor guide
 
-This file instructs AI agents (Claude Code, Copilot CLI, etc.) on how to work in this repository. Read this file before making any changes.
+This repository is a **cross-harness plugin marketplace** for AI coding assistants. It distributes a set of plugins (each plugin contains skills and optionally agents) that work identically under **Claude Code** and **GitHub Copilot CLI**, and is compatible with VS Code Copilot's agent-plugins preview.
 
-## Repository purpose
+Read this file before making changes. Then run `make help` to see the build/validate commands.
 
-Personal collection of **skills** and **agents** for AI coding assistants. Distributed as:
-- A Claude Code / Copilot CLI **marketplace** (individual plugin installs) via `.claude-plugin/marketplace.json`
-- A Claude Code / Copilot CLI **plugin** (single install) via `.claude-plugin/plugin.json`
+---
 
-## Directory structure
+## Why a single repo for two harnesses
+
+Claude Code and GitHub Copilot CLI have converged on a shared plugin format:
+
+- Both consume the **agentskills.io** open standard for `SKILL.md`.
+- Both read a `marketplace.json` with the same schema (`name`, `owner`, `metadata`, `plugins[]`).
+- The plugin manifest (`plugin.json`) is structurally similar.
+
+But they differ in two important ways:
+
+1. **Plugin manifest location.** Claude Code reads `.claude-plugin/plugin.json` (only). Copilot CLI tries `.plugin/plugin.json` → `plugin.json` → `.github/plugin/plugin.json` → `.claude-plugin/plugin.json` in that order.
+2. **Agent file format and discovery.** Claude scans the `agents/` directory and loads **any `*.md` file** (including ones named `*.agent.md`). Copilot loads only `*.agent.md` files from its configured `agents` directory.
+
+Empirically tested: if you put both `foo.md` and `foo.agent.md` in the same `agents/` directory, Claude double-loads and the second one wins. So the two harnesses' agent files **must live in different directories**, and each harness must read a `plugin.json` that points to its directory.
+
+This repo treats everything that is identical (skills, plugin metadata) as one source of truth and **generates the per-harness artifacts** that diverge (agent files + the Copilot-specific `plugin.json`).
+
+---
+
+## Repository layout
 
 ```
 .
 ├── .claude-plugin/
-│   ├── marketplace.json    ← marketplace manifest (lists all plugins)
-│   └── plugin.json         ← root plugin manifest (single-install)
-├── agents/
-│   └── <name>/             ← SOURCE (edit here)
-│       ├── body.md             shared system prompt
-│       ├── copilot.yaml        Copilot CLI frontmatter
-│       └── claude.yaml         Claude Code frontmatter (may include 'plugin: <name>')
-├── plugins/
-│   └── <plugin>/           ← GENERATED agents + hand-authored skills
+│   ├── marketplace.json          ← ONE marketplace; both harnesses read here (Copilot uses .claude-plugin/ as a fallback for the marketplace)
+│   └── plugin.json               ← root single-install manifest
+│
+├── src/                          ← AUTHORED — humans edit here only
+│   └── agents/
+│       └── <agent>/
+│           ├── body.md                shared system prompt
+│           ├── agent.yaml             shared frontmatter (name, description, plugin, model)
+│           ├── claude.yaml            Claude-only frontmatter overrides (optional)
+│           └── copilot.yaml           Copilot-only frontmatter overrides (optional)
+│
+├── plugins/                      ← PUBLISHED PLUGINS (authored skills + generated agents + generated Copilot manifest)
+│   └── <plugin>/
 │       ├── .claude-plugin/
-│       │   └── plugin.json
-│       ├── skills/
-│       │   └── <skill-name>/
+│       │   └── plugin.json            AUTHORED — Claude reads this. MUST NOT contain `skills` or `agents` fields.
+│       ├── .github/plugin/
+│       │   └── plugin.json            GENERATED — Copilot reads this. Identical to the Claude one plus `agents: ["./copilot/"]`.
+│       ├── skills/                    AUTHORED — agentskills.io spec, identical for both harnesses
+│       │   └── <skill>/
 │       │       ├── SKILL.md
-│       │       └── references/   optional extended docs
-│       └── agents/         ← GENERATED — do not edit (Claude Code only)
-│           └── <name>.md
-│       └── copilot/        ← GENERATED — do not edit (Copilot CLI only)
+│       │       ├── references/        optional
+│       │       └── scripts/           optional
+│       ├── agents/                    GENERATED — Claude agents only, `<name>.md`
+│       │   └── <name>.md
+│       └── copilot/                   GENERATED — Copilot agents only, `<name>.agent.md`
 │           └── <name>.agent.md
+│
 ├── scripts/
-│   └── build_agents.py     ← agent build script
-├── Makefile
-├── README.md
-└── skills-lock.json
+│   ├── build_agents.py           src/agents/ + .claude-plugin/plugin.json → agents/, copilot/, .github/plugin/plugin.json
+│   └── validate.py               full repo invariant checks
+│
+├── Makefile                      canonical command surface
+├── AGENTS.md                     this file
+├── CLAUDE.md → AGENTS.md         symlink (Claude Code convention)
+└── README.md                     user-facing install + plugin/skill/agent index
 ```
 
-## Plugins
+### File ownership
 
-| Plugin | Skills | Agents |
+| Path | Authored / Generated | Notes |
 |---|---|---|
-| `python` | python-development, python-testing | — |
-| `api` | fastapi, sqlalchemy, ddd | api-reviewer |
-| `javascript` | javascript-typescript, react, nextjs | — |
+| `src/agents/<name>/` | Authored | Source of truth for agents. |
+| `plugins/<plugin>/skills/<skill>/` | Authored | `SKILL.md` follows the [agentskills.io spec](https://agentskills.io/specification). |
+| `plugins/<plugin>/.claude-plugin/plugin.json` | Authored | Read by Claude. **No `skills` field** (Claude rejects it) and **no `agents` field** (build provides the Copilot override separately). |
+| `plugins/<plugin>/.github/plugin/plugin.json` | **Generated** | Read by Copilot. Identical to the Claude manifest plus `"agents": ["./copilot/"]`. Never edit. |
+| `plugins/<plugin>/agents/<name>.md` | **Generated** | Claude agent. Never edit. |
+| `plugins/<plugin>/copilot/<name>.agent.md` | **Generated** | Copilot agent. Never edit. |
+| `.claude-plugin/marketplace.json` | Authored | One entry per plugin; versions must match per-plugin `plugin.json`. |
+| `.claude-plugin/plugin.json` | Authored | Root single-install manifest. |
 
-## Build system
+---
 
-| Command | What it does |
+## Commands (Makefile is the only surface)
+
+| Command | Purpose |
 |---|---|
-| `make build` | Generate `plugins/<plugin>/agents/*.md` and `*.agent.md` from `agents/<name>/` |
-| `make validate` | Exit 1 if generated files are out of sync with source |
+| `make help` | List all targets. |
+| `make build` | Generate agent files **and** the per-plugin Copilot `plugin.json`. |
+| `make validate` | Build sync + plugin manifest hygiene + SKILL.md spec + marketplace ↔ disk + README ↔ disk. |
+| `make new-agent NAME=<name> PLUGIN=<plugin>` | Scaffold a new agent under `src/agents/<name>/`. |
+| `make new-skill PLUGIN=<plugin> NAME=<name>` | Scaffold `plugins/<plugin>/skills/<name>/SKILL.md`. |
+| `make clean` | Remove all generated files. |
 
-**Always run `make build` after editing anything in `agents/<name>/`.** Commit both the source and generated files.
+**Always run `make validate` before committing.** It catches drift between sources, generated agent files, Copilot manifests, the marketplace, and the README.
 
-## Agent plugin routing convention
+---
 
-The target plugin for each agent is resolved in this order:
-1. `plugin: <name>` field in `claude.yaml` — explicit override
-2. First segment before `-` in the agent dir name — e.g. `api-reviewer` → plugin `api`
+## How agents work (the 3-layer source format)
 
-## File ownership
+Each agent lives in `src/agents/<name>/`:
 
-| Path | Owner | Rule |
+| File | Required | Purpose |
 |---|---|---|
-| `agents/<name>/` | Human / agent | Edit freely |
-| `plugins/<plugin>/agents/` | **Generated** | Never edit directly |
-| `plugins/<plugin>/skills/<name>/SKILL.md` | Human / agent | Edit freely |
-| `.claude-plugin/marketplace.json` | Human / agent | Update when adding/removing plugins |
-| `.claude-plugin/plugin.json` | Human / agent | Update version on releases |
-| `plugins/<plugin>/.claude-plugin/plugin.json` | Human / agent | Update version when plugin changes |
+| `agent.yaml` | Yes | Shared frontmatter: `name`, `description`, `plugin`, `model`. Plus anything else identical for both harnesses. |
+| `body.md` | Yes | The system prompt. Same for both harnesses. |
+| `claude.yaml` | No | Keys to add or override for the Claude Code output. |
+| `copilot.yaml` | No | Keys to add or override for the Copilot CLI output. |
+
+### Build behavior
+
+For each agent the build script produces:
+
+```
+plugins/<plugin>/agents/<name>.md          ← agent.yaml merged with claude.yaml  (Claude reads this)
+plugins/<plugin>/copilot/<name>.agent.md   ← agent.yaml merged with copilot.yaml (Copilot reads this)
+```
+
+Per-harness keys win over shared keys on conflict. The `plugin` field is stripped from both outputs (it's repo-level routing, not part of harness frontmatter).
+
+For each plugin the build script also produces:
+
+```
+plugins/<plugin>/.github/plugin/plugin.json   ← copy of .claude-plugin/plugin.json + `"agents": ["./copilot/"]`
+```
+
+This is what makes Copilot CLI scan `copilot/` for `.agent.md` files instead of (incorrectly) scanning `agents/`.
+
+### Recognised frontmatter keys
+
+**Shared (`agent.yaml`)**
+- `name` — kebab-case, must match the directory name, used as filename for both outputs.
+- `description` — trigger phrase. Both harnesses use this to decide when to invoke the agent — write it as `"…Use when …"`.
+- `plugin` — target plugin name. Defaults to first `-` segment of `name` (e.g. `api-reviewer` → `api`).
+- `model` — model identifier (e.g. `sonnet`).
+
+**Claude-only (`claude.yaml`)** — see the [Claude plugin reference](https://code.claude.com/docs/en/plugins-reference#agents).
+- `tools` — comma-separated string, e.g. `Read, Edit, Bash`.
+- `effort`, `maxTurns`, `disallowedTools`, `skills`, `memory`, `background`, `isolation`.
+
+**Copilot-only (`copilot.yaml`)** — see the [Copilot custom-agent reference](https://docs.github.com/en/copilot/reference/custom-agents-configuration).
+- `name` — override the shared kebab-case identifier with a pretty display label (e.g. `"API Reviewer"`).
+- `tools` — YAML array, e.g. `[read, edit, execute]`.
+- `argument-hint`, `target`, `disable-model-invocation`, `user-invocable`, `mcp-servers`, `metadata`.
+
+---
+
+## Design constraints (do not violate)
+
+These are load-bearing — the layout breaks if any of them slip.
+
+| Constraint | Why |
+|---|---|
+| `.claude-plugin/plugin.json` must NOT contain a `skills` field. | Claude Code rejects the manifest outright. Both harnesses auto-discover `skills/` when the field is absent. |
+| `.claude-plugin/plugin.json` must NOT contain an `agents` field. | Claude's `agents` field expects file paths and overrides auto-discovery. The Copilot override (`["./copilot/"]`) lives only in `.github/plugin/plugin.json`. |
+| No `.agent.md` files in `agents/`. | Claude scans `agents/` for any `*.md`; a `foo.agent.md` would be loaded and shadow `foo.md`. Empirically tested. |
+| No `.md` files in `copilot/`. | Symmetric — keeps Copilot's discovery clean and removes ambiguity. |
+| Marketplace.json sits at `.claude-plugin/marketplace.json` (repo root). | Claude reads here; Copilot CLI falls back to `.claude-plugin/marketplace.json` when looking up marketplaces. |
+
+`validate.py` enforces each of these.
+
+---
 
 ## How to add a new skill
 
-1. Identify the target plugin (`python`, `api`, or `javascript`).
-2. Create `plugins/<plugin>/skills/<name>/SKILL.md`.
-3. Optionally add a `references/` directory alongside `SKILL.md`.
-4. Bump the version in `plugins/<plugin>/.claude-plugin/plugin.json` and in `.claude-plugin/marketplace.json`.
-5. Add a row to the **Available Skills** table in `README.md`.
-6. Run `make validate` to confirm nothing is broken.
+1. Pick a target plugin (see `README.md` or `ls plugins/`).
+2. Scaffold:
+   ```bash
+   make new-skill PLUGIN=<plugin> NAME=<skill-name>
+   ```
+3. Fill in the `description` (10–1024 chars, agent-triggering phrase) and the body of `SKILL.md`.
+4. Bump the plugin version in `plugins/<plugin>/.claude-plugin/plugin.json` and the matching entry in `.claude-plugin/marketplace.json`.
+5. Add a row to the **Skills** table in `README.md`.
+6. Run `make validate`.
 
 ## How to add a new agent
 
-1. Create `agents/<name>/body.md` — the shared system prompt (plain markdown, no frontmatter).
-2. Create `agents/<name>/copilot.yaml` — Copilot CLI frontmatter fields only (no `---` delimiters):
-   ```yaml
-   name: "Agent Name"
-   description: Short description for Copilot CLI.
-   tools: ['vscode', 'execute', 'read', 'edit', 'search', 'web', 'agent']
+1. Scaffold:
+   ```bash
+   make new-agent NAME=<agent-name> PLUGIN=<plugin>
    ```
-3. Create `agents/<name>/claude.yaml` — Claude Code frontmatter fields only:
-   ```yaml
-   name: agent-name
-   description: Short description. Include "Use when..." trigger phrase.
-   tools: Read, Edit, Bash, Grep, Glob, WebSearch
-   model: sonnet
-   plugin: api   # optional: override plugin routing (default: first segment of dir name)
-   ```
-4. Run `make build` to generate both formats into `plugins/<plugin>/agents/`.
-5. Add a row to the **Available Agents** table in `README.md`.
-6. Commit everything: agent source dir, generated files, updated `README.md`.
+2. Edit the four files under `src/agents/<agent-name>/`:
+   - `agent.yaml` — set `description` (trigger phrase) and `model`.
+   - `claude.yaml` — pick the Claude `tools` list.
+   - `copilot.yaml` — pick the Copilot `tools` list and any display overrides.
+   - `body.md` — write the system prompt.
+3. Run `make build` to generate the per-harness files.
+4. Add a row to the **Agents** table in `README.md`.
+5. Run `make validate`.
 
-## How to update an existing agent
+## How to update a skill or agent
 
-1. Edit the relevant file(s) in `agents/<name>/`.
-2. Run `make build`.
-3. Commit source changes + regenerated plugin agent files together.
-4. If the description changed, update `README.md`.
-
-## How to update an existing skill
-
-1. Edit `plugins/<plugin>/skills/<name>/SKILL.md` and/or files in `references/`.
-2. Bump the version in `plugins/<plugin>/.claude-plugin/plugin.json` and in `.claude-plugin/marketplace.json`.
-3. Update the version in `README.md` if it changed.
-4. Run `make validate`.
-
-## Version bumping
-
-| What changed | Where to bump version |
+| Change | Steps |
 |---|---|
-| A skill's content | `plugins/<plugin>/.claude-plugin/plugin.json` + marketplace entry |
-| An agent's content | source in `agents/<name>/`, then `make build` |
-| Root plugin release | `.claude-plugin/plugin.json` |
+| Edit a skill body | Edit `plugins/<plugin>/skills/<skill>/SKILL.md`. Bump plugin version. Run `make validate`. |
+| Edit an agent prompt | Edit `src/agents/<agent>/body.md`. Run `make build`, then `make validate`. |
+| Add a tool to an agent | Edit `claude.yaml` and/or `copilot.yaml`. Run `make build`, then `make validate`. |
+| Bump a plugin version | Edit `plugins/<plugin>/.claude-plugin/plugin.json` + the matching marketplace entry. Run `make build` to refresh `.github/plugin/plugin.json`, then `make validate`. |
+| Rename or remove a plugin | Update `marketplace.json`, delete the plugin dir, update the README tables, run `make validate`. |
 
-Use semantic versioning (MAJOR.MINOR.PATCH).
+---
 
-## Plugin install reference
+## Versioning
 
-| Method | Command |
+Use semantic versioning (MAJOR.MINOR.PATCH) at three levels:
+
+| What changed | Bump the version in |
 |---|---|
-| Claude Code — marketplace | `/plugin marketplace add giocaizzi/skills` |
-| Claude Code — install plugin | `/plugin install python@giocaizzi-skills` |
-| Copilot CLI — marketplace | `copilot plugin marketplace add giocaizzi/skills` |
+| Skill content (in any plugin) | `plugins/<plugin>/.claude-plugin/plugin.json` **and** the matching entry in `.claude-plugin/marketplace.json`. The Copilot manifest is regenerated by `make build`. |
+| Agent body or frontmatter | The plugin that owns the agent (same as above). |
+| Cross-cutting / new plugin / marketplace shape | `.claude-plugin/plugin.json` (root manifest) **and** `.claude-plugin/marketplace.json#metadata.version`. |
+
+`validate.py` flags any mismatch between per-plugin Claude `plugin.json`, Copilot `plugin.json`, and the marketplace entry.
+
+---
+
+## Installation reference
+
+| Harness | Install marketplace | Install one plugin |
+|---|---|---|
+| Claude Code | `/plugin marketplace add giocaizzi/skills` | `/plugin install <plugin>@giocaizzi-skills` |
+| GitHub Copilot CLI | `copilot plugin marketplace add giocaizzi/skills` | `copilot plugin install <plugin>@giocaizzi-skills` |
+| VS Code Copilot | Browse `@agentPlugins` in the Extensions sidebar after adding the marketplace, or use **Chat: Install Plugin From Source** with the repo URL. | — |
+
+The repo-root `.claude-plugin/marketplace.json` is what both CLI harnesses fetch. Each plugin then exposes the right manifest to the right harness via `.claude-plugin/plugin.json` (Claude) and `.github/plugin/plugin.json` (Copilot).
+
+---
 
 ## Commit conventions
 
-Follow [Conventional Commits](https://www.conventionalcommits.org/):
+Conventional Commits 1.0.0:
+
 - `feat(agents): add <name> agent`
 - `feat(skills/<plugin>): add <name> skill`
-- `fix(agents): fix <name> agent body`
-- `chore: bump versions`
+- `fix(agents): correct <name> frontmatter`
+- `chore: bump <plugin> to 1.0.2`
 
-## README update rules
+Mark breaking changes with `!` in the header or a `BREAKING CHANGE:` footer.
 
-Update `README.md` when:
-- Adding or removing a skill → update the **Available Skills** table
-- Adding or removing an agent → update the **Available Agents** table
-- A skill's version changes → update the version in the table
-- Installation instructions change
+---
 
-Do not update `README.md` for internal refactors that don't affect the public interface.
+## Reference
 
-
-## Directory structure
-
-```
-.
-├── .claude-plugin/
-│   ├── marketplace.json    ← marketplace manifest (lists all plugins)
-│   └── plugin.json         ← root plugin manifest (single-install, all skills + agents)
-├── agents/
-│   ├── <name>/             ← SOURCE (edit here)
-│   │   ├── body.md             shared system prompt
-│   │   ├── copilot.yaml        Copilot CLI frontmatter
-│   │   └── claude.yaml         Claude Code frontmatter
-│   ├── dist/               ← GENERATED — do not edit
-│   │   ├── claude/
-│   │   │   └── <name>.md           Claude Code format
-│   │   └── copilot/
-│   │       └── <name>.agent.md     Copilot CLI format
-├── skills/
-│   └── <name>/
-│       ├── .claude-plugin/
-│       │   └── plugin.json     individual skill plugin manifest
-│       ├── SKILL.md            skill content (follows agentskills.io spec)
-│       └── references/         optional extended docs
-├── scripts/
-│   └── build_agents.py     ← agent build script
-├── Makefile
-├── README.md
-└── skills-lock.json
-```
-
-## Build system
-
-| Command | What it does |
-|---|---|
-| `make build` | Generate `agents/dist/claude/*.md` and `agents/dist/copilot/*.agent.md` from `agents/<name>/` |
-| `make validate` | Exit 1 if generated files are out of sync with source |
-
-**Always run `make build` after editing anything in `agents/<name>/`.** Commit both the source and generated files.
-
-## File ownership
-
-| Path | Owner | Rule |
-|---|---|---|
-| `agents/<name>/` | Human / agent | Edit freely |
-| `agents/dist/claude/<name>.md` | **Generated** | Never edit directly |
-| `agents/dist/copilot/<name>.agent.md` | **Generated** | Never edit directly |
-| `skills/<name>/SKILL.md` | Human / agent | Edit freely |
-| `.claude-plugin/marketplace.json` | Human / agent | Update when adding/removing skills or agents |
-| `.claude-plugin/plugin.json` | Human / agent | Update version on releases |
-
-## How to add a new skill
-
-1. Create `skills/<name>/SKILL.md` following the [Agent Skills spec](https://agentskills.io/specification):
-   ```markdown
-   ---
-   name: <name>
-   description: <one-line description>
-   version: 1.0.0
-   ---
-
-   Skill content here.
-   ```
-2. Create `skills/<name>/.claude-plugin/plugin.json`:
-   ```json
-   {
-     "name": "<name>",
-     "version": "1.0.0",
-     "description": "<description>",
-     "keywords": ["<tag>"]
-   }
-   ```
-3. Add an entry to `.claude-plugin/marketplace.json` under `"plugins"`:
-   ```json
-   {
-     "name": "<name>",
-     "source": "./skills/<name>",
-     "description": "<description>",
-     "version": "1.0.0",
-     "keywords": ["<tag>"]
-   }
-   ```
-4. Add a row to the **Available Skills** table in `README.md`.
-5. Run `make validate` to confirm nothing is broken.
-
-## How to add a new agent
-
-1. Create `agents/<name>/body.md` — the shared system prompt (plain markdown, no frontmatter).
-2. Create `agents/<name>/copilot.yaml` — Copilot CLI frontmatter fields only (no `---` delimiters):
-   ```yaml
-   name: "Agent Name"
-   description: Short description for Copilot CLI.
-   tools: ['vscode', 'execute', 'read', 'edit', 'search', 'web', 'agent']
-   ```
-3. Create `agents/<name>/claude.yaml` — Claude Code frontmatter fields only:
-   ```yaml
-   name: agent-name
-   description: Short description. Include "Use when..." trigger phrase.
-   tools: Read, Edit, Bash, Grep, Glob, WebSearch
-   model: sonnet
-   ```
-4. Run `make build` to generate `agents/dist/claude/<name>.md` and `agents/dist/copilot/<name>.agent.md`.
-5. Add an entry to `.claude-plugin/marketplace.json` if exposing as a standalone installable agent.
-6. Add a row to the **Available Agents** table in `README.md`.
-7. Commit everything: agent source dir, `agents/dist/`, updated `marketplace.json`, updated `README.md`.
-
-## How to update an existing agent
-
-1. Edit the relevant file(s) in `agents/<name>/`.
-2. Run `make build`.
-3. Commit source changes + regenerated `agents/dist/` files together.
-4. If the description changed, update `README.md`.
-
-## How to update an existing skill
-
-1. Edit `skills/<name>/SKILL.md` and/or files in `skills/<name>/references/`.
-2. Bump the version in `skills/<name>/.claude-plugin/plugin.json` and in `.claude-plugin/marketplace.json`.
-3. Update the version in `README.md` if it changed.
-4. Run `make validate`.
-
-## Version bumping
-
-| What changed | Where to bump version |
-|---|---|
-| A skill's content | `skills/<name>/.claude-plugin/plugin.json` + marketplace entry |
-| An agent's content | marketplace `agents` entry |
-| Root plugin release | `.claude-plugin/plugin.json` |
-
-Use semantic versioning (MAJOR.MINOR.PATCH).
-
-## Plugin install reference
-
-| Method | Command |
-|---|---|
-| Claude Code — all skills + agents | `/plugin install giocaizzi/skills` |
-| Copilot CLI — all skills + agents | `copilot plugin install giocaizzi/skills` |
-| Claude Code — marketplace browse | `/plugin marketplace add giocaizzi/skills`, then install individual items |
-| Copilot CLI — individual skill | `copilot plugin install giocaizzi/skills:skills/<name>` |
-| npx skills | `npx skills add giocaizzi/skills --skill <name>` |
-
-## Commit conventions
-
-Follow [Conventional Commits](https://www.conventionalcommits.org/):
-- `feat(agents): add <name> agent`
-- `feat(skills): add <name> skill`
-- `fix(agents): fix <name> agent body`
-- `chore: bump versions`
-
-## README update rules
-
-Update `README.md` when:
-- Adding or removing a skill → update the **Available Skills** table
-- Adding or removing an agent → update the **Available Agents** table
-- A skill's version changes → update the version in the table
-- Installation instructions change
-
-Do not update `README.md` for internal refactors that don't affect the public interface.
+- Claude Code — [plugins](https://code.claude.com/docs/en/plugins) · [plugin reference](https://code.claude.com/docs/en/plugins-reference) · [marketplaces](https://code.claude.com/docs/en/plugin-marketplaces) · [subagents](https://code.claude.com/docs/en/sub-agents)
+- GitHub Copilot CLI — [about plugins](https://docs.github.com/en/copilot/concepts/agents/copilot-cli/about-cli-plugins) · [plugin reference](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-plugin-reference) · [custom agents](https://docs.github.com/en/copilot/reference/custom-agents-configuration)
+- VS Code Copilot — [agent plugins (preview)](https://code.visualstudio.com/docs/copilot/customization/agent-plugins) · [agent skills](https://code.visualstudio.com/docs/copilot/customization/agent-skills)
+- Agent Skills standard — [agentskills.io](https://agentskills.io/specification)

@@ -1,0 +1,21 @@
+{
+  "name": "api",
+  "version": "1.0.1",
+  "description": "API development with FastAPI, SQLAlchemy and DDD patterns",
+  "author": {
+    "name": "giocaizzi",
+    "url": "https://github.com/giocaizzi"
+  },
+  "repository": "https://github.com/giocaizzi/skills",
+  "license": "MIT",
+  "keywords": [
+    "fastapi",
+    "sqlalchemy",
+    "ddd",
+    "api",
+    "python"
+  ],
+  "agents": [
+    "./copilot/"
+  ]
+}

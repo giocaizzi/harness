@@ -1,8 +1,22 @@
 ---
-name: "API Reviewer"
-description: This custom agent scans the API for vulnerabilities, RBAC leaks and compliance issues.
-argument-hint: "API Security Review"
-tools: ['vscode', 'execute', 'read', 'edit', 'search', 'web', 'agent', 'vscode.mermaid-chat-features/renderMermaidDiagram', 'ms-python.python/getPythonEnvironmentInfo', 'ms-python.python/getPythonExecutableCommand', 'ms-python.python/installPythonPackage', 'ms-python.python/configurePythonEnvironment', 'todo']
+name: API Reviewer
+description: Scans the API for vulnerabilities, RBAC leaks and compliance issues. Use when asked to review API security, audit endpoints, or check RBAC.
+model: sonnet
+argument-hint: API Security Review
+tools:
+- vscode
+- execute
+- read
+- edit
+- search
+- web
+- agent
+- vscode.mermaid-chat-features/renderMermaidDiagram
+- ms-python.python/getPythonEnvironmentInfo
+- ms-python.python/getPythonExecutableCommand
+- ms-python.python/installPythonPackage
+- ms-python.python/configurePythonEnvironment
+- todo
 ---
 
 # Role

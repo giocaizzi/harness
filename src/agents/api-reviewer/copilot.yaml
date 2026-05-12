@@ -1,0 +1,19 @@
+# Copilot CLI-specific frontmatter. Merged on top of agent.yaml.
+# See https://docs.github.com/en/copilot/reference/custom-agents-configuration for all keys.
+# Use `name` here to override the shared kebab-case identifier with a pretty display label.
+name: "API Reviewer"
+argument-hint: "API Security Review"
+tools:
+  - vscode
+  - execute
+  - read
+  - edit
+  - search
+  - web
+  - agent
+  - vscode.mermaid-chat-features/renderMermaidDiagram
+  - ms-python.python/getPythonEnvironmentInfo
+  - ms-python.python/getPythonExecutableCommand
+  - ms-python.python/installPythonPackage
+  - ms-python.python/configurePythonEnvironment
+  - todo

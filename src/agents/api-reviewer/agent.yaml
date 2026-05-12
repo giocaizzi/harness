@@ -1,0 +1,10 @@
+# Shared frontmatter. Merged with claude.yaml / copilot.yaml at build time.
+# Fields recognised here:
+#   name         (required) kebab-case identifier. Drives output filename for both harnesses.
+#   description  (required) "Use when..." trigger phrase; activates the agent for the model.
+#   plugin       (optional) Target plugin. Defaults to first '-' segment of name.
+#   model        (optional) Default model for both harnesses (may be overridden per harness).
+name: api-reviewer
+description: Scans the API for vulnerabilities, RBAC leaks and compliance issues. Use when asked to review API security, audit endpoints, or check RBAC.
+plugin: api
+model: sonnet
