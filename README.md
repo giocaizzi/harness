@@ -2,7 +2,7 @@
 
 A personal collection of skills and agents for AI coding assistants, distributed as a **cross-harness plugin marketplace** that works under both [Claude Code](https://code.claude.com/), [GitHub Copilot CLI](https://github.com/features/copilot/cli) and [VS Code](https://code.visualstudio.com/).
 
-A single repository, one `marketplace.json` at the root, and each plugin ships the manifests both harnesses need.
+A single repository, one `marketplace.json` at the root, and each plugin ships the manifests needed for Claude and Copilot-compatible agent discovery.
 
 ## Available plugins
 
@@ -56,7 +56,7 @@ copilot plugin install javascript@giocaizzi-skills
 
 ### VS Code Copilot
 
-After adding the marketplace, browse `@agentPlugins` in the Extensions sidebar, or use **Chat: Install Plugin From Source** pointing at this repository.
+After adding the marketplace, browse `@agentPlugins` in the Extensions sidebar.
 To verify that VSCode loaded the plugins, see the "Setting > Customization" panel in the Copilot sidebar.
 
 ### Local development
