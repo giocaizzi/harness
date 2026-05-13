@@ -1,6 +1,6 @@
 # Skills & Agents
 
-A personal collection of skills and agents for AI coding assistants, distributed as a **cross-harness plugin marketplace** that works under both [Claude Code](https://code.claude.com/docs/en/plugins) and [GitHub Copilot CLI](https://docs.github.com/en/copilot/concepts/agents/copilot-cli/about-cli-plugins).
+A personal collection of skills and agents for AI coding assistants, distributed as a **cross-harness plugin marketplace** that works under both [Claude Code](https://code.claude.com/), [GitHub Copilot CLI](https://github.com/features/copilot/cli) and [VS Code](https://code.visualstudio.com/).
 
 A single repository, one `marketplace.json` at the root, and each plugin ships the manifests both harnesses need.
 
@@ -57,6 +57,7 @@ copilot plugin install javascript@giocaizzi-skills
 ### VS Code Copilot
 
 After adding the marketplace, browse `@agentPlugins` in the Extensions sidebar, or use **Chat: Install Plugin From Source** pointing at this repository.
+To verify that VSCode loaded the plugins, see the "Setting > Customization" panel in the Copilot sidebar.
 
 ### Local development
 
@@ -72,19 +73,9 @@ copilot plugin install ./plugins/api
 
 ---
 
-## Contributing
-
-See [AGENTS.md](./AGENTS.md) for the architecture, build pipeline, conventions, and the precise rules each harness imposes on plugin layout. Quick start:
-
-```bash
-make help          # list all targets
-make build         # regenerate agents and the per-plugin Copilot manifest
-make validate      # check every repo invariant before committing
-```
-
 ## References
 
 - Claude Code — [plugins](https://code.claude.com/docs/en/plugins) · [marketplaces](https://code.claude.com/docs/en/plugin-marketplaces)
 - GitHub Copilot CLI — [plugins overview](https://docs.github.com/en/copilot/concepts/agents/copilot-cli/about-cli-plugins) · [marketplace setup](https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/plugins-marketplace)
-- [Agent Skills specification](https://agentskills.io/specification)
-- [VSCode Plugins](https://code.visualstudio.com/docs/copilot/customization/agent-plugins)
+- Agent Skills - [specification](https://agentskills.io/specification)
+- VSCode plugins - [plugins](https://code.visualstudio.com/docs/copilot/customization/agent-plugins)
