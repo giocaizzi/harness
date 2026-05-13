@@ -87,3 +87,4 @@ make validate      # check every repo invariant before committing
 - Claude Code — [plugins](https://code.claude.com/docs/en/plugins) · [marketplaces](https://code.claude.com/docs/en/plugin-marketplaces)
 - GitHub Copilot CLI — [plugins overview](https://docs.github.com/en/copilot/concepts/agents/copilot-cli/about-cli-plugins) · [marketplace setup](https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/plugins-marketplace)
 - [Agent Skills specification](https://agentskills.io/specification)
+- [VSCode Plugins](https://code.visualstudio.com/docs/copilot/customization/agent-plugins)
