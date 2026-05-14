@@ -6,7 +6,7 @@
   },
   "metadata": {
     "description": "Personal collection of agent skills for AI coding assistants",
-    "version": "2.1.0"
+    "version": "2.2.0"
   },
   "plugins": [
     {
@@ -29,6 +29,13 @@
       "description": "JavaScript, TypeScript, React and Next.js development",
       "version": "1.1.0",
       "keywords": ["javascript", "typescript", "react", "nextjs", "frontend"]
+    },
+    {
+      "name": "dev-tools",
+      "source": "./plugins/dev-tools",
+      "description": "General development tooling — git, GitHub, conventional commits",
+      "version": "1.0.0",
+      "keywords": ["git", "github", "conventional-commits", "tooling", "workflow"]
     }
   ]
 }

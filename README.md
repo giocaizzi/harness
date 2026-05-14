@@ -11,6 +11,7 @@ A single repository, one `marketplace.json` at the root, and each plugin ships t
 | `api` | API development — FastAPI, SQLAlchemy, DDD; plus the `api-reviewer` agent. |
 | `python` | Python development and testing best practices. |
 | `javascript` | JavaScript/TypeScript, React, Next.js. |
+| `dev-tools` | General development tooling — git, GitHub, conventional commits. |
 
 ## Available skills
 
@@ -24,6 +25,8 @@ A single repository, one `marketplace.json` at the root, and each plugin ships t
 | `javascript-typescript` | `javascript` | JavaScript and TypeScript development with ES6+ and Node.js. |
 | `react` | `javascript` | ReactJS development standards and best practices. |
 | `nextjs` | `javascript` | Next.js best practices and conventions. |
+| `conventional-commits` | `dev-tools` | Conventional Commits 1.0.0 — type, scope, breaking change, and bump semantics. |
+| `release-please` | `dev-tools` | Automated versioning, changelog, and tagging from Conventional Commits. |
 
 ## Available agents
 
@@ -43,6 +46,7 @@ A single repository, one `marketplace.json` at the root, and each plugin ships t
 /plugin install api@giocaizzi-skills
 /plugin install python@giocaizzi-skills
 /plugin install javascript@giocaizzi-skills
+/plugin install dev-tools@giocaizzi-skills
 ```
 
 ### GitHub Copilot CLI
@@ -52,6 +56,7 @@ copilot plugin marketplace add giocaizzi/skills
 copilot plugin install api@giocaizzi-skills
 copilot plugin install python@giocaizzi-skills
 copilot plugin install javascript@giocaizzi-skills
+copilot plugin install dev-tools@giocaizzi-skills
 ```
 
 ### VS Code Copilot
