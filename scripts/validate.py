@@ -175,14 +175,15 @@ def check_readme(r: Reporter) -> None:
     expected_skills = {
         f"{p.name}/{s.name}"
         for p in _discover_plugins()
+        if (p / "skills").exists()
         for s in (p / "skills").iterdir()
-        if (p / "skills").exists() and s.is_dir()
+        if s.is_dir()
     }
     expected_agents = {
         f"{p.name}/{a.stem}"
         for p in _discover_plugins()
+        if (p / "agents").exists()
         for a in (p / "agents").glob("*.md")
-        if a.exists()
     }
 
     for ref in expected_skills:
