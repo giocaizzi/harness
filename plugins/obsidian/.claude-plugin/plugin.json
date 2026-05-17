@@ -1,0 +1,12 @@
+{
+  "name": "obsidian",
+  "version": "1.0.0",
+  "description": "Obsidian vault operations — markdown authoring, canvas, bases, and web ingestion",
+  "author": {
+    "name": "giocaizzi",
+    "url": "https://github.com/giocaizzi"
+  },
+  "repository": "https://github.com/giocaizzi/skills",
+  "license": "MIT",
+  "keywords": ["obsidian", "markdown", "vault", "notes", "canvas", "bases"]
+}

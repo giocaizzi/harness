@@ -6,7 +6,7 @@
   },
   "metadata": {
     "description": "Personal collection of agent skills for AI coding assistants",
-    "version": "2.2.0"
+    "version": "2.3.0"
   },
   "plugins": [
     {
@@ -36,6 +36,13 @@
       "description": "General development tooling — git, GitHub, conventional commits",
       "version": "1.0.0",
       "keywords": ["git", "github", "conventional-commits", "tooling", "workflow"]
+    },
+    {
+      "name": "obsidian",
+      "source": "./plugins/obsidian",
+      "description": "Obsidian vault operations — markdown authoring, canvas, bases, and web ingestion",
+      "version": "1.0.0",
+      "keywords": ["obsidian", "markdown", "vault", "notes", "canvas", "bases"]
     }
   ]
 }
