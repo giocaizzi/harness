@@ -1,6 +1,6 @@
 ---
 name: release-please
-description: release-please workflow — automated versioning, changelog generation, and tagging from Conventional Commits. Use whenever you see `release-please-config.json`, `.release-please-manifest.json`, a `release-please.yml` workflow, or the user mentions release-please, automated releases, or "Release PR". You must follow these rules always.
+description: release-please workflow — automated versioning, changelog generation, and tagging from Conventional Commits. Activate this skill when the task is about a repository that uses release-please, confirmed by `release-please-config.json`, `.release-please-manifest.json`, a `release-please.yml` workflow, or an explicit user request about release-please, automated releases, or a Release PR. You must follow these rules always.
 ---
 
 ## What release-please does
@@ -53,7 +53,9 @@ To surface a hidden type in the changelog, override it in `release-please-config
 
 1. Developers land Conventional Commits on the default branch.
 2. The `release-please` workflow runs on each push and opens/updates a Release PR titled `chore(release): X.Y.Z` (or `chore(main): release X.Y.Z` for monorepos). The PR body previews the changelog and the version bumps.
-3. Reviewers inspect the PR. **Do not push commits directly to the Release PR branch** — release-please will overwrite them on its next run. If something looks wrong, fix the underlying commits on `main` (e.g. with `git revert`) and let release-please re-render.
+3. Reviewers inspect the PR.
+  - Do not push commits directly to the Release PR branch; release-please will overwrite them.
+  - If something is wrong, fix the underlying commits on `main` and let release-please re-render the PR.
 4. Merging the PR is the release. release-please then:
    - updates `.release-please-manifest.json` to the new version
    - updates every tracked version file (the package's native one + everything in `extra-files`)
@@ -64,7 +66,12 @@ To surface a hidden type in the changelog, override it in `release-please-config
 
 ## Keeping non-canonical version locations in sync
 
-release-please knows about your package's primary version file by `release-type` (e.g. `release-type: python` knows about `pyproject.toml`). If you have **other** files that must mirror the version — a workspace's per-package `pyproject.toml`, a `version.py` constant, a Helm `Chart.yaml`, a Dockerfile `LABEL` — declare them in `extra-files` so release-please bumps them in lockstep:
+Treat this in two steps:
+
+- `release-type` determines the primary version file release-please manages. Example: `release-type: python` updates `pyproject.toml`.
+- `extra-files` lists any additional files that must mirror the same version, such as another `pyproject.toml`, a `version.py` constant, a Helm `Chart.yaml`, or a Dockerfile `LABEL`.
+
+Declare those additional files in `extra-files` so release-please bumps them in lockstep:
 
 ```json
 {
@@ -81,7 +88,7 @@ release-please knows about your package's primary version file by `release-type`
 }
 ```
 
-`type: generic` looks for an `x-release-please-version` marker comment near the version line; structured types (`toml`, `json`, `yaml`, `xml`) use a path expression.
+Use `type: generic` when a file has an `x-release-please-version` marker comment near the version line. Use structured types such as `toml`, `json`, `yaml`, or `xml` when the file should be updated through a path expression.
 
 ## Monorepo mode
 
@@ -105,32 +112,31 @@ For multi-package repos, declare each package in `release-please-config.json`:
 
 ## Manual release escape hatch
 
-If release-please is broken or you need an emergency cut, you can release by hand. This is a last resort; the manifest must end up consistent with the tag, or the next automated release will be confused.
+If release-please is broken or you need an emergency cut, you can release by hand. Use this only as a last resort. The manifest must end up consistent with the tag, or the next automated release will be confused.
 
 ```bash
-# 1. Set the same version in the manifest and every tracked version file
-#    (don't forget anything listed under extra-files — checking the failing
-#    workflow's planned diff is the safest way to enumerate them)
-# 2. Update CHANGELOG.md by hand
-# 3. Tag and create the GitHub Release — downstream workflows fire on the tag
+# 1. Set the same version in the manifest and every tracked version file.
+# 2. Update CHANGELOG.md by hand.
+# 3. Tag and create the GitHub Release.
 git tag -a vX.Y.Z -m "vX.Y.Z"
 git push origin vX.Y.Z
 gh release create vX.Y.Z --notes-from-tag
 ```
 
-After the next merge to `main`, verify release-please reads the manifest correctly and re-opens a fresh Release PR.
+Before doing this, check `extra-files` so every tracked version location is updated. After the next merge to `main`, verify release-please reads the manifest correctly and opens a fresh Release PR.
 
 ## Common pitfalls
 
-- **Pushing to the Release PR branch.** It's an automation artifact — overwritten on every workflow run. Fix the source commits instead.
-- **Hand-editing `CHANGELOG.md`.** Gets clobbered. If you need a manual note, add it via the `Release-As:` footer on a commit or the PR's edit-the-changelog UI before merging.
-- **Mistyped commit `type`.** A `feat` that should have been `chore` cuts a minor version with a blank "Features" entry; the reverse hides a real change. The fix is to `git revert` the bad commit and recommit with the right type — never amend an already-merged commit.
-- **Missing `extra-files`.** A new version-bearing file (new sublibrary, new Helm chart, new constant) won't be bumped. Add it to `release-please-config.json` in the same PR that introduces the file.
-- **Drift between manifest and version files.** Trust the manifest, not the file. Bring drifting files back into line by hand-editing them to match the manifest, or run release-please's `manifest-pr` action.
-- **Forgetting that `BREAKING CHANGE:` must be a real footer.** It needs to start at the beginning of a line in the commit body's footer block, with no leading whitespace. Otherwise release-please won't parse it and you'll get a patch bump instead of a major.
+- **Pushing to the Release PR branch.** It will be overwritten. Fix the source commits instead.
+- **Hand-editing `CHANGELOG.md`.** It will be regenerated. Add manual notes through release-please-supported inputs instead.
+- **Mistyped commit `type`.** The bump will be wrong. Revert and recommit with the right type; do not amend an already-merged commit.
+- **Missing `extra-files`.** New version-bearing files will drift. Add them in the same PR that introduces them.
+- **Drift between manifest and version files.** Trust the manifest and realign the files to it.
+- **Invalid `BREAKING CHANGE:` footer.** It must be a real footer line with no leading whitespace or release-please will miss the major bump.
 
 ## When working with Claude
 
-- Before guessing the next version, read `.release-please-manifest.json` — it is authoritative.
-- Before suggesting a config change, read `release-please-config.json` in the repo; defaults vary by `release-type` and per-package overrides are common.
-- Never write to `CHANGELOG.md` or package version files in a normal PR. If the user asks you to "bump the version", that means: write the right Conventional Commit, push to `main`, and let release-please do it. Push back if asked to do it by hand without the escape-hatch context.
+- Before guessing the next version, read `.release-please-manifest.json`.
+- Before suggesting a config change, read `release-please-config.json`.
+- In a normal PR, do not edit `CHANGELOG.md` or package version files by hand.
+- If the user asks to "bump the version", prefer the normal flow: land the right Conventional Commit and let release-please create the Release PR.

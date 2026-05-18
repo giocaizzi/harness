@@ -16,7 +16,7 @@ The commit `type` is not a stylistic choice — release automation (release-plea
 - One line, imperative mood, no trailing period.
 - `<description>` should fit on one line (target ≤72 chars).
 - Lowercase `<type>`. Scope, if used, is a lowercase noun in parentheses.
-- `!` after type/scope **and/or** a `BREAKING CHANGE:` footer marks a breaking change. Either alone is sufficient; using both is fine.
+- `!` after type/scope or a `BREAKING CHANGE:` footer marks a breaking change. Either marker alone is sufficient; using both is acceptable for emphasis.
 
 Full message:
 
@@ -31,6 +31,11 @@ Full message:
 A blank line separates header, body, and footers.
 
 ## Types and their bump semantics
+
+Pick the type in two steps:
+
+1. Decide whether the change should trigger a release bump.
+2. If it should, choose the smallest type that matches the user-visible impact.
 
 | Type | Bump | Typical changelog section |
 |---|---|---|

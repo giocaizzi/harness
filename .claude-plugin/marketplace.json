@@ -6,7 +6,7 @@
   },
   "metadata": {
     "description": "Personal collection of agent skills for AI coding assistants",
-    "version": "2.4.0"
+    "version": "2.4.1"
   },
   "plugins": [
     {
@@ -34,7 +34,7 @@
       "name": "dev-tools",
       "source": "./plugins/dev-tools",
       "description": "General development tooling — git, GitHub, conventional commits",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "keywords": ["git", "github", "conventional-commits", "tooling", "workflow"]
     }
   ]

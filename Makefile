@@ -4,10 +4,10 @@ help: ## Show this help.
 	@awk 'BEGIN {FS = ":.*##"; printf "Usage: make \033[36m<target>\033[0m\n\nTargets:\n"} /^[a-zA-Z_-]+:.*?##/ { printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
 
 build: ## Generate per-plugin agent files and Copilot manifests from sources.
-	@python3 scripts/build_agents.py
+	@uv run python scripts/build_agents.py
 
 validate: ## Run all repo invariant checks (build sync, manifests, skills, marketplace, README).
-	@python3 scripts/validate.py
+	@uv run python scripts/validate.py
 
 new-agent: ## Scaffold src/agents/<NAME>/.  Usage: make new-agent NAME=<name> PLUGIN=<plugin>
 	@scripts/new-agent.sh "$(NAME)" "$(PLUGIN)"
