@@ -12,9 +12,7 @@ compatibility: "Python >=3.10, Pydantic >=2.9.0, Starlette >=1.0.0"
 
 Modern FastAPI with **Pydantic v2**. Leverage automatic validation, serialization, and OpenAPI docs — don't fight them.
 
-Apply these priorities in this order:
-
-If two priorities conflict, follow the numerical order below, with lower numbers taking precedence. Apply a later item only when it does not violate a lower-numbered one. Example: keep a route handler thin even if dependency wiring would be more convenient inline; move that wiring into a dependency provider instead.
+Use this list as the default preference order for the same endpoint, dependency chain, or request flow. Example: keep a route handler thin even if dependency wiring would be more convenient inline; move that wiring into a dependency provider instead.
 
 1. Use an app factory with `lifespan`.
 2. Keep routes thin.
