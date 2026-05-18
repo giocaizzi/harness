@@ -1,11 +1,19 @@
 #!/usr/bin/env python3
 """Validate repo invariants for the dual-harness plugin layout.
 
+Schema checks for the Claude plugin manifest, SKILL.md frontmatter and the
+marketplace manifest are delegated to the native `claude plugin validate`
+command. This file only enforces things the native validator cannot see:
+the Copilot-side manifest, marketplace ↔ disk cross-refs, README sync,
+generated-agent sync, and a couple of repo-specific rules.
+
 Checks:
-  1. Every plugin has .claude-plugin/plugin.json with valid metadata.
-  2. No plugin.json declares a `skills` field (Claude Code rejects it).
-  3. Each SKILL.md has frontmatter conforming to the agentskills.io spec.
-  4. marketplace.json lists every plugins/<dir>, with versions matching plugin.json.
+  1. Native `claude plugin validate` passes for every plugin and the marketplace.
+  2. The Copilot manifest (.github/plugin/plugin.json) matches the Claude
+     manifest's version and sets `agents: ["./copilot/"]`.
+  3. The Claude plugin.json does not declare `skills` or `agents` fields
+     (repo policy: both must be auto-discovered).
+  4. marketplace.json lists every plugins/<dir> with matching versions and source paths.
   5. The root README links to every plugin, and each plugin's README lists all its skills and agents.
   6. Generated agents are in sync with src/agents/ sources (delegates to build_agents.py --check).
 """
@@ -13,21 +21,16 @@ Checks:
 from __future__ import annotations
 
 import json
-import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
-
-import yaml
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PLUGINS_ROOT = REPO_ROOT / "plugins"
 MARKETPLACE = REPO_ROOT / ".claude-plugin" / "marketplace.json"
 README = REPO_ROOT / "README.md"
 SRC_AGENTS = REPO_ROOT / "src" / "agents"
-
-SKILL_NAME_RE = re.compile(r"^(?!-)(?!.*--)[a-z0-9-]{1,64}(?<!-)$")
-PLUGIN_NAME_RE = re.compile(r"^(?!-)(?!.*--)[a-z0-9-]{1,64}(?<!-)$")
 
 
 class Reporter:
@@ -44,16 +47,6 @@ class Reporter:
         print(f"  ✓ {msg}")
 
 
-def _load_yaml_frontmatter(path: Path) -> dict | None:
-    text = path.read_text()
-    if not text.startswith("---\n"):
-        return None
-    end = text.find("\n---", 4)
-    if end < 0:
-        return None
-    return yaml.safe_load(text[4:end]) or {}
-
-
 def _load_json(path: Path) -> dict:
     return json.loads(path.read_text())
 
@@ -62,30 +55,52 @@ def _discover_plugins() -> list[Path]:
     return sorted(p for p in PLUGINS_ROOT.iterdir() if p.is_dir() and not p.name.startswith("."))
 
 
-def check_plugin_manifests(r: Reporter) -> None:
-    r.section("Plugin manifests")
+def _run_claude_validate(target: Path) -> tuple[bool, str]:
+    result = subprocess.run(
+        ["claude", "plugin", "validate", str(target)],
+        capture_output=True,
+        text=True,
+    )
+    return result.returncode == 0, (result.stdout + result.stderr).strip()
+
+
+def check_native_validator(r: Reporter) -> None:
+    r.section("Native `claude plugin validate`")
+    if shutil.which("claude") is None:
+        r.fail("claude CLI not found on PATH — install Claude Code to run native plugin validation")
+        return
+
+    for plugin_dir in _discover_plugins():
+        ok, output = _run_claude_validate(plugin_dir)
+        label = plugin_dir.relative_to(REPO_ROOT)
+        if not ok:
+            r.fail(f"{label}: native validator failed\n{output}")
+        else:
+            r.ok(f"{label}")
+
+    ok, output = _run_claude_validate(MARKETPLACE)
+    label = MARKETPLACE.relative_to(REPO_ROOT)
+    if not ok:
+        r.fail(f"{label}: native validator failed\n{output}")
+    else:
+        r.ok(f"{label}")
+
+
+def check_repo_specific_manifests(r: Reporter) -> None:
+    r.section("Repo-specific manifest rules (Copilot + auto-discovery)")
     for plugin_dir in _discover_plugins():
         manifest = plugin_dir / ".claude-plugin" / "plugin.json"
         rel = manifest.relative_to(REPO_ROOT)
         if not manifest.exists():
-            r.fail(f"{rel}: missing")
             continue
         try:
             data = _load_json(manifest)
-        except json.JSONDecodeError as e:
-            r.fail(f"{rel}: invalid JSON: {e}")
+        except json.JSONDecodeError:
             continue
-        if data.get("name") != plugin_dir.name:
-            r.fail(f"{rel}: name {data.get('name')!r} must match dir name {plugin_dir.name!r}")
-        if not PLUGIN_NAME_RE.match(plugin_dir.name):
-            r.fail(f"{rel}: dir name {plugin_dir.name!r} is not valid kebab-case")
-        if "version" not in data:
-            r.fail(f"{rel}: missing `version`")
         if "skills" in data:
             r.fail(f"{rel}: contains `skills` field — Claude Code rejects this; remove it (auto-discovery works for both harnesses)")
         if "agents" in data:
             r.fail(f"{rel}: contains `agents` field — Claude Code reads this manifest; it must auto-discover the agents/ dir. The `agents` override belongs in .github/plugin/plugin.json (Copilot).")
-        r.ok(f"{plugin_dir.name} @ {data.get('version', '?')}")
 
         copilot_manifest = plugin_dir / ".github" / "plugin" / "plugin.json"
         crel = copilot_manifest.relative_to(REPO_ROOT)
@@ -101,35 +116,7 @@ def check_plugin_manifests(r: Reporter) -> None:
             r.fail(f"{crel}: version drift vs .claude-plugin/plugin.json ({cdata.get('version')!r} vs {data.get('version')!r}) — run `make build`")
         if cdata.get("agents") != ["./copilot/"]:
             r.fail(f"{crel}: must contain `\"agents\": [\"./copilot/\"]` so Copilot CLI scans the copilot/ dir (got {cdata.get('agents')!r})")
-
-
-def check_skills(r: Reporter) -> None:
-    r.section("Skills (agentskills.io spec)")
-    for plugin_dir in _discover_plugins():
-        skills_dir = plugin_dir / "skills"
-        if not skills_dir.exists():
-            continue
-        for skill_dir in sorted(p for p in skills_dir.iterdir() if p.is_dir()):
-            skill_md = skill_dir / "SKILL.md"
-            rel = skill_md.relative_to(REPO_ROOT)
-            if not skill_md.exists():
-                r.fail(f"{rel}: missing SKILL.md")
-                continue
-            fm = _load_yaml_frontmatter(skill_md)
-            if fm is None:
-                r.fail(f"{rel}: missing YAML frontmatter")
-                continue
-            name = fm.get("name")
-            if name != skill_dir.name:
-                r.fail(f"{rel}: frontmatter `name` ({name!r}) must match dir {skill_dir.name!r}")
-            if name and not SKILL_NAME_RE.match(str(name)):
-                r.fail(f"{rel}: `name` {name!r} violates agentskills.io regex")
-            desc = fm.get("description", "")
-            if not isinstance(desc, str) or not desc.strip():
-                r.fail(f"{rel}: `description` is required and must be non-empty")
-            elif len(desc) > 1024:
-                r.fail(f"{rel}: `description` exceeds 1024 chars ({len(desc)})")
-            r.ok(f"{plugin_dir.name}/{skill_dir.name}")
+        r.ok(f"{plugin_dir.name} (Claude + Copilot manifests)")
 
 
 def check_marketplace(r: Reporter) -> None:
@@ -225,8 +212,8 @@ def check_build_sync(r: Reporter) -> None:
 
 def main() -> None:
     r = Reporter()
-    check_plugin_manifests(r)
-    check_skills(r)
+    check_native_validator(r)
+    check_repo_specific_manifests(r)
     check_marketplace(r)
     check_build_sync(r)
     check_readme(r)
