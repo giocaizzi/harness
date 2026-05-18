@@ -24,6 +24,7 @@ import json
 import shutil
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -31,6 +32,7 @@ PLUGINS_ROOT = REPO_ROOT / "plugins"
 MARKETPLACE = REPO_ROOT / ".claude-plugin" / "marketplace.json"
 README = REPO_ROOT / "README.md"
 SRC_AGENTS = REPO_ROOT / "src" / "agents"
+PYPROJECT = REPO_ROOT / "pyproject.toml"
 
 
 class Reporter:
@@ -49,6 +51,10 @@ class Reporter:
 
 def _load_json(path: Path) -> dict:
     return json.loads(path.read_text())
+
+
+def _load_toml(path: Path) -> dict:
+    return tomllib.loads(path.read_text(encoding="utf-8"))
 
 
 def _discover_plugins() -> list[Path]:
@@ -152,6 +158,35 @@ def check_marketplace(r: Reporter) -> None:
         r.ok(f"{name} @ {manifest.get('version')}")
 
 
+def check_repo_version_sync(r: Reporter) -> None:
+    r.section("Repo version sync")
+    if not PYPROJECT.exists():
+        r.fail(f"{PYPROJECT.relative_to(REPO_ROOT)}: missing")
+        return
+
+    try:
+        pyproject = _load_toml(PYPROJECT)
+    except tomllib.TOMLDecodeError as e:
+        r.fail(f"{PYPROJECT.relative_to(REPO_ROOT)}: invalid TOML: {e}")
+        return
+
+    try:
+        market = _load_json(MARKETPLACE)
+    except json.JSONDecodeError:
+        return
+
+    pyproject_version = pyproject.get("project", {}).get("version")
+    marketplace_version = market.get("metadata", {}).get("version")
+    if pyproject_version != marketplace_version:
+        r.fail(
+            "repo version drift: "
+            f"pyproject.toml={pyproject_version!r} vs "
+            f".claude-plugin/marketplace.json metadata.version={marketplace_version!r}"
+        )
+        return
+    r.ok(f"pyproject.toml matches marketplace metadata ({pyproject_version})")
+
+
 def check_readme(r: Reporter) -> None:
     r.section("Root README ↔ plugins sync")
     if not README.exists():
@@ -215,6 +250,7 @@ def main() -> None:
     check_native_validator(r)
     check_repo_specific_manifests(r)
     check_marketplace(r)
+    check_repo_version_sync(r)
     check_build_sync(r)
     check_readme(r)
 
