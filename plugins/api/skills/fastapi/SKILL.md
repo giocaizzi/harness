@@ -12,7 +12,19 @@ compatibility: "Python >=3.10, Pydantic >=2.9.0, Starlette >=1.0.0"
 
 Modern FastAPI with **Pydantic v2**. Leverage automatic validation, serialization, and OpenAPI docs — don't fight them.
 
+Apply these priorities in this order:
+
+If two priorities conflict, follow the numerical order below, with lower numbers taking precedence. Apply a later item only when it does not violate a lower-numbered one. Example: keep a route handler thin even if dependency wiring would be more convenient inline; move that wiring into a dependency provider instead.
+
+1. Use an app factory with `lifespan`.
+2. Keep routes thin.
+3. Type inputs and outputs with Pydantic models.
+4. Declare dependencies with `Annotated[..., Depends(...)]`.
+5. Use `async def` only for non-blocking I/O such as async database queries, HTTP requests, or async file operations.
+
 ## Application Factory & Lifespan
+
+Start here for application setup. This establishes the process-level lifecycle and shared resources for the rest of the app.
 
 Use the application factory pattern. Use `lifespan` for startup/shutdown — `on_startup`/`on_shutdown` are deprecated.
 
@@ -38,6 +50,8 @@ def create_app() -> FastAPI:
 
 ## Settings
 
+Keep configuration centralized and typed so runtime behavior is predictable across environments.
+
 ```python
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -49,12 +63,14 @@ class Settings(BaseSettings):
 
 ## Dependency Injection with Depends()
 
+Use dependencies to wire the HTTP layer to services and infrastructure without leaking construction details into route handlers.
+
 FastAPI's `Depends()` is **parameter injection** — it inspects signatures, resolves the dependency tree per-request, and provides results as arguments.
 
 ### Core Rules
 
 - **Always use `Annotated[Type, Depends(...)]`** — never `= Depends(...)` as default.
-- **Return abstractions**, not concretions — hide concrete types inside dependency functions.
+- **Return an interface, protocol, abstract base class, or other stable public type**, not a concrete implementation — keep concrete class construction inside the dependency provider.
 - **Define dependencies in a dedicated module** (`dependencies/` or `dependencies.py`) — this is the composition root.
 
 ### Scoping & Lifecycle
@@ -86,6 +102,8 @@ app.dependency_overrides.clear()  # reset after test
 
 ## async def vs def
 
+Choose the function type based on runtime behavior, not style: async for non-blocking I/O, sync for blocking or CPU-bound work.
+
 **Critical performance rule.** Getting this wrong is the #1 FastAPI performance killer.
 
 - **`async def`**: For I/O-bound operations (database, HTTP calls, file I/O with async libs). Runs on the event loop.
@@ -93,6 +111,8 @@ app.dependency_overrides.clear()  # reset after test
 - **Never block the event loop**: Blocking I/O inside `async def` starves all concurrent requests. Use `def` or `asyncio.to_thread()`.
 
 ## Routes & Endpoints
+
+Treat route handlers as transport adapters: validate the HTTP contract, delegate work, and shape the response.
 
 - **Type everything** with Pydantic models: request bodies, responses, query/path params.
 - **Organize with `APIRouter`** by feature/domain.
@@ -106,6 +126,8 @@ async def list_items(params: Annotated[ItemQueryParams, Query()], session: Sessi
 ```
 
 ## Pydantic v2 Schemas
+
+Keep schema design explicit and boring: clear names, strict config, and validators only for real invariants.
 
 ### Naming
 
@@ -170,6 +192,8 @@ class UserResponse(UserBase):
 
 ## Error Handling
 
+Translate internal failures into consistent HTTP responses without exposing implementation details.
+
 - **Custom exception handlers** convert domain/application exceptions to HTTP responses.
 - **Consistent format**: `{"error": str, "code": str, "details": dict | None}`.
 - **Never expose tracebacks in production.**
@@ -182,6 +206,8 @@ async def domain_error_handler(request: Request, exc: DomainError):
 
 ## Performance
 
+Apply performance changes after the request lifecycle is correct; most wins come from avoiding blocked event-loop work and expensive middleware.
+
 - **`ORJSONResponse`** for 20-50% faster JSON serialization: `pip install orjson`, set as `default_response_class`.
 - **Pure ASGI middleware** instead of `BaseHTTPMiddleware` for performance-critical paths (~40% faster).
 - **Stream large responses** with `StreamingResponse` — don't buffer in memory.
@@ -189,6 +215,8 @@ async def domain_error_handler(request: Request, exc: DomainError):
 - **Multiple workers** in production: `uvicorn --workers $(nproc)` or Gunicorn with UvicornWorker.
 
 ## Architecture
+
+Pick the simplest structure that preserves thin routes, explicit dependency wiring, and a clean boundary between HTTP concerns and business logic.
 
 ### Simple CRUD APIs
 
@@ -221,6 +249,8 @@ contexts/{name}/
 
 ## Testing
 
+Test the HTTP contract and dependency wiring from the outside, then override dependencies to keep tests isolated and fast.
+
 ```python
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -239,6 +269,8 @@ async def test_create_user(client: AsyncClient):
 Override dependencies for isolation: `app.dependency_overrides[get_uow] = lambda: FakeUnitOfWork()`
 
 ## Prohibited Patterns
+
+Treat every item here as a default rejection unless the user has a repo-specific exception with a clear reason.
 
 - Raw `os.environ` (use Settings)
 - `= Depends(...)` as default (use `Annotated`)

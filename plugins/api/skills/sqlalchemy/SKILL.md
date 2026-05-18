@@ -12,8 +12,16 @@ compatibility: "SQLAlchemy >=2.0, Python >=3.10"
 
 ## Core Principles
 
+Use this routing table first:
+
+| Question | Default |
+|----------|---------|
+| Which SQLAlchemy API style should you use? | Use the v2 API only. |
+| How should you manage transactions? | Keep boundaries explicit with `session.begin()`. |
+| When should you use async sessions? | Use them only when both request handling and database operations run through async code paths in frameworks like FastAPI, Starlette, aiohttp, or similar async-first frameworks. Otherwise use sync sessions. |
+
 - **Always use v2 API** — `select()`, `Mapped[T]`, `mapped_column()`. Never legacy `Query` or `Column`.
-- Use async sessions only when your application is async (FastAPI, async web servers).
+- Use async sessions only when request handling and database access both run in an async-first framework such as FastAPI, Starlette, or aiohttp. Do not treat partial async support in otherwise sync-first stacks as the default case for async sessions.
 - Sync sessions for scripts, CLI tools, and simpler use cases.
 
 ## Annotated Declarative Types (DRY)
@@ -96,6 +104,22 @@ async with AsyncSession(engine) as session, session.begin():
     session.add(User(name="Alice"))
 ```
 
+Handle database-specific failures at the boundary of the transaction block so the rollback stays automatic and the error can be translated appropriately:
+
+```python
+from sqlalchemy.exc import IntegrityError, OperationalError
+
+try:
+    with Session(engine) as session, session.begin():
+        session.add(User(name="Alice", email="alice@example.com"))
+except IntegrityError:
+    # translate unique/foreign-key violations into domain or API errors
+    raise
+except OperationalError:
+    # translate connection or database availability failures
+    raise
+```
+
 ### Session Factories
 
 ```python
@@ -165,7 +189,9 @@ stmt = select(User).options(selectinload(User.posts))
 stmt = select(Post).options(joinedload(Post.user))
 ```
 
-**Always set `lazy="raise"` on relationships** and explicitly eager-load at query time. This prevents N+1 queries and is mandatory for async (implicit lazy loads raise `MissingGreenlet`).
+Set `lazy="raise"` on relationships unless there is a specific, documented reason to use another loading strategy.
+Choose eager loading explicitly in each query.
+This prevents N+1 queries and is the safe default for async because implicit lazy loads raise `MissingGreenlet`.
 
 ### AsyncAttrs Mixin (async alternative)
 
