@@ -6,7 +6,7 @@ Checks:
   2. No plugin.json declares a `skills` field (Claude Code rejects it).
   3. Each SKILL.md has frontmatter conforming to the agentskills.io spec.
   4. marketplace.json lists every plugins/<dir>, with versions matching plugin.json.
-  5. README.md tables list every skill and every agent on disk.
+  5. The root README links to every plugin, and each plugin's README lists all its skills and agents.
   6. Generated agents are in sync with src/agents/ sources (delegates to build_agents.py --check).
 """
 
@@ -166,39 +166,47 @@ def check_marketplace(r: Reporter) -> None:
 
 
 def check_readme(r: Reporter) -> None:
-    r.section("README ↔ filesystem sync")
+    r.section("Root README ↔ plugins sync")
     if not README.exists():
         r.fail("README.md: missing")
         return
     text = README.read_text()
 
-    expected_skills = {
-        f"{p.name}/{s.name}"
-        for p in _discover_plugins()
-        if (p / "skills").exists()
-        for s in (p / "skills").iterdir()
-        if s.is_dir()
-    }
-    expected_agents = {
-        f"{p.name}/{a.stem}"
-        for p in _discover_plugins()
-        if (p / "agents").exists()
-        for a in (p / "agents").glob("*.md")
-    }
+    for plugin_dir in _discover_plugins():
+        name = plugin_dir.name
+        if f"`{name}`" not in text:
+            r.fail(f"README.md missing plugin entry for `{name}`")
+            continue
+        if f"plugins/{name}/README.md" not in text:
+            r.fail(f"README.md must link to plugins/{name}/README.md")
+            continue
+        r.ok(f"root → {name}")
 
-    for ref in expected_skills:
-        plugin, skill = ref.split("/")
-        if f"`{skill}`" not in text or f"`{plugin}`" not in text:
-            r.fail(f"README.md missing row for skill {ref}")
-        else:
-            r.ok(f"skill {ref}")
+    r.section("Per-plugin README ↔ skills/agents sync")
+    for plugin_dir in _discover_plugins():
+        readme = plugin_dir / "README.md"
+        rel = readme.relative_to(REPO_ROOT)
+        if not readme.exists():
+            r.fail(f"{rel}: missing — every plugin must ship a README.md")
+            continue
+        ptext = readme.read_text()
 
-    for ref in expected_agents:
-        plugin, agent = ref.split("/")
-        if f"`{agent}`" not in text:
-            r.fail(f"README.md missing row for agent {ref}")
-        else:
-            r.ok(f"agent {ref}")
+        skills_dir = plugin_dir / "skills"
+        if skills_dir.exists():
+            for skill in sorted(s.name for s in skills_dir.iterdir() if s.is_dir()):
+                if f"`{skill}`" not in ptext:
+                    r.fail(f"{rel}: missing row for skill `{skill}`")
+                else:
+                    r.ok(f"{plugin_dir.name}/README.md → skill {skill}")
+
+        agents_dir = plugin_dir / "agents"
+        if agents_dir.exists():
+            for agent_path in sorted(agents_dir.glob("*.md")):
+                agent = agent_path.stem
+                if f"`{agent}`" not in ptext:
+                    r.fail(f"{rel}: missing row for agent `{agent}`")
+                else:
+                    r.ok(f"{plugin_dir.name}/README.md → agent {agent}")
 
 
 def check_build_sync(r: Reporter) -> None:

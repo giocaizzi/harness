@@ -1,62 +1,34 @@
-# Skills & Agents
+# Skills
 
-A personal collection of skills and agents for AI coding assistants, distributed as a **cross-harness plugin marketplace** that works under both [Claude Code](https://code.claude.com/), [GitHub Copilot CLI](https://github.com/features/copilot/cli) and [VS Code](https://code.visualstudio.com/).
+My personal marketplace with plugins for AI coding assistants, including skills, agents, slash commands and more.
 
-A single repository, one `marketplace.json` at the root, and each plugin ships the manifests needed for Claude and Copilot-compatible agent discovery.
+Compatible with most of AI harnesses — [Claude Code](https://code.claude.com/), [GitHub Copilot CLI](https://github.com/features/copilot/cli) and [VS Code](https://code.visualstudio.com/).
 
 ## Available plugins
 
 | Plugin | Description |
 |---|---|
-| `api` | API development — FastAPI, SQLAlchemy, DDD; plus the `api-reviewer` agent. |
-| `python` | Python development and testing best practices. |
-| `javascript` | JavaScript/TypeScript, React, Next.js. |
-| `dev-tools` | General development tooling — git, GitHub, conventional commits. |
+| [`api`](plugins/api/README.md) | API development — FastAPI, SQLAlchemy, DDD; plus the `api-reviewer` agent. |
+| [`python`](plugins/python/README.md) | Python development and testing best practices. |
+| [`javascript`](plugins/javascript/README.md) | JavaScript/TypeScript, React, Next.js. |
+| [`dev-tools`](plugins/dev-tools/README.md) | General development tooling — git, GitHub, conventional commits. |
 
-## Available skills
-
-| Skill | Plugin | Description |
-|---|---|---|
-| `ddd` | `api` | Domain-Driven Design with Hexagonal Architecture (Ports & Adapters). |
-| `fastapi` | `api` | FastAPI best practices with Pydantic v2 for production REST APIs. |
-| `sqlalchemy` | `api` | SQLAlchemy v2 best practices for ORM, Core, and migrations. |
-| `python-development` | `python` | Python development best practices and conventions. |
-| `python-testing` | `python` | Python testing best practices and conventions. |
-| `javascript-typescript` | `javascript` | JavaScript and TypeScript development with ES6+ and Node.js. |
-| `react` | `javascript` | ReactJS development standards and best practices. |
-| `nextjs` | `javascript` | Next.js best practices and conventions. |
-| `conventional-commits` | `dev-tools` | Conventional Commits 1.0.0 — type, scope, breaking change, and bump semantics. |
-| `release-please` | `dev-tools` | Automated versioning, changelog, and tagging from Conventional Commits. |
-
-## Available agents
-
-| Agent | Plugin | Description |
-|---|---|---|
-| `api-reviewer` | `api` | Scans the API for vulnerabilities, RBAC leaks and compliance issues. |
+Each plugin's README lists the skills and agents it ships.
 
 ---
 
 ## Install
 
-### Claude Code
+Install the marketplace and plugins under your preferred harness:
 
 ```bash
-# Add the marketplace, then install whichever plugins you want:
+# Add the marketplace
 /plugin marketplace add giocaizzi/skills
+# Then install the plugins you want to use
 /plugin install api@giocaizzi-skills
 /plugin install python@giocaizzi-skills
 /plugin install javascript@giocaizzi-skills
 /plugin install dev-tools@giocaizzi-skills
-```
-
-### GitHub Copilot CLI
-
-```bash
-copilot plugin marketplace add giocaizzi/skills
-copilot plugin install api@giocaizzi-skills
-copilot plugin install python@giocaizzi-skills
-copilot plugin install javascript@giocaizzi-skills
-copilot plugin install dev-tools@giocaizzi-skills
 ```
 
 ### VS Code Copilot
