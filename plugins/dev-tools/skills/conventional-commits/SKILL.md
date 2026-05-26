@@ -30,6 +30,12 @@ Full message:
 
 A blank line separates header, body, and footers.
 
+## PR titles
+
+PR titles follow the same `<type>[scope][!]: <description>` header format.
+Omit body and footers there; those belong in the PR description.
+In squash-merge repos, the PR title often becomes the final commit message, so accuracy matters.
+
 ## Types and their bump semantics
 
 Pick the type in two steps:
@@ -65,7 +71,7 @@ The bump mapping above is the convention most release tools default to. The exac
 - **Tooling, CI, lockfiles, dependency bumps** → `chore` / `build` / `ci`. `build` for the build system (bundlers, package managers), `ci` for pipeline config, `chore` for everything else housekeeping.
 - **Whitespace, formatting, lint-only** → `style`.
 
-If a commit mixes types (e.g. a `feat` that drags along test updates), classify by the **most impactful** change. Don't split a coherent change just to satisfy types — but do split unrelated changes.
+If all changes serve a single user-facing goal, keep them in one commit classified by the highest-impact type. If changes serve independent goals (for example, fixing a bug and adding an unrelated feature), split them into separate commits.
 
 ## Scope
 
@@ -81,7 +87,7 @@ Pick scopes from a small, stable vocabulary that already exists in the repo's co
 
 Anything that forces consumers to change code, config, or behaviour is breaking. Examples: removing a public API, renaming a flag, changing default behaviour, dropping support for a runtime version.
 
-Mark in **one** of two ways (or both for emphasis):
+Mark it with `!` after the type or scope, with a `BREAKING CHANGE:` footer, or with both for emphasis:
 
 ```text
 feat(api)!: drop /v1 endpoints
