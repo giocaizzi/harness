@@ -93,6 +93,11 @@ This repo treats everything that is identical (skills, plugin metadata) as one s
 
 **Always run `make validate` before committing.** It catches drift between sources, generated agent files, Copilot manifests, the marketplace, and the README.
 
+If `make validate` fails, check the common drift points first:
+- version mismatch between `plugins/<plugin>/.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, and, when applicable, `pyproject.toml`
+- missing or stale README table rows after adding or renaming a skill or agent
+- stale generated files after editing `src/agents/` or plugin manifests; rerun `make build`, then `make validate`
+
 ---
 
 ## How agents work (the 3-layer source format)
@@ -103,8 +108,8 @@ Each agent lives in `src/agents/<name>/`:
 |---|---|---|
 | `agent.yaml` | Yes | Shared frontmatter: `name`, `description`, `plugin`, `model`. Plus anything else identical for both harnesses. |
 | `body.md` | Yes | The system prompt. Same for both harnesses. |
-| `claude.yaml` | No | Keys to add or override for the Claude Code output. |
-| `copilot.yaml` | No | Keys to add or override for the Copilot CLI output. |
+| `claude.yaml` | No | Keys to add or override for the Claude Code output. `make new-agent` creates it by default, but you may omit or delete it if you do not need Claude-specific overrides. |
+| `copilot.yaml` | No | Keys to add or override for the Copilot CLI output. `make new-agent` creates it by default, but you may omit or delete it if you do not need Copilot-specific overrides. |
 
 ### Build behavior
 
@@ -130,7 +135,7 @@ This is what makes Copilot CLI scan `copilot/` for `.agent.md` files instead of 
 **Shared (`agent.yaml`)**
 - `name` — kebab-case, must match the directory name, used as filename for both outputs.
 - `description` — trigger phrase. Both harnesses use this to decide when to invoke the agent — write it as `"…Use when …"`.
-- `plugin` — target plugin name. Defaults to first `-` segment of `name` (e.g. `api-reviewer` → `api`).
+- `plugin` — target plugin name. Defaults to the substring before the first `-` in `name`. If `name` contains no `-`, it defaults to the full `name` (e.g. `api-reviewer` → `api`, `linter` → `linter`).
 - `model` — model identifier (e.g. `sonnet`).
 
 **Claude-only (`claude.yaml`)** — see the [Claude plugin reference](https://code.claude.com/docs/en/plugins-reference#agents).
@@ -178,11 +183,11 @@ These are load-bearing — the layout breaks if any of them slip.
    ```bash
    make new-agent NAME=<agent-name> PLUGIN=<plugin>
    ```
-2. Edit the four files under `src/agents/<agent-name>/`:
+2. Edit the scaffolded files under `src/agents/<agent-name>/`:
    - `agent.yaml` — set `description` (trigger phrase) and `model`.
-   - `claude.yaml` — pick the Claude `tools` list.
-   - `copilot.yaml` — pick the Copilot `tools` list and any display overrides.
    - `body.md` — write the system prompt.
+   - `claude.yaml` — adjust the Claude `tools` list if you need Claude-specific overrides; otherwise you can leave it as scaffolded or delete it.
+   - `copilot.yaml` — adjust the Copilot `tools` list and any display overrides if you need Copilot-specific overrides; otherwise you can leave it as scaffolded or delete it.
 3. Run `make build` to generate the per-harness files.
 4. Add a row to the **Agents** table in `README.md`.
 5. Run `make validate`.
