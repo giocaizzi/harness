@@ -1,7 +1,7 @@
 {
   "name": "dev-tools",
-  "version": "1.0.1",
-  "description": "General development tooling \u00e2\u20ac\u201d git, GitHub, conventional commits",
+  "version": "1.1.0",
+  "description": "General development tooling \u00e2\u20ac\u201d git, GitHub, conventional commits, semantic versioning",
   "author": {
     "name": "giocaizzi",
     "url": "https://github.com/giocaizzi"
@@ -12,6 +12,8 @@
     "git",
     "github",
     "conventional-commits",
+    "semver",
+    "versioning",
     "tooling",
     "workflow"
   ],
