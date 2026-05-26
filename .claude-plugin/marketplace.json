@@ -34,7 +34,7 @@
       "name": "dev-tools",
       "source": "./plugins/dev-tools",
       "description": "General development tooling — git, GitHub, conventional commits, semantic versioning",
-      "version": "1.1.0",
+      "version": "1.1.1",
       "keywords": ["git", "github", "conventional-commits", "semver", "versioning", "tooling", "workflow"]
     }
   ]
