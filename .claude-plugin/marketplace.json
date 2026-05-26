@@ -13,7 +13,7 @@
       "name": "python",
       "source": "./plugins/python",
       "description": "Python development and testing best practices",
-      "version": "1.1.0",
+      "version": "1.2.0",
       "keywords": ["python", "development", "testing", "pytest"]
     },
     {
