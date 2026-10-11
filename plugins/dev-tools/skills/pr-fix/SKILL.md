@@ -1,7 +1,6 @@
 ---
 name: pr-fix
-description: Fix unresolved review comments and failing CI on a PR, then commit and push. Invoke explicitly as /pr-fix, optionally with a PR number.
-disable-model-invocation: true
+description: Fix unresolved review comments and failing CI on a PR, then commit and push. Use when the user asks to address review comments or CI failures, or types /pr-fix (optionally a PR number).
 ---
 
 # PR fix
