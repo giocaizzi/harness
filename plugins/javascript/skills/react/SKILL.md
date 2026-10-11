@@ -1,168 +1,50 @@
 ---
 name: react
-description: 'ReactJS development standards and best practices. Use this skill whenever working with reactJS.'
+description: React 19+ conventions - component design, state, effects, data fetching, styling (Tailwind v4), testing, Storybook. Use when writing or reviewing React code.
 ---
 
-# ReactJS Development Instructions
+# React
 
-Instructions for building high-quality ReactJS applications with modern patterns, hooks, and best practices following the official React documentation at https://react.dev.
+Target React 19+ with function components and hooks, TypeScript, per https://react.dev.
 
-## Project Context
-- Latest React version (React 19+)
-- TypeScript for type safety (when applicable)
-- Functional components with hooks as default
-- Follow React's official style guide and best practices
-- Use modern build tools (Vite, Create React App, or custom Webpack setup)
-- Implement proper component composition and reusability patterns
+## Architecture and components
 
-## Development Standards
+- Organize by feature/domain. Prefer composition over inheritance; extract reusable stateful logic into custom hooks.
+- Keep components small, single-purpose, testable. Separate presentational from container components so UI stays reusable.
+- Atomic design vocabulary (atoms, molecules, organisms, templates, pages) for UI libraries; design tokens centralized in the Tailwind config.
+- Type props with interfaces; use React's built-in types (`React.ComponentProps`, etc.) and union types for variants.
 
-### Architecture
-- Use functional components with hooks as the primary pattern
-- Implement component composition over inheritance
-- Organize components by feature or domain for scalability
-- Separate presentational and container components clearly
-- Use custom hooks for reusable stateful logic
-- Implement proper component hierarchies with clear data flow
+## State, effects, performance
 
-### TypeScript Integration
-- Use TypeScript interfaces for props, state, and component definitions
-- Define proper types for event handlers and refs
-- Implement generic components where appropriate
-- Use strict mode in `tsconfig.json` for type safety
-- Leverage React's built-in types (`React.FC`, `React.ComponentProps`, etc.)
-- Create union types for component variants and states
+- State ladder: `useState` locally, `useReducer` for complex transitions, context for tree-wide sharing, Redux Toolkit or Zustand only when an app truly needs it. Server state goes in React Query or SWR, not hand-rolled effects.
+- Effects: correct dependency arrays and cleanup (otherwise loops and leaks). Do not reach for effects when derivation or event handlers suffice.
+- Memoization (`useMemo`, `useCallback`, `React.memo`) only where profiling shows a need; code-split routes with `React.lazy` + `Suspense`; virtualize large lists.
 
-### Component Design
-- Follow the single responsibility principle for components
-- Use descriptive and consistent naming conventions
-- Implement proper prop validation with TypeScript or PropTypes
-- Design components to be testable and reusable
-- Keep components small and focused on a single concern
-- Use composition patterns (render props, children as functions)
-- Atomic design: atoms → molecules → organisms → templates → pages
-- Use centralized design tokens via Tailwind config, if applicable
+## Data, errors, forms
 
-### State Management
-- Use `useState` for local component state
-- Implement `useReducer` for complex state logic
-- Leverage `useContext` for sharing state across component trees
-- Consider external state management (Redux Toolkit, Zustand) for complex applications
-- Implement proper state normalization and data structures
-- Use React Query or SWR for server state management
+- Handle loading, error and success states, request cancellation/races, and offline/network failures. Optimistic updates where UX benefits.
+- Error Boundaries with fallback UI; surface meaningful messages to users.
+- Controlled inputs; React Hook Form (or Formik) for validation; labelled, ARIA-correct forms.
 
-### Hooks and Effects
-- Use `useEffect` with proper dependency arrays to avoid infinite loops
-- Implement cleanup functions in effects to prevent memory leaks
-- Use `useMemo` and `useCallback` for performance optimization when needed
-- Create custom hooks for reusable stateful logic
-- Follow the rules of hooks (only call at the top level)
-- Use `useRef` for accessing DOM elements and storing mutable values
+## Styling
 
-### Styling
+- Tailwind v4 with config in `globals.css` via `@theme` / `@utility`; mobile-first responsive; consistent spacing/type/color scale.
 
-- Tailwind v4 config in `globals.css` via `@theme`/`@utility`
-- Implement responsive design with mobile-first approach
-- Implement consistent spacing, typography, and color systems
-- Ensure accessibility with proper ARIA attributes and semantic HTML
+## Security and accessibility
 
-### Performance Optimization
-- Use `React.memo` for component memoization when appropriate
-- Implement code splitting with `React.lazy` and `Suspense`
-- Optimize bundle size with tree shaking and dynamic imports
-- Use `useMemo` and `useCallback` judiciously to prevent unnecessary re-renders
-- Implement virtual scrolling for large lists
-- Profile components with React DevTools to identify performance bottlenecks
+- Sanitize and escape user-provided content (XSS); keep sensitive data out of `localStorage`/`sessionStorage`; enforce auth server-side; use CSP headers.
+- Semantic HTML first, ARIA when needed, keyboard operability, alt text, contrast. Verify with screen readers/tools.
 
-### Data Fetching
-- Use modern data fetching libraries (React Query, SWR, Apollo Client)
-- Implement proper loading, error, and success states
-- Handle race conditions and request cancellation
-- Use optimistic updates for better user experience
-- Implement proper caching strategies
-- Handle offline scenarios and network errors gracefully
+## Testing and docs
 
-### Error Handling
-- Implement Error Boundaries for component-level error handling
-- Use proper error states in data fetching
-- Implement fallback UI for error scenarios
-- Log errors appropriately for debugging
-- Handle async errors in effects and event handlers
-- Provide meaningful error messages to users
+- React Testing Library + Jest; test behavior, not implementation; mock external APIs; cover keyboard/a11y.
+- Storybook: `*.stories.tsx` beside components, using `@storybook/react`.
+- JSDoc for complex components and custom hooks; ESLint + Prettier.
 
-### Forms and Validation
-- Use controlled components for form inputs
-- Implement proper form validation with libraries like Formik, React Hook Form
-- Handle form submission and error states appropriately
-- Implement accessibility features for forms (labels, ARIA attributes)
-- Use debounced validation for better user experience
-- Handle file uploads and complex form scenarios
+## Routing
 
-### Routing
-- Use React Router for client-side routing
-- Implement nested routes and route protection
-- Handle route parameters and query strings properly
-- Implement lazy loading for route-based code splitting
-- Use proper navigation patterns and back button handling
-- Implement breadcrumbs and navigation state management
+- React Router for client-side apps: nested routes, route protection, lazy-loaded route chunks.
 
-### Testing
-- Write unit tests for components using React Testing Library
-- Test component behavior, not implementation details
-- Use Jest for test runner and assertion library
-- Implement integration tests for complex component interactions
-- Mock external dependencies and API calls appropriately
-- Test accessibility features and keyboard navigation
+## References
 
-## Storybook
-
-- Stories in `*.stories.tsx` files alongside components
-- Use `@storybook/react` for component documentation and testing
-
-### Security
-- Sanitize user inputs to prevent XSS attacks
-- Validate and escape data before rendering
-- Use HTTPS for all external API calls
-- Implement proper authentication and authorization patterns
-- Avoid storing sensitive data in localStorage or sessionStorage
-- Use Content Security Policy (CSP) headers
-
-### Accessibility
-- Use semantic HTML elements appropriately
-- Implement proper ARIA attributes and roles
-- Ensure keyboard navigation works for all interactive elements
-- Provide alt text for images and descriptive text for icons
-- Implement proper color contrast ratios
-- Test with screen readers and accessibility tools
-
-## Implementation Process
-1. Plan component architecture and data flow
-2. Set up project structure with proper folder organization
-3. Define TypeScript interfaces and types
-4. Implement core components with proper styling
-5. Add state management and data fetching logic
-6. Implement routing and navigation
-7. Add form handling and validation
-8. Implement error handling and loading states
-9. Add testing coverage for components and functionality
-10. Optimize performance and bundle size
-11. Ensure accessibility compliance
-12. Add documentation and code comments
-
-## Additional Guidelines
-- Follow React's naming conventions (PascalCase for components, camelCase for functions)
-- Use meaningful commit messages and maintain clean git history
-- Implement proper code splitting and lazy loading strategies
-- Document complex components and custom hooks with JSDoc
-- Use ESLint and Prettier for consistent code formatting
-- Keep dependencies up to date and audit for security vulnerabilities
-- Implement proper environment configuration for different deployment stages
-- Use React Developer Tools for debugging and performance analysis
-
-## Common Patterns
-- Higher-Order Components (HOCs) for cross-cutting concerns
-- Render props pattern for component composition
-- Compound components for related functionality
-- Provider pattern for context-based state sharing
-- Container/Presentational component separation
-- Custom hooks for reusable logic extraction
+- Implementation process, common patterns, build tooling, and extra form/routing/security notes: read `references/PATTERNS_AND_PROCESS.md` when planning a feature or choosing a pattern.

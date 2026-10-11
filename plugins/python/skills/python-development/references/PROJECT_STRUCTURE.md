@@ -99,7 +99,7 @@ addopts = "-ra --strict-markers"
 
 ## Package Manager: uv
 
-`uv` is the recommended package manager (fast, Rust-based, pip-compatible).
+`uv` is the only package manager used.
 
 ### Common workflows
 
@@ -160,25 +160,23 @@ uv run --python 3.13 pytest
 
 ## Makefile (Task Runner)
 
+Standard targets: `help`, `lint`, `test`, `check` (= `lint` + `test`).
+
 ```makefile
-.PHONY: lint test typecheck format all
+.PHONY: help lint test check
 
-all: format lint typecheck test
+help:  ## List targets
+	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | sed 's/:.*##/\t/'
 
-format:
-	uv run ruff format src/ tests/
-
-lint:
-	uv run ruff check src/ tests/ --fix
-
-typecheck:
+lint:  ## Format check, lint, type check
+	uv run ruff format --check src/ tests/
+	uv run ruff check src/ tests/
 	uv run mypy src/
 
-test:
+test:  ## Run tests
 	uv run pytest --cov=my_package
 
-clean:
-	rm -rf dist/ .mypy_cache/ .pytest_cache/ .ruff_cache/
+check: lint test  ## lint + test
 ```
 
 ## Versioning
