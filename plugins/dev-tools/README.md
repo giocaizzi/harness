@@ -10,6 +10,11 @@ General development tooling — git, GitHub, conventional commits, semantic vers
 | `semver` | Semantic Versioning 2.0.0 — choosing major, minor, and patch from compatibility impact. |
 | `release-please` | Automated versioning, changelog, and tagging from Conventional Commits. |
 | `github-workflow` | Stacked PRs, auto-merge, merge queues, and rulesets with required CI checks. |
+| `ship` | Commit as Conventional Commits, push and open a PR (`/ship`). |
+| `land` | Watch CI, merge via auto-merge or queue, sync and clean up (`/land`). |
+| `pr-fix` | Fix unresolved review comments and failing CI on a PR (`/pr-fix`). |
+| `wt` | Start a task in its own worktree, within the live-worktree cap (`/wt`). |
+| `docs-sync` | Update docs and runbooks the diff made stale (`/docs-sync`). |
 | `secrets-handling` | Bitwarden (bw, bws), keyrings and encrypted config; secrets never printed or inlined. |
 | `subagent-orchestration` | Hub-and-spoke delegation, model tiers, effort levels, escalation and verification. |
 
