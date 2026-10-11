@@ -11,7 +11,7 @@ There is no fixed cap on worktrees or agents; throttle on availability instead. 
 
 1. **Look first:** `git worktree list`. Remove finished ones (`git worktree remove`, then `prune`). Check your own capacity before starting more parallel work (Claude Code: `cd /tmp && claude -p "/usage"`) and back off near the session or weekly limit.
 2. **Branch name:** `<type>/<slug>`; for an issue, take the title from `gh issue view <n>` and include the number.
-3. **Create** from the up-to-date default branch: `git fetch`, then `git worktree add <path> -b <branch> origin/<default>`.
+3. **Create** from the up-to-date default branch: `git fetch`, then `git worktree add .claude/worktrees/<slug> -b <branch> origin/<default>`. Worktrees always live in the repo's own `.claude/worktrees/` (gitignored globally); never beside the repo.
 4. **Switch into it.** Install dependencies only if the task needs them.
 
 Report the path and branch. Remove the worktree when its PR merges (`land` does this).
