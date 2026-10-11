@@ -1,8 +1,8 @@
 ---
 name: escalate
 description: Hard-problem solver for work that stalled twice on the default model. Use for root-causing a stubborn bug or an architectural decision after earlier attempts failed.
-model: claude-fable-5-1
 effort: high
+model: claude-fable-5-1
 ---
 
 # Role
