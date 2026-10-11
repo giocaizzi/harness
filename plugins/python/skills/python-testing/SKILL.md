@@ -1,26 +1,17 @@
 ---
 name: python-testing
-description: python testing best practices and conventions. Use this skill whenever you are testing Python code. You must follow these guidelines always.
+description: pytest conventions for Python tests: fixtures vs factories, deterministic test data, TDD for bugs. Use when writing or reviewing Python tests.
 ---
 
 # Python Testing
 
-- **Test behaviour not implementation details.**
-- **Test edge cases and failure modes.**
-- TDD: write tests before implementation -> For bugs, reproduce first with failing test then fix
-- `pytest` for testing; co-locate tests in `tests/`
-- Use `pytest-asyncio` for async tests
-- Use fixtures for setup/teardown
-- Re-utilize test utilities/helpers, avoid duplication
-- Use markers for categorization (e.g., `@pytest.mark.integration`)
+- Test behaviour, not implementation details, so refactors don't break tests. Cover edge cases and failure modes.
+- TDD: tests before implementation; for bugs, reproduce with a failing test first, then fix.
+- `pytest` with tests in `tests/`; `pytest-asyncio` for async; markers for categories (e.g. `@pytest.mark.integration`). Reuse shared helpers rather than duplicating them.
 
-## Best Practices 
+## Keep fixtures small
 
-### Kill fixture sprawl aggressively : Fixtures must be local first, then promoted.
-
-- Fixtures must be local first, then promoted.
-- No fixture may depend on more than 2 other fixtures.
-- Fixtures returning complex graphs are banned.
+Fixture sprawl hides what a test depends on. Keep fixtures local to the test file first and promote to `conftest.py` only when reused. A fixture should depend on at most 2 others, and fixtures returning complex object graphs are out: build the graph in the test.
 
 ```python
 user = make_user()
@@ -28,22 +19,10 @@ order = make_order(user)
 payment = make_payment(order)
 ```
 
-### Prefer factories over fixtures
+## Prefer factories over fixtures
 
-```python 
-@pytest.fixture
-def user_factory():
-    def factory(**kwargs):
-        return User(...)
-    return factory
-```
+A factory fixture (`user_factory(**overrides)`) lets each test state only the fields it cares about.
 
-### Make test data boring and deterministic
+## Boring, deterministic data
 
-- Hardcode values unless randomness is the thing being tested.
-- Use semantic defaults:
-
-```python
-DEFAULT_EMAIL = "user@example.com"
-```
-
+Hardcode values unless randomness is what's under test, and use named semantic defaults (`DEFAULT_EMAIL = "user@example.com"`) so failures are reproducible and readable.

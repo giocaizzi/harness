@@ -1,289 +1,64 @@
 ---
 name: fastapi
-description: >-
-  FastAPI best practices with Pydantic v2 for production REST APIs.
-  Use when building APIs with FastAPI, handling routes, schemas, dependencies,
-  middleware, or configuration. Activate when code imports fastapi or uses
-  APIRouter, Depends, BaseModel, or BaseSettings. Follow these guidelines always.
+description: FastAPI with Pydantic v2 for production REST APIs. Use when writing routes, schemas, dependencies, middleware, settings, or tests for a FastAPI app.
 compatibility: "Python >=3.10, Pydantic >=2.9.0, Starlette >=1.0.0"
 ---
 
-# FastAPI Best Practices
+# FastAPI (Pydantic v2)
 
-Modern FastAPI with **Pydantic v2**. Leverage automatic validation, serialization, and OpenAPI docs — don't fight them.
+Lean on automatic validation, serialization and OpenAPI rather than fighting them. When rules conflict, prefer in this order: app factory with `lifespan`; thin routes; Pydantic-typed inputs/outputs; `Annotated` dependencies; `async def` only for non-blocking I/O.
 
-Use this list as the default preference order for the same endpoint, dependency chain, or request flow. Example: keep a route handler thin even if dependency wiring would be more convenient inline; move that wiring into a dependency provider instead.
+## Application and settings
 
-1. Use an app factory with `lifespan`.
-2. Keep routes thin.
-3. Type inputs and outputs with Pydantic models.
-4. Declare dependencies with `Annotated[..., Depends(...)]`.
-5. Use `async def` only for non-blocking I/O such as async database queries, HTTP requests, or async file operations.
+- Use an app factory (`create_app()`) with `lifespan` for engines, HTTP clients and pools, yielding a typed state; `on_startup`/`on_shutdown` are deprecated.
+- Configuration lives in a typed `BaseSettings` class, never raw `os.environ`; cache the provider with `@lru_cache`.
+- No global mutable state or global sessions; app-scoped resources go through `lifespan`.
 
-## Application Factory & Lifespan
+## Dependencies
 
-Start here for application setup. This establishes the process-level lifecycle and shared resources for the rest of the app.
+- Declare with `Annotated[Type, Depends(...)]` (aliases like `SessionDep`, `UnitOfWorkDep`), not `= Depends(...)` defaults, so signatures stay reusable and type-checkable.
+- Providers return an interface/protocol, keeping concrete construction inside the provider; they live in one module (`dependencies/`), which is the composition root.
+- `Depends(scope="function")` cleans up before the response is sent; the default `scope="request"` cleans up after. Pick `function` when the resource (e.g. a session) must be released before streaming/slow responses.
+- Tests swap providers with `app.dependency_overrides[...]` and clear it afterwards.
 
-Use the application factory pattern. Use `lifespan` for startup/shutdown — `on_startup`/`on_shutdown` are deprecated.
+## Async vs sync
 
-```python
-from contextlib import asynccontextmanager
-from typing import TypedDict
-from fastapi import FastAPI
+Blocking I/O inside `async def` starves every concurrent request and is the most common FastAPI performance bug. Use `async def` for async I/O; use plain `def` (FastAPI runs it in a threadpool) or `asyncio.to_thread()` for blocking or CPU-bound work.
 
-class State(TypedDict):
-    engine: AsyncEngine
-    http_client: httpx.AsyncClient
+## Routes
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    engine = create_async_engine(settings.database_url)
-    async with httpx.AsyncClient() as client:
-        yield State(engine=engine, http_client=client)
-    await engine.dispose()
+- Routes are transport adapters: validate, dispatch to a service/handler, shape the response. No business logic, and no endpoint calling another endpoint (share a service).
+- Organize `APIRouter`s by feature. Annotate every parameter.
+- Prefer return-type annotations for responses; use `response_model` when the return type differs or to filter fields for security.
 
-def create_app() -> FastAPI:
-    return FastAPI(title="My API", version="1.0.0", lifespan=lifespan)
-```
+## Schemas
 
-## Settings
+- Names: `{Action}{Entity}Request`, `{Entity}Response`, `{Entity}ListResponse`, `{Entity}QueryParams`.
+- `ConfigDict(extra="forbid")` on requests to reject unknown fields; `from_attributes=True` on responses built from ORM objects. Share fields via a base schema, and keep API schemas separate from domain models.
+- Validators only for real invariants.
 
-Keep configuration centralized and typed so runtime behavior is predictable across environments.
+## Errors
 
-```python
-from pydantic_settings import BaseSettings, SettingsConfigDict
+Map domain/application exceptions to HTTP with exception handlers, using one format `{"error": str, "code": str, "details": dict | None}`. Never expose tracebacks in production.
 
-class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", case_sensitive=False)
-    database_url: str
-    debug: bool = False
-```
+## Performance and deployment
 
-## Dependency Injection with Depends()
+- `ORJSONResponse` as `default_response_class`; `uvloop` + `httptools` for throughput.
+- Pure ASGI middleware instead of `BaseHTTPMiddleware` on hot paths (it is markedly slower).
+- `StreamingResponse` for large payloads.
+- Run multiple workers in production (uvicorn `--workers` or Gunicorn with UvicornWorker), never a single one.
 
-Use dependencies to wire the HTTP layer to services and infrastructure without leaking construction details into route handlers.
+## Structure
 
-FastAPI's `Depends()` is **parameter injection** — it inspects signatures, resolves the dependency tree per-request, and provides results as arguments.
-
-### Core Rules
-
-- **Always use `Annotated[Type, Depends(...)]`** — never `= Depends(...)` as default.
-- **Return an interface, protocol, abstract base class, or other stable public type**, not a concrete implementation — keep concrete class construction inside the dependency provider.
-- **Define dependencies in a dedicated module** (`dependencies/` or `dependencies.py`) — this is the composition root.
-
-### Scoping & Lifecycle
-
-| Scope | Mechanism | Use For |
-|-------|-----------|---------|
-| Per-request | `Depends()` default | DB sessions, UoW, repositories |
-| Cleanup control | `Depends(scope="function")` | Cleanup **before** response sent |
-| Cleanup control | `Depends(scope="request")` | Cleanup **after** response sent (default for yield) |
-| Singleton | `@lru_cache` on provider | Settings, config |
-| App-scoped | `lifespan` + `app.state` | Connection pools, HTTP clients, engine |
-
-### Dependency Chains (layered / DDD architecture)
-
-```python
-# dependencies/uow.py — composition root
-async def get_uow(session: SessionDep) -> AsyncGenerator[AbstractUnitOfWork, None]:
-    yield SqlAlchemyUnitOfWork(session)
-
-UnitOfWorkDep = Annotated[AbstractUnitOfWork, Depends(get_uow)]
-```
-
-### Testing Overrides
-
-```python
-app.dependency_overrides[get_uow] = lambda: FakeUnitOfWork()
-app.dependency_overrides.clear()  # reset after test
-```
-
-## async def vs def
-
-Choose the function type based on runtime behavior, not style: async for non-blocking I/O, sync for blocking or CPU-bound work.
-
-**Critical performance rule.** Getting this wrong is the #1 FastAPI performance killer.
-
-- **`async def`**: For I/O-bound operations (database, HTTP calls, file I/O with async libs). Runs on the event loop.
-- **`def`** (sync): For CPU-bound or blocking operations. FastAPI runs these in a threadpool automatically.
-- **Never block the event loop**: Blocking I/O inside `async def` starves all concurrent requests. Use `def` or `asyncio.to_thread()`.
-
-## Routes & Endpoints
-
-Treat route handlers as transport adapters: validate the HTTP contract, delegate work, and shape the response.
-
-- **Type everything** with Pydantic models: request bodies, responses, query/path params.
-- **Organize with `APIRouter`** by feature/domain.
-- **Routes are thin** — validate, dispatch to service/handler, return response. No business logic.
-- **Response model**: prefer return type annotation for simple cases. Use `response_model` parameter when return type differs or for security filtering (exclude fields).
-
-```python
-@router.get("/items", response_model=list[ItemResponse])
-async def list_items(params: Annotated[ItemQueryParams, Query()], session: SessionDep):
-    return await item_service.list_items(session, params)
-```
-
-## Pydantic v2 Schemas
-
-Keep schema design explicit and boring: clear names, strict config, and validators only for real invariants.
-
-### Naming
-
-| Type | Pattern | Example |
-|------|---------|---------|
-| Request | `{Action}{Entity}Request` | `CreateUserRequest` |
-| Response | `{Entity}Response` | `UserResponse` |
-| List Response | `{Entity}ListResponse` | `UserListResponse` |
-| Query Params | `{Entity}QueryParams` | `ProductQueryParams` |
-
-### Key ConfigDict Options
-
-```python
-class UserResponse(BaseModel):
-    model_config = ConfigDict(
-        from_attributes=True,   # ORM model → Pydantic (replaces orm_mode)
-        frozen=True,            # Immutable instances
-        strict=False,           # Allow type coercion
-        extra="forbid",         # Reject unknown fields
-        json_schema_extra={"examples": [{"email": "user@example.com"}]},
-    )
-```
-
-### Validators
-
-```python
-from pydantic import field_validator, model_validator
-
-class CreateOrderRequest(BaseModel):
-    items: list[OrderItemRequest]
-    discount_code: str | None = None
-
-    @field_validator("items")
-    @classmethod
-    def must_have_items(cls, v: list) -> list:
-        if not v:
-            raise ValueError("Order must have at least one item")
-        return v
-
-    @model_validator(mode="after")
-    def validate_discount(self) -> "CreateOrderRequest":
-        if self.discount_code and len(self.items) < 3:
-            raise ValueError("Discount requires 3+ items")
-        return self
-```
-
-### Base Schemas (DRY)
-
-```python
-class UserBase(BaseModel):
-    email: EmailStr
-    username: str
-
-class CreateUserRequest(UserBase):
-    password: str
-
-class UserResponse(UserBase):
-    model_config = ConfigDict(from_attributes=True)
-    id: int
-    created_at: datetime
-```
-
-## Error Handling
-
-Translate internal failures into consistent HTTP responses without exposing implementation details.
-
-- **Custom exception handlers** convert domain/application exceptions to HTTP responses.
-- **Consistent format**: `{"error": str, "code": str, "details": dict | None}`.
-- **Never expose tracebacks in production.**
-
-```python
-@app.exception_handler(DomainError)
-async def domain_error_handler(request: Request, exc: DomainError):
-    return JSONResponse(status_code=exc.status_code, content={"error": exc.message, "code": exc.code})
-```
-
-## Performance
-
-Apply performance changes after the request lifecycle is correct; most wins come from avoiding blocked event-loop work and expensive middleware.
-
-- **`ORJSONResponse`** for 20-50% faster JSON serialization: `pip install orjson`, set as `default_response_class`.
-- **Pure ASGI middleware** instead of `BaseHTTPMiddleware` for performance-critical paths (~40% faster).
-- **Stream large responses** with `StreamingResponse` — don't buffer in memory.
-- **`uvloop` + `httptools`**: 2-4x throughput. `pip install uvloop httptools`, uvicorn auto-detects.
-- **Multiple workers** in production: `uvicorn --workers $(nproc)` or Gunicorn with UvicornWorker.
-
-## Architecture
-
-Pick the simplest structure that preserves thin routes, explicit dependency wiring, and a clean boundary between HTTP concerns and business logic.
-
-### Simple CRUD APIs
-
-```
-project/
-├── main.py              # App factory + lifespan
-├── config.py            # Pydantic BaseSettings
-├── dependencies.py      # Dependency providers (composition root)
-├── routes/              # APIRouter modules by feature
-├── services/            # Business logic
-├── models/              # SQLAlchemy/DB models
-└── schemas/             # Pydantic request/response DTOs
-```
-
-### With DDD / Hexagonal Architecture
-
-FastAPI is the **driving adapter** (primary adapter) — translates HTTP into application commands/queries:
-
-```
-contexts/{name}/
-├── api/                 # DRIVING ADAPTER (FastAPI)
-│   ├── routes/          # Thin: validate → dispatch → respond
-│   ├── dependencies/    # COMPOSITION ROOT: wires concrete → abstract
-│   ├── schemas/         # Pydantic DTOs (NOT domain models)
-│   └── middleware/      # Error translation, auth, logging
-├── domain/              # No FastAPI imports
-├── application/         # No FastAPI imports
-└── infrastructure/      # Concrete implementations
-```
+Simple CRUD: `main.py`, `config.py`, `dependencies.py`, `routes/`, `services/`, `models/`, `schemas/`. With DDD/hexagonal, FastAPI is the driving adapter only: `contexts/{name}/api/{routes,dependencies,schemas,middleware}`, while `domain/` and `application/` never import FastAPI.
 
 ## Testing
 
-Test the HTTP contract and dependency wiring from the outside, then override dependencies to keep tests isolated and fast.
+Test through `httpx.AsyncClient(transport=ASGITransport(app=app))` and override dependencies with fakes to keep tests fast and isolated.
 
-```python
-import pytest
-from httpx import ASGITransport, AsyncClient
+## References
 
-@pytest.fixture
-async def client(app: FastAPI):
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
-        yield c
-
-@pytest.mark.anyio
-async def test_create_user(client: AsyncClient):
-    response = await client.post("/users", json={"email": "a@b.com", "username": "test", "password": "secret"})
-    assert response.status_code == 201
-```
-
-Override dependencies for isolation: `app.dependency_overrides[get_uow] = lambda: FakeUnitOfWork()`
-
-## Prohibited Patterns
-
-Treat every item here as a default rejection unless the user has a repo-specific exception with a clear reason.
-
-- Raw `os.environ` (use Settings)
-- `= Depends(...)` as default (use `Annotated`)
-- Global mutable state or sessions
-- Blocking I/O in `async def` endpoints (use `def` or `asyncio.to_thread`)
-- Business logic in route handlers
-- Endpoint-to-endpoint calls (use shared service)
-- `BaseHTTPMiddleware` for perf-critical paths (use pure ASGI)
-- Single worker in production
-- Missing type annotations on parameters
-- Exposing tracebacks in production
-- `on_startup`/`on_shutdown` (use `lifespan`)
-
-## Additional References
-
-- [references/SSE.md](references/SSE.md) — Server-Sent Events with `EventSourceResponse`
-- [references/SECURITY.md](references/SECURITY.md) — OAuth2, JWT, API keys, scopes
-- [references/ASYNC_PATTERNS.md](references/ASYNC_PATTERNS.md) — Background tasks, streaming, WebSocket, file uploads
+- [references/SECURITY.md](references/SECURITY.md): read when implementing OAuth2, JWT, API keys or scopes.
+- [references/ASYNC_PATTERNS.md](references/ASYNC_PATTERNS.md): read for background tasks, streaming, WebSocket, or file uploads.
+- [references/SSE.md](references/SSE.md): read for Server-Sent Events with `EventSourceResponse`.
+- [references/PATTERNS.md](references/PATTERNS.md): read for the dependency scoping table, ConfigDict options, validator and base-schema examples, and the prohibited-patterns list.

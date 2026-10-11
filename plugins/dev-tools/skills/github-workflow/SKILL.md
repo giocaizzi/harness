@@ -1,6 +1,6 @@
 ---
 name: github-workflow
-description: GitHub pull-request workflow — stacked PRs with `gh stack`, auto-merge, merge queues, and rulesets that require CI checks on the default branch. Use when opening, splitting, or merging pull requests; setting up or auditing branch protection or rulesets; adding CI that gates merges; or deciding how to land a change on main. You must follow these rules always.
+description: Landing changes on main via pull requests: stacked PRs with `gh stack`, auto-merge, merge queues, and rulesets that require CI. Use when opening, splitting or merging PRs, or setting up branch protection or merge-gating CI.
 ---
 
 ## Principle

@@ -2,6 +2,16 @@
 
 Deep-dive on Python typing for 3.12+ codebases.
 
+## Version-Specific Features
+
+Use when the project's minimum Python allows; otherwise import from `typing_extensions`.
+
+| Feature | Min version |
+|---|---|
+| `class Foo[T]`, `type Alias = ...` (PEP 695), `@override` | 3.12 |
+| `TypeIs` (PEP 742), `@warnings.deprecated` (PEP 702), `ReadOnly` TypedDict (PEP 705), `TypeVar` defaults (PEP 696) | 3.13 |
+| Deferred annotation eval (PEP 649), `except A, B:` without parens (PEP 758), template strings `t"..."` (PEP 750) | 3.14 |
+
 ## Modern Syntax (3.12+)
 
 ### Generics
