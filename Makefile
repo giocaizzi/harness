@@ -1,4 +1,4 @@
-.PHONY: help build validate new-agent new-skill clean
+.PHONY: help check lint test build validate new-agent new-skill clean
 
 help: ## Show this help.
 	@awk 'BEGIN {FS = ":.*##"; printf "Usage: make \033[36m<target>\033[0m\n\nTargets:\n"} /^[a-zA-Z_-]+:.*?##/ { printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
@@ -8,6 +8,13 @@ build: ## Generate per-plugin agent files and Copilot manifests from sources.
 
 validate: ## Run all repo invariant checks (build sync, manifests, skills, marketplace, README).
 	@uv run python scripts/validate.py
+
+check: validate ## Standard entrypoint: alias for validate.
+
+lint: validate ## Alias for validate (repo invariant checks are the lint).
+
+test: ## No tests configured.
+	@echo "no tests configured"
 
 new-agent: ## Scaffold src/agents/<NAME>/.  Usage: make new-agent NAME=<name> PLUGIN=<plugin>
 	@scripts/new-agent.sh "$(NAME)" "$(PLUGIN)"
