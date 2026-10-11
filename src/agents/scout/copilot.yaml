@@ -1,0 +1,5 @@
+# model left unset: Copilot inherits the session model; choose the tier with /model.
+tools:
+  - read
+  - search
+  - execute
