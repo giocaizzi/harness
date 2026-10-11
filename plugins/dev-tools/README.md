@@ -13,7 +13,7 @@ General development tooling — git, GitHub, conventional commits, semantic vers
 | `ship` | Commit as Conventional Commits, push and open a PR (`/ship`). |
 | `land` | Watch CI, merge via auto-merge or queue, sync and clean up (`/land`). |
 | `pr-fix` | Fix unresolved review comments and failing CI on a PR (`/pr-fix`). |
-| `wt` | Start a task in its own worktree, within the live-worktree cap (`/wt`). |
+| `wt` | Start a task in its own worktree from an issue or slug (`/wt`). |
 | `docs-sync` | Update docs and runbooks the diff made stale (`/docs-sync`). |
 | `secrets-handling` | Bitwarden (bw, bws), keyrings and encrypted config; secrets never printed or inlined. |
 | `subagent-orchestration` | Hub-and-spoke delegation, model tiers, effort levels, escalation and verification. |
