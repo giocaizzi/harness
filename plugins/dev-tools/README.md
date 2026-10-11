@@ -9,6 +9,7 @@ General development tooling — git, GitHub, conventional commits, semantic vers
 | `conventional-commits` | Conventional Commits 1.0.0 — type, scope, breaking change, and bump semantics. |
 | `semver` | Semantic Versioning 2.0.0 — choosing major, minor, and patch from compatibility impact. |
 | `release-please` | Automated versioning, changelog, and tagging from Conventional Commits. |
+| `github-workflow` | Stacked PRs, auto-merge, merge queues, and rulesets with required CI checks. |
 
 ## Install
 
