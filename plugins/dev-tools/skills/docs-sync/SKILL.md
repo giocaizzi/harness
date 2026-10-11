@@ -13,3 +13,5 @@ Argument (`$ARGUMENTS`): an optional path to limit the scope.
 4. **Keep the split.** `AGENTS.md` is practical instructions for AI coding agents. `docs/` is the documentation: the source of truth for business decisions, details, infrastructure and architecture decisions, plus runbooks. Work in progress goes in `docs/wip/`, and a backlog in `docs/backlog/` only when GitHub issues do not fit. `AGENTS.md` links to docs, it does not duplicate them.
 
 Report which files changed and why; say so when nothing was stale.
+
+Runbooks follow the shape in [references/runbook-template.md](references/runbook-template.md): read it when writing or updating one.
