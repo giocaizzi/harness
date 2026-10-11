@@ -1,7 +1,6 @@
 ---
 name: wt
-description: Start a task in its own git worktree and branch, from an issue number or a slug. Invoke explicitly as /wt <issue-or-slug>.
-disable-model-invocation: true
+description: Start a task in its own git worktree and branch, from an issue number or a slug. Use when the user asks to start work on a task or issue, or types /wt <issue-or-slug>.
 ---
 
 # Worktree

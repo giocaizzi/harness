@@ -1,7 +1,6 @@
 ---
 name: ship
-description: Commit the current changes as small Conventional Commits, push the branch and open a PR if none exists. Invoke explicitly as /ship, optionally with "draft".
-disable-model-invocation: true
+description: Commit the current changes as small Conventional Commits, push the branch and open a PR if none exists. Use when the user asks to commit, push or open a PR, or types /ship (optionally "draft").
 ---
 
 # Ship
