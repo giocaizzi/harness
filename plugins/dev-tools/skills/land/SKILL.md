@@ -1,7 +1,6 @@
 ---
 name: land
-description: Wait for CI on a PR, fix trivial failures, merge it through auto-merge or the merge queue, then sync main and remove the branch and worktree. Invoke explicitly as /land, optionally with a PR number.
-disable-model-invocation: true
+description: Wait for CI on a PR, fix trivial failures, merge it through auto-merge or the merge queue, then sync main and remove the branch and worktree. Use when the user asks to merge or land a PR, or types /land (optionally a PR number).
 ---
 
 # Land

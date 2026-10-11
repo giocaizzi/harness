@@ -1,7 +1,6 @@
 ---
 name: docs-sync
-description: Update docs, runbooks, README and AGENTS.md that the current diff made stale. Invoke explicitly as /docs-sync, optionally with a path.
-disable-model-invocation: true
+description: Update docs, runbooks, README and AGENTS.md that the current diff made stale. Use when code, commands or procedures changed, or when the user types /docs-sync (optionally a path).
 ---
 
 # Docs sync
