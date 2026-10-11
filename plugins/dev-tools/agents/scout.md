@@ -1,9 +1,9 @@
 ---
 name: scout
 description: Read-only search and summarization - finds code, reads logs, triages test output and reports findings with file:line evidence. Use for lookups and reading-heavy subtasks, never for edits.
-model: haiku
 tools: Read, Grep, Glob, Bash
 effort: low
+model: haiku
 ---
 
 # Role
