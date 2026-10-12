@@ -1,12 +1,12 @@
 {
-  "name": "giocaizzi-skills",
+  "name": "giocaizzi-harness",
   "owner": {
     "name": "giocaizzi",
     "url": "https://github.com/giocaizzi"
   },
   "metadata": {
-    "description": "Personal collection of agent skills for AI coding assistants",
-    "version": "2.5.0"
+    "description": "Personal agent harness: skills, agents and guards for Claude Code and Copilot CLI",
+    "version": "3.0.0"
   },
   "plugins": [
     {

@@ -21,8 +21,8 @@ Agent guardrails as hooks: one `hooks/hooks.json` and one Node script that run t
 ## Install
 
 ```bash
-/plugin install guard@giocaizzi-skills          # Claude Code
-copilot plugin install guard@giocaizzi-skills   # Copilot CLI
+/plugin install guard@giocaizzi-harness          # Claude Code
+copilot plugin install guard@giocaizzi-harness   # Copilot CLI
 ```
 
 See the [repository README](../../README.md) for marketplace setup and local-development instructions.

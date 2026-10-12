@@ -14,7 +14,7 @@ JavaScript and TypeScript development — ES6+, Node.js, React and Next.js.
 
 ```bash
 # Claude Code / Copilot CLI
-/plugin install javascript@giocaizzi-skills
+/plugin install javascript@giocaizzi-harness
 ```
 
 See the [repository README](../../README.md) for marketplace setup and local-development instructions.
