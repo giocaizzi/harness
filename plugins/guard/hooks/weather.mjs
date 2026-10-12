@@ -7,8 +7,13 @@ export const clock = (ms) => `${Math.floor(ms / 60_000)}:${String(Math.floor(ms 
 
 const BLOCKS = '▁▂▃▄▅▆▇█'
 
-// One single-width glyph for how full the context is.
-export const glyph = (ctx) => (ctx == null ? '' : ctx < 25 ? '☀' : ctx < 50 ? '☁' : ctx < 75 ? '☂' : ctx < 90 ? '☇' : '↯')
+// Nerd Font icons (BMP private use, so a Raster could take them too), checked present in JetBrainsMono Nerd Font,
+// which chezmoi installs and sets in Ghostty, VS Code and Windows Terminal. Each is drawn followed by a space:
+// Ghostty then draws the icon at full size instead of squeezing it into one cell.
+export const ICON = { cache: '\uf472', ttl: '\uf520' } // nf-oct-database, nf-oct-stopwatch
+
+// A weather icon for how full the context is: sunny, cloudy, showers, thunderstorm, lightning (nf-weather-*).
+export const glyph = (ctx) => (ctx == null ? '' : ctx < 25 ? '\ue30d' : ctx < 50 ? '\ue302' : ctx < 75 ? '\ue319' : ctx < 90 ? '\ue31d' : '\ue315')
 
 // Cells of a bar chart, row-major [codePoint, color, background] triplets, one column per value (0-100), the
 // tallest bar filling `rows`. Colours are 0xRRGGBB by how full the value is; 0x01000000 is the default background.
@@ -26,7 +31,7 @@ export function sparkCells(values, rows) {
 }
 
 // showCtx false leaves the context % out of `text` and `segments` (the Claude status line already shows it);
-// `segments` are the same parts with a tone (ok | warn | bad) for a drawing to colour.
+// `segments` are the same parts with their kind, bare value and a tone (ok | warn | bad) for a drawing to colour.
 export function forecast({ percent, usage, turns = 0, ttlMs, sinceMs, showCtx = true }) {
   const ctx = percent == null ? null : Math.round(percent)
   const total = usage ? usage.cache_read_input_tokens + usage.cache_creation_input_tokens + usage.input_tokens : 0
@@ -39,10 +44,10 @@ export function forecast({ percent, usage, turns = 0, ttlMs, sinceMs, showCtx = 
   if (cold) hints.push('cache cold')
   if (left != null && left <= 0) hints.push('cache expired')
   const segments = [
-    showCtx && ctx != null ? { text: `ctx ${ctx}%`, tone: ctx >= 80 ? 'bad' : ctx >= 50 ? 'warn' : 'ok' } : null,
-    hit == null ? null : { text: `cache ${hit}%`, tone: cold ? 'bad' : 'ok' },
-    left > 0 ? { text: `ttl ${clock(left)}`, tone: left <= 60_000 ? 'warn' : 'ok' } : null,
-    ...hints.map((text) => ({ text, tone: text === 'compact soon' ? 'warn' : 'bad' })),
+    showCtx && ctx != null ? { kind: 'ctx', value: `${ctx}%`, text: `ctx ${ctx}%`, tone: ctx >= 80 ? 'bad' : ctx >= 50 ? 'warn' : 'ok' } : null,
+    hit == null ? null : { kind: 'cache', value: `${hit}%`, text: `cache ${hit}%`, tone: cold ? 'bad' : 'ok' },
+    left > 0 ? { kind: 'ttl', value: clock(left), text: `ttl ${clock(left)}`, tone: left <= 60_000 ? 'warn' : 'ok' } : null,
+    ...hints.map((text) => ({ kind: 'hint', value: text, text, tone: text === 'compact soon' ? 'warn' : 'bad' })),
   ].filter(Boolean)
   const text = segments.map((x) => x.text).join(' · ')
   return { ctx, hit, left, hints, text, segments }

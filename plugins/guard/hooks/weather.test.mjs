@@ -48,7 +48,7 @@ test('showCtx false leaves the context out; segments carry the tone', () => {
 })
 
 test('glyph by context fullness', () => {
-  assert.deepEqual([10, 30, 60, 80, 95].map(glyph), ['☀', '☁', '☂', '☇', '↯'])
+  assert.deepEqual([10, 30, 60, 80, 95].map(glyph), ['\ue30d', '\ue302', '\ue319', '\ue31d', '\ue315'])
   assert.equal(glyph(null), '')
 })
 
