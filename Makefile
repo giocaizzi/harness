@@ -11,11 +11,19 @@ validate: ## Run all repo invariant checks (build sync, manifests, skills, marke
 
 check: lint test ## Standard entrypoint: lint + test.
 
-lint: validate ## Alias for validate (repo invariant checks are the lint).
+SH := $(wildcard plugins/*/skills/*/scripts/*.sh tests/*.sh)
 
-test: ## Run the plugins' hook tests (Node 22+), then their mod tests (`claude plugin test`).
+lint: validate ## Repo invariant checks, plus shellcheck and PSScriptAnalyzer when installed.
+	@if command -v shellcheck >/dev/null; then shellcheck $(SH); else echo "shellcheck not found, skipped"; fi
+	@if command -v pwsh >/dev/null && pwsh -NoProfile -Command 'exit !(Get-Module -ListAvailable PSScriptAnalyzer)'; then \
+		pwsh -NoProfile -Command '$$r = Invoke-ScriptAnalyzer -Path . -Recurse; $$r; exit $$r.Count'; \
+	else echo "pwsh or PSScriptAnalyzer not found, skipped"; fi
+
+test: ## Run the plugins' hook tests (Node 22+), their mod tests (`claude plugin test`), then the skill script tests.
 	@node --test $(wildcard plugins/*/core/*.test.mjs plugins/*/hooks/*.test.mjs)
 	@for d in $(sort $(dir $(patsubst %/,%,$(dir $(wildcard plugins/*/tests/*.test.ts))))); do claude plugin test $$d || exit 1; done
+	@bash tests/heavy.test.sh
+	@if command -v pwsh >/dev/null; then pwsh -NoProfile -File tests/heavy.test.ps1; else echo "pwsh not found, heavy.ps1 tests skipped"; fi
 
 new-agent: ## Scaffold src/agents/<NAME>/.  Usage: make new-agent NAME=<name> PLUGIN=<plugin>
 	@scripts/new-agent.sh "$(NAME)" "$(PLUGIN)"

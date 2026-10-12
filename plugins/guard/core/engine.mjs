@@ -150,16 +150,18 @@ export function evaluateCommand({ command, loadedSkills = new Set(), state, host
   }
 
   const heavy = hit(rules.heavy, command);
-  const { loadCap, cpuPercentCap, freeFloorGb } = rules.host;
+  const { loadCap, cpuPercentCap, freeFloorGb, wrapper } = rules.host;
   const strained = (host.load1 ?? 0) > loadCap || (host.cpuPercent ?? 0) > cpuPercentCap || (host.freeGb ?? Infinity) < freeFloorGb;
-  if (heavy && strained && !state.reminded.has('host')) {
+  // A command already run through the heavy wrapper waits for its slot and load on its own.
+  if (heavy && strained && !new RegExp(wrapper).test(command) && !state.reminded.has('host')) {
     state.reminded.add('host');
     return {
       action: 'deny',
       rule: 'host',
       reason:
         `The host is strained (${host.load1 != null ? `load ${host.load1}` : `cpu ${host.cpuPercent}%`}, ${host.freeGb} GB free; caps ${host.load1 != null ? loadCap : `${cpuPercentCap}%`} / ${freeFloorGb} GB). ` +
-        'Load the `host-hygiene` skill, use the repo\'s scripts/host/heavy.sh if it has one, or wait and retry.',
+        'Load the `host-hygiene` skill and run the command through its scripts/heavy.sh (scripts/heavy.ps1 on Windows), ' +
+        'or the repo\'s own heavy wrapper if it ships one: it waits for a slot and for load instead of failing.',
     };
   }
 
