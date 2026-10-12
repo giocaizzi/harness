@@ -65,8 +65,8 @@
     {
       "name": "guard",
       "source": "./plugins/guard",
-      "description": "Agent guardrails for Claude Code and Copilot CLI: skill enforcer, title guard, pip deny, host guard, risky-command ask, make check on stop, post-edit lint, keep-awake; Claude-only usage throttle and token-weather band",
-      "version": "0.4.0",
+      "description": "Agent guardrails for Claude Code, Copilot CLI and VS Code: skill enforcer, title guard, pip deny, host guard, risky-command ask, make check on stop, post-edit lint, keep-awake; Claude-only usage throttle and token-weather band",
+      "version": "0.5.0",
       "keywords": [
         "hooks",
         "guardrails",
