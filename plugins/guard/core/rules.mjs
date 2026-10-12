@@ -55,6 +55,13 @@ export const rules = {
       "why": "secrets are never printed or inlined"
     }
   ],
+  "deny": [
+    {
+      "id": "pip",
+      "match": "(?<!uv )(?<![\\w-])(pipx|pip3?|python3? -m pip)(\\s|$)",
+      "why": "Python tooling is uv only: use uv add / uv run / uvx, not pip or pipx."
+    }
+  ],
   "heavy": [
     {
       "id": "build",
