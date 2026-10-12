@@ -115,7 +115,10 @@ export function register(on) {
         h.length > 1 ? spark(Raster, 'weather-spark', h.map((x) => x.ctx ?? 0), 1, ...sparkRange(h.map((x) => x.ctx ?? 0))) : null,
       ].filter(Boolean),
     })
-    return Box({ flexDirection: 'column', children: below ? [below, line] : [line] })
+    // Claude Code keeps a blank row under the band; a blank row on top pairs it, unless a plugin beneath already
+    // leads its block with one (next-steps does). The engine's own drawing under the band takes no rows.
+    const alone = !below || below.type === 'engine'
+    return Box({ flexDirection: 'column', marginTop: alone ? 1 : 0, children: below ? [below, line] : [line] })
   })
 
   // The spinner says how long the prompt cache lasts while a turn runs.
