@@ -89,9 +89,9 @@ test('Claude status line: two lines of the session facts', async () => {
   const facts = { user: 'me', host: 'mac', git: { branch: 'main', dirty: true }, gcp: 'proj', now: 1000, home: '/Users/me' }
   assert.equal(
     plain(claudeStatusline(status, facts)),
-    '┌[me from mac] [\ue725 main *] [proj] (work)\n└| [~/code/app]  Sonnet 5.5  ctx:41%  \uf242 5h:62%/2h15m  \uf240 7d:5%/3d4h  $1.84\n',
+    '┌[me from mac] [\ue725 main *] [proj] (work)\n└[~/code/app] Sonnet 5.5 ctx:41% \uf242 5h:62%/2h15m \uf240 7d:5%/3d4h $1.84\n',
   )
-  assert.equal(plain(claudeStatusline({}, { user: 'me', host: 'mac', now: 0 })), '┌[me from mac]\n└| [~]\n')
+  assert.equal(plain(claudeStatusline({}, { user: 'me', host: 'mac', now: 0 })), '┌[me from mac]\n└[~]\n')
 })
 
 test('gcpProject reads the active gcloud configuration', async () => {
