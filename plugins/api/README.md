@@ -20,7 +20,7 @@ API development — FastAPI, SQLAlchemy and Domain-Driven Design with Hexagonal 
 
 ```bash
 # Claude Code / Copilot CLI
-/plugin install api@giocaizzi-skills
+/plugin install api@giocaizzi-harness
 ```
 
 See the [repository README](../../README.md) for marketplace setup and local-development instructions.

@@ -13,7 +13,7 @@ Python development and testing best practices.
 
 ```bash
 # Claude Code / Copilot CLI
-/plugin install python@giocaizzi-skills
+/plugin install python@giocaizzi-harness
 ```
 
 See the [repository README](../../README.md) for marketplace setup and local-development instructions.

@@ -24,13 +24,13 @@ Install the marketplace and plugins under your preferred harness:
 
 ```bash
 # Add the marketplace
-/plugin marketplace add giocaizzi/skills
+/plugin marketplace add giocaizzi/harness
 # Then install the plugins you want to use
-/plugin install api@giocaizzi-skills
-/plugin install python@giocaizzi-skills
-/plugin install javascript@giocaizzi-skills
-/plugin install dev-tools@giocaizzi-skills
-/plugin install guard@giocaizzi-skills
+/plugin install api@giocaizzi-harness
+/plugin install python@giocaizzi-harness
+/plugin install javascript@giocaizzi-harness
+/plugin install dev-tools@giocaizzi-harness
+/plugin install guard@giocaizzi-harness
 ```
 
 ### VS Code Copilot
