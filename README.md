@@ -1,4 +1,15 @@
-# Skills
+<div align="center">
+
+# harness
+
+**Personal plugin marketplace for AI coding assistants.**
+
+[![CI](https://github.com/giocaizzi/harness/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/giocaizzi/harness/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+</div>
+
+---
 
 My personal marketplace with plugins for AI coding assistants, including skills, agents, slash commands and more.
 
