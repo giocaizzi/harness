@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { alerts, battery, forecast, glyph, sparkCells, sparkRange, turnSound, TTL_MS } from './weather.mjs'
+import { activityLabel, alerts, battery, repoState, forecast, glyph, sparkCells, sparkRange, turnSound, TTL_MS } from './weather.mjs'
 
 const usage = (read, create, input) => ({ cache_read_input_tokens: read, cache_creation_input_tokens: create, input_tokens: input })
 
@@ -131,4 +131,22 @@ test('turnSound: one setting per way a turn can end', () => {
   assert.equal(turnSound({ reason: 'refusal', durationMs: 1 }), 'soundRefused')
   assert.equal(turnSound({ reason: 'error', durationMs: 1 }), 'soundError')
   assert.equal(turnSound({ reason: 'answer', durationMs: 1, agentId: 'a1' }), 'soundSubagent')
+})
+
+test('spinner activity: an icon and a verb per tool, nothing for the rest', () => {
+  assert.equal(activityLabel('Bash'), '\uf489 Running')
+  assert.equal(activityLabel('Grep'), '\uf422 Searching')
+  assert.equal(activityLabel('mcp__x__y'), '\uf1e6 Calling')
+  assert.equal(activityLabel('TodoWrite'), null)
+  assert.equal(activityLabel(null), null)
+})
+
+test('repoState: the PR and its checks, and unpushed work', () => {
+  const run = (conclusion, status = 'COMPLETED') => ({ conclusion, status })
+  assert.deepEqual(repoState({ number: 7, statusCheckRollup: [run('SUCCESS'), run('SUCCESS')] }, '0\t2'), { pr: { number: 7, ci: 'pass' }, ahead: 2, behind: 0 })
+  assert.equal(repoState({ number: 7, statusCheckRollup: [run('SUCCESS'), run('FAILURE')] }, null).pr.ci, 'fail')
+  assert.equal(repoState({ number: 7, statusCheckRollup: [run(null, 'IN_PROGRESS'), run('SUCCESS')] }, null).pr.ci, 'pending')
+  assert.equal(repoState({ number: 7, statusCheckRollup: [{ state: 'PENDING' }] }, null).pr.ci, 'pending')
+  assert.equal(repoState({ number: 7, statusCheckRollup: [] }, null).pr.ci, null)
+  assert.deepEqual(repoState(null, '3\t0'), { pr: null, ahead: 0, behind: 3 })
 })

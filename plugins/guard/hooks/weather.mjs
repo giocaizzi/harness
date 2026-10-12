@@ -50,6 +50,35 @@ export function turnSound(e, doneAfterSeconds = 0) {
   return e.durationMs >= doneAfterSeconds * 1000 ? 'soundDone' : null
 }
 
+// The spinner's word while a tool runs: a Nerd Font icon and a verb, null for a tool with no personality.
+const ACTIVITY = {
+  Bash: ['\uf489', 'Running'],
+  Read: ['\uf4a5', 'Reading'],
+  Grep: ['\uf422', 'Searching'],
+  Glob: ['\uf422', 'Searching'],
+  Edit: ['\uf448', 'Editing'],
+  Write: ['\uf448', 'Editing'],
+  NotebookEdit: ['\uf448', 'Editing'],
+  WebFetch: ['\uf0ac', 'Browsing'],
+  WebSearch: ['\uf0ac', 'Browsing'],
+  Agent: ['\uf0c0', 'Delegating'],
+}
+export function activityLabel(tool) {
+  const a = ACTIVITY[tool] ?? (String(tool).startsWith('mcp__') ? ['\uf1e6', 'Calling'] : null)
+  return a ? `${a[0]} ${a[1]}` : null
+}
+
+// The branch's pull request and unpushed work, from `gh pr view --json number,statusCheckRollup` (null: no PR) and
+// `git rev-list --left-right --count @{u}...HEAD` ("behind<TAB>ahead", null: no upstream). ci: fail | pending | pass.
+export function repoState(pr, counts) {
+  const [behind = 0, ahead = 0] = (counts ?? '').trim().split(/\s+/).map(Number)
+  const checks = pr?.statusCheckRollup ?? []
+  const failed = (c) => ['FAILURE', 'ERROR', 'TIMED_OUT', 'CANCELLED', 'STARTUP_FAILURE', 'ACTION_REQUIRED'].includes(c.conclusion ?? c.state)
+  const waiting = (c) => (c.status ? c.status !== 'COMPLETED' : c.state === 'PENDING')
+  const ci = checks.some(failed) ? 'fail' : checks.some(waiting) ? 'pending' : checks.length ? 'pass' : null
+  return { pr: pr ? { number: pr.number, ci } : null, ahead: ahead || 0, behind: behind || 0 }
+}
+
 // Cells of a bar chart, row-major [codePoint, color, background] triplets, one column per value (0-100). Heights
 // span lo..hi (the tallest bar fills `rows`, the lowest keeps one eighth so it shows); colours are 0xRRGGBB by the
 // value itself. 0x01000000 is the default background.

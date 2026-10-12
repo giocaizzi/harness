@@ -4,12 +4,19 @@ import { atom, read, update } from 'claude-code'
 import { evaluateSpawn } from '../core/engine.mjs'
 import { logRequest } from '../core/otel.mjs'
 import { rules } from '../core/rules.mjs'
-import { ICON, TTL_MS, alerts, battery, clock, forecast, glyph, sparkCells, sparkRange, turnSound } from './weather.mjs'
+import { ICON, TTL_MS, activityLabel, alerts, battery, clock, forecast, glyph, repoState, sparkCells, sparkRange, turnSound } from './weather.mjs'
 
 // The last main-loop turn: its usage, when it ended, and how many turns this conversation has had.
 const weather = atom({ plugin: 'guard', key: 'weather' }, null)
 // Context % and cache hit % of the last turns (null: unknown), oldest first.
 const history = atom({ plugin: 'guard', key: 'history' }, [])
+
+// The tool the model is running now (the spinner says it), and the branch's PR and unpushed work (the band says it).
+const activity = atom({ plugin: 'guard', key: 'activity' }, null)
+const repo = atom({ plugin: 'guard', key: 'repo' }, null)
+const REPO_REFRESH_MS = 60_000
+const CI_ICON = { pass: '\u2713', fail: '\u2717', pending: '\u2026' }
+const CI_TONE = { pass: 'ok', fail: 'bad', pending: 'warn' }
 
 const PANE = 'weather'
 const tokens = (n) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n))
@@ -54,6 +61,21 @@ async function emitThrottle($, w) {
   }
 }
 
+// The branch's PR (with its checks) and unpushed work; either part is null where git or gh cannot say.
+async function refreshRepo($) {
+  const run = async (argv) => {
+    try {
+      const r = await $.process.run(argv, { timeoutMs: 8000 })
+      return r.exitCode === 0 ? r.stdout : null
+    } catch {
+      return null // not a repository, or the tool is missing
+    }
+  }
+  const pr = await run(['gh', 'pr', 'view', '--json', 'number,statusCheckRollup'])
+  const counts = await run(['git', 'rev-list', '--left-right', '--count', '@{u}...HEAD'])
+  await update($, repo, () => repoState(pr ? JSON.parse(pr) : null, counts))
+}
+
 // A sound by its setting's value (`off` plays nothing); macOS only, elsewhere nothing plays.
 async function clip($, name, gain = 1) {
   if (name && name !== 'off') await $.audio.play({ asset: `sounds/${name}.wav` }, { gain }).catch(() => {})
@@ -71,6 +93,7 @@ async function windows($) {
 export function register(on, options = {}) {
   let ttlMs = TTL_MS['5m']
   let tick
+  let repoTick
   let warned // the turn whose cache expiry was announced
   let expired // the turn whose cache expiry was announced as past
 
@@ -83,8 +106,11 @@ export function register(on, options = {}) {
       // settings unreadable: the API default
     }
     // The TTL countdown: one redraw a second while the band shows a last turn.
+    await refreshRepo($)
     await $.command.register({ name: 'weather', description: 'Show the context and prompt-cache history in a pane' })
     tick?.cancel()
+    repoTick?.cancel()
+    repoTick = $.clock.every(REPO_REFRESH_MS, () => refreshRepo($))
     tick = $.clock.every(1000, async () => {
       const w = await read($, weather)
       if (!w) return
@@ -125,6 +151,7 @@ export function register(on, options = {}) {
         sounds.add(x.key)
       }
     }
+    if (!e.agentId) await refreshRepo($)
     const done = turnSound(e, options.doneAfterSeconds)
     if (done) sounds.add(done)
     // One clip per distinct sound: two limits crossing together play it once.
@@ -141,27 +168,48 @@ export function register(on, options = {}) {
     const w = await read($, weather)
     const now = await $.clock.now()
     const f = forecast({ percent: await contextPercent($), usage: w?.usage, turns: w?.turns ?? 0, ttlMs, sinceMs: w ? now - w.at : undefined, showCtx: false })
-    if (!f.segments.length) return below
     const h = (await read($, history)).slice(-BAND_TURNS)
     const { Box, Text, Raster } = $.ui.resolve(e)
     const dim = (children) => Text({ dimColor: true, children: [children] })
-    const sep = () => dim(' \ue0b1 ')
-    // Icon, space, value: dim while fine, coloured when not.
+    // Each part in brackets, as the prompt and the status line draw theirs: dim while fine, coloured when not.
+    const bracket = (inner) => [dim('['), inner, dim(']')]
+    const part = (text, tone) => bracket(Text({ color: TONE_COLOR[tone], dimColor: tone === 'ok', children: [text] }))
     const label = (x) => (ICON[x.kind] ? `${ICON[x.kind]} ${x.value}` : x.value)
-    const parts = f.segments.flatMap((x, i) => [i ? sep() : null, Text({ color: TONE_COLOR[x.tone], dimColor: x.tone === 'ok', children: [label(x)] })])
+    const r = await read($, repo)
+    const ahead = r && (r.ahead || r.behind) ? `${r.ahead ? `\u2191${r.ahead}` : ''}${r.ahead && r.behind ? ' ' : ''}${r.behind ? `\u2193${r.behind}` : ''}` : null
+    const parts = [
+      r?.pr ? part(`\uf407 #${r.pr.number}${r.pr.ci ? ` ${CI_ICON[r.pr.ci]}` : ''}`, CI_TONE[r.pr.ci] ?? 'ok') : null,
+      ahead ? part(ahead, 'ok') : null,
+      ...f.segments.map((x) => part(label(x), x.tone)),
+      h.length > 1 ? bracket(spark(Raster, 'weather-spark', h.map((x) => x.ctx ?? 0), 1, ...sparkRange(h.map((x) => x.ctx ?? 0)))) : null,
+    ].filter(Boolean)
+    if (!parts.length) return below
     const line = Box({
       flexDirection: 'row',
       children: [
-        glyph(f.ctx) ? Text({ color: TONE_COLOR[toneOf(f.ctx)], dimColor: toneOf(f.ctx) === 'ok', children: [`${glyph(f.ctx)}  `] }) : null,
-        ...parts,
-        h.length > 1 ? sep() : null,
-        h.length > 1 ? spark(Raster, 'weather-spark', h.map((x) => x.ctx ?? 0), 1, ...sparkRange(h.map((x) => x.ctx ?? 0))) : null,
+        glyph(f.ctx) ? Text({ color: TONE_COLOR[toneOf(f.ctx)], dimColor: toneOf(f.ctx) === 'ok', children: [`${glyph(f.ctx)} `] }) : null,
+        ...parts.flatMap((p, i) => [i ? Text({ children: [' '] }) : null, ...p]),
       ].filter(Boolean),
     })
     // Claude Code keeps a blank row under the band; a blank row on top pairs it, unless a plugin beneath already
     // leads its block with one (next-steps does). The engine's own drawing under the band takes no rows.
     const alone = !below || below.type === 'engine'
     return Box({ flexDirection: 'column', marginTop: alone ? 1 : 0, children: below ? [below, line] : [line] })
+  })
+
+  // The spinner says what a running tool is doing instead of a random verb.
+  on('tool.call', async ($, e, next) => {
+    await update($, activity, () => e.tool)
+    try {
+      return await next(e)
+    } finally {
+      await update($, activity, () => null)
+    }
+  })
+
+  on('ui.render', { component: 'Spinner' }, async ($, e, next) => {
+    const label = activityLabel(await read($, activity))
+    return next(label ? { ...e, props: { ...e.props, message: label } } : e)
   })
 
   // /weather: the history at full size.

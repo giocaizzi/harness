@@ -166,6 +166,49 @@ test('a sound set to off plays nothing; a long-turn threshold skips short turns'
   expect(clips).toEqual(['sounds/done.wav'])
 })
 
+test('the spinner names the running tool while it runs', async ($, on) => {
+  on('ui.render', { component: 'Spinner' }, ($$, e) => $$.ui.resolve(e).Text({ children: [`${e.props.message ?? e.props.word}`] }))
+  const SPINNER = { component: 'Spinner', props: { word: 'Sauteing', message: null, suffix: '…', mode: 'tool-use' } } as const
+  let during = false
+  on('tool.call', async () => {
+    const ui = await $.ui.mount({ plugin: 'guard', surface: 'terminal', ...SPINNER })
+    during = (await ui.find({ type: 'Text', text: /\uf489 Running/ })) !== undefined
+    await ui.unmount()
+    return { result: { stdout: '', stderr: '', interrupted: false } } as never
+  })
+  await $.tool.call({ tool: 'Bash', input: { command: 'ls' } } as never)
+  expect(during).toBe(true)
+  const after = await $.ui.mount({ plugin: 'guard', surface: 'terminal', ...SPINNER })
+  expect(await after.find({ type: 'Text', text: /Sauteing/ })).toBeDefined()
+  await after.unmount()
+})
+
+test('the band shows the PR with its checks and the unpushed work, in brackets', async ($, on) => {
+  mock.clock(on)
+  on('session.usage', () => usage(10))
+  on('settings.read', () => ({ value: {} }))
+  on('session.start', () => ({ cwd: '/r' }))
+  on('command.register', () => ({ value: undefined }))
+  on('process.run', (_$, e) => ({
+    value: {
+      exitCode: 0,
+      stderr: '',
+      isStdoutTruncated: false,
+      isStderrTruncated: false,
+      stdout: e.argv[0] === 'gh' ? JSON.stringify({ number: 56, statusCheckRollup: [{ status: 'COMPLETED', conclusion: 'SUCCESS' }] }) : '0\t2',
+    },
+  }))
+  bottom(on)
+  on('turn.complete', () => ({ text: 'ok' }))
+  await $.session.start({ cwd: '/r' })
+  await $.turn.complete(turn(900, 0, 100))
+  const ui = await $.ui.mount({ plugin: 'guard', surface: 'terminal', ...BAND })
+  expect(await ui.find({ type: 'Text', text: /\uf407 #56 \u2713/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /\u21912/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^\[$/ })).toBeDefined()
+  await ui.unmount()
+})
+
 test('a throttle denial posts a record to the collector when the session exports to one', async ($, on) => {
   on('session.usage', () => usage(95))
   on('agent.spawn', () => ({ model: 'haiku', agentId: 'a1' }))
