@@ -67,20 +67,38 @@ export function isTempPath(target, env = {}) {
   return (UNIX_TEMP.test(p) || WINDOWS_TEMP.test(p)) && !tempDirs.includes(p.toLowerCase());
 }
 
-// Git facts for one removal target, through an injected `run(argv) -> stdout | null` (null on failure).
+// Git facts for one removal target, through an injected `run(argv, cwd?) -> stdout | null` (null on failure or timeout).
 // Undefined when the target is not the root of a linked worktree (the main checkout never qualifies).
-// "Safe" = clean tree and every commit on some remote ref (pushed, or merged into origin's default branch).
-// ponytail: a squash-merged branch whose remote ref was pruned counts as unpushed and still asks.
+// "Safe" = clean tree and either every commit on some remote ref (pushed, or merged into origin's default branch)
+// or HEAD contained in the head of a merged PR of its branch (squash merge with the remote branch deleted).
 export async function worktreeFact(path, run) {
-  const git = (...args) => Promise.resolve().then(() => run(['git', '-C', path, ...args])).catch(() => null);
-  const rp = await git('rev-parse', '--path-format=absolute', '--git-dir', '--git-common-dir', '--show-prefix');
+  const sh = (argv, cwd) => Promise.resolve().then(() => run(argv, cwd)).catch(() => null);
+  const git = (...args) => sh(['git', '-C', path, ...args]);
+  const rp = await git('rev-parse', '--path-format=absolute', '--git-dir', '--git-common-dir', '--show-prefix', '--show-toplevel');
   if (rp == null) return undefined;
-  const [gitDir, commonDir, prefix = ''] = rp.split(/\r?\n/);
+  const [gitDir, commonDir, prefix = '', top] = rp.split(/\r?\n/);
   if (!gitDir || gitDir === commonDir || prefix !== '') return undefined;
   const [status, ahead] = await Promise.all([git('status', '--porcelain'), git('rev-list', '--count', 'HEAD', '--not', '--remotes')]);
   if (status == null || ahead == null || !/^\d+\s*$/.test(ahead)) return { safe: false, why: 'git check failed' };
-  const why = [Number(ahead) && `${Number(ahead)} unpushed commit${Number(ahead) > 1 ? 's' : ''}`, status.trim() && 'dirty tree'].filter(Boolean);
+  const n = Number(ahead);
+  if (n && !status.trim()) {
+    const merged = await mergedPrHead(git, sh, top || path);
+    if (merged === true) return { safe: true, why: '' };
+    return { safe: false, why: `${n} unpushed commit${n > 1 ? 's' : ''} (${merged})` };
+  }
+  const why = [n && `${n} unpushed commit${n > 1 ? 's' : ''}`, status.trim() && 'dirty tree'].filter(Boolean);
   return { safe: !why.length, why: why.join(', ') };
+}
+
+// True when HEAD is contained in the head of a merged PR of the current branch (gh, run in the worktree),
+// else why not. Any gh failure (missing, unauthenticated, offline, timeout) is a reason, so the delete asks.
+async function mergedPrHead(git, sh, cwd) {
+  const branch = (await git('branch', '--show-current'))?.trim();
+  if (!branch) return 'no branch';
+  const oid = await sh(['gh', 'pr', 'list', '--head', branch, '--state', 'merged', '--json', 'headRefOid', '--limit', '1', '--jq', '.[0].headRefOid // empty'], cwd);
+  if (oid == null) return 'gh check failed';
+  if (!oid.trim()) return 'no merged PR';
+  return (await git('merge-base', '--is-ancestor', 'HEAD', oid.trim())) != null || 'HEAD not in the merged PR';
 }
 
 // Worktree facts for every non-temp removal target of a command: { [target]: { safe, why } }.

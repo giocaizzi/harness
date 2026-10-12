@@ -13,8 +13,9 @@ check: lint test ## Standard entrypoint: lint + test.
 
 lint: validate ## Alias for validate (repo invariant checks are the lint).
 
-test: ## Run the plugins' hook tests (Node 22+).
+test: ## Run the plugins' hook tests (Node 22+), then their mod tests (`claude plugin test`).
 	@node --test $(wildcard plugins/*/core/*.test.mjs plugins/*/hooks/*.test.mjs)
+	@for d in $(sort $(dir $(patsubst %/,%,$(dir $(wildcard plugins/*/tests/*.test.ts))))); do claude plugin test $$d || exit 1; done
 
 new-agent: ## Scaffold src/agents/<NAME>/.  Usage: make new-agent NAME=<name> PLUGIN=<plugin>
 	@scripts/new-agent.sh "$(NAME)" "$(PLUGIN)"

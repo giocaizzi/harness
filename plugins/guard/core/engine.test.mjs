@@ -182,6 +182,34 @@ test('worktrees: unpushed, dirty, failing git, main checkout or subdir still ask
   assert.equal(decide('rm -rf a', { worktrees: throwing }).action, 'ask');
 });
 
+// Fake git + gh for squash-merged worktrees: `ahead` commits on no remote, `pr` the merged PR head ('' none, null gh fails),
+// `inPr` whether HEAD is contained in it. gh runs with the worktree root as cwd.
+const fakeSquash = (trees) => async (argv, cwd) => {
+  const t = trees[argv[0] === 'gh' ? cwd : argv[2]];
+  if (!t) return null;
+  if (argv[0] === 'gh') return t.pr == null ? null : `${t.pr}\n`;
+  if (argv[3] === 'rev-parse') return `/r/.git/worktrees/x\n/r/.git\n\n${argv[2]}\n`;
+  if (argv[3] === 'status') return t.status ?? '';
+  if (argv[3] === 'rev-list') return '2\n';
+  if (argv[3] === 'branch') return 'fix/x\n';
+  if (argv[3] === 'merge-base') return t.inPr === false ? null : '';
+};
+
+test('worktrees: squash-merged (merged PR, remote branch deleted) and clean is allowed', async () => {
+  const run = fakeSquash({ a: { pr: 'abc' } });
+  for (const c of ['rm -rf a', 'git worktree remove --force a'])
+    assert.equal(decide(c, { worktrees: await worktreeFacts(c, {}, rules, run) }).action, 'allow', c);
+});
+
+test('worktrees: squash-merged but dirty, gh failing, no merged PR or commits after it still ask, and say why', async () => {
+  const run = fakeSquash({ d: { pr: 'abc', status: ' M f\n' }, g: { pr: null }, n: { pr: '' }, l: { pr: 'abc', inPr: false } });
+  const ask = async (c) => decide(c, { worktrees: await worktreeFacts(c, {}, rules, run) });
+  assert.match((await ask('rm -rf d')).reason, /Worktree d: 2 unpushed commits, dirty tree/);
+  assert.match((await ask('rm -rf g')).reason, /Worktree g: 2 unpushed commits \(gh check failed\)/);
+  assert.match((await ask('rm -rf n')).reason, /Worktree n: 2 unpushed commits \(no merged PR\)/);
+  assert.match((await ask('rm -rf l')).reason, /Worktree l: 2 unpushed commits \(HEAD not in the merged PR\)/);
+});
+
 test('git worktree remove without --force is not risky', () => {
   assert.equal(decide('git worktree remove /r/x').action, 'allow');
 });

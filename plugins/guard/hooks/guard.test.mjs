@@ -83,3 +83,17 @@ test('SessionEnd drops the session state', async () => {
   await handle({ session_id: 'x', hook_event_name: 'SessionEnd' }, deps)
   assert.ok(!existsSync(join(dataDir, 'sessions', 'x.json')))
 })
+
+test('a squash-merged worktree (merged PR found by gh in the worktree) is not asked about', async () => {
+  const calls = []
+  const run = async (argv, cwd) => {
+    calls.push([argv[0], cwd])
+    if (argv[0] === 'gh') return 'abc\n'
+    const sub = argv[3]
+    if (sub === 'rev-parse') return '/r/.git/worktrees/x\n/r/.git\n\n/r/.claude/worktrees/x\n'
+    return sub === 'rev-list' ? '2\n' : sub === 'branch' ? 'fix/x\n' : ''
+  }
+  const h = setup({ run })
+  assert.equal(decision(await h(pre('Bash', 'rm -rf /r/.claude/worktrees/x'))), undefined)
+  assert.ok(calls.some(([cmd, cwd]) => cmd === 'gh' && cwd === '/r/.claude/worktrees/x'))
+})
