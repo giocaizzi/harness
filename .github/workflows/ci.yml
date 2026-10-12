@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Required status check. `if: always()` so a failed `secrets` job fails
+  # `check` instead of skipping it (a skipped required check counts as passing).
+  check:
+    needs: [secrets]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - if: needs.secrets.result != 'success'
+        run: echo "::error::secrets job ${{ needs.secrets.result }}" && exit 1
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - run: uv python install
+      - run: npm install -g @anthropic-ai/claude-code # validate.py runs `claude plugin validate`
+      - run: make check
