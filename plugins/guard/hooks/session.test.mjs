@@ -9,6 +9,10 @@ import { harnessPid, keepAwake, keeperArgv } from './awake.mjs'
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'guard-test-'))
 
+// The stop tests expect the check to run; a developer's own GUARD_STOP_CHECK=off must not leak in.
+delete process.env.GUARD_STOP_CHECK
+delete process.env.GUARD_STOP_TIMEOUT_MS
+
 const stopRun = (calls, make, git = { status: 0, stdout: 'x' }) => (cmd, args) => {
   calls.push(`${cmd} ${args.join(' ')}`)
   if (cmd === 'git') return git

@@ -10,7 +10,7 @@ Target 3.12 as the floor. Use newer features when the project's `requires-python
 ## Tooling
 
 - Use `uv` for everything (`uv add`, `uv sync`, `uv run`, `uv tool install`/`uvx` for CLIs). Never pip, pipx or global installs: they bypass the lockfile and make environments irreproducible.
-- `pyproject.toml` is the single source of truth (metadata, deps, tool config). Commit `uv.lock`. Use `src/<package>/` layout so tests run against the installed package, not the working directory.
+- `pyproject.toml` is the single source of truth (metadata, deps, tool config). Commit `uv.lock` (release-please does not bump the version it records: see the `release-please` skill). Use `src/<package>/` layout so tests run against the installed package, not the working directory.
 - `ruff` for format and lint (replaces black/isort/flake8); `mypy --strict` (or `pyright` for libraries).
 - New projects start with every ruff rule and Google docstrings; ignore a rule only when it conflicts with another tool, with the reason inline:
   ```toml
