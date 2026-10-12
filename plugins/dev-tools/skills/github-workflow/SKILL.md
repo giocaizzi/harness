@@ -68,6 +68,10 @@ Start with `"enforcement": "evaluate"` where available, then switch to `"active"
 - Prefer one final aggregate job (`needs: [...]`, `if: always()`) as the single required check, so matrix changes don't touch the ruleset.
 - A path-filtered workflow that is skipped leaves its required check pending; use the aggregate job or avoid path filters on required workflows.
 
+## Squash merges and PR titles
+
+With squash-only repos, the PR title is the commit on `main` and drives release automation. Require a `Validate PR title` check next to the CI aggregate and pin `squash_merge_commit_title: PR_TITLE` / `squash_merge_commit_message: PR_BODY`; details and gotchas are in `conventional-commits`.
+
 ## Merge queue availability
 
 Merge queue is a repository-level ruleset rule and is not offered on every repository: it depends on ownership and plan (for example organization-owned repos; private repos need a qualifying plan). On a repo that cannot have one, fall back to auto-merge + required checks + "require branches to be up to date". Check availability before promising a queue.
