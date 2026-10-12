@@ -6,7 +6,7 @@
   },
   "metadata": {
     "description": "Personal collection of agent skills for AI coding assistants",
-    "version": "2.4.3"
+    "version": "2.5.0"
   },
   "plugins": [
     {
@@ -36,7 +36,13 @@
       "description": "General development tooling — git, GitHub, conventional commits, semantic versioning",
       "version": "1.7.2",
       "keywords": ["git", "github", "conventional-commits", "semver", "versioning", "tooling", "workflow"]
+    },
+    {
+      "name": "guard",
+      "source": "./plugins/guard",
+      "description": "Agent guardrails for Claude Code and Copilot CLI: skill enforcer, Conventional Commit title guard, host guard and risky-command ask",
+      "version": "0.1.0",
+      "keywords": ["hooks", "guardrails", "safety", "claude-code", "copilot-cli"]
     }
   ]
 }
-

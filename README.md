@@ -12,8 +12,9 @@ Compatible with most of AI harnesses — [Claude Code](https://code.claude.com/)
 | [`python`](plugins/python/README.md) | Python development and testing best practices. |
 | [`javascript`](plugins/javascript/README.md) | JavaScript/TypeScript, React, Next.js. |
 | [`dev-tools`](plugins/dev-tools/README.md) | General development tooling — git, GitHub, conventional commits, semantic versioning. |
+| [`guard`](plugins/guard/README.md) | Guardrail hooks for both harnesses — skill enforcer, commit-title guard, host guard, risky-command ask. |
 
-Each plugin's README lists the skills and agents it ships.
+Each plugin's README lists the skills, agents and hooks it ships.
 
 ---
 
@@ -29,6 +30,7 @@ Install the marketplace and plugins under your preferred harness:
 /plugin install python@giocaizzi-skills
 /plugin install javascript@giocaizzi-skills
 /plugin install dev-tools@giocaizzi-skills
+/plugin install guard@giocaizzi-skills
 ```
 
 ### VS Code Copilot

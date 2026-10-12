@@ -53,8 +53,10 @@ This repo treats everything that is identical (skills, plugin metadata) as one s
 │       │       └── scripts/           optional
 │       ├── agents/                    GENERATED — Claude agents only, `<name>.md`
 │       │   └── <name>.md
-│       └── copilot/                   GENERATED — Copilot agents only, `<name>.agent.md`
-│           └── <name>.agent.md
+│       ├── copilot/                   GENERATED — Copilot agents only, `<name>.agent.md`
+│       │   └── <name>.agent.md
+│       ├── hooks/                     AUTHORED — hooks.json + Node hook scripts (guard plugin; both harnesses)
+│       └── core/                      AUTHORED — pure rule engine the hooks import (guard plugin)
 │
 ├── scripts/
 │   ├── build_agents.py           src/agents/ + .claude-plugin/plugin.json → agents/, copilot/, .github/plugin/plugin.json
@@ -76,6 +78,7 @@ This repo treats everything that is identical (skills, plugin metadata) as one s
 | `plugins/<plugin>/.github/plugin/plugin.json` | **Generated** | Read by Copilot. Identical to the Claude manifest plus `"agents": ["./copilot/"]`. Never edit. |
 | `plugins/<plugin>/agents/<name>.md` | **Generated** | Claude agent. Never edit. |
 | `plugins/<plugin>/copilot/<name>.agent.md` | **Generated** | Copilot agent. Never edit. |
+| `plugins/<plugin>/hooks/`, `core/` | Authored | Hooks for both harnesses (only `guard` has them). See [docs/guard.md](docs/guard.md). |
 | `.claude-plugin/marketplace.json` | Authored | One entry per plugin; versions must match per-plugin `plugin.json`. |
 
 ---
@@ -98,6 +101,15 @@ If `make validate` fails, check the common drift points first:
 - version mismatch between `plugins/<plugin>/.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, and, when applicable, `pyproject.toml`
 - missing or stale README table rows after adding or renaming a skill or agent
 - stale generated files after editing `src/agents/` or plugin manifests; rerun `make build`, then `make validate`
+
+## Hooks (the `guard` plugin)
+
+`plugins/guard/hooks/hooks.json` is read by both harnesses: Claude Code natively, Copilot CLI as Claude-format (PascalCase events, `tool_name`/`tool_input` payload, `hookSpecificOutput.permissionDecision`). Architecture, decisions and the install/verify runbook: [docs/guard.md](docs/guard.md).
+
+- `make test` runs `node --test` over `plugins/*/core/*.test.mjs` and `plugins/*/hooks/*.test.mjs` (Node 22+). Add a test with every rule change.
+- A hook script must never exit non-zero by accident: Copilot denies a `PreToolUse` whose hook fails. Fail open for reminders; the risky-command ask fails closed on purpose.
+- Use `${CLAUDE_PLUGIN_ROOT}` in commands and `CLAUDE_PLUGIN_DATA` for state: both harnesses set them. One `command` field runs under bash and PowerShell, so keep it to `node "<path>" <args>`.
+- Rules are data in `plugins/guard/core/rules.mjs`; `core/engine.mjs` stays pure (no I/O). Bump the `guard` version for any hook change.
 
 ---
 
