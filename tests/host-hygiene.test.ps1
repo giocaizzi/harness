@@ -17,11 +17,11 @@ $script:fails = 0
 function Test-Equal([string]$Name, $Got, $Want) {
     if ("$Got" -eq "$Want") { "ok - $Name" } else { "not ok - ${Name}: got '$Got', want '$Want'"; $script:fails++ }
 }
-function Start-Shell([string]$Command, [string]$Dir = $tmp) {
+function Invoke-Shell([string]$Command, [string]$Dir = $tmp) {
     Start-Process $shell -ArgumentList '-NoProfile', '-Command', $Command -WorkingDirectory $Dir -PassThru
 }
-function Get-DeadPid { $p = Start-Shell 'exit 0'; $p.WaitForExit(); $p.Id }
-function Start-SlotHolder { $h = Start-Shell "`$m = New-Object Threading.Mutex(`$false, '$mutex1'); [void]`$m.WaitOne(); Start-Sleep 8"; Start-Sleep 2; $h }
+function Get-DeadPid { $p = Invoke-Shell 'exit 0'; $p.WaitForExit(); $p.Id }
+function Invoke-SlotHolder { $h = Invoke-Shell "`$m = New-Object Threading.Mutex(`$false, '$mutex1'); [void]`$m.WaitOne(); Start-Sleep 8"; Start-Sleep 2; $h }
 New-Item -ItemType Directory -Path $tmp | Out-Null
 $log = Join-Path $tmp 'log'
 try {
@@ -58,7 +58,7 @@ try {
 
     # Release own only: a waiter that gives up leaves the holder's slot alone.
     $env:HOST_LOCK_TIMEOUT_SECONDS = '1'
-    $h = Start-SlotHolder
+    $h = Invoke-SlotHolder
     Set-Content (Join-Path $L 'heavy.slot.1') "other $($h.Id) cmd"
     & $shell -NoProfile -File $heavy $shell -NoProfile -Command 'exit 0' 2>$null
     Test-Equal -Name 'timed-out waiter exits 124 and keeps the holder''s slot' -Got "$LASTEXITCODE $(Get-Content (Join-Path $L 'heavy.slot.1'))" -Want "124 other $($h.Id) cmd"
@@ -111,7 +111,7 @@ try {
         $d = Join-Path $tmp "wt-$n"
         @(Get-Item $d -Force) + @(Get-ChildItem $d -Recurse -Force) | ForEach-Object { $_.LastWriteTime = [datetime]'2020-01-01' }
     }
-    $busy = Start-Shell 'Start-Sleep 20' (Join-Path $tmp 'wt-busy')
+    $busy = Invoke-Shell 'Start-Sleep 20' (Join-Path $tmp 'wt-busy')
     Start-Sleep 2
     Push-Location $repo
     $out = @(& $shell -NoProfile -File $sweep)
