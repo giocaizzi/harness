@@ -15,6 +15,9 @@ export const ICON = { cache: '\uf472', ttl: '\uf520' } // nf-oct-database, nf-oc
 // A weather icon for how full the context is: sunny, cloudy, showers, thunderstorm, lightning (nf-weather-*).
 export const glyph = (ctx) => (ctx == null ? '' : ctx < 25 ? '\ue30d' : ctx < 50 ? '\ue302' : ctx < 75 ? '\ue319' : ctx < 90 ? '\ue31d' : '\ue315')
 
+// A battery for how much of a rate-limit window is left (nf-fa-battery_0..4, full to empty as `used` rises).
+export const battery = (used) => String.fromCharCode(0xf244 - Math.min(4, Math.max(0, Math.round((100 - used) / 25))))
+
 // Cells of a bar chart, row-major [codePoint, color, background] triplets, one column per value (0-100). Heights
 // span lo..hi (the tallest bar fills `rows`, the lowest keeps one eighth so it shows); colours are 0xRRGGBB by the
 // value itself. 0x01000000 is the default background.
