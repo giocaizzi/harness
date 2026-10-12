@@ -7,6 +7,8 @@ declare module 'claude-code' {
         turns: number
         alert?: Record<string, number>
       } | null
+      activity: string | null
+      repo: { pr: { number: number; ci: 'pass' | 'fail' | 'pending' | null } | null; ahead: number; behind: number } | null
       history: { ctx: number | null; hit: number | null; five?: number | null; seven?: number | null }[]
     }
   }
