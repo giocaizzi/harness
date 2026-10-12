@@ -74,7 +74,7 @@ async function onShell(input, state, deps) {
     const facts = {}
     if (isRisky(command, rules)) {
       facts.env = { TMPDIR: deps.env.TMPDIR, TEMP: deps.env.TEMP, TMP: deps.env.TMP }
-      facts.worktrees = await worktreeFacts(command, facts.env, rules, (argv) => deps.run(argv, input.cwd))
+      facts.worktrees = await worktreeFacts(command, facts.env, rules, (argv, cwd) => deps.run(argv, cwd ?? input.cwd))
     }
     const reminded = new Set(state.reminded)
     const d = evaluateCommand({ command, loadedSkills: new Set(state.loaded), state: { reminded }, host, ...facts, rules })

@@ -106,10 +106,11 @@ If `make validate` fails, check the common drift points first:
 
 `plugins/guard/hooks/hooks.json` is read by both harnesses: Claude Code natively, Copilot CLI as Claude-format (PascalCase events, `tool_name`/`tool_input` payload, `hookSpecificOutput.permissionDecision`). Architecture, decisions and the install/verify runbook: [docs/guard.md](docs/guard.md).
 
-- `make test` runs `node --test` over `plugins/*/core/*.test.mjs` and `plugins/*/hooks/*.test.mjs` (Node 22+). Add a test with every rule change.
+- `make test` runs `node --test` over `plugins/*/core/*.test.mjs` and `plugins/*/hooks/*.test.mjs` (Node 22+), then `claude plugin test` for every plugin with `tests/*.test.ts` (the Claude mod). Add a test with every rule change.
+- `hooks.json` may hold both `hooks` (command hooks, both harnesses) and `modules` (a Claude Code mod, which Copilot ignores). A mod module imports `claude-code`, so keep its logic in a pure sibling file node can test (`weather.mjs`), and keep functions that take `$` declared at the top level (`claude plugin validate` rejects `$` passed to a closure).
 - A hook script must never exit non-zero by accident: Copilot denies a `PreToolUse` whose hook fails. Fail open for reminders; the risky-command ask fails closed on purpose.
 - Use `${CLAUDE_PLUGIN_ROOT}` in commands and `CLAUDE_PLUGIN_DATA` for state: both harnesses set them. One `command` field runs under bash and PowerShell, so keep it to `node "<path>" <args>`.
-- Rules are data in `plugins/guard/core/rules.mjs`; `core/engine.mjs` stays pure (no I/O). Bump the `guard` version for any hook change.
+- Rules are data in `plugins/guard/core/rules.mjs`; `core/engine.mjs` stays pure (no I/O). Bump the `guard` version (plugin.json + marketplace entry) for every behaviour change: installed caches update only on a version change.
 
 ---
 
