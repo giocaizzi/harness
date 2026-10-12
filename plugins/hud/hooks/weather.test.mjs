@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { activityLabel, battery, repoState, forecast, glyph, sparkCells, sparkRange, TTL_MS } from './weather.mjs'
+import { activityLabel, battery, duration, editStat, footerText, fullAt, repoState, tokens, when, forecast, glyph, sparkCells, sparkRange, TTL_MS } from './weather.mjs'
 
 const usage = (read, create, input) => ({ cache_read_input_tokens: read, cache_creation_input_tokens: create, input_tokens: input })
 
@@ -119,7 +119,7 @@ test('spinner activity: an icon and a verb per tool, nothing for the rest', () =
 test('repoState: the PR and its checks, and unpushed work', () => {
   const run = (conclusion, status = 'COMPLETED') => ({ conclusion, status })
   assert.deepEqual(repoState({ number: 7, statusCheckRollup: [run('SUCCESS'), run('SUCCESS')] }, '0\t2'), {
-    pr: { number: 7, ci: 'pass', passed: 2, total: 2 },
+    pr: { number: 7, url: null, ci: 'pass', passed: 2, total: 2 },
     ahead: 2,
     behind: 0,
     changes: { files: 0, added: 0, removed: 0, untracked: 0 },
@@ -132,4 +132,34 @@ test('repoState: the PR and its checks, and unpushed work', () => {
   assert.equal(repoState({ number: 7, statusCheckRollup: [run(null, 'IN_PROGRESS'), run('SUCCESS')] }, null).pr.passed, 1)
   assert.deepEqual(repoState(null, null, ' 3 files changed, 120 insertions(+), 30 deletions(-)\n', '?? a\n?? b\n M c\n').changes, { files: 3, added: 120, removed: 30, untracked: 2 })
   assert.deepEqual(repoState(null, null, ' 1 file changed, 1 insertion(+)\n', '').changes, { files: 1, added: 1, removed: 0, untracked: 0 })
+})
+
+test('footer text, durations and token counts', () => {
+  assert.equal(footerText({ usage: { input_tokens: 100, cache_read_input_tokens: 9000, cache_creation_input_tokens: 900, output_tokens: 1200 }, cost: 0.041 }), '10.0k in · 1.2k out · 90% cached · $0.04')
+  assert.equal(footerText({ usage: { input_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0, output_tokens: 5 }, cost: null }), '0 in · 5 out')
+  assert.deepEqual([850, 4200, 64_000].map(duration), ['850ms', '4.2s', '1m 4s'])
+  assert.deepEqual([950, 12_300, 1_200_000].map(tokens), ['950', '12.3k', '1.2M'])
+})
+
+test('editStat: lines an edit adds and removes', () => {
+  assert.equal(editStat('Edit', { old_string: 'a\nb', new_string: 'a\nb\nc' }), '+3 -2')
+  assert.equal(editStat('MultiEdit', { edits: [{ old_string: 'a', new_string: 'b\nc' }, { old_string: 'd', new_string: '' }] }), '+2 -2')
+  assert.equal(editStat('Write', { content: 'x\ny' }), '+2')
+  assert.equal(editStat('Bash', { command: 'ls' }), null)
+})
+
+test('fullAt: the pace of the samples since the last reset, only when it beats the reset', () => {
+  const h = 3_600_000
+  // 10% an hour from 50% at t=0 to 60% at 1h: full at 5h.
+  assert.equal(fullAt([{ at: 0, pct: 50 }, { at: h, pct: 60 }], 10 * h), 5 * h)
+  assert.equal(fullAt([{ at: 0, pct: 50 }, { at: h, pct: 60 }], 2 * h), null) // resets first
+  assert.equal(fullAt([{ at: 0, pct: 90 }, { at: h, pct: 5 }, { at: 2 * h, pct: 15 }], 100 * h), 2 * h + 8.5 * h) // after a reset
+  assert.equal(fullAt([{ at: 0, pct: 50 }, { at: h, pct: 50 }], null), null) // no pace
+  assert.equal(fullAt([{ at: 0, pct: 50 }], null), null)
+})
+
+test('when: the time today, the weekday and time later', () => {
+  const now = new Date(2026, 9, 13, 10, 0).getTime()
+  assert.equal(when(new Date(2026, 9, 13, 16, 40).getTime(), now), '16:40')
+  assert.equal(when(new Date(2026, 9, 15, 9, 5).getTime(), now), 'Thu 09:05')
 })
