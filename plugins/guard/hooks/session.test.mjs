@@ -9,18 +9,21 @@ import { harnessPid, keepAwake, keeperArgv } from './awake.mjs'
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'guard-test-'))
 
+const stopRun = (calls, make, git = { status: 0, stdout: 'x' }) => (cmd, args) => {
+  calls.push(`${cmd} ${args.join(' ')}`)
+  if (cmd === 'git') return git
+  return args[0] === '-n' ? { status: 0 } : make
+}
+
 test('stop: blocks once with the output tail when make check fails', () => {
   const calls = []
-  const run = (cmd, args) => {
-    calls.push(args.join(' '))
-    return args[0] === '-n' ? { status: 0 } : { status: 2, stdout: 'ok\n'.repeat(50) + 'FAIL x\n', stderr: '' }
-  }
-  const out = stopCheck({ cwd: '/r' }, run)
+  const make = { status: 2, stdout: 'ok\n'.repeat(50) + 'FAIL x\n', stderr: '' }
+  const out = stopCheck({ cwd: '/r' }, stopRun(calls, make, { status: 2 }))
   assert.equal(out.decision, 'block')
   assert.match(out.reason, /make check failed[\s\S]*FAIL x$/)
   assert.deepEqual(out.hookSpecificOutput, { hookEventName: 'Stop', decision: 'block', reason: out.reason }) // VS Code
   assert.ok(out.reason.split('\n').length <= 41)
-  assert.deepEqual(calls, ['-n check', 'check'])
+  assert.deepEqual(calls.filter((c) => c.startsWith('make')), ['make -n check', 'make check'])
 })
 
 test('stop: passes when stop_hook_active, no check target, no make, or green', () => {
@@ -29,6 +32,51 @@ test('stop: passes when stop_hook_active, no check target, no make, or green', (
   assert.equal(stopCheck({}, () => ({ status: 2 })), null)
   assert.equal(stopCheck({}, () => ({ status: null, error: new Error('ENOENT') })), null)
   assert.equal(stopCheck({}, () => ({ status: 0 })), null)
+})
+
+test('stop: skips make check when the repo is unchanged since the last green run', () => {
+  const dir = tmp()
+  process.env.CLAUDE_PLUGIN_DATA = dir
+  try {
+    const calls = []
+    const run = stopRun(calls, { status: 0 })
+    assert.equal(stopCheck({ cwd: '/r' }, run), null)
+    assert.equal(calls.filter((c) => c === 'make check').length, 1)
+    assert.equal(stopCheck({ cwd: '/r' }, run), null) // same fingerprint: skipped
+    assert.equal(calls.filter((c) => c === 'make check').length, 1)
+    const changed = stopRun(calls, { status: 0 }, { status: 0, stdout: 'y' })
+    assert.equal(stopCheck({ cwd: '/r' }, changed), null) // changed tree: runs again
+    assert.equal(calls.filter((c) => c === 'make check').length, 2)
+  } finally {
+    delete process.env.CLAUDE_PLUGIN_DATA
+  }
+})
+
+test('stop: a timeout is reported, not blocked, and never marks green', () => {
+  const dir = tmp()
+  process.env.CLAUDE_PLUGIN_DATA = dir
+  process.env.GUARD_STOP_TIMEOUT_MS = '5000'
+  try {
+    const calls = []
+    const make = { status: null, error: Object.assign(new Error('spawnSync make ETIMEDOUT'), { code: 'ETIMEDOUT' }) }
+    const out = stopCheck({ cwd: '/r' }, stopRun(calls, make))
+    assert.equal(out.decision, undefined)
+    assert.match(out.systemMessage, /did not finish within 5 s/)
+    stopCheck({ cwd: '/r' }, stopRun(calls, { status: 0 }))
+    assert.equal(calls.filter((c) => c === 'make check').length, 2) // not skipped
+  } finally {
+    delete process.env.CLAUDE_PLUGIN_DATA
+    delete process.env.GUARD_STOP_TIMEOUT_MS
+  }
+})
+
+test('stop: GUARD_STOP_CHECK=off disables it', () => {
+  process.env.GUARD_STOP_CHECK = 'off'
+  try {
+    assert.equal(stopCheck({}, () => assert.fail('must not run')), null)
+  } finally {
+    delete process.env.GUARD_STOP_CHECK
+  }
 })
 
 test('lint: shellcheck findings come back as context; clean, missing tool or other files pass', () => {

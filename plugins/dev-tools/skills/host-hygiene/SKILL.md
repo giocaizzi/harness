@@ -26,6 +26,7 @@ In this skill's `scripts/`, `.sh` on macOS/Linux and `.ps1` on Windows. Env, def
 - **Register long-running services;** stop yours before you finish.
 - **Worktrees:** one per task, removed when its PR merges. Never install into another task's tree.
 - **Quota.** Before fanning out, check plan usage (Claude Code: `cd /tmp && claude -p "/usage"`; Copilot CLI: `/usage`) and back off near the limit. Stagger resumes after a reset.
+- **Mind the Stop hook budget.** The `guard` plugin runs `make check` when an agent stops, only if the repo changed since the last green run, and gives up after 1750 s (`GUARD_STOP_TIMEOUT_MS`; `GUARD_STOP_CHECK=off` disables it). A repo whose `check` runs longer than that never gets verified by the hook: make `check` fast (parallel tests) and run the long gate yourself through `heavy.sh`.
 - **End with a cleanup line** in your final report: what you started, what you stopped, what is left running and why.
 
 Why each rule exists, and the incidents behind it: [references/lessons.md](references/lessons.md) (read when designing host tooling or debugging a stuck lock).

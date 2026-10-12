@@ -26,3 +26,7 @@ A factory fixture (`user_factory(**overrides)`) lets each test state only the fi
 ## Boring, deterministic data
 
 Hardcode values unless randomness is what's under test, and use named semantic defaults (`DEFAULT_EMAIL = "user@example.com"`) so failures are reproducible and readable.
+
+## Keep `make check` fast
+
+`make check` gates every push and every agent stop, so a serial suite that takes tens of minutes slows all work. Run tests in parallel with `pytest -n auto` (pytest-xdist; make the tests order- and state-independent first) and keep a slow-test budget. Note the wall time of the full suite in the repo's `AGENTS.md`.
