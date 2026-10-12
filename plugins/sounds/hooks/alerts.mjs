@@ -34,3 +34,23 @@ export function turnSound(e, doneAfterSeconds = 0) {
   if (e.reason === 'error') return 'soundError'
   return e.durationMs >= doneAfterSeconds * 1000 ? 'soundDone' : null
 }
+
+// A minute-and-seconds duration for a notification: 45s, 2m 3s.
+const took = (ms) => (ms < 60_000 ? `${Math.round(ms / 1000)}s` : `${Math.floor(ms / 60_000)}m ${Math.round((ms % 60_000) / 1000)}s`)
+
+// The system notification a finished main-loop turn raises, if any: an answer after at least `afterSeconds`, or a
+// turn that ended badly. An interrupt is the person's own doing and raises none.
+export function turnNotice(e, afterSeconds = 60) {
+  if (e.agentId || e.reason === 'aborted') return null
+  if (e.reason === 'refusal') return 'The model refused the turn'
+  if (e.reason === 'error') return 'The turn ended on an API error'
+  return e.durationMs >= afterSeconds * 1000 ? `Turn finished in ${took(e.durationMs)}` : null
+}
+
+// The notification a change of the branch's PR checks raises (from the hud plugin's repo state), if any: checks that
+// were running and now passed or failed, on the same PR.
+export function ciNotice(previous, value) {
+  const [a, b] = [previous?.pr, value?.pr]
+  if (!a || !b || a.number !== b.number || a.ci !== 'pending' || b.ci === 'pending' || !b.ci) return null
+  return b.ci === 'fail' ? `Checks failed on #${b.number}` : `Checks passed on #${b.number}`
+}

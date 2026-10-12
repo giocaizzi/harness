@@ -1,7 +1,7 @@
 {
   "name": "sounds",
-  "version": "0.1.1",
-  "description": "Toasts and configurable sounds for Claude Code: usage limits, context, prompt-cache expiry and every way a turn ends (Claude mod)",
+  "version": "0.2.0",
+  "description": "Toasts, configurable sounds and system notifications for Claude Code: usage limits, context, prompt-cache expiry, every way a turn ends, questions waiting and PR checks finishing (Claude mod)",
   "author": {
     "name": "giocaizzi",
     "url": "https://github.com/giocaizzi"
@@ -216,6 +216,20 @@
       "description": "Linear gain from 0 to 4.",
       "required": false,
       "default": 1
+    },
+    "notify": {
+      "type": "boolean",
+      "title": "Notify: system notifications",
+      "description": "Send a system notification when a long turn finishes or ends badly, when Claude asks a question, and when the PR checks finish (with the hud plugin).",
+      "required": false,
+      "default": true
+    },
+    "notifyAfterSeconds": {
+      "type": "number",
+      "title": "Notify: shortest turn",
+      "description": "Turns shorter than this many seconds raise no 'finished' notification.",
+      "required": false,
+      "default": 60
     }
   }
 }

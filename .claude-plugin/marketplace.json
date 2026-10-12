@@ -91,8 +91,8 @@
     {
       "name": "sounds",
       "source": "./plugins/sounds",
-      "description": "Toasts and configurable sounds for Claude Code: usage limits, context, prompt-cache expiry and every way a turn ends (Claude mod)",
-      "version": "0.1.1",
+      "description": "Toasts, configurable sounds and system notifications for Claude Code: usage limits, context, prompt-cache expiry, every way a turn ends, questions waiting and PR checks finishing (Claude mod)",
+      "version": "0.2.0",
       "keywords": [
         "sounds",
         "notifications",
