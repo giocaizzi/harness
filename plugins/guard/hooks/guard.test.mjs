@@ -36,7 +36,7 @@ test('the Skill tool (either harness spelling) and a typed slash command count a
 test('title guard denies a non-conventional commit every time, on bash and PowerShell', async () => {
   const h = setup()
   await h({ hook_event_name: 'UserPromptSubmit', prompt: '/ship' })
-  for (const tool of ['Bash', 'bash', 'PowerShell', 'powershell']) {
+  for (const tool of ['Bash', 'bash', 'PowerShell', 'powershell', 'run_in_terminal']) {
     const d = decision(await h(pre(tool, 'git commit -m "bad"')))
     assert.equal(d.permissionDecision, 'deny', tool)
     assert.match(d.permissionDecisionReason, /not a Conventional Commit/)
@@ -143,4 +143,10 @@ test('pip and poetry are denied in a uv repo, allowed with a note once in a poet
     assert.match(first.additionalContext, new RegExp(`uses ${manager}.*uv is preferred`))
     assert.equal(decision(await h2({ ...pre('PowerShell', 'pip install x'), cwd })), undefined, 'note once per session')
   }
+})
+
+test('VS Code ignores matchers: a non-shell tool with a command passes untouched', async () => {
+  const h = setup()
+  assert.equal(decision(await h(pre('read_file', 'git commit -m "bad"'))), undefined)
+  assert.equal(decision(await h(pre('run_in_terminal', 'git commit'))).permissionDecision, 'deny')
 })
