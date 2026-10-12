@@ -14,7 +14,8 @@ Agent rules enforced as hooks, from one plugin, for Claude Code, Copilot CLI and
 | `hooks/stop.mjs` | `make check` before the agent stops (was the dotfiles `stop-make-check.sh`/`.ps1`). |
 | `hooks/lint.mjs` | shellcheck / PSScriptAnalyzer after an edit (was the dotfiles `post-edit-lint.sh`/`.ps1`). |
 | `hooks/awake.mjs` | Keep-awake keeper tied to the harness process. |
-| `hooks/mod.mjs` | Claude Code mod (`modules` in `hooks.json`, ignored by Copilot CLI and VS Code): usage throttle and the token-weather band. `hooks/weather.mjs` holds its pure display logic; `types/index.d.ts` declares its `$.state`. |
+| `hooks/mod.mjs` | Claude Code mod (`modules` in `hooks.json`, ignored by Copilot CLI and VS Code): usage throttle and the token-weather band. `hooks/weather.mjs` holds its pure display logic, shared with `hooks/statusline.mjs`; `types/index.d.ts` declares its `$.state`. |
+| `hooks/statusline.mjs` | Copilot CLI status line (`statusLine.command`): the token-weather line from the status JSON Copilot pipes on stdin. |
 
 Events:
 
@@ -40,7 +41,7 @@ Events:
 - **Stop runs `make check` once.** No make, no Makefile or no `check` target: the agent stops. A failure blocks the stop with the last 40 lines; the next stop (`stop_hook_active`) always passes, so it cannot loop (Copilot also caps at 8 blocks).
 - **Lint is advice, not a block.** Findings come back as `hookSpecificOutput.additionalContext`; a missing shellcheck, pwsh or PSScriptAnalyzer skips silently. The file path is `tool_input.file_path` (Claude) or `tool_input.path` (Copilot).
 - **Keep-awake follows the harness.** The hook walks past shell parents to the harness pid (under VS Code, the extension host: the keeper lives as long as the window) and starts a detached keeper bound to it: `caffeinate -i -w <pid>` (macOS), `systemd-inhibit --what=idle:sleep tail --pid=<pid> -f /dev/null` (Linux), a hidden PowerShell holding `SetThreadExecutionState(ES_CONTINUOUS|ES_SYSTEM_REQUIRED)` until `Wait-Process -Id <pid>` (Windows). The keeper pid is kept in `$CLAUDE_PLUGIN_DATA/awake/<harness pid>.pid`, so resume, `/clear` and compaction reuse it. It prevents idle sleep only; the display may still sleep.
-- **The mod is Claude-only.** Copilot CLI and VS Code have no mods API and no rate-limit windows, so the throttle and the band have no Copilot side (Copilot's footer already shows quota and context). The band calls `await next(e)` and draws its line above whatever plugins beneath drew (next-steps and the like), never in their place. It draws from session start (context part), counts only main-loop turns, suppresses `cache cold` on the first turn (which always writes the cache), forgets the last turn on `/clear` (`session.end` with `reason: clear`), and counts down the prompt-cache TTL (`promptCacheTtl` setting, `5m` when unset) from the end of the last turn, redrawing once a second.
+- **The mod is Claude-only.** Copilot CLI and VS Code have no mods API and no rate-limit windows, so the throttle has no Copilot side. The weather line reaches Copilot CLI as a status line instead: Copilot pipes `context_window` (context %, cumulative input, cache read and write tokens) to `statusLine.command`, so it shows `ctx N% · cache N%` with the session's hit rate (Copilot exposes no per-turn usage and no cache TTL, so no countdown). VS Code has no status-line hook. The band calls `await next(e)` and draws its line above whatever plugins beneath drew (next-steps and the like), never in their place. It draws from session start (context part), counts only main-loop turns, suppresses `cache cold` on the first turn (which always writes the cache), forgets the last turn on `/clear` (`session.end` with `reason: clear`), and counts down the prompt-cache TTL (`promptCacheTtl` setting, `5m` when unset) from the end of the last turn, redrawing once a second.
 - **`ask` is the harness's own prompt.** Under `claude -p` or a non-interactive Copilot run nobody can answer, so the risky command does not run.
 - **The skill enforcer counts the `skill` tool.** Claude's `Skill`, Copilot CLI's and VS Code's `skill` record the loaded skill; a skill read any other way is not seen, so the reminder fires once and the retry passes.
 
@@ -59,6 +60,9 @@ copilot plugin install guard@giocaizzi-harness
 ```
 
 VS Code: add `giocaizzi/harness` to `chat.plugins.marketplaces` (with `chat.plugins.enabled` on), then install `guard` from `@agentPlugins` in the Extensions view; or run **Chat: Install Plugin From Source** with the repo URL.
+
+Copilot CLI token weather: in `~/.copilot/settings.json` (Windows: `%USERPROFILE%\.copilot\settings.json`) set
+`"statusLine": { "type": "command", "command": "node ~/.copilot/installed-plugins/giocaizzi-harness/guard/hooks/statusline.mjs" }`.
 
 Managed machines enable it from the dotfiles settings (`enabledPlugins: { "guard@giocaizzi-harness": true }` in both the Claude and the Copilot settings templates).
 
@@ -86,7 +90,7 @@ echo '{"hook_event_name":"PreToolUse","session_id":"t","tool_name":"Bash","tool_
   | CLAUDE_PLUGIN_DATA="$(mktemp -d)" node plugins/guard/hooks/guard.mjs
 ```
 
-In a live Claude session the band shows `ctx N%` at once and `cache N% · ttl M:SS` after the first turn. In a uv repo: `pip install x` and `poetry add x` are denied; in a poetry or requirements repo they run, with one note. In any session: ending a turn in a repo whose `make check` fails continues the turn once with the failure; `pmset -g assertions | grep caffeinate` (macOS) or `systemd-inhibit --list` (Linux) shows the keeper; `git commit -m "bad"` is denied with the Conventional Commit hint; `rm -rf build` shows the permission prompt with a `Would affect:` preview; `rm -rf /tmp/x` runs without asking.
+In a live Claude session the band shows `ctx N%` at once and `cache N% · ttl M:SS` after the first turn. In Copilot CLI the status line shows `ctx N%` at once and `cache N%` after the first turn. In a uv repo: `pip install x` and `poetry add x` are denied; in a poetry or requirements repo they run, with one note. In any session: ending a turn in a repo whose `make check` fails continues the turn once with the failure; `pmset -g assertions | grep caffeinate` (macOS) or `systemd-inhibit --list` (Linux) shows the keeper; `git commit -m "bad"` is denied with the Conventional Commit hint; `rm -rf build` shows the permission prompt with a `Would affect:` preview; `rm -rf /tmp/x` runs without asking.
 
 ## Troubleshooting
 
