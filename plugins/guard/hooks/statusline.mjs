@@ -74,7 +74,7 @@ export function claudeStatusline(status, facts) {
   if (facts.gcp) line1.push(paint(C.yellow, `[${facts.gcp}]`))
   if (status.session_name) line1.push(paint(C.blue, `(${status.session_name})`))
 
-  const line2 = [paint(C.blue, '└|') + ' ' + paint(C.pink, `[${path}]`)]
+  const line2 = [paint(C.blue, '└') + paint(C.pink, `[${path}]`)]
   if (status.model?.display_name) line2.push(paint(C.white, status.model.display_name))
   const ctx = status.context_window?.used_percentage
   if (ctx != null) line2.push(paint(tone(ctx), `ctx:${Math.trunc(ctx)}%`))
@@ -86,7 +86,7 @@ export function claudeStatusline(status, facts) {
   }
   const usd = status.cost?.total_cost_usd
   if (usd != null) line2.push(paint(C.grey, `$${usd.toFixed(2)}`))
-  return `${line1.join(' ')}\n${line2.join('  ')}\n`
+  return `${line1.join(' ')}\n${line2.join(' ')}\n`
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
