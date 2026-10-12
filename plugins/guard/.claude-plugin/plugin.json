@@ -1,0 +1,12 @@
+{
+  "name": "guard",
+  "version": "0.1.0",
+  "description": "Agent guardrails for Claude Code and Copilot CLI: skill enforcer, Conventional Commit title guard, host guard and risky-command ask with blast radius",
+  "author": {
+    "name": "giocaizzi",
+    "url": "https://github.com/giocaizzi"
+  },
+  "repository": "https://github.com/giocaizzi/skills",
+  "license": "MIT",
+  "keywords": ["hooks", "guardrails", "safety", "conventional-commits", "claude-code", "copilot-cli"]
+}

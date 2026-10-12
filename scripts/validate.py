@@ -16,11 +16,13 @@ Checks:
   4. marketplace.json lists every plugins/<dir> with matching versions and source paths.
   5. The root README links to every plugin, and each plugin's README lists all its skills and agents.
   6. Generated agents are in sync with src/agents/ sources (delegates to build_agents.py --check).
+  7. Every file a plugin's hooks/hooks.json names (command scripts, mod modules) exists.
 """
 
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -231,6 +233,31 @@ def check_readme(r: Reporter) -> None:
                     r.ok(f"{plugin_dir.name}/README.md → agent {agent}")
 
 
+def check_hooks(r: Reporter) -> None:
+    """A plugin's hooks/hooks.json may only point at files it ships (both harnesses skip a missing one silently)."""
+    r.section("Plugin hooks ↔ files")
+    for plugin_dir in _discover_plugins():
+        hooks_json = plugin_dir / "hooks" / "hooks.json"
+        if not hooks_json.exists():
+            continue
+        rel = hooks_json.relative_to(REPO_ROOT)
+        try:
+            data = _load_json(hooks_json)
+        except json.JSONDecodeError as e:
+            r.fail(f"{rel}: invalid JSON: {e}")
+            continue
+        paths = [hooks_json.parent / m for m in data.get("modules", [])]
+        for groups in data.get("hooks", {}).values():
+            for group in groups:
+                for hook in group.get("hooks", []):
+                    paths += [plugin_dir / p for p in re.findall(r"\$\{CLAUDE_PLUGIN_ROOT\}/([^\"'\s]+)", hook.get("command", ""))]
+        missing = [str(p.relative_to(REPO_ROOT)) for p in paths if not p.exists()]
+        if missing:
+            r.fail(f"{rel}: references missing files: {', '.join(missing)}")
+        else:
+            r.ok(f"{plugin_dir.name}: {len(paths)} hook file(s)")
+
+
 def check_build_sync(r: Reporter) -> None:
     r.section("Generated agents ↔ src/agents/ sources")
     result = subprocess.run(
@@ -252,6 +279,7 @@ def main() -> None:
     check_marketplace(r)
     check_repo_version_sync(r)
     check_build_sync(r)
+    check_hooks(r)
     check_readme(r)
 
     print()

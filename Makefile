@@ -13,8 +13,8 @@ check: lint test ## Standard entrypoint: lint + test.
 
 lint: validate ## Alias for validate (repo invariant checks are the lint).
 
-test: ## No tests configured.
-	@echo "no tests configured"
+test: ## Run the plugins' hook tests (Node 22+).
+	@node --test $(wildcard plugins/*/core/*.test.mjs plugins/*/hooks/*.test.mjs)
 
 new-agent: ## Scaffold src/agents/<NAME>/.  Usage: make new-agent NAME=<name> PLUGIN=<plugin>
 	@scripts/new-agent.sh "$(NAME)" "$(PLUGIN)"
