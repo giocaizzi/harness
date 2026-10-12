@@ -13,7 +13,9 @@ Toasts and configurable sounds for Claude Code (a mod). No skills or agents. Arc
 | `soundAborted`, `soundRefused`, `soundError` | A turn interrupted (also a message sent mid-turn), refused, or ended by an API error | `off`, `error`, `error` |
 | `soundSubagent` | A subagent's turn ended | `tick` |
 
-Each is a picker in `/config` over `off`, `chime`, `ping`, `alert`, `warn`, `error`, `done`, `tick`; `soundGain` sets the volume. Sounds play on macOS only.
+| `notify` | System notification: a turn of at least `notifyAfterSeconds` (default 60) finishing or ending badly, Claude asking a question, the PR checks finishing (with `hud`) | on |
+
+Each sound is a picker in `/config` over `off`, `chime`, `ping`, `alert`, `warn`, `error`, `done`, `tick`; `soundGain` sets the volume. Sounds play on macOS only.
 
 ## Install
 

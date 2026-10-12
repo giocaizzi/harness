@@ -65,3 +65,17 @@ test('a sound set to off plays nothing; a long-turn threshold skips short turns'
   await $.turn.complete({ ...base, reason: 'answer', durationMs: 31_000 })
   expect(clips).toEqual(['sounds/done.wav'])
 })
+
+test('a long turn and a question raise system notifications', { options: { notifyAfterSeconds: 10 } }, async ($, on) => {
+  mock.clock(on)
+  on('session.usage', () => usage(10))
+  on('turn.complete', () => ({ text: 'ok' }))
+  on('audio.play', () => ({ value: undefined }) as never)
+  const sent: string[] = []
+  on('ui.notify', (_$, e) => (sent.push(e.text), { value: { isSent: true, channel: 'terminal' } }) as never)
+  on('tool.call', () => ({ result: { answers: {} } }) as never)
+  await $.turn.complete({ answer: '', reason: 'answer', isAborted: false, turnId: 't', durationMs: 30_000 })
+  await $.turn.complete({ answer: '', reason: 'answer', isAborted: false, turnId: 't', durationMs: 3_000 })
+  await $.tool.call({ tool: 'AskUserQuestion', input: { questions: [{ question: 'Which defaults?' }] }, tool_use_id: 'q' } as never)
+  expect(sent).toEqual(['Turn finished in 30s', 'Claude is asking: Which defaults?'])
+})

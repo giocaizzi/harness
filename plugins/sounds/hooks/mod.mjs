@@ -1,7 +1,7 @@
 // Claude Code mod (hooks.json `modules`; Copilot ignores the key): a toast and a sound for each limit, context and
 // prompt-cache alert, and a sound for each way a turn ends. Every sound is a `userConfig` picker in /config.
 import { atom, read, update } from 'claude-code'
-import { TTL_MS, alerts, clock, turnSound } from './alerts.mjs'
+import { TTL_MS, alerts, ciNotice, clock, turnNotice, turnSound } from './alerts.mjs'
 
 // The last main-loop turn: when it ended, and the alert levels raised so far.
 const last = atom({ plugin: 'sounds', key: 'last' }, null)
@@ -9,6 +9,15 @@ const last = atom({ plugin: 'sounds', key: 'last' }, null)
 // A sound by its setting's value (`off` plays nothing); macOS only, elsewhere nothing plays.
 async function clip($, name, gain = 1) {
   if (name && name !== 'off') await $.audio.play({ asset: `sounds/${name}.wav` }, { gain }).catch(() => {})
+}
+
+// A system notification through the person's own channel, for when the terminal is not in front; never fails a hook.
+async function notify($, text) {
+  try {
+    await $.ui.notify(text, { title: 'Claude Code' })
+  } catch {
+    // no channel, or a Notification hook refused it
+  }
 }
 
 // The context % and the rate-limit windows' percent used, by kind (five_hour, seven_day, spend_limit).
@@ -71,10 +80,25 @@ export function register(on, options = {}) {
         keys.add(x.key)
       }
     }
+    const notice = options.notify === false ? null : turnNotice(e, options.notifyAfterSeconds)
+    if (notice) await notify($, notice)
     const done = turnSound(e, options.doneAfterSeconds)
     if (done) keys.add(done)
     // One clip per distinct sound: two limits crossing together play it once.
     for (const name of new Set([...keys].map((k) => options[k]))) await clip($, name, options.soundGain)
+    return next(e)
+  })
+
+  // A question waits for the person: notify as it is asked.
+  on('tool.call', { tool: 'AskUserQuestion' }, async ($, e, next) => {
+    if (options.notify !== false) await notify($, `Claude is asking: ${e.input?.questions?.[0]?.question ?? 'a question'}`)
+    return next(e)
+  })
+
+  // The hud plugin's PR state: checks that finish while the person is elsewhere. Nothing without hud.
+  on('state.set', { plugin: 'hud', key: 'repo' }, async ($, e, next) => {
+    const notice = options.notify === false ? null : ciNotice(e.previous, e.value)
+    if (notice) await notify($, notice)
     return next(e)
   })
 }
