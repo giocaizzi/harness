@@ -79,7 +79,7 @@
       "name": "hud",
       "source": "./plugins/hud",
       "description": "Heads-up display for Claude Code and Copilot CLI: token-weather band and /weather pane, PR and CI strip, spinner that names the running tool (Claude mod), and a two-line status line for both CLIs",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "keywords": [
         "statusline",
         "ui",
@@ -92,7 +92,7 @@
       "name": "sounds",
       "source": "./plugins/sounds",
       "description": "Toasts and configurable sounds for Claude Code: usage limits, context, prompt-cache expiry and every way a turn ends (Claude mod)",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "keywords": [
         "sounds",
         "notifications",

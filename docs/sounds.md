@@ -13,7 +13,7 @@ Toasts and sounds for Claude Code, drawn by a mod. The visual display is [hud](h
 ## Decisions
 
 - **Alerts.** The context crossing 80% and 90%, each limit window (5h, 7d, gateway spend) crossing 80%, 90% and 100%: one toast each, raised once and re-armed after the level is left (a compaction re-arms the context). A minute before the prompt cache expires and when it has: one toast per turn.
-- **Sounds.** Each alert, and each way a turn ends (answer, interrupt, refusal, API error, subagent), has its own `userConfig` picker over `off` and the clips, in `/config`. `doneAfterSeconds` skips the finished sound for shorter turns; `soundGain` sets the volume (0 to 4). Two alerts of one turn that share a sound play it once. Defaults: every sound on, `doneAfterSeconds` 0.
+- **Sounds.** Each alert, and each way a turn ends (answer, interrupt, refusal, API error, subagent), has its own `userConfig` picker over `off` and the clips, in `/config`. `doneAfterSeconds` skips the finished sound for shorter turns; `soundGain` sets the volume (0 to 4). Two alerts of one turn that share a sound play it once. Defaults: every sound on but `soundAborted` (a message sent mid-turn instead of queued interrupts the turn, so it would play every time), `doneAfterSeconds` 0.
 - **macOS only.** The engine plays clips with `afplay`; Linux and Windows terminals have no player and play nothing. Copilot CLI and VS Code have no mods API ([#47](https://github.com/giocaizzi/harness/issues/47)).
 
 ## Install

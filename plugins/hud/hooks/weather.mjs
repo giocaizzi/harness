@@ -36,15 +36,25 @@ export function activityLabel(tool) {
   return a ? `${a[0]} ${a[1]}` : null
 }
 
-// The branch's pull request and unpushed work, from `gh pr view --json number,statusCheckRollup` (null: no PR) and
-// `git rev-list --left-right --count @{u}...HEAD` ("behind<TAB>ahead", null: no upstream). ci: fail | pending | pass.
-export function repoState(pr, counts) {
+// The branch's pull request, unpushed work and uncommitted changes, from `gh pr view --json number,statusCheckRollup`
+// (null: no PR), `git rev-list --left-right --count @{u}...HEAD` ("behind<TAB>ahead", null: no upstream),
+// `git diff --shortstat HEAD` and `git status --porcelain` (null: not a repository).
+// ci: fail | pending | pass; passed of total checks.
+export function repoState(pr, counts, shortstat = null, porcelain = null) {
   const [behind = 0, ahead = 0] = (counts ?? '').trim().split(/\s+/).map(Number)
   const checks = pr?.statusCheckRollup ?? []
   const failed = (c) => ['FAILURE', 'ERROR', 'TIMED_OUT', 'CANCELLED', 'STARTUP_FAILURE', 'ACTION_REQUIRED'].includes(c.conclusion ?? c.state)
   const waiting = (c) => (c.status ? c.status !== 'COMPLETED' : c.state === 'PENDING')
   const ci = checks.some(failed) ? 'fail' : checks.some(waiting) ? 'pending' : checks.length ? 'pass' : null
-  return { pr: pr ? { number: pr.number, ci } : null, ahead: ahead || 0, behind: behind || 0 }
+  const passed = checks.filter((c) => !failed(c) && !waiting(c)).length
+  const n = (re) => Number(re.exec(shortstat ?? '')?.[1] ?? 0)
+  const untracked = (porcelain ?? '').split('\n').filter((l) => l.startsWith('??')).length
+  return {
+    pr: pr ? { number: pr.number, ci, passed, total: checks.length } : null,
+    ahead: ahead || 0,
+    behind: behind || 0,
+    changes: { files: n(/(\d+) files? changed/), added: n(/(\d+) insertions?/), removed: n(/(\d+) deletions?/), untracked },
+  }
 }
 
 // Cells of a bar chart, row-major [codePoint, color, background] triplets, one column per value (0-100). Heights
