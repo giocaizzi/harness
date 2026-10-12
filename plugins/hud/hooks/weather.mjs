@@ -50,7 +50,7 @@ export function repoState(pr, counts, shortstat = null, porcelain = null) {
   const n = (re) => Number(re.exec(shortstat ?? '')?.[1] ?? 0)
   const untracked = (porcelain ?? '').split('\n').filter((l) => l.startsWith('??')).length
   return {
-    pr: pr ? { number: pr.number, url: pr.url ?? null, ci, passed, total: checks.length } : null,
+    pr: pr ? { number: pr.number, url: pr.url ?? null, state: (pr.state ?? 'OPEN').toLowerCase(), ci, passed, total: checks.length } : null,
     ahead: ahead || 0,
     behind: behind || 0,
     changes: { files: n(/(\d+) files? changed/), added: n(/(\d+) insertions?/), removed: n(/(\d+) deletions?/), untracked },

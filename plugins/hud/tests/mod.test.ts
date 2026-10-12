@@ -199,6 +199,23 @@ test('/subagents lists each spawned subagent and how it ended', async ($, on) =>
   await done.unmount()
 })
 
+test('a merged PR says merged instead of its checks', async ($, on) => {
+  mock.clock(on)
+  on('session.usage', () => usage(10))
+  on('settings.read', () => ({ value: {} }))
+  on('session.start', () => ({ cwd: '/r' }))
+  on('command.register', () => ({ value: undefined }))
+  on('process.run', (_$, e) => ({
+    value: { exitCode: 0, stderr: '', isStdoutTruncated: false, isStderrTruncated: false, stdout: e.argv[0] === 'gh' ? JSON.stringify({ number: 62, url: 'https://x/62', state: 'MERGED', statusCheckRollup: [{ status: 'IN_PROGRESS' }] }) : '' },
+  }))
+  bottom(on)
+  await $.session.start({ cwd: '/r' })
+  const ui = await $.ui.mount({ plugin: 'hud', surface: 'terminal', ...BAND })
+  expect(await ui.find({ type: 'Text', text: /merged/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /\uf252/ })).toBeUndefined()
+  await ui.unmount()
+})
+
 test('/ctx draws the breakdown grid and one row per category', async ($, on) => {
   const square = (categoryName: string, isFilled: boolean) => ({ color: 'x', isFilled, categoryName, tokens: 1, percentage: 1, squareFullness: 1 })
   on('session.usage', () => ({
