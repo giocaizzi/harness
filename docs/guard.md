@@ -47,15 +47,15 @@ Both harnesses read the repo's one marketplace.
 
 ```bash
 # Claude Code
-claude plugin marketplace add giocaizzi/skills
-claude plugin install guard@giocaizzi-skills
+claude plugin marketplace add giocaizzi/harness
+claude plugin install guard@giocaizzi-harness
 
 # Copilot CLI
-copilot plugin marketplace add giocaizzi/skills
-copilot plugin install guard@giocaizzi-skills
+copilot plugin marketplace add giocaizzi/harness
+copilot plugin install guard@giocaizzi-harness
 ```
 
-Managed machines enable it from the dotfiles settings (`enabledPlugins: { "guard@giocaizzi-skills": true }` in both the Claude and the Copilot settings templates).
+Managed machines enable it from the dotfiles settings (`enabledPlugins: { "guard@giocaizzi-harness": true }` in both the Claude and the Copilot settings templates).
 
 ## Verify
 

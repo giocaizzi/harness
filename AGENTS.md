@@ -236,8 +236,8 @@ Use semantic versioning (MAJOR.MINOR.PATCH) at three levels:
 
 | Harness | Install marketplace | Install one plugin |
 |---|---|---|
-| Claude Code | `/plugin marketplace add giocaizzi/skills` | `/plugin install <plugin>@giocaizzi-skills` |
-| GitHub Copilot CLI | `copilot plugin marketplace add giocaizzi/skills` | `copilot plugin install <plugin>@giocaizzi-skills` |
+| Claude Code | `/plugin marketplace add giocaizzi/harness` | `/plugin install <plugin>@giocaizzi-harness` |
+| GitHub Copilot CLI | `copilot plugin marketplace add giocaizzi/harness` | `copilot plugin install <plugin>@giocaizzi-harness` |
 | VS Code Copilot | Browse `@agentPlugins` in the Extensions sidebar after adding the marketplace, or use **Chat: Install Plugin From Source** with the repo URL. | — |
 
 The repo-root `.claude-plugin/marketplace.json` is what both CLI harnesses fetch. Each plugin then exposes the right manifest to the right harness via `.claude-plugin/plugin.json` (Claude) and `.github/plugin/plugin.json` (Copilot).

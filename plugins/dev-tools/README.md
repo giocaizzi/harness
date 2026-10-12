@@ -30,7 +30,7 @@ General development tooling — git, GitHub, conventional commits, semantic vers
 
 ```bash
 # Claude Code / Copilot CLI
-/plugin install dev-tools@giocaizzi-skills
+/plugin install dev-tools@giocaizzi-harness
 ```
 
 See the [repository README](../../README.md) for marketplace setup and local-development instructions.
