@@ -21,7 +21,7 @@ To bump a version, land the right Conventional Commit and let the Release PR app
 - `BREAKING CHANGE:` must be a real footer line with no leading whitespace, or the major bump is missed.
 - Version-bearing files beyond the `release-type` default (another `pyproject.toml`, a `version.py`, Helm `Chart.yaml`, a Dockerfile `LABEL`) must be listed in `extra-files`, added in the same PR that introduces them, or they drift.
 - Cross-cutting `chore` commits touch no package and produce no bump in monorepos.
-- **`uv.lock` goes stale after every release** in a uv project: it records the project's own version, and release-please never bumps it. Do not try `extra-files` for it (its TOML updater cannot select a `[[package]]` by name, only by position, which breaks when dependencies change). Refresh it in the release workflow instead: see the recipe in `references/config-recipes.md`.
+- **`uv.lock` goes stale after every release** in a uv project unless listed in `extra-files`: it records the project's own version. Add one `toml` entry per `[[package]]` that carries a version you bump, filtering on `@.name.value` (the TOML parser wraps strings, so `@.name=='x'` matches nothing). Recipe in `references/config-recipes.md`.
 - Hidden types (`docs`, `chore`, ...) trigger no release and no changelog entry by default; surface one via `changelog-sections` with `"hidden": false`.
 
 Config snippets (extra-files types, monorepo layout, changelog sections) are in [references/config-recipes.md](references/config-recipes.md); read when editing `release-please-config.json`.

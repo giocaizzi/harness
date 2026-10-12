@@ -48,29 +48,17 @@ Default mapping: feat->minor/Features, fix->patch/Bug Fixes, perf, refactor, rev
 - A commit affects a package when it touches files under its path.
 - Release PR title: `chore(release): X.Y.Z`, or `chore(main): release X.Y.Z` in monorepos.
 
-## uv projects: refresh `uv.lock` on the release PR
+## uv projects: bump the versions in `uv.lock`
 
-`uv.lock` names the project (and each workspace package) with its own `version`, so after a release it still shows the old one and a plain `uv run` rewrites it. `extra-files` cannot fix it: release-please's TOML updater with a filter path (`$.package[?(@.name=='x')].version`) matches nothing (checked against release-please 17), and a positional path (`$.package[0].version`) breaks when dependencies change.
+`uv.lock` names the project (and each workspace package) with its own `version`, so after a release it still shows the old one and a plain `uv run` rewrites it. List the lock in `extra-files`, one `toml` entry per package, selecting the `[[package]]` by name with `.name.value`:
 
-Run `uv lock` on the release PR branch in the release workflow, with the release-please GitHub App token so CI runs on the push. Give the action step `id: rp`, then:
-
-```yaml
-      - if: ${{ steps.rp.outputs.prs_created == 'true' }}
-        uses: actions/checkout@v7
-        with:
-          ref: ${{ fromJSON(steps.rp.outputs.pr).headBranchName }}
-          token: ${{ steps.app-token.outputs.token }}
-      - if: ${{ steps.rp.outputs.prs_created == 'true' }}
-        uses: astral-sh/setup-uv@v7
-      - if: ${{ steps.rp.outputs.prs_created == 'true' }}
-        run: |
-          uv lock
-          if ! git diff --quiet -- uv.lock; then
-            git config user.name "release-please[bot]"
-            git config user.email "release-please[bot]@users.noreply.github.com"
-            git commit -m "chore: refresh uv.lock" -- uv.lock
-            git push
-          fi
+```json
+{ "type": "toml", "path": "uv.lock", "jsonpath": "$.package[?(@.name.value=='my-pkg')].version" }
 ```
 
-Reference: `giocaizzi/greenhouse` `.github/workflows/release-please.yml`.
+- The `.value` is required: release-please's TOML parser wraps strings, so `@.name=='my-pkg'` silently matches nothing ("No entries modified").
+- Avoid positional paths (`$.package[0].version`): the index moves when dependencies change.
+- Add an entry when a workspace package is added. Check a new entry against the real file before relying on it: run the `GenericToml` updater from `release-please` over `uv.lock` and confirm only the version lines change.
+- Fallback if a lock cannot be matched: run `uv lock` on the release PR branch in the release workflow, with the release-please GitHub App token so CI runs on the push.
+
+Reference: `tickylabs/ticky` and `giocaizzi/greenhouse` `release-please-config.json`.
