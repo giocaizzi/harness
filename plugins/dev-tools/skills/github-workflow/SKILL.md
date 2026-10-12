@@ -80,6 +80,8 @@ Merge queue is a repository-level ruleset rule and is not offered on every repos
 
 Keep one canonical standard in a single repo (`<owner>/.github`): a prose standard in `docs/`, machine-readable parts (ruleset JSON, labels, repo settings) in `standard/`, and a read-only audit script that reports drift per repo. Change the standard there first, then the repos.
 
+New repos start from a template repository that already carries the standard files (CI with the aggregate `check`, PR-title and label-guard workflows, Dependabot, Makefile, `AGENTS.md`), then one onboarding command applies settings, labels and workflows and adds the ruleset once `check` is green. On a personal account nothing applies the standard automatically, so the audit must run on a schedule with a read-only token and fail on an empty scope.
+
 Apply in this order, lowest risk first: repo settings, labels, CI with one aggregate `check` job, and only then the ruleset that requires it. A ruleset applied to a repo without that check blocks every merge. Re-run the audit after each repo; it must report no drift.
 
 ## Before handoff
