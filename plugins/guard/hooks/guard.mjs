@@ -1,4 +1,4 @@
-// Command hook for Claude Code and Copilot CLI: one hooks.json, one script, every OS.
+// Command hook for Claude Code, Copilot CLI and VS Code Copilot: one hooks.json, one script, every OS.
 // Both harnesses send Claude's payload (snake_case, `hook_event_name`); Copilot maps the PascalCase events
 // and reads `hookSpecificOutput.permissionDecision`. A hook is a fresh process, so per-session facts
 // (loaded skills, rules already reminded) live in a JSON file under $CLAUDE_PLUGIN_DATA.
@@ -12,7 +12,9 @@ import { deniedBy, evaluateCommand, isHeavy, isRisky, previewCommand, withPrevie
 import { cpuPercentFrom } from '../core/host.mjs'
 import { rules } from '../core/rules.mjs'
 
-const SHELLS = new Set(['bash', 'powershell'])
+// Claude Bash/PowerShell, Copilot bash/powershell, VS Code run_in_terminal. VS Code ignores matchers, so every
+// tool call reaches this script and anything else passes untouched.
+const SHELLS = new Set(['bash', 'powershell', 'run_in_terminal'])
 const WEEK_MS = 7 * 24 * 3600 * 1000
 
 // Per-session state: { reminded: string[], loaded: string[] }.
