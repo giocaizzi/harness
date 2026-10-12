@@ -15,6 +15,20 @@ export const ICON = { cache: '\uf472', ttl: '\uf520' } // nf-oct-database, nf-oc
 // A weather icon for how full the context is: sunny, cloudy, showers, thunderstorm, lightning (nf-weather-*).
 export const glyph = (ctx) => (ctx == null ? '' : ctx < 25 ? '\ue30d' : ctx < 50 ? '\ue302' : ctx < 75 ? '\ue319' : ctx < 90 ? '\ue31d' : '\ue315')
 
+// A battery for how much of a rate-limit window is left (nf-fa-battery_0..4, full to empty as `used` rises).
+export const battery = (used) => String.fromCharCode(0xf244 - Math.min(4, Math.max(0, Math.round((100 - used) / 25))))
+
+// What a turn's end raises: the context crossing 80 and 90, the 5-hour window passing 90. `before` is what was raised
+// already, so a level is announced once and again only after it was left.
+export function alerts(ctx, five, before = { ctx: 0, five: false }) {
+  const level = ctx >= 90 ? 90 : ctx >= 80 ? 80 : 0
+  const hot = five >= 90
+  const toasts = []
+  if (level > before.ctx) toasts.push(level === 90 ? `Context ${ctx}%: compact now` : `Context ${ctx}%: compact soon`)
+  if (hot && !before.five) toasts.push(`5h window ${Math.round(five)}% used`)
+  return { toasts, now: { ctx: level, five: hot }, isLoud: (level === 90 && before.ctx < 90) || (hot && !before.five) }
+}
+
 // Cells of a bar chart, row-major [codePoint, color, background] triplets, one column per value (0-100). Heights
 // span lo..hi (the tallest bar fills `rows`, the lowest keeps one eighth so it shows); colours are 0xRRGGBB by the
 // value itself. 0x01000000 is the default background.

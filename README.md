@@ -39,7 +39,7 @@ Each plugin's README lists the skills, agents and hooks it ships.
 | `guard` post-edit lint, stop `make check` | yes | yes | yes |
 | `guard` keep-awake | yes | yes | yes, while the window is open |
 | `guard` usage throttle | yes (mod) | no: no mods API, no rate-limit windows | no: no mods API |
-| `guard` token weather | yes, band, spinner and pane (mod) | yes, status line (`statusLine.command`) | no: no status-line hook |
+| `guard` token weather | yes, band and pane (mod), plus the status line | yes, status line (`statusLine.command`) | no: no status-line hook |
 
 Hosts: everything runs on macOS, Linux and Windows; the hooks need `node` 22+ on PATH. Checked live on macOS only (the `host-hygiene` `.ps1` scripts run in CI under Linux PowerShell): Windows is pending ([#25](https://github.com/giocaizzi/harness/issues/25)) and the Linux and Windows keep-awake keepers are unit-tested only. Details per hook: [docs/guard.md](docs/guard.md).
 
