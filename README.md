@@ -16,6 +16,21 @@ Compatible with most of AI harnesses — [Claude Code](https://code.claude.com/)
 
 Each plugin's README lists the skills, agents and hooks it ships.
 
+## Compatibility
+
+| Plugin / feature | Claude Code | GitHub Copilot CLI | VS Code Copilot (agent plugins) |
+|---|---|---|---|
+| Marketplace `.claude-plugin/marketplace.json` | yes | yes | yes, via `chat.plugins.marketplaces` |
+| Skills (`api`, `python`, `javascript`, `dev-tools`) | yes | yes | yes |
+| Agents (`api-reviewer`, `scout`, `escalate`) | yes, `agents/*.md` | yes, `copilot/*.agent.md` | yes, `agents/*.md` (Claude format): tool names and `sonnet`/`haiku`/`opus` are mapped; other model ids (`escalate`) use the picked model; `effort` is ignored |
+| `guard` command hooks (skill enforcer, title guard, host guard, pip deny, risky ask, skill tracker) | yes | yes | yes, Local agent (`chat.useHooks`) |
+| `guard` post-edit lint, stop `make check` | yes | yes | yes |
+| `guard` keep-awake | yes | yes | yes, while the window is open |
+| `guard` usage throttle | yes (mod) | no: no mods API, no rate-limit windows | no: no mods API |
+| `guard` token weather | yes, band above the prompt (mod) | yes, status line (`statusLine.command`) | no: no status-line hook |
+
+Hosts: everything runs on macOS, Linux and Windows; the hooks need `node` 22+ on PATH. Checked live on macOS only: Windows is pending ([#25](https://github.com/giocaizzi/harness/issues/25)) and the Linux and Windows keep-awake keepers are unit-tested only. Details per hook: [docs/guard.md](docs/guard.md).
+
 ---
 
 ## Install
@@ -35,8 +50,13 @@ Install the marketplace and plugins under your preferred harness:
 
 ### VS Code Copilot
 
-After adding the marketplace, browse `@agentPlugins` in the Extensions sidebar.
-To verify that VSCode loaded the plugins, see the "Setting > Customization" panel in the Copilot sidebar.
+Add the marketplace to the settings (`chat.plugins.enabled` on):
+
+```jsonc
+"chat.plugins.marketplaces": ["giocaizzi/harness"]
+```
+
+Then install the plugins from `@agentPlugins` in the Extensions view, or run **Chat: Install Plugin From Source** with the repo URL. **Chat: Open Agent Customizations** lists what VS Code loaded. VS Code also picks up plugins installed by Copilot CLI.
 
 ### Local development
 
@@ -49,6 +69,8 @@ claude --plugin-dir ./plugins/api
 # GitHub Copilot CLI
 copilot plugin install ./plugins/api
 ```
+
+VS Code: `"chat.pluginLocations": { "/abs/path/plugins/api": true }`.
 
 ---
 
