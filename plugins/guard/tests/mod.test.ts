@@ -16,6 +16,10 @@ const BAND = {
 // The engine's own band beneath the plugins: draws nothing of its own.
 const bottom = (on) => on('ui.render', { component: 'AbovePrompt' }, ($, e) => $.ui.resolve(e).Box({ children: [] }))
 
+const usageWith = (ctx: number, five: number) => ({
+  value: { startedAt: 0, context: { tokens: 0, window: 1000000, percent: ctx }, rateLimits: [{ kind: 'five_hour', percentUsed: five, resetsAt: '2030-01-01T00:00:00Z' }] },
+})
+
 const turn = (read: number, create: number, input: number) => ({
   answer: 'ok',
   durationMs: 1,
@@ -104,6 +108,30 @@ test('/weather opens a pane listing the turns', async ($, on) => {
   expect(await ui.find({ type: 'Text', text: /turn 2 .* 12% {2}\uf472 10%/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /last turn: 100 in · 100 read · 800 written · 1 out/ })).toBeDefined()
   expect(await ui.find({ type: 'Button', text: /Close/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('a turn ending at 90% context toasts once and plays the alert', async ($, on) => {
+  mock.clock(on)
+  on('session.usage', () => usageWith(91, 20))
+  on('turn.complete', () => ({ text: 'ok' }))
+  const toasts: string[] = []
+  const clips: string[] = []
+  on('ui.toast', (_$, e) => (toasts.push(e.text), { value: undefined }) as never)
+  on('audio.play', (_$, e) => (clips.push(e.clip.asset ?? ''), { value: undefined }) as never)
+  await $.turn.complete(turn(900, 0, 100))
+  await $.turn.complete(turn(900, 0, 100))
+  expect(toasts).toEqual(['Context 91%: compact now'])
+  expect(clips).toEqual(['sounds/alert.wav'])
+})
+
+test('the pane shows the 5h window from the turns', async ($, on) => {
+  mock.clock(on)
+  on('session.usage', () => usageWith(10, 40))
+  on('turn.complete', () => ({ text: 'ok' }))
+  await $.turn.complete(turn(900, 0, 100))
+  const ui = await $.ui.mount({ plugin: 'guard', surface: 'terminal', component: 'Pane', requestId: 'weather', props: {} })
+  expect(await ui.find({ type: 'Text', text: /5h 40%/ })).toBeDefined()
   await ui.unmount()
 })
 

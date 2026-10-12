@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { battery, forecast, glyph, sparkCells, sparkRange, TTL_MS } from './weather.mjs'
+import { alerts, battery, forecast, glyph, sparkCells, sparkRange, TTL_MS } from './weather.mjs'
 
 const usage = (read, create, input) => ({ cache_read_input_tokens: read, cache_creation_input_tokens: create, input_tokens: input })
 
@@ -38,6 +38,7 @@ test('Copilot status line: context % and the session cache hit rate from its cum
   assert.equal(copilotWeather(status({ total_input_tokens: 100, total_cache_read_tokens: 0, total_cache_write_tokens: 90, last_call_input_tokens: 100 })), '\ue30d ctx 9% · cache 0%')
   assert.equal(copilotWeather(status({ total_input_tokens: 200, total_cache_read_tokens: 20, total_cache_write_tokens: 170, last_call_input_tokens: 100 })), '\ue30d ctx 9% · cache 10% · cache cold')
   assert.equal(copilotWeather(status({ total_input_tokens: 0 })), '\ue30d ctx 9%')
+  assert.equal(copilotWeather({ cost: { total_premium_requests: 3 }, ...status({ total_input_tokens: 0 }) }), '\ue30d ctx 9% · 3 req')
   assert.equal(copilotWeather({}), '')
 })
 
@@ -105,4 +106,16 @@ test('gcpProject reads the active gcloud configuration', async () => {
   assert.equal(gcpProject({ CLOUDSDK_CONFIG: dir }, '/h', 'linux'), 'my-proj')
   assert.equal(gcpProject({ CLOUDSDK_CONFIG: dir, CLOUDSDK_CORE_PROJECT: 'env-proj' }, '/h', 'linux'), 'env-proj')
   assert.equal(gcpProject({ CLOUDSDK_CONFIG: join(dir, 'none') }, '/h', 'linux'), undefined)
+})
+
+test('alerts: a level is announced once, loud on the first 90 and on the 5h window', () => {
+  const a = alerts(82, 10)
+  assert.deepEqual(a.toasts, ['Context 82%: compact soon'])
+  assert.equal(a.isLoud, false)
+  assert.deepEqual(alerts(84, 10, a.now).toasts, [])
+  const b = alerts(93, 95, a.now)
+  assert.deepEqual(b.toasts, ['Context 93%: compact now', '5h window 95% used'])
+  assert.equal(b.isLoud, true)
+  assert.deepEqual(alerts(20, 95, b.now), { toasts: [], now: { ctx: 0, five: true }, isLoud: false }) // compacted: re-arms
+  assert.deepEqual(alerts(85, 0, { ctx: 0, five: true }).toasts, ['Context 85%: compact soon'])
 })

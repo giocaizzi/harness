@@ -17,7 +17,10 @@ export function copilotWeather(status) {
   // More input than the last call means more than one call, so a low hit rate is worth a hint.
   const turns = c.total_input_tokens > (c.last_call_input_tokens ?? 0) ? 2 : 1
   const f = forecast({ percent: c.current_context_used_percentage ?? c.used_percentage ?? undefined, usage, turns })
-  return glyph(f.ctx) ? `${glyph(f.ctx)} ${f.text}` : f.text
+  // Copilot bills premium requests, not dollars.
+  const req = status?.cost?.total_premium_requests
+  const text = req > 0 ? `${f.text} · ${req} req` : f.text
+  return glyph(f.ctx) ? `${glyph(f.ctx)} ${text}` : text
 }
 
 // Catppuccin Mocha, as 24-bit ANSI.
