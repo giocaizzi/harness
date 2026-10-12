@@ -10,7 +10,27 @@ const BLOCKS = '▁▂▃▄▅▆▇█'
 // Nerd Font icons (BMP private use, so a Raster could take them too), checked present in JetBrainsMono Nerd Font,
 // which chezmoi installs and sets in Ghostty, VS Code and Windows Terminal. Each is drawn followed by a space:
 // Ghostty then draws the icon at full size instead of squeezing it into one cell.
-export const ICON = { cache: '\uf472', ttl: '\uf520' } // nf-oct-database, nf-oct-stopwatch
+// One icon per part, the same in the status line and the band: every part is drawn `[icon value]`.
+export const ICON = {
+  user: '\uf007', // nf-fa-user
+  branch: '\ue725', // nf-dev-git_branch
+  cloud: '\uf0c2', // nf-fa-cloud (the GCP project)
+  session: '\uf02b', // nf-fa-tag
+  path: '\uf07c', // nf-fa-folder_open
+  model: '\uf2db', // nf-fa-microchip
+  cost: '\uf155', // nf-fa-usd
+  pr: '\uf407', // nf-oct-git_pull_request
+  merged: '\uf419', // nf-oct-git_merge
+  pending: '\uf252', // nf-fa-hourglass_half
+  sync: '\uf47f', // nf-oct-git_compare (ahead and behind)
+  changes: '\uf448', // nf-oct-pencil
+  agents: '\uf0c0', // nf-fa-users
+  forecast: '\uf244', // nf-fa-battery_empty
+  cache: '\uf472', // nf-oct-database
+  ttl: '\uf520', // nf-oct-stopwatch
+  trend: '\uf201', // nf-fa-line_chart
+  hint: '\uf071', // nf-fa-warning
+}
 
 // A weather icon for how full the context is: sunny, cloudy, showers, thunderstorm, lightning (nf-weather-*).
 export const glyph = (ctx) => (ctx == null ? '' : ctx < 25 ? '\ue30d' : ctx < 50 ? '\ue302' : ctx < 75 ? '\ue319' : ctx < 90 ? '\ue31d' : '\ue315')
@@ -36,21 +56,58 @@ export function activityLabel(tool) {
   return a ? `${a[0]} ${a[1]}` : null
 }
 
-// The branch's pull request, unpushed work and uncommitted changes, from `gh pr view --json number,statusCheckRollup`
-// (null: no PR), `git rev-list --left-right --count @{u}...HEAD` ("behind<TAB>ahead", null: no upstream),
-// `git diff --shortstat HEAD` and `git status --porcelain` (null: not a repository).
-// ci: fail | pending | pass; passed of total checks.
+// The forge a remote URL belongs to: github, gitlab, azure, or null for any other.
+export function forgeOf(url) {
+  if (!url) return null
+  if (/github\.com[:/]/.test(url)) return 'github'
+  if (/dev\.azure\.com|visualstudio\.com/.test(url)) return 'azure'
+  if (/gitlab/.test(url)) return 'gitlab'
+  return null
+}
+
+// A pull request as every forge's reader returns it: number, url, state (open | merged | closed) and one entry per
+// check (pass | fail | pending).
+// GitHub: `gh pr view --json number,url,state,statusCheckRollup`.
+export function githubPr(j) {
+  if (!j) return null
+  const check = (c) =>
+    ['FAILURE', 'ERROR', 'TIMED_OUT', 'CANCELLED', 'STARTUP_FAILURE', 'ACTION_REQUIRED'].includes(c.conclusion ?? c.state)
+      ? 'fail'
+      : (c.status ? c.status !== 'COMPLETED' : c.state === 'PENDING')
+        ? 'pending'
+        : 'pass'
+  return { number: j.number, url: j.url ?? null, state: (j.state ?? 'OPEN').toLowerCase(), checks: (j.statusCheckRollup ?? []).map(check) }
+}
+
+// GitLab: `glab mr view --output json` (the API's merge request): its head pipeline is its one check.
+export function gitlabMr(j) {
+  if (!j) return null
+  const p = (j.head_pipeline ?? j.pipeline)?.status
+  const check = !p ? [] : p === 'success' || p === 'skipped' ? ['pass'] : ['failed', 'canceled'].includes(p) ? ['fail'] : ['pending']
+  return { number: j.iid, url: j.web_url ?? null, state: j.state === 'opened' ? 'open' : j.state === 'merged' ? 'merged' : 'closed', checks: check }
+}
+
+// Azure DevOps: `az repos pr list --source-branch <branch> --status all --top 1` and `az repos pr policy list --id <n>`:
+// each policy evaluation is a check.
+export function azurePr(list, policies) {
+  const j = list?.[0]
+  if (!j) return null
+  const check = (p) => (p.status === 'rejected' || p.status === 'broken' ? 'fail' : p.status === 'running' || p.status === 'queued' ? 'pending' : 'pass')
+  const state = j.status === 'completed' ? 'merged' : j.status === 'abandoned' ? 'closed' : 'open'
+  return { number: j.pullRequestId, url: j.repository?.webUrl ? `${j.repository.webUrl}/pullrequest/${j.pullRequestId}` : null, state, checks: (policies ?? []).map(check) }
+}
+
+// The branch's pull request (from githubPr, gitlabMr or azurePr; null: none), unpushed work from
+// `git rev-list --left-right --count @{u}...HEAD` ("behind<TAB>ahead", null: no upstream) and uncommitted changes from
+// `git diff --shortstat HEAD` and `git status --porcelain`. ci: fail | pending | pass; passed of total checks.
 export function repoState(pr, counts, shortstat = null, porcelain = null) {
   const [behind = 0, ahead = 0] = (counts ?? '').trim().split(/\s+/).map(Number)
-  const checks = pr?.statusCheckRollup ?? []
-  const failed = (c) => ['FAILURE', 'ERROR', 'TIMED_OUT', 'CANCELLED', 'STARTUP_FAILURE', 'ACTION_REQUIRED'].includes(c.conclusion ?? c.state)
-  const waiting = (c) => (c.status ? c.status !== 'COMPLETED' : c.state === 'PENDING')
-  const ci = checks.some(failed) ? 'fail' : checks.some(waiting) ? 'pending' : checks.length ? 'pass' : null
-  const passed = checks.filter((c) => !failed(c) && !waiting(c)).length
+  const checks = pr?.checks ?? []
+  const ci = checks.includes('fail') ? 'fail' : checks.includes('pending') ? 'pending' : checks.length ? 'pass' : null
   const n = (re) => Number(re.exec(shortstat ?? '')?.[1] ?? 0)
   const untracked = (porcelain ?? '').split('\n').filter((l) => l.startsWith('??')).length
   return {
-    pr: pr ? { number: pr.number, url: pr.url ?? null, state: (pr.state ?? 'OPEN').toLowerCase(), ci, passed, total: checks.length } : null,
+    pr: pr ? { number: pr.number, url: pr.url, state: pr.state, ci, passed: checks.filter((c) => c === 'pass').length, total: checks.length } : null,
     ahead: ahead || 0,
     behind: behind || 0,
     changes: { files: n(/(\d+) files? changed/), added: n(/(\d+) insertions?/), removed: n(/(\d+) deletions?/), untracked },
