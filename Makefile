@@ -9,7 +9,7 @@ build: ## Generate per-plugin agent files and Copilot manifests from sources.
 validate: ## Run all repo invariant checks (build sync, manifests, skills, marketplace, README).
 	@uv run python scripts/validate.py
 
-check: validate ## Standard entrypoint: alias for validate.
+check: lint test ## Standard entrypoint: lint + test.
 
 lint: validate ## Alias for validate (repo invariant checks are the lint).
 

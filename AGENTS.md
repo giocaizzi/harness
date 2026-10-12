@@ -87,7 +87,7 @@ This repo treats everything that is identical (skills, plugin metadata) as one s
 | `make help` | List all targets. |
 | `make build` | Generate agent files **and** the per-plugin Copilot `plugin.json`. |
 | `make validate` | Build sync + plugin manifest hygiene + SKILL.md spec + marketplace ↔ disk + README ↔ disk. |
-| `make check` | Alias for `make validate` (standard entrypoint; `make lint` is also an alias). |
+| `make check` | `make lint` + `make test` (standard entrypoint, run by CI; `make lint` is an alias for `make validate`). |
 | `make new-agent NAME=<name> PLUGIN=<plugin>` | Scaffold a new agent under `src/agents/<name>/`. |
 | `make new-skill PLUGIN=<plugin> NAME=<name>` | Scaffold `plugins/<plugin>/skills/<name>/SKILL.md`. |
 | `make clean` | Remove all generated files. |
