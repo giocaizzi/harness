@@ -15,19 +15,27 @@ export const ICON = { cache: '\uf472', ttl: '\uf520' } // nf-oct-database, nf-oc
 // A weather icon for how full the context is: sunny, cloudy, showers, thunderstorm, lightning (nf-weather-*).
 export const glyph = (ctx) => (ctx == null ? '' : ctx < 25 ? '\ue30d' : ctx < 50 ? '\ue302' : ctx < 75 ? '\ue319' : ctx < 90 ? '\ue31d' : '\ue315')
 
-// Cells of a bar chart, row-major [codePoint, color, background] triplets, one column per value (0-100), the
-// tallest bar filling `rows`. Colours are 0xRRGGBB by how full the value is; 0x01000000 is the default background.
+// Cells of a bar chart, row-major [codePoint, color, background] triplets, one column per value (0-100). Heights
+// span lo..hi (the tallest bar fills `rows`, the lowest keeps one eighth so it shows); colours are 0xRRGGBB by the
+// value itself. 0x01000000 is the default background.
 export const TONE_RGB = { ok: 0xa6e3a1, warn: 0xf9e2af, bad: 0xf38ba8 }
-export function sparkCells(values, rows) {
+export function sparkCells(values, rows, lo = 0, hi = 100) {
   const out = []
   for (let r = 0; r < rows; r++) {
     for (const v of values) {
-      const eighths = Math.round((Math.min(100, Math.max(0, v)) / 100) * rows * 8) - (rows - 1 - r) * 8
+      const share = (Math.min(hi, Math.max(lo, v)) - lo) / (hi - lo || 1)
+      const eighths = Math.max(1, Math.round(share * rows * 8)) - (rows - 1 - r) * 8
       const level = Math.min(8, Math.max(0, eighths))
       out.push(level ? BLOCKS.codePointAt(level - 1) : 32, v >= 80 ? TONE_RGB.bad : v >= 50 ? TONE_RGB.warn : TONE_RGB.ok, 0x01000000)
     }
   }
   return out
+}
+
+// The band's sparkline range: the history's own spread, at least 10 points, so a steady context still shows a shape.
+export function sparkRange(values) {
+  const lo = Math.max(0, Math.min(...values) - 2)
+  return [lo, Math.min(100, Math.max(lo + 10, Math.max(...values)))]
 }
 
 // showCtx false leaves the context % out of `text` and `segments` (the Claude status line already shows it);

@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { forecast, glyph, sparkCells, TTL_MS } from './weather.mjs'
+import { forecast, glyph, sparkCells, sparkRange, TTL_MS } from './weather.mjs'
 
 const usage = (read, create, input) => ({ cache_read_input_tokens: read, cache_creation_input_tokens: create, input_tokens: input })
 
@@ -59,4 +59,12 @@ test('sparkCells: one column per value, the bar filling the rows from the bottom
   assert.equal(cells[3], 32) // top row, empty value: space
   assert.equal(cells[6], 0x2588) // bottom row, full value
   assert.equal(sparkCells([50], 1)[0], 0x2584) // half of one row: ▄
+})
+
+test('sparkline range: the history\'s spread, at least 10 points; the lowest bar still shows', () => {
+  assert.deepEqual(sparkRange([13, 20, 34]), [11, 34])
+  assert.deepEqual(sparkRange([30, 31]), [28, 38])
+  const [lo, hi] = sparkRange([13, 34])
+  assert.equal(sparkCells([13, 34], 1, lo, hi)[0], 0x2581) // lowest: ▁, not a blank
+  assert.equal(sparkCells([13, 34], 1, lo, hi)[3], 0x2588) // highest: █
 })

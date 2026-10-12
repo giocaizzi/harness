@@ -4,7 +4,7 @@ import { atom, read, update } from 'claude-code'
 import { evaluateSpawn } from '../core/engine.mjs'
 import { logRequest } from '../core/otel.mjs'
 import { rules } from '../core/rules.mjs'
-import { ICON, TTL_MS, clock, forecast, glyph, sparkCells } from './weather.mjs'
+import { ICON, TTL_MS, clock, forecast, glyph, sparkCells, sparkRange } from './weather.mjs'
 
 // The last main-loop turn: its usage, when it ended, and how many turns this conversation has had.
 const weather = atom({ plugin: 'guard', key: 'weather' }, null)
@@ -17,8 +17,8 @@ const TONE_COLOR = { ok: undefined, warn: '#f9e2af', bad: '#f38ba8' }
 const toneOf = (percent) => (percent >= 80 ? 'bad' : percent >= 50 ? 'warn' : 'ok')
 
 // A bar chart of the history as one Raster; a value of unknown context counts as empty.
-const spark = (Raster, key, values, rows) =>
-  Raster({ key, columns: values.length, rows, cells: new Uint8Array(Uint32Array.from(sparkCells(values, rows)).buffer).toBase64() })
+const spark = (Raster, key, values, rows, lo, hi) =>
+  Raster({ key, columns: values.length, rows, cells: new Uint8Array(Uint32Array.from(sparkCells(values, rows, lo, hi)).buffer).toBase64() })
 
 // The window closest to its limit (a gateway spend limit is not a plan window).
 const worstWindow = (limits) => limits.filter((r) => r.kind !== 'spend_limit').sort((a, b) => b.percentUsed - a.percentUsed)[0]
@@ -112,7 +112,7 @@ export function register(on) {
         glyph(f.ctx) ? Text({ color: TONE_COLOR[toneOf(f.ctx)], dimColor: toneOf(f.ctx) === 'ok', children: [`${glyph(f.ctx)}  `] }) : null,
         ...parts,
         h.length > 1 ? sep() : null,
-        h.length > 1 ? spark(Raster, 'weather-spark', h.map((x) => x.ctx ?? 0), 1) : null,
+        h.length > 1 ? spark(Raster, 'weather-spark', h.map((x) => x.ctx ?? 0), 1, ...sparkRange(h.map((x) => x.ctx ?? 0))) : null,
       ].filter(Boolean),
     })
     return Box({ flexDirection: 'column', children: below ? [below, line] : [line] })
