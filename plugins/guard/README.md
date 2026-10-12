@@ -16,6 +16,7 @@ Agent guardrails as hooks: one `hooks/hooks.json` and one Node script that run t
 | `keep-awake` | SessionStart | Claude, Copilot, VS Code | Keeps the machine awake while the harness runs (VS Code: while the window is open): `caffeinate -w` (macOS), `systemd-inhibit` (Linux), `SetThreadExecutionState` (Windows). |
 | `usage-throttle` | mod `agent.spawn` | Claude | Refuses new subagents at 90% of the worst plan window. Copilot exposes no rate-limit windows. |
 | `token-weather` | mod `AbovePrompt` band | Claude | One line above the prompt: context %, last turn's cache hit rate, prompt-cache TTL countdown; hints `compact soon`, `cache cold`, `cache expired`. Drawn on top of other plugins' bands. |
+| `token-weather` (status line) | `statusLine.command` | Copilot | `hooks/statusline.mjs`: context % and the session's cache hit rate, hints `compact soon`, `cache cold`. Wired in Copilot settings, see [docs/guard.md](../../docs/guard.md#install). |
 | `skill-tracker` | PreToolUse (Skill), UserPromptSubmit | Claude, Copilot, VS Code | Records loaded skills and typed slash commands for the skill enforcer. |
 
 ## Install
