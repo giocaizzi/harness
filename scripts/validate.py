@@ -17,6 +17,11 @@ Checks:
   5. The root README links to every plugin, and each plugin's README lists all its skills and agents.
   6. Generated agents are in sync with src/agents/ sources (delegates to build_agents.py --check).
   7. Every file a plugin's hooks/hooks.json names (command scripts, mod modules) exists.
+  8. VS Code reads each plugin as Claude format: no `.plugin/plugin.json` or root
+     `plugin.json` (they win VS Code's format detection), skill `name` is kebab-case
+     and equals its directory (VS Code skips others silently), hook events are ones
+     VS Code maps, and hook commands use no `${CLAUDE_PLUGIN_DATA}` token (VS Code
+     expands only `${CLAUDE_PLUGIN_ROOT}`).
 """
 
 from __future__ import annotations
@@ -258,6 +263,42 @@ def check_hooks(r: Reporter) -> None:
             r.ok(f"{plugin_dir.name}: {len(paths)} hook file(s)")
 
 
+# Hook events VS Code maps (Claude PascalCase and Copilot camelCase names).
+VSCODE_HOOK_EVENTS = {
+    "SessionStart", "SessionEnd", "UserPromptSubmit", "PreToolUse", "PostToolUse", "PreCompact",
+    "SubagentStart", "SubagentStop", "Stop", "sessionStart", "sessionEnd", "userPromptSubmitted",
+    "preToolUse", "postToolUse", "agentStop", "subagentStop", "errorOccurred", "ErrorOccurred",
+}
+KEBAB = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
+
+
+def check_vscode(r: Reporter) -> None:
+    r.section("VS Code agent-plugin compatibility")
+    for plugin_dir in _discover_plugins():
+        errors = []
+        for shadow in (".plugin/plugin.json", "plugin.json"):
+            if (plugin_dir / shadow).exists():
+                errors.append(f"{shadow} exists: VS Code would read it instead of .claude-plugin/plugin.json")
+        for skill_md in sorted(plugin_dir.glob("skills/*/SKILL.md")):
+            m = re.search(r"^name:\s*[\"']?([^\"'\n]+?)[\"']?\s*$", skill_md.read_text(), re.M)
+            name = m.group(1) if m else None
+            if name != skill_md.parent.name or not KEBAB.match(name):
+                errors.append(f"skills/{skill_md.parent.name}: name {name!r} must be kebab-case and equal the directory")
+        hooks_json = plugin_dir / "hooks" / "hooks.json"
+        if hooks_json.exists():
+            try:
+                hooks = _load_json(hooks_json).get("hooks", {})
+            except json.JSONDecodeError:
+                hooks = {}  # check_hooks reports it
+            errors += [f"hooks.json: event {e!r} is not one VS Code maps" for e in hooks if e not in VSCODE_HOOK_EVENTS]
+            if "${CLAUDE_PLUGIN_DATA}" in hooks_json.read_text():
+                errors.append("hooks.json: ${CLAUDE_PLUGIN_DATA} is not expanded by VS Code; read the env var in the script with a fallback")
+        for e in errors:
+            r.fail(f"{plugin_dir.relative_to(REPO_ROOT)}: {e}")
+        if not errors:
+            r.ok(plugin_dir.name)
+
+
 def check_build_sync(r: Reporter) -> None:
     r.section("Generated agents ↔ src/agents/ sources")
     result = subprocess.run(
@@ -280,6 +321,7 @@ def main() -> None:
     check_repo_version_sync(r)
     check_build_sync(r)
     check_hooks(r)
+    check_vscode(r)
     check_readme(r)
 
     print()

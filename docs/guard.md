@@ -1,6 +1,6 @@
 # guard plugin
 
-Agent rules enforced as hooks, from one plugin, for Claude Code and Copilot CLI on macOS, Linux and Windows.
+Agent rules enforced as hooks, from one plugin, for Claude Code, Copilot CLI and VS Code Copilot (agent plugins) on macOS, Linux and Windows.
 
 ## Architecture
 
@@ -9,41 +9,45 @@ Agent rules enforced as hooks, from one plugin, for Claude Code and Copilot CLI 
 | `core/rules.mjs` | Data: skill rules (command pattern -> skill), deny rules, heavy and risky command patterns, title types, host caps, usage thresholds. |
 | `core/engine.mjs` | Pure decisions: `evaluateCommand` (risky ask, title guard, host guard, skill reminder), `evaluateSpawn`, blast-radius preview argv, safe-delete facts through an injected runner. |
 | `core/host.mjs` | Host-fact parsers (load average, free disk, Windows CPU percent). |
-| `hooks/hooks.json` | Command hooks, Claude format. Both harnesses load it from the installed plugin. |
+| `hooks/hooks.json` | Command hooks, Claude format. All three harnesses load it from the installed plugin. |
 | `hooks/guard.mjs` | The command guard: reads the event on stdin, gathers facts (host, worktrees, the repo's Python manager), asks the engine, writes `hookSpecificOutput` on stdout. |
 | `hooks/stop.mjs` | `make check` before the agent stops (was the dotfiles `stop-make-check.sh`/`.ps1`). |
 | `hooks/lint.mjs` | shellcheck / PSScriptAnalyzer after an edit (was the dotfiles `post-edit-lint.sh`/`.ps1`). |
 | `hooks/awake.mjs` | Keep-awake keeper tied to the harness process. |
-| `hooks/mod.mjs` | Claude Code mod (`modules` in `hooks.json`, ignored by Copilot): usage throttle and the token-weather band. `hooks/weather.mjs` holds its pure display logic; `types/index.d.ts` declares its `$.state`. |
+| `hooks/mod.mjs` | Claude Code mod (`modules` in `hooks.json`, ignored by Copilot CLI and VS Code): usage throttle and the token-weather band. `hooks/weather.mjs` holds its pure display logic, shared with `hooks/statusline.mjs`; `types/index.d.ts` declares its `$.state`. |
+| `hooks/statusline.mjs` | Copilot CLI status line (`statusLine.command`): the token-weather line from the status JSON Copilot pipes on stdin. |
 
 Events:
 
-| Event (Claude / Copilot) | Matcher | What runs |
+| Event (Claude and VS Code / Copilot CLI) | Tools (matcher, re-checked in the script) | What runs |
 |---|---|---|
 | `SessionStart` / `sessionStart` | all | Keep-awake keeper, one per harness process. |
-| `PreToolUse` / `preToolUse` | `Bash`, `PowerShell`, `Skill` (and the lowercase Copilot names) | Shell: deny rules (pip, poetry), risky ask, title guard, host guard, skill reminder. Skill: records the loaded skill. |
-| `PostToolUse` / `postToolUse` | `Edit`, `Write`, `MultiEdit` (and Copilot `edit`, `create`) | Lint the edited file; findings as `additionalContext`. |
+| `PreToolUse` / `preToolUse` | Shell: `Bash`, `PowerShell` (Claude), `bash`, `powershell` (Copilot), `run_in_terminal` (VS Code). Skill: `Skill`, `skill` | Shell: deny rules (pip, poetry), risky ask, title guard, host guard, skill reminder. Skill: records the loaded skill. |
+| `PostToolUse` / `postToolUse` | `Edit`, `Write`, `MultiEdit` (Claude); `edit`, `create`, `Edit` with an apply_patch string (Copilot); `create_file`, `replace_string_in_file`, `multi_replace_string_in_file`, `insert_edit_into_file`, `apply_patch` (VS Code) | Lint the edited files; findings as `additionalContext`. |
 | `Stop` / `agentStop` | all | `make check`; on failure `decision: block` once, never when `stop_hook_active`. |
 | `UserPromptSubmit` / `userPromptSubmitted` | all | A typed `/skill` counts as loaded. |
-| `SessionEnd` / `sessionEnd` | all | Drops the session's state file (and any older than a week). |
+| `SessionEnd` / `sessionEnd` | all | Drops the session's state file (and any older than a week). VS Code does not fire it; the weekly sweep covers it. |
 
 ## Decisions
 
-- **Command hooks, not a mod or an extension.** Copilot CLI (1.0.95) loads a plugin's `hooks/hooks.json`, accepts Claude's PascalCase events and payload (`tool_name` carries Claude names such as `Bash`), runs `command` under bash or PowerShell, sets `CLAUDE_PLUGIN_ROOT`/`CLAUDE_PLUGIN_DATA`, and honours `hookSpecificOutput.permissionDecision` `allow|deny|ask`. One file serves both harnesses, with no `--experimental`.
+- **Command hooks, not a mod or an extension.** Copilot CLI (1.0.95) loads a plugin's `hooks/hooks.json`, accepts Claude's PascalCase events and payload (`tool_name` carries Claude names such as `Bash`), runs `command` under bash or PowerShell, sets `CLAUDE_PLUGIN_ROOT`/`CLAUDE_PLUGIN_DATA`, and honours `hookSpecificOutput.permissionDecision` `allow|deny|ask`. One file serves every harness, with no `--experimental`.
+- **VS Code reads the same file.** VS Code (1.139) detects the plugin as Claude format from `.claude-plugin/plugin.json`, loads `hooks/hooks.json`, maps both PascalCase and Copilot camelCase event names, sets `CLAUDE_PLUGIN_ROOT` but not `CLAUDE_PLUGIN_DATA` (state falls back to `<tmpdir>/guard-plugin`), and **ignores `matcher`**: every command of an event runs, so each script checks `tool_name` itself and passes anything else untouched. VS Code sends its own tool names (`run_in_terminal`, `create_file`, ...) and reads `permissionDecision` and `additionalContext` from `hookSpecificOutput`.
+- **One output, every reader.** Where the harnesses read different fields, the hook writes both: post-edit lint puts `additionalContext` at the top level (Copilot CLI) and in `hookSpecificOutput` (Claude, VS Code); the stop hook puts `decision`/`reason` at the top level (Claude, Copilot CLI) and in `hookSpecificOutput` (VS Code). Claude and Copilot CLI accept the extra fields (checked live).
 - **State in a file.** A command hook is a fresh process, so the loaded skills and the rules already reminded live in `$CLAUDE_PLUGIN_DATA/sessions/<session_id>.json`. Read-modify-write without a lock: parallel calls can lose a write, which only repeats a reminder.
 - **Remind once, ask every time.** A skill rule denies once per session with the skill to load; the title guard denies every time the subject of `git commit -m`, `gh pr create --title`/`-t`, `glab mr create|update --title`/`-t` or `az repos pr create|update --title` is not a Conventional Commit (az's `-t` is the target branch, so only `--title` counts); risky commands return `ask` every time, with a read-only blast-radius preview (`du -sh`, `git status --short`, `git log HEAD..@{u}`).
 - **Safe deletes.** `rm -r`, `Remove-Item -Recurse` and `git worktree remove --force` skip the ask when every target is strictly under a temp dir or is the root of a linked worktree that is clean and either has every commit on a remote ref or is squash-merged: `gh pr list --head <branch> --state merged` (run in the worktree, 5 s timeout) finds a merged PR whose head contains HEAD. Any gh failure asks, with the reason. Globs, `~`, `..`, quotes and unset variables still ask.
 - **Fail open for reminders, closed for risky.** A crash while judging a risky command denies it; anything else lets the call through. The script never exits non-zero, because Copilot denies a `preToolUse` whose hook fails. A hook timeout is fail-open on both harnesses.
-- **Deny rules are data, scoped to the repo.** `rules.deny` (pip, pipx, `python -m pip`; poetry) is matched on what the command would run, so a quoted mention passes. A rule with `when: "uv"` denies every time, before anything else, only in a uv repo; elsewhere the command runs and the agent gets one note per session (`hookSpecificOutput.additionalContext`, no permission decision) naming the repo's manager. Copilot CLI does not document `additionalContext` on `preToolUse`, so there the note may be dropped ([#31](https://github.com/giocaizzi/harness/issues/31)). The hook finds the manager in the nearest directory up to the repo root: `uv.lock` → uv; `poetry.lock` or `[tool.poetry]` → poetry; `Pipfile`/`Pipfile.lock` → pipenv; `requirements*.txt` without a `pyproject.toml` `[project]` table → pip; any other `pyproject.toml` → uv; none → no Python project. Plain `node:fs` calls, the same on every OS; a read error counts as no project.
+- **Deny rules are data, scoped to the repo.** `rules.deny` (pip, pipx, `python -m pip`; poetry) is matched on what the command would run, so a quoted mention passes. A rule with `when: "uv"` denies every time, before anything else, only in a uv repo; elsewhere the command runs and the agent gets one note per session (`hookSpecificOutput.additionalContext`, no permission decision) naming the repo's manager. Copilot CLI (1.0.95) passes that note to the agent too (checked live), and VS Code documents `additionalContext` on `PreToolUse`. The hook finds the manager in the nearest directory up to the repo root: `uv.lock` → uv; `poetry.lock` or `[tool.poetry]` → poetry; `Pipfile`/`Pipfile.lock` → pipenv; `requirements*.txt` without a `pyproject.toml` `[project]` table → pip; any other `pyproject.toml` → uv; none → no Python project. Plain `node:fs` calls, the same on every OS; a read error counts as no project.
 - **Stop runs `make check` once.** No make, no Makefile or no `check` target: the agent stops. A failure blocks the stop with the last 40 lines; the next stop (`stop_hook_active`) always passes, so it cannot loop (Copilot also caps at 8 blocks).
 - **Lint is advice, not a block.** Findings come back as `hookSpecificOutput.additionalContext`; a missing shellcheck, pwsh or PSScriptAnalyzer skips silently. The file path is `tool_input.file_path` (Claude) or `tool_input.path` (Copilot).
-- **Keep-awake follows the harness.** The hook walks past shell parents to the harness pid and starts a detached keeper bound to it: `caffeinate -i -w <pid>` (macOS), `systemd-inhibit --what=idle:sleep tail --pid=<pid> -f /dev/null` (Linux), a hidden PowerShell holding `SetThreadExecutionState(ES_CONTINUOUS|ES_SYSTEM_REQUIRED)` until `Wait-Process -Id <pid>` (Windows). The keeper pid is kept in `$CLAUDE_PLUGIN_DATA/awake/<harness pid>.pid`, so resume, `/clear` and compaction reuse it. It prevents idle sleep only; the display may still sleep.
-- **The mod is Claude-only.** Copilot has no mods API and no rate-limit windows, so the throttle and the band have no Copilot side (Copilot's footer already shows quota and context). The band calls `await next(e)` and draws its line above whatever plugins beneath drew (next-steps and the like), never in their place. It draws from session start (context part), counts only main-loop turns, suppresses `cache cold` on the first turn (which always writes the cache), forgets the last turn on `/clear` (`session.end` with `reason: clear`), and counts down the prompt-cache TTL (`promptCacheTtl` setting, `5m` when unset) from the end of the last turn, redrawing once a second.
+- **Keep-awake follows the harness.** The hook walks past shell parents to the harness pid (under VS Code, the extension host: the keeper lives as long as the window) and starts a detached keeper bound to it: `caffeinate -i -w <pid>` (macOS), `systemd-inhibit --what=idle:sleep tail --pid=<pid> -f /dev/null` (Linux), a hidden PowerShell holding `SetThreadExecutionState(ES_CONTINUOUS|ES_SYSTEM_REQUIRED)` until `Wait-Process -Id <pid>` (Windows). The keeper pid is kept in `$CLAUDE_PLUGIN_DATA/awake/<harness pid>.pid`, so resume, `/clear` and compaction reuse it. It prevents idle sleep only; the display may still sleep.
+- **The mod is Claude-only.** Copilot CLI and VS Code have no mods API and no rate-limit windows, so the throttle has no Copilot side. The weather line reaches Copilot CLI as a status line instead: Copilot pipes `context_window` (context %, cumulative input, cache read and write tokens) to `statusLine.command`, so it shows `ctx N% · cache N%` with the session's hit rate (Copilot exposes no per-turn usage and no cache TTL, so no countdown). VS Code has no status-line hook. The band calls `await next(e)` and draws its line above whatever plugins beneath drew (next-steps and the like), never in their place. It draws from session start (context part), counts only main-loop turns, suppresses `cache cold` on the first turn (which always writes the cache), forgets the last turn on `/clear` (`session.end` with `reason: clear`), and counts down the prompt-cache TTL (`promptCacheTtl` setting, `5m` when unset) from the end of the last turn, redrawing once a second.
 - **`ask` is the harness's own prompt.** Under `claude -p` or a non-interactive Copilot run nobody can answer, so the risky command does not run.
+- **The skill enforcer counts the `skill` tool.** Claude's `Skill`, Copilot CLI's and VS Code's `skill` record the loaded skill; a skill read any other way is not seen, so the reminder fires once and the retry passes.
 
 ## Install
 
-Both harnesses read the repo's one marketplace.
+All three harnesses read the repo's one marketplace (`.claude-plugin/marketplace.json`).
 
 ```bash
 # Claude Code
@@ -54,6 +58,11 @@ claude plugin install guard@giocaizzi-harness
 copilot plugin marketplace add giocaizzi/harness
 copilot plugin install guard@giocaizzi-harness
 ```
+
+VS Code: add `giocaizzi/harness` to `chat.plugins.marketplaces` (with `chat.plugins.enabled` on), then install `guard` from `@agentPlugins` in the Extensions view; or run **Chat: Install Plugin From Source** with the repo URL.
+
+Copilot CLI token weather: in `~/.copilot/settings.json` (Windows: `%USERPROFILE%\.copilot\settings.json`) set
+`"statusLine": { "type": "command", "command": "node ~/.copilot/installed-plugins/giocaizzi-harness/guard/hooks/statusline.mjs" }`.
 
 Managed machines enable it from the dotfiles settings (`enabledPlugins: { "guard@giocaizzi-harness": true }` in both the Claude and the Copilot settings templates).
 
@@ -71,18 +80,23 @@ copilot plugin install ./plugins/guard
 copilot plugin list                               # shows guard
 rm -rf "$COPILOT_HOME"; unset COPILOT_HOME
 
+# VS Code: a throwaway profile, never your own
+code --user-data-dir "$(mktemp -d)" --extensions-dir "$(mktemp -d)" .
+# then set chat.plugins.enabled and "chat.pluginLocations": { "<abs>/plugins/guard": true },
+# and check the plugin and its hooks under Chat: Open Agent Customizations
+
 # The hook by hand: a non-conventional commit is denied
 echo '{"hook_event_name":"PreToolUse","session_id":"t","tool_name":"Bash","tool_input":{"command":"git commit -m bad"}}' \
   | CLAUDE_PLUGIN_DATA="$(mktemp -d)" node plugins/guard/hooks/guard.mjs
 ```
 
-In a live Claude session the band shows `ctx N%` at once and `cache N% · ttl M:SS` after the first turn. In a uv repo: `pip install x` and `poetry add x` are denied; in a poetry or requirements repo they run, with one note. In any session: ending a turn in a repo whose `make check` fails continues the turn once with the failure; `pmset -g assertions | grep caffeinate` (macOS) or `systemd-inhibit --list` (Linux) shows the keeper; `git commit -m "bad"` is denied with the Conventional Commit hint; `rm -rf build` shows the permission prompt with a `Would affect:` preview; `rm -rf /tmp/x` runs without asking.
+In a live Claude session the band shows `ctx N%` at once and `cache N% · ttl M:SS` after the first turn. In Copilot CLI the status line shows `ctx N%` at once and `cache N%` after the first turn. In a uv repo: `pip install x` and `poetry add x` are denied; in a poetry or requirements repo they run, with one note. In any session: ending a turn in a repo whose `make check` fails continues the turn once with the failure; `pmset -g assertions | grep caffeinate` (macOS) or `systemd-inhibit --list` (Linux) shows the keeper; `git commit -m "bad"` is denied with the Conventional Commit hint; `rm -rf build` shows the permission prompt with a `Would affect:` preview; `rm -rf /tmp/x` runs without asking.
 
 ## Troubleshooting
 
 | Symptom | Check |
 |---|---|
-| No guard at all | Plugin enabled? Claude: `/plugin`; Copilot: `copilot plugin list`. `node` on PATH (22+)? |
+| No guard at all | Plugin enabled? Claude: `/plugin`; Copilot: `copilot plugin list`; VS Code: `chat.plugins.enabled`, `chat.useHooks` and the Agent Customizations editor. `node` on PATH (22+)? |
 | Every shell call denied on Copilot | The hook exits non-zero (Copilot fails `preToolUse` closed): run it by hand as above and read stderr. |
 | Session never ends a turn on Copilot | `make check` keeps failing: the agent gets 8 blocks at most, then stops. |
 | Machine still sleeps | Keeper running? `pgrep -fl caffeinate` / `systemd-inhibit --list`; on Linux `systemd-inhibit` needs a logind session. |

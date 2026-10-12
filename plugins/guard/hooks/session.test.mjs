@@ -18,6 +18,7 @@ test('stop: blocks once with the output tail when make check fails', () => {
   const out = stopCheck({ cwd: '/r' }, run)
   assert.equal(out.decision, 'block')
   assert.match(out.reason, /make check failed[\s\S]*FAIL x$/)
+  assert.deepEqual(out.hookSpecificOutput, { hookEventName: 'Stop', decision: 'block', reason: out.reason }) // VS Code
   assert.ok(out.reason.split('\n').length <= 41)
   assert.deepEqual(calls, ['-n check', 'check'])
 })
@@ -37,14 +38,33 @@ test('lint: shellcheck findings come back as context; clean, missing tool or oth
   writeFileSync(sh, 'echo $x\n')
   writeFileSync(md, '# x\n')
   const findings = () => ({ status: 1, stdout: 'SC2086: quote this\n', stderr: '' })
-  const out = lintFile({ tool_input: { file_path: sh } }, findings)
+  const out = lintFile({ tool_name: 'Edit', tool_input: { file_path: sh } }, findings)
   assert.match(out.hookSpecificOutput.additionalContext, /SC2086/)
   assert.equal(out.hookSpecificOutput.hookEventName, 'PostToolUse')
-  assert.match(lintFile({ tool_input: { path: sh } }, findings).hookSpecificOutput.additionalContext, /a\.sh/) // Copilot spelling
-  assert.equal(lintFile({ tool_input: { file_path: sh } }, () => ({ status: 0, stdout: '' })), null)
-  assert.equal(lintFile({ tool_input: { file_path: sh } }, () => ({ status: null, error: new Error('ENOENT') })), null)
-  assert.equal(lintFile({ tool_input: { file_path: md } }, findings), null)
-  assert.equal(lintFile({ tool_input: { file_path: join(dir, 'gone.sh') } }, findings), null)
+  assert.equal(out.additionalContext, out.hookSpecificOutput.additionalContext) // Copilot reads the top level
+  assert.match(lintFile({ tool_name: 'create', tool_input: { path: sh } }, findings).additionalContext, /a\.sh/) // Copilot spelling
+  assert.equal(lintFile({ tool_name: 'Write', tool_input: { file_path: sh } }, () => ({ status: 0, stdout: '' })), null)
+  assert.equal(lintFile({ tool_name: 'Write', tool_input: { file_path: sh } }, () => ({ status: null, error: new Error('ENOENT') })), null)
+  assert.equal(lintFile({ tool_name: 'Write', tool_input: { file_path: md } }, findings), null)
+  assert.equal(lintFile({ tool_name: 'Write', tool_input: { file_path: join(dir, 'gone.sh') } }, findings), null)
+  assert.equal(lintFile({ tool_name: 'read_file', tool_input: { filePath: sh } }, findings), null) // VS Code ignores matchers
+})
+
+test('lint: VS Code and apply_patch spellings of the edited files', () => {
+  const dir = tmp()
+  const sh = join(dir, 'a.sh')
+  const findings = () => ({ status: 1, stdout: 'SC2086\n' })
+  writeFileSync(sh, 'echo $x\n')
+  for (const [tool_name, tool_input] of [
+    ['create_file', { filePath: sh }],
+    ['replace_string_in_file', { filePath: sh }],
+    ['multi_replace_string_in_file', { replacements: [{ filePath: sh }, { filePath: sh }] }],
+    ['Edit', '*** Begin Patch\n*** Update File: a.sh\n@@\n-x\n+y\n*** End Patch\n'], // Copilot CLI apply_patch
+    ['apply_patch', { input: `*** Begin Patch\n*** Add File: ${sh}\n+y\n*** End Patch\n` }], // VS Code
+  ]) {
+    const out = lintFile({ tool_name, tool_input, cwd: dir }, findings)
+    assert.equal(out?.additionalContext.match(/Lint findings/g).length, 1, tool_name)
+  }
 })
 
 test('lint: .ps1 goes to PSScriptAnalyzer through pwsh, powershell on Windows', () => {
@@ -56,9 +76,9 @@ test('lint: .ps1 goes to PSScriptAnalyzer through pwsh, powershell on Windows', 
     used = [cmd, opts.env.GUARD_LINT_FILE]
     return { status: 0, stdout: 'RuleName : PSAvoidUsingWriteHost\n' }
   }
-  assert.match(lintFile({ tool_input: { file_path: ps1 } }, run, 'darwin').hookSpecificOutput.additionalContext, /PSAvoidUsingWriteHost/)
+  assert.match(lintFile({ tool_name: 'Edit', tool_input: { file_path: ps1 } }, run, 'darwin').hookSpecificOutput.additionalContext, /PSAvoidUsingWriteHost/)
   assert.deepEqual(used, ['pwsh', ps1])
-  lintFile({ tool_input: { file_path: ps1 } }, run, 'win32')
+  lintFile({ tool_name: 'Edit', tool_input: { file_path: ps1 } }, run, 'win32')
   assert.equal(used[0], 'powershell')
 })
 

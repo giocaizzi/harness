@@ -1,4 +1,4 @@
-// Stop hook (Claude Code Stop, Copilot agentStop): run `make check` once before the agent stops.
+// Stop hook (Claude Code and VS Code Stop, Copilot agentStop): run `make check` once before the agent stops.
 // On failure, block the stop once and hand back the output tail; a second stop (stop_hook_active)
 // always passes, so it cannot loop. No make, no Makefile or no `check` target: nothing to do.
 import { spawnSync } from 'node:child_process'
@@ -12,7 +12,9 @@ export function stopCheck(input, run = spawnSync) {
   const r = run('make', ['check'], opts)
   if (r.status === 0) return null
   const out = `${r.stdout ?? ''}${r.stderr ?? ''}`.trimEnd().split('\n').slice(-40).join('\n')
-  return { decision: 'block', reason: `make check failed; fix before finishing:\n${out || r.error?.message || `exit ${r.status}`}` }
+  const reason = `make check failed; fix before finishing:\n${out || r.error?.message || `exit ${r.status}`}`
+  // Claude and Copilot CLI read the top-level decision; VS Code reads it from hookSpecificOutput.
+  return { decision: 'block', reason, hookSpecificOutput: { hookEventName: 'Stop', decision: 'block', reason } }
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {

@@ -1,5 +1,5 @@
 {
-  "description": "guard: command guards, make check on stop, post-edit lint and keep-awake, plus a Claude Code mod (usage throttle, token-weather band) for Claude Code and Copilot CLI",
+  "description": "guard: command guards, make check on stop, post-edit lint and keep-awake, plus a Claude Code mod (usage throttle, token-weather band) for Claude Code, Copilot CLI and VS Code",
   "modules": [
     "./mod.mjs"
   ],
