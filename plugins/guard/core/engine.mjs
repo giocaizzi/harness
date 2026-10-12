@@ -101,6 +101,10 @@ function safeRemoval(command, rules, env, worktrees) {
 }
 
 export function evaluateCommand({ command, loadedSkills = new Set(), state, host = {}, env = {}, worktrees = {}, rules }) {
+  // Hard denies come first and fire every time, like the title guard.
+  const denied = hit(rules.deny ?? [], command)
+  if (denied) return { action: 'deny', rule: denied.id, reason: denied.why }
+
   const exempt = safeRemoval(command, rules, env, worktrees);
   const risky = rules.risky.find((r) => new RegExp(r.match, 'i').test(executable(command)) && !(exempt && REMOVAL.has(r.id)));
   if (risky) {
