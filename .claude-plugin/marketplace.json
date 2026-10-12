@@ -6,7 +6,7 @@
   },
   "metadata": {
     "description": "Personal agent harness: skills, agents and guards for Claude Code and Copilot CLI",
-    "version": "3.0.0"
+    "version": "3.1.0"
   },
   "plugins": [
     {
@@ -65,14 +65,39 @@
     {
       "name": "guard",
       "source": "./plugins/guard",
-      "description": "Agent guardrails for Claude Code, Copilot CLI and VS Code: skill enforcer, title guard, pip deny, host guard, risky-command ask, make check on stop, post-edit lint, keep-awake; Claude-only usage throttle, token weather on Claude and Copilot CLI",
-      "version": "0.12.0",
+      "description": "Agent guardrails for Claude Code, Copilot CLI and VS Code: skill enforcer, title guard, pip deny, host guard, risky-command ask, make check on stop, post-edit lint, keep-awake; Claude-only usage throttle",
+      "version": "0.13.0",
       "keywords": [
         "hooks",
         "guardrails",
         "safety",
         "claude-code",
         "copilot-cli"
+      ]
+    },
+    {
+      "name": "hud",
+      "source": "./plugins/hud",
+      "description": "Heads-up display for Claude Code and Copilot CLI: token-weather band and /weather pane, PR and CI strip, spinner that names the running tool (Claude mod), and a two-line status line for both CLIs",
+      "version": "0.1.0",
+      "keywords": [
+        "statusline",
+        "ui",
+        "mod",
+        "claude-code",
+        "copilot-cli"
+      ]
+    },
+    {
+      "name": "sounds",
+      "source": "./plugins/sounds",
+      "description": "Toasts and configurable sounds for Claude Code: usage limits, context, prompt-cache expiry and every way a turn ends (Claude mod)",
+      "version": "0.1.0",
+      "keywords": [
+        "sounds",
+        "notifications",
+        "mod",
+        "claude-code"
       ]
     }
   ]

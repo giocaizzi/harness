@@ -24,6 +24,8 @@ Compatible with most of AI harnesses — [Claude Code](https://code.claude.com/)
 | [`javascript`](plugins/javascript/README.md) | JavaScript/TypeScript, React, Next.js. |
 | [`dev-tools`](plugins/dev-tools/README.md) | General development tooling — git, GitHub, conventional commits, semantic versioning. |
 | [`guard`](plugins/guard/README.md) | Guardrail hooks for both harnesses — skill enforcer, commit-title guard, host guard, risky-command ask. |
+| [`hud`](plugins/hud/README.md) | Heads-up display — token-weather band and pane, PR and CI strip, tool-naming spinner, status line for both CLIs. |
+| [`sounds`](plugins/sounds/README.md) | Toasts and configurable sounds for limits, context, cache expiry and every way a turn ends. |
 
 Each plugin's README lists the skills, agents and hooks it ships.
 
@@ -39,7 +41,9 @@ Each plugin's README lists the skills, agents and hooks it ships.
 | `guard` post-edit lint, stop `make check` | yes | yes | yes |
 | `guard` keep-awake | yes | yes | yes, while the window is open |
 | `guard` usage throttle | yes (mod) | no: no mods API, no rate-limit windows | no: no mods API |
-| `guard` token weather | yes, band and pane (mod), plus the status line | yes, status line (`statusLine.command`) | no: no status-line hook |
+| `hud` band, pane, PR strip, spinner | yes (mod) | no: no mods API | no: no mods API |
+| `hud` status line | yes (`statusLine.command`) | yes (`statusLine.command`) | no: no status-line hook |
+| `sounds` toasts and sounds | yes (mod), sounds on macOS only | no: no mods API | no: no mods API |
 
 Hosts: everything runs on macOS, Linux and Windows; the hooks need `node` 22+ on PATH. Checked live on macOS only (the `host-hygiene` `.ps1` scripts run in CI under Linux PowerShell): Windows is pending ([#25](https://github.com/giocaizzi/harness/issues/25)) and the Linux and Windows keep-awake keepers are unit-tested only. Details per hook: [docs/guard.md](docs/guard.md).
 
