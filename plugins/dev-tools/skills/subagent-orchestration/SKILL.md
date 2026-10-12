@@ -1,6 +1,6 @@
 ---
 name: subagent-orchestration
-description: Routing work to subagents and models in Claude Code and Copilot CLI - hub-and-spoke delegation, three model tiers, effort levels, escalation and verifying delegated results. Use when spawning subagents, splitting work in parallel, or choosing a model or effort for a task.
+description: Routing work to subagents and models in Claude Code and Copilot CLI - hub-and-spoke delegation, four model tiers, effort levels, escalation and verifying delegated results. Use when spawning subagents, splitting work in parallel, or choosing a model or effort for a task.
 ---
 
 # Subagent orchestration
@@ -12,10 +12,11 @@ The main session (hub) plans, delegates and verifies. Subagents (spokes) do boun
 | Tier | Work | Claude Code | Copilot CLI |
 |---|---|---|---|
 | 1 Scout | search, read logs, summarize test output | Haiku 5.5, `low` | GPT-5.4 mini or GPT-6 Luna |
-| 2 Driver (default) | code edits, features, debugging, review | Opus 5.5, `medium`; `high` to verify | GPT-6.1 Sol |
-| 3 Escalation | a problem that stalled at tier 2 | Fable 5.1 | GPT-6 Astra |
+| 2 Routine | mechanical edits, config rollouts across repos, PR/Dependabot triage, audits | Sonnet 5.5, `low`–`medium` | GPT-6 Luna |
+| 3 Driver (default) | features, debugging, review: code that needs judgement | Opus 5.5, `medium`; `high` to verify | GPT-6.1 Sol |
+| 4 Escalation | a problem that stalled at tier 3 | Fable 5.1 | GPT-6 Astra |
 
-- **Scout for reading, not editing.** A weak model's mistake in a summary shows up as a missing detail; in an edit it ships a bug. Mechanical edits stay on the driver at `low` effort: the cheaper model saves little and risks more.
+- **Scout for reading, not editing.** A weak model's mistake in a summary shows up as a missing detail; in an edit it ships a bug. Routine, well-specified edits go to Sonnet; anything needing judgement goes to the driver.
 - **Escalate only after the driver failed twice at `xhigh` on the same problem.** Compact first, since the new model re-pays the cache write for the whole conversation, and return to the driver once solved.
 - **Reviewer is not the author.** Review important changes at the author's tier or higher.
 
@@ -42,7 +43,7 @@ Claude Code:
 - `model` on each spawn (`haiku`, `sonnet`, `opus`, `fable`); `model` and `effort` in an agent definition.
 - `CLAUDE_CODE_SUBAGENT_MODEL` sets all subagents; a definition's own `model` wins.
 - `/model` and `/effort` change the session.
-- This plugin ships `scout` (tier 1) and `escalate` (tier 3).
+- This plugin ships `scout` (tier 1) and `escalate` (tier 4).
 
 Copilot CLI:
 - `/model [--session|--global|--repo|--local] [MODEL|auto TIER]` sets model and reasoning effort; auto tiers are `efficiency`, `balance`, `intelligence`.
