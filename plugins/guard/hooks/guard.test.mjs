@@ -150,3 +150,12 @@ test('VS Code ignores matchers: a non-shell tool with a command passes untouched
   assert.equal(decision(await h(pre('read_file', 'git commit -m "bad"'))), undefined)
   assert.equal(decision(await h(pre('run_in_terminal', 'git commit'))).permissionDecision, 'deny')
 })
+
+test('telemetry: a deny and an ask emit a decision record, an allow does not', async () => {
+  const sent = []
+  const run = setup({ emit: async (event, attrs) => sent.push([event, attrs.action]) })
+  await run({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'git commit -m "bad title"' } })
+  assert.deepEqual(sent, [['guard.decision', 'deny']])
+  await run({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'ls' } })
+  assert.equal(sent.length, 1)
+})

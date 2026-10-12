@@ -2,11 +2,23 @@
 // The command guards run as command hooks for both harnesses; this holds only what needs the mods API.
 import { atom, read, update } from 'claude-code'
 import { evaluateSpawn } from '../core/engine.mjs'
+import { logRequest } from '../core/otel.mjs'
 import { rules } from '../core/rules.mjs'
-import { TTL_MS, forecast } from './weather.mjs'
+import { TTL_MS, clock, forecast, glyph, sparkCells } from './weather.mjs'
 
 // The last main-loop turn: its usage, when it ended, and how many turns this conversation has had.
 const weather = atom({ plugin: 'guard', key: 'weather' }, null)
+// Context % and cache hit % of the last turns (null: unknown), oldest first.
+const history = atom({ plugin: 'guard', key: 'history' }, [])
+
+const PANE = 'weather'
+const HISTORY_TURNS = 24
+const TONE_COLOR = { ok: undefined, warn: '#f9e2af', bad: '#f38ba8' }
+const toneOf = (percent) => (percent >= 80 ? 'bad' : percent >= 50 ? 'warn' : 'ok')
+
+// A bar chart of the history as one Raster; a value of unknown context counts as empty.
+const spark = (Raster, key, values, rows) =>
+  Raster({ key, columns: values.length, rows, cells: new Uint8Array(Uint32Array.from(sparkCells(values, rows)).buffer).toBase64() })
 
 // The window closest to its limit (a gateway spend limit is not a plan window).
 const worstWindow = (limits) => limits.filter((r) => r.kind !== 'spend_limit').sort((a, b) => b.percentUsed - a.percentUsed)[0]
@@ -14,7 +26,30 @@ const worstWindow = (limits) => limits.filter((r) => r.kind !== 'spend_limit').s
 // A /clear: forget the last turn and redraw.
 async function reset($) {
   await update($, weather, () => null)
+  await update($, history, () => [])
   $.ui.invalidate('ui.render')
+}
+
+async function contextPercent($) {
+  try {
+    return (await $.session.usage()).context.percent
+  } catch {
+    return undefined // usage unavailable
+  }
+}
+
+// The throttle denial as a log record for the OTel collector, when the session exports to one; never fails the denial.
+async function emitThrottle($, w) {
+  try {
+    const req = logRequest(
+      { endpoint: await $.env.get('OTEL_EXPORTER_OTLP_ENDPOINT'), headers: await $.env.get('OTEL_EXPORTER_OTLP_HEADERS'), resource: await $.env.get('OTEL_RESOURCE_ATTRIBUTES') },
+      'guard.throttle',
+      { action: 'deny', rule: 'usage-throttle', window: w?.kind, percent: w?.percentUsed, harness: 'claude' },
+    )
+    if (req) await $.http.fetch(req.url, { method: 'POST', headers: req.headers, body: req.body })
+  } catch {
+    // collector unreachable: the denial stands
+  }
 }
 
 export function register(on) {
@@ -30,6 +65,7 @@ export function register(on) {
       // settings unreadable: the API default
     }
     // The TTL countdown: one redraw a second while the band shows a last turn.
+    await $.command.register({ name: 'weather', description: 'Show the context and prompt-cache history in a pane' })
     tick?.cancel()
     tick = $.clock.every(1000, async () => {
       if (await read($, weather)) $.ui.invalidate('ui.render')
@@ -47,27 +83,62 @@ export function register(on) {
     if (!e.agentId && e.usage) {
       const at = await $.clock.now()
       await update($, weather, (w) => ({ usage: e.usage, at, turns: (w?.turns ?? 0) + 1 }))
+      const { ctx, hit } = forecast({ percent: await contextPercent($), usage: e.usage, turns: 2 })
+      await update($, history, (h) => [...h, { ctx, hit }].slice(-HISTORY_TURNS))
     }
     return next(e)
   })
 
   // Our line on top of whatever the plugins beneath draw (next-steps and the like), never in its place.
+  // The context % is in the status line already, so the band says the context as a glyph and the cache facts.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const below = await next(e)
     if (e.props.hasSurvey) return below
     const w = await read($, weather)
-    let percent
-    try {
-      percent = (await $.session.usage()).context.percent
-    } catch {
-      // usage unavailable: show the cache part alone
-    }
     const now = await $.clock.now()
-    const f = forecast({ percent, usage: w?.usage, turns: w?.turns ?? 0, ttlMs, sinceMs: w ? now - w.at : undefined })
-    if (!f.text) return below
-    const { Box, Text } = $.ui.resolve(e)
-    const line = Text({ dimColor: !f.hints.length, color: f.hints.length ? 'yellow' : undefined, children: [f.text] })
+    const f = forecast({ percent: await contextPercent($), usage: w?.usage, turns: w?.turns ?? 0, ttlMs, sinceMs: w ? now - w.at : undefined, showCtx: false })
+    if (!f.segments.length) return below
+    const h = await read($, history)
+    const { Box, Text, Raster } = $.ui.resolve(e)
+    const dim = (children) => Text({ dimColor: true, children: [children] })
+    const parts = f.segments.flatMap((x, i) => [i ? dim(' · ') : null, Text({ color: TONE_COLOR[x.tone], dimColor: x.tone === 'ok', children: [x.text] })])
+    const line = Box({
+      flexDirection: 'row',
+      children: [Text({ color: TONE_COLOR[toneOf(f.ctx)], children: [glyph(f.ctx) ? `${glyph(f.ctx)} ` : '']}), ...parts.filter(Boolean), h.length > 1 ? dim('  ') : null, h.length > 1 ? spark(Raster, 'weather-spark', h.map((x) => x.ctx ?? 0), 1) : null].filter(Boolean),
+    })
     return Box({ flexDirection: 'column', children: below ? [line, below] : [line] })
+  })
+
+  // The spinner says how long the prompt cache lasts while a turn runs.
+  on('ui.render', { component: 'Spinner' }, async ($, e, next) => {
+    const w = await read($, weather)
+    if (!w) return next(e)
+    const left = ttlMs - ((await $.clock.now()) - w.at)
+    return next(left > 0 ? { ...e, props: { ...e.props, suffix: ` · ttl ${clock(left)}…` } } : e)
+  })
+
+  // /weather: the history at full size.
+  on('command.run', { command: 'weather' }, async ($) => {
+    const opened = await $.ui.open({ id: PANE, title: 'Token weather', focus: true })
+    return { text: opened.isPlaced ? 'Token weather pane opened.' : 'Widen the terminal to see the token weather pane.' }
+  })
+
+  on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
+    const { Box, Text, Button, Raster } = $.ui.resolve(e)
+    const w = await read($, weather)
+    const h = await read($, history)
+    const left = w ? ttlMs - ((await $.clock.now()) - w.at) : null
+    const bar = left == null ? '' : '▰'.repeat(Math.round((20 * Math.max(0, left)) / ttlMs)).padEnd(20, '▱')
+    return Box({
+      flexDirection: 'column',
+      children: [
+        h.length ? Text({ dimColor: true, children: ['context %, one bar per turn'] }) : Text({ dimColor: true, children: ['No turns yet.'] }),
+        h.length ? spark(Raster, 'weather-pane', h.map((x) => x.ctx ?? 0), 4) : null,
+        ...h.slice(-8).map((x, i, rows) => Text({ children: [`turn ${w.turns - (rows.length - 1 - i)}  ctx ${x.ctx ?? '?'}%  cache ${x.hit ?? '?'}%`] })),
+        left == null ? null : Text({ color: TONE_COLOR[left <= 60_000 ? 'warn' : 'ok'], children: [left > 0 ? `ttl ${bar} ${clock(left)}` : 'cache expired'] }),
+        Button({ label: 'Close', hotkey: 'q', onPress: () => $.ui.close({ id: PANE }) }),
+      ].filter(Boolean),
+    })
   })
 
   // Usage throttle: no new subagents at the throttle level.
@@ -75,6 +146,8 @@ export function register(on) {
     const { rateLimits } = await $.session.usage()
     const w = worstWindow(rateLimits)
     const d = evaluateSpawn({ usagePercent: w?.percentUsed, resetsAt: w?.resetsAt, rules })
-    return d.action === 'deny' ? { deny: d.reason } : next(e)
+    if (d.action !== 'deny') return next(e)
+    await emitThrottle($, w)
+    return { deny: d.reason }
   }).catch(($, e, next) => next(e)) // usage unreadable: fail open
 }

@@ -6,6 +6,7 @@ declare module 'claude-code' {
         at: number
         turns: number
       } | null
+      history: { ctx: number | null; hit: number | null }[]
     }
   }
 }

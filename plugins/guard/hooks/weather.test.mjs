@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { forecast, TTL_MS } from './weather.mjs'
+import { forecast, glyph, sparkCells, TTL_MS } from './weather.mjs'
 
 const usage = (read, create, input) => ({ cache_read_input_tokens: read, cache_creation_input_tokens: create, input_tokens: input })
 
@@ -39,4 +39,24 @@ test('Copilot status line: context % and the session cache hit rate from its cum
   assert.equal(copilotWeather(status({ total_input_tokens: 200, total_cache_read_tokens: 20, total_cache_write_tokens: 170, last_call_input_tokens: 100 })), 'ctx 9% · cache 10% · cache cold')
   assert.equal(copilotWeather(status({ total_input_tokens: 0 })), 'ctx 9%')
   assert.equal(copilotWeather({}), '')
+})
+
+test('showCtx false leaves the context out; segments carry the tone', () => {
+  const f = forecast({ percent: 85, usage: usage(100, 800, 100), turns: 2, showCtx: false })
+  assert.equal(f.text, 'cache 10% · compact soon · cache cold')
+  assert.deepEqual(f.segments.map((x) => x.tone), ['bad', 'warn', 'bad'])
+})
+
+test('glyph by context fullness', () => {
+  assert.deepEqual([10, 30, 60, 80, 95].map(glyph), ['☀', '☁', '☂', '☇', '↯'])
+  assert.equal(glyph(null), '')
+})
+
+test('sparkCells: one column per value, the bar filling the rows from the bottom', () => {
+  const cells = sparkCells([100, 0], 2)
+  assert.equal(cells.length, 2 * 2 * 3)
+  assert.equal(cells[0], 0x2588) // top row, full value: full block
+  assert.equal(cells[3], 32) // top row, empty value: space
+  assert.equal(cells[6], 0x2588) // bottom row, full value
+  assert.equal(sparkCells([50], 1)[0], 0x2584) // half of one row: ▄
 })
