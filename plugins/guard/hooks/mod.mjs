@@ -4,7 +4,7 @@ import { atom, read, update } from 'claude-code'
 import { evaluateSpawn } from '../core/engine.mjs'
 import { logRequest } from '../core/otel.mjs'
 import { rules } from '../core/rules.mjs'
-import { ICON, TTL_MS, alerts, battery, clock, forecast, glyph, sparkCells, sparkRange } from './weather.mjs'
+import { ICON, TTL_MS, alerts, battery, clock, forecast, glyph, sparkCells, sparkRange, turnSound } from './weather.mjs'
 
 // The last main-loop turn: its usage, when it ended, and how many turns this conversation has had.
 const weather = atom({ plugin: 'guard', key: 'weather' }, null)
@@ -54,6 +54,11 @@ async function emitThrottle($, w) {
   }
 }
 
+// A sound by its setting's value (`off` plays nothing); macOS only, elsewhere nothing plays.
+async function clip($, name, gain = 1) {
+  if (name && name !== 'off') await $.audio.play({ asset: `sounds/${name}.wav` }, { gain }).catch(() => {})
+}
+
 // The rate-limit windows' percent used, by kind (five_hour, seven_day); empty when unavailable.
 async function windows($) {
   try {
@@ -63,10 +68,11 @@ async function windows($) {
   }
 }
 
-export function register(on) {
+export function register(on, options = {}) {
   let ttlMs = TTL_MS['5m']
   let tick
   let warned // the turn whose cache expiry was announced
+  let expired // the turn whose cache expiry was announced as past
 
   // Draw at once (the context part needs no turn); a reload keeps $.state, so the last turn stays.
   on('session.start', async ($, e, next) => {
@@ -88,6 +94,12 @@ export function register(on) {
       if (left > 0 && left <= 60_000 && warned !== w.at) {
         warned = w.at
         $.ui.toast(`Prompt cache expires in ${clock(left)}`)
+        await clip($, options.soundCacheExpiring, options.soundGain)
+      }
+      if (left <= 0 && expired !== w.at) {
+        expired = w.at
+        $.ui.toast('Prompt cache expired')
+        await clip($, options.soundCacheExpired, options.soundGain)
       }
     })
     return next(e)
@@ -98,18 +110,25 @@ export function register(on) {
     return next(e)
   })
 
-  // Main loop only: a subagent's turn says nothing about this conversation's cache.
+  // The weather facts count main-loop turns only: a subagent's turn says nothing about this conversation's cache.
   on('turn.complete', async ($, e, next) => {
+    const sounds = new Set()
     if (!e.agentId && e.usage) {
       const at = await $.clock.now()
       const lim = await windows($)
       const { ctx, hit } = forecast({ percent: await contextPercent($), usage: e.usage, turns: 2 })
-      const a = alerts(ctx, lim.five_hour ?? 0, (await read($, weather))?.alert)
+      const a = alerts(ctx, lim, (await read($, weather))?.alert)
       await update($, weather, (w) => ({ usage: e.usage, at, turns: (w?.turns ?? 0) + 1, alert: a.now }))
       await update($, history, (h) => [...h, { ctx, hit, five: lim.five_hour ?? null, seven: lim.seven_day ?? null }].slice(-HISTORY_TURNS))
-      for (const text of a.toasts) $.ui.toast(text)
-      if (a.isLoud) await $.audio.play({ asset: 'sounds/alert.wav' }).catch(() => {}) // macOS only; elsewhere nothing plays
+      for (const x of a.alerts) {
+        $.ui.toast(x.text)
+        sounds.add(x.key)
+      }
     }
+    const done = turnSound(e, options.doneAfterSeconds)
+    if (done) sounds.add(done)
+    // One clip per distinct sound: two limits crossing together play it once.
+    for (const name of new Set([...sounds].map((k) => options[k]))) await clip($, name, options.soundGain)
     return next(e)
   })
 
