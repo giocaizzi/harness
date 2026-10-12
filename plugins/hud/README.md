@@ -7,7 +7,7 @@ Heads-up display for Claude Code (a mod) and a status line for Claude Code and C
 | Part | Where | Harness | What it shows |
 |---|---|---|---|
 | `token-weather` band | mod `AbovePrompt` | Claude | `[ cache %] [ TTL] [sparkline]`: last turn's cache hit rate, prompt-cache countdown, context over the last 8 turns. Indented one column like the status line. |
-| PR and CI strip | mod `AbovePrompt` | Claude | `[ #56 ✓ 3/3]` the branch's PR (click to open) and its passed checks, `[↑2 ↓1]` unpushed work, `[~3 +120 -30 ?2]` uncommitted changes (files, lines added and removed, untracked). |
+| PR and CI strip | mod `AbovePrompt` | Claude | `[ #56 ✓ 3/3]` the branch's PR (click to open) and its passed checks (an hourglass while some still run; `merged` or `closed` once it is), `[↑2 ↓1]` unpushed work, `[~3 +120 -30 ?2]` uncommitted changes (files, lines added and removed, untracked). |
 | `/weather` pane | mod `Pane` | Claude | Context chart, per-turn table, last turn's tokens, 5h and 7d history, TTL gauge. |
 | Spinner | mod `Spinner` | Claude | ` Running`, ` Searching`, ` Editing`, … while a tool runs. |
 | Limit forecast | mod `AbovePrompt` | Claude | `[ 5h full ~16:40]` when a window fills before it resets at the pace of the last turns. |

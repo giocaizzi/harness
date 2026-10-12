@@ -119,7 +119,7 @@ test('spinner activity: an icon and a verb per tool, nothing for the rest', () =
 test('repoState: the PR and its checks, and unpushed work', () => {
   const run = (conclusion, status = 'COMPLETED') => ({ conclusion, status })
   assert.deepEqual(repoState({ number: 7, statusCheckRollup: [run('SUCCESS'), run('SUCCESS')] }, '0\t2'), {
-    pr: { number: 7, url: null, ci: 'pass', passed: 2, total: 2 },
+    pr: { number: 7, url: null, state: 'open', ci: 'pass', passed: 2, total: 2 },
     ahead: 2,
     behind: 0,
     changes: { files: 0, added: 0, removed: 0, untracked: 0 },
@@ -129,6 +129,7 @@ test('repoState: the PR and its checks, and unpushed work', () => {
   assert.equal(repoState({ number: 7, statusCheckRollup: [{ state: 'PENDING' }] }, null).pr.ci, 'pending')
   assert.equal(repoState({ number: 7, statusCheckRollup: [] }, null).pr.ci, null)
   assert.equal(repoState(null, '3\t0').behind, 3)
+  assert.equal(repoState({ number: 7, state: 'MERGED', statusCheckRollup: [] }, null).pr.state, 'merged')
   assert.equal(repoState({ number: 7, statusCheckRollup: [run(null, 'IN_PROGRESS'), run('SUCCESS')] }, null).pr.passed, 1)
   assert.deepEqual(repoState(null, null, ' 3 files changed, 120 insertions(+), 30 deletions(-)\n', '?? a\n?? b\n M c\n').changes, { files: 3, added: 120, removed: 30, untracked: 2 })
   assert.deepEqual(repoState(null, null, ' 1 file changed, 1 insertion(+)\n', '').changes, { files: 1, added: 1, removed: 0, untracked: 0 })

@@ -22,7 +22,8 @@ const KEEP_TURNS = 200
 // The branch's PR, unpushed work and uncommitted changes (the band says them).
 const repo = atom({ plugin: 'hud', key: 'repo' }, null)
 const REPO_REFRESH_MS = 60_000
-const CI_ICON = { pass: '\u2713', fail: '\u2717', pending: '\u2026' }
+// Checks passed, failed, or some still running (an hourglass: nf-fa-hourglass_half).
+const CI_ICON = { pass: '\u2713', fail: '\u2717', pending: '\uf252' }
 const CI_TONE = { pass: 'ok', fail: 'bad', pending: 'warn' }
 
 const PANE = 'weather'
@@ -67,7 +68,7 @@ async function refreshRepo($) {
       return null // not a repository, or the tool is missing
     }
   }
-  const pr = await run(['gh', 'pr', 'view', '--json', 'number,url,statusCheckRollup'])
+  const pr = await run(['gh', 'pr', 'view', '--json', 'number,url,state,statusCheckRollup'])
   const counts = await run(['git', 'rev-list', '--left-right', '--count', '@{u}...HEAD'])
   const shortstat = await run(['git', 'diff', '--shortstat', 'HEAD'])
   const porcelain = await run(['git', 'status', '--porcelain'])
@@ -175,7 +176,14 @@ export function register(on) {
             flexDirection: 'row',
             children: [
               r.pr.url ? Link({ href: r.pr.url, label: `\uf407 #${r.pr.number}` }) : Text({ children: [`\uf407 #${r.pr.number}`] }),
-              r.pr.ci ? Text({ color: TONE_COLOR[CI_TONE[r.pr.ci]], dimColor: r.pr.ci === 'pass', children: [` ${CI_ICON[r.pr.ci]} ${r.pr.passed}/${r.pr.total}`] }) : null,
+              // A merged or closed PR says so; an open one says its checks.
+              r.pr.state === 'merged'
+                ? Text({ color: '#cba6f7', children: [' \uf419 merged'] })
+                : r.pr.state === 'closed'
+                  ? Text({ dimColor: true, children: [' closed'] })
+                  : r.pr.ci
+                    ? Text({ color: TONE_COLOR[CI_TONE[r.pr.ci]], dimColor: r.pr.ci === 'pass', children: [` ${CI_ICON[r.pr.ci]} ${r.pr.passed}/${r.pr.total}`] })
+                    : null,
             ].filter(Boolean),
           }),
         )
