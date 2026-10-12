@@ -19,6 +19,8 @@ But they differ in two important ways:
 1. **Plugin manifest location.** Claude Code reads `.claude-plugin/plugin.json` (only). Copilot CLI tries `.plugin/plugin.json` → `plugin.json` → `.github/plugin/plugin.json` → `.claude-plugin/plugin.json` in that order.
 2. **Agent file format and discovery.** Claude scans the `agents/` directory and loads **any `*.md` file** (including ones named `*.agent.md`). Copilot loads only `*.agent.md` files from its configured `agents` directory.
 
+VS Code Copilot (agent plugins) detects a plugin with `.claude-plugin/plugin.json` as **Claude format**: it reads `agents/*.md` (any `.md`, Claude frontmatter mapped), `skills/` and `hooks/hooks.json`, and never reads `.github/plugin/plugin.json` or `copilot/`. A `.plugin/plugin.json` or root `plugin.json` would switch it to another format, so neither may exist. Hook details: [docs/guard.md](docs/guard.md).
+
 Empirically tested: if you put both `foo.md` and `foo.agent.md` in the same `agents/` directory, Claude double-loads and the second one wins. So the two harnesses' agent files **must live in different directories**, and each harness must read a `plugin.json` that points to its directory.
 
 This repo treats everything that is identical (skills, plugin metadata) as one source of truth and **generates the per-harness artifacts** that diverge (agent files + the Copilot-specific `plugin.json`).
@@ -104,12 +106,13 @@ If `make validate` fails, check the common drift points first:
 
 ## Hooks (the `guard` plugin)
 
-`plugins/guard/hooks/hooks.json` is read by both harnesses: Claude Code natively, Copilot CLI as Claude-format (PascalCase events, `tool_name`/`tool_input` payload, `hookSpecificOutput.permissionDecision`). Architecture, decisions and the install/verify runbook: [docs/guard.md](docs/guard.md).
+`plugins/guard/hooks/hooks.json` is read by all three harnesses: Claude Code natively, Copilot CLI and VS Code as Claude-format (PascalCase events, `tool_name`/`tool_input` payload, `hookSpecificOutput.permissionDecision`). Architecture, decisions and the install/verify runbook: [docs/guard.md](docs/guard.md).
 
 - `make test` runs `node --test` over `plugins/*/core/*.test.mjs` and `plugins/*/hooks/*.test.mjs` (Node 22+), then `claude plugin test` for every plugin with `tests/*.test.ts` (the Claude mod). Add a test with every rule change.
-- `hooks.json` may hold both `hooks` (command hooks, both harnesses) and `modules` (a Claude Code mod, which Copilot ignores). A mod module imports `claude-code`, so keep its logic in a pure sibling file node can test (`weather.mjs`), and keep functions that take `$` declared at the top level (`claude plugin validate` rejects `$` passed to a closure).
+- `hooks.json` may hold both `hooks` (command hooks, both harnesses) and `modules` (a Claude Code mod, which Copilot CLI and VS Code ignore). A mod module imports `claude-code`, so keep its logic in a pure sibling file node can test (`weather.mjs`), and keep functions that take `$` declared at the top level (`claude plugin validate` rejects `$` passed to a closure).
 - A hook script must never exit non-zero by accident: Copilot denies a `PreToolUse` whose hook fails. Fail open for reminders; the risky-command ask fails closed on purpose.
-- Use `${CLAUDE_PLUGIN_ROOT}` in commands and `CLAUDE_PLUGIN_DATA` for state: both harnesses set them. One `command` field runs under bash and PowerShell, so keep it to `node "<path>" <args>`.
+- Use `${CLAUDE_PLUGIN_ROOT}` in commands and `CLAUDE_PLUGIN_DATA` for state: both CLIs set them; VS Code sets only `CLAUDE_PLUGIN_ROOT`, so read `CLAUDE_PLUGIN_DATA` with a fallback.
+- VS Code ignores `matcher`: every hook of an event runs, so each script checks `tool_name` itself. One `command` field runs under bash and PowerShell, so keep it to `node "<path>" <args>`.
 - Rules are data in `plugins/guard/core/rules.mjs`; `core/engine.mjs` stays pure (no I/O). Bump the `guard` version (plugin.json + marketplace entry) for every behaviour change: installed caches update only on a version change.
 
 ---
@@ -173,7 +176,9 @@ These are load-bearing — the layout breaks if any of them slip.
 | `.claude-plugin/plugin.json` must NOT contain an `agents` field. | Claude's `agents` field expects file paths and overrides auto-discovery. The Copilot override (`["./copilot/"]`) lives only in `.github/plugin/plugin.json`. |
 | No `.agent.md` files in `agents/`. | Claude scans `agents/` for any `*.md`; a `foo.agent.md` would be loaded and shadow `foo.md`. Empirically tested. |
 | No `.md` files in `copilot/`. | Symmetric — keeps Copilot's discovery clean and removes ambiguity. |
-| Marketplace.json sits at `.claude-plugin/marketplace.json` (repo root). | Claude reads here; Copilot CLI falls back to `.claude-plugin/marketplace.json` when looking up marketplaces. |
+| Marketplace.json sits at `.claude-plugin/marketplace.json` (repo root). | Claude reads here; Copilot CLI and VS Code fall back to `.claude-plugin/marketplace.json` when looking up marketplaces. |
+| No `.plugin/plugin.json` or root `plugin.json` in a plugin. | VS Code would detect another plugin format and skip the Claude layout. |
+| Skill `name` is kebab-case and equals its directory. | VS Code skips any other skill silently. |
 
 `validate.py` enforces each of these.
 
@@ -238,7 +243,7 @@ Use semantic versioning (MAJOR.MINOR.PATCH) at three levels:
 |---|---|---|
 | Claude Code | `/plugin marketplace add giocaizzi/harness` | `/plugin install <plugin>@giocaizzi-harness` |
 | GitHub Copilot CLI | `copilot plugin marketplace add giocaizzi/harness` | `copilot plugin install <plugin>@giocaizzi-harness` |
-| VS Code Copilot | Browse `@agentPlugins` in the Extensions sidebar after adding the marketplace, or use **Chat: Install Plugin From Source** with the repo URL. | — |
+| VS Code Copilot | Add `giocaizzi/harness` to `chat.plugins.marketplaces` | `@agentPlugins` in the Extensions view, or **Chat: Install Plugin From Source** |
 
 The repo-root `.claude-plugin/marketplace.json` is what both CLI harnesses fetch. Each plugin then exposes the right manifest to the right harness via `.claude-plugin/plugin.json` (Claude) and `.github/plugin/plugin.json` (Copilot).
 
