@@ -109,6 +109,7 @@ test('the pane shows the 5h window from the turns', async ($, on) => {
 })
 
 test('the spinner names the running tool while it runs', async ($, on) => {
+  mock.clock(on)
   on('ui.render', { component: 'Spinner' }, ($$, e) => $$.ui.resolve(e).Text({ children: [`${e.props.message ?? e.props.word}`] }))
   const SPINNER = { component: 'Spinner', props: { word: 'Sauteing', message: null, suffix: '…', mode: 'tool-use' } } as const
   let during = false
@@ -137,7 +138,7 @@ test('the band shows the PR with its checks and the unpushed work, in brackets',
       stderr: '',
       isStdoutTruncated: false,
       isStderrTruncated: false,
-      stdout: e.argv[0] === 'gh' ? JSON.stringify({ number: 56, statusCheckRollup: [{ status: 'COMPLETED', conclusion: 'SUCCESS' }] }) : e.argv[1] === 'rev-list' ? '0\t2' : e.argv[1] === 'diff' ? ' 3 files changed, 12 insertions(+), 4 deletions(-)' : '?? new.txt\n',
+      stdout: e.argv[0] === 'gh' ? JSON.stringify({ number: 56, url: 'https://github.com/o/r/pull/56', statusCheckRollup: [{ status: 'COMPLETED', conclusion: 'SUCCESS' }] }) : e.argv[1] === 'rev-list' ? '0\t2' : e.argv[1] === 'diff' ? ' 3 files changed, 12 insertions(+), 4 deletions(-)' : '?? new.txt\n',
     },
   }))
   bottom(on)
@@ -145,9 +146,87 @@ test('the band shows the PR with its checks and the unpushed work, in brackets',
   await $.session.start({ cwd: '/r' })
   await $.turn.complete(turn(900, 0, 100))
   const ui = await $.ui.mount({ plugin: 'hud', surface: 'terminal', ...BAND })
-  expect(await ui.find({ type: 'Text', text: /\uf407 #56 \u2713 1\/1/ })).toBeDefined()
+  expect(await ui.find({ type: 'Link' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /\u2713 1\/1/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /~3 \+12 -4 \?1/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /\u21912/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /^\[$/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('the turn footer adds tokens, cache hit rate and cost after the engine line', async ($, on) => {
+  mock.clock(on)
+  let usd = 1
+  on('session.usage', () => ({ value: { startedAt: 0, context: { tokens: 0, window: 1000000, percent: 12 }, rateLimits: [], cost: { usd } } }))
+  on('turn.complete', () => ({ text: 'ok' }))
+  on('ui.render', { component: 'TurnDuration' }, ($$, e) => $$.ui.resolve(e).Text({ children: [`${e.props.word} for 3s`] }))
+  await $.turn.complete({ ...turn(900, 0, 100), durationMs: 1000 })
+  usd = 1.25
+  await $.turn.complete({ ...turn(9000, 1000, 0), durationMs: 3000 })
+  const ui = await $.ui.mount({ plugin: 'hud', surface: 'terminal', component: 'TurnDuration', props: { word: 'Baked', durationMs: 3000 } })
+  expect(await ui.find({ type: 'Text', text: /Baked for 3s/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /10\.0k in · 1 out · 90% cached · \$0\.25/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('a tool row gets a status icon, the edit size and the call time', async ($, on) => {
+  const clock = mock.clock(on)
+  on('tool.call', async () => {
+    await clock.advance(1500)
+    return { result: { stdout: '', stderr: '', interrupted: false } } as never
+  })
+  on('ui.render', { component: 'ToolUse' }, ($$, e) => $$.ui.resolve(e).Text({ children: [`row ${e.props.tool}`] }))
+  await $.tool.call({ tool: 'Bash', input: { command: 'ls' }, tool_use_id: 'tu1' } as never)
+  const props = { tool_use_id: 'tu1', tool: 'Edit', input: { old_string: 'a\nb', new_string: 'a\nb\nc' }, isRunning: false, isErrored: false, isInterrupted: false }
+  const ui = await $.ui.mount({ plugin: 'hud', surface: 'terminal', component: 'ToolUse', requestId: 'tu1', props })
+  expect(await ui.find({ type: 'Text', text: /row Edit/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /\+3 -2 · 1\.5s/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('/subagents lists each spawned subagent and how it ended', async ($, on) => {
+  mock.clock(on)
+  on('agent.spawn', () => ({ model: 'haiku', agentId: 'a1' }))
+  on('turn.complete', () => ({ text: 'ok' }))
+  await $.agent.spawn({ prompt: 'x', description: 'find the bug', subagentType: 'scout' } as never)
+  const ui = await $.ui.mount({ plugin: 'hud', surface: 'terminal', component: 'Pane', requestId: 'subagents', props: {} })
+  expect(await ui.find({ type: 'Text', text: /\u2026/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /find the bug · haiku/ })).toBeDefined()
+  await ui.unmount()
+  await $.turn.complete({ ...turn(10, 0, 10), agentId: 'a1' })
+  const done = await $.ui.mount({ plugin: 'hud', surface: 'terminal', component: 'Pane', requestId: 'subagents', props: {} })
+  expect(await done.find({ type: 'Text', text: /\u2713/ })).toBeDefined()
+  await done.unmount()
+})
+
+test('/ctx draws the breakdown grid and one row per category', async ($, on) => {
+  const square = (categoryName: string, isFilled: boolean) => ({ color: 'x', isFilled, categoryName, tokens: 1, percentage: 1, squareFullness: 1 })
+  on('session.usage', () => ({
+    value: {
+      startedAt: 0,
+      rateLimits: [],
+      context: {
+        tokens: 30000,
+        window: 200000,
+        percent: 15,
+        breakdown: {
+          categories: [
+            { name: 'System prompt', tokens: 20000, color: 'x', isDeferred: false, kind: 'used' },
+            { name: 'Messages', tokens: 10000, color: 'x', isDeferred: false, kind: 'used' },
+            { name: 'Free space', tokens: 170000, color: 'x', isDeferred: false, kind: 'free' },
+          ],
+          totalTokens: 30000,
+          maxTokens: 200000,
+          percentage: 15,
+          gridRows: [[square('System prompt', true), square('Messages', true), square('Free space', false)]],
+          model: 'opus',
+        },
+      },
+    },
+  }))
+  const ui = await $.ui.mount({ plugin: 'hud', surface: 'terminal', component: 'Pane', requestId: 'ctx', props: { bodyColumns: 80 } as never })
+  expect(await ui.find({ type: 'Text', text: /opus · 30\.0k of 200\.0k \(15%\)/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /System prompt/ })).toBeDefined()
+  expect(await ui.find({ type: 'Raster' })).toBeDefined()
   await ui.unmount()
 })

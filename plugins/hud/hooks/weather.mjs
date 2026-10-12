@@ -19,7 +19,7 @@ export const glyph = (ctx) => (ctx == null ? '' : ctx < 25 ? '\ue30d' : ctx < 50
 export const battery = (used) => String.fromCharCode(0xf244 - Math.min(4, Math.max(0, Math.round((100 - used) / 25))))
 
 // The spinner's word while a tool runs: a Nerd Font icon and a verb, null for a tool with no personality.
-const ACTIVITY = {
+export const ACTIVITY = {
   Bash: ['\uf489', 'Running'],
   Read: ['\uf4a5', 'Reading'],
   Grep: ['\uf422', 'Searching'],
@@ -50,11 +50,55 @@ export function repoState(pr, counts, shortstat = null, porcelain = null) {
   const n = (re) => Number(re.exec(shortstat ?? '')?.[1] ?? 0)
   const untracked = (porcelain ?? '').split('\n').filter((l) => l.startsWith('??')).length
   return {
-    pr: pr ? { number: pr.number, ci, passed, total: checks.length } : null,
+    pr: pr ? { number: pr.number, url: pr.url ?? null, ci, passed, total: checks.length } : null,
     ahead: ahead || 0,
     behind: behind || 0,
     changes: { files: n(/(\d+) files? changed/), added: n(/(\d+) insertions?/), removed: n(/(\d+) deletions?/), untracked },
   }
+}
+
+// Token counts as the footer and pane write them: 950, 12.3k, 1.2M.
+export const tokens = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n))
+
+// A duration as the transcript writes one: 850ms, 4.2s, 1m 4s.
+export const duration = (ms) => (ms < 1000 ? `${Math.round(ms)}ms` : ms < 60_000 ? `${(ms / 1000).toFixed(1)}s` : `${Math.floor(ms / 60_000)}m ${Math.round((ms % 60_000) / 1000)}s`)
+
+// The turn footer's tail after the engine's `Baked for 3s`: tokens in and out, cache hit rate, and what the turn cost.
+export function footerText(t) {
+  const u = t.usage
+  const input = u.input_tokens + u.cache_read_input_tokens + u.cache_creation_input_tokens
+  const hit = input ? Math.round((100 * u.cache_read_input_tokens) / input) : null
+  return [`${tokens(input)} in`, `${tokens(u.output_tokens)} out`, hit == null ? null : `${hit}% cached`, t.cost == null ? null : `$${t.cost.toFixed(2)}`].filter(Boolean).join(' · ')
+}
+
+// Lines an edit adds and removes, read off the call's input: `+12 -4` (Edit, MultiEdit), `+40` (Write), else null.
+export function editStat(tool, input) {
+  const lines = (x) => (typeof x === 'string' && x ? x.split('\n').length : 0)
+  if (tool === 'Write') return `+${lines(input?.content)}`
+  const edits = tool === 'Edit' ? [input ?? {}] : tool === 'MultiEdit' ? (input?.edits ?? []) : null
+  if (!edits) return null
+  return `+${edits.reduce((n, x) => n + lines(x.new_string), 0)} -${edits.reduce((n, x) => n + lines(x.old_string), 0)}`
+}
+
+// When a rate-limit window fills at the pace of its recent samples, if that comes before it resets; else null.
+// samples: [{ at, pct }] oldest first; a drop in pct is a reset, so only the samples after the last drop count.
+export function fullAt(samples, resetsAt) {
+  let s = samples.filter((x) => x.pct != null)
+  const drop = s.findLastIndex((x, i) => i && x.pct < s[i - 1].pct)
+  if (drop > 0) s = s.slice(drop)
+  if (s.length < 2) return null
+  const [a, b] = [s[0], s.at(-1)]
+  const rate = (b.pct - a.pct) / (b.at - a.at)
+  if (!(rate > 0) || b.pct >= 100) return null
+  const at = b.at + (100 - b.pct) / rate
+  return resetsAt != null && at >= resetsAt ? null : at
+}
+
+// A moment as the band writes it: 16:40 today, Thu 16:40 later.
+export function when(ms, now) {
+  const d = new Date(ms)
+  const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+  return new Date(now).toDateString() === d.toDateString() ? hm : `${['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.getDay()]} ${hm}`
 }
 
 // Cells of a bar chart, row-major [codePoint, color, background] triplets, one column per value (0-100). Heights
