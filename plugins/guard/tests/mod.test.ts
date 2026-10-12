@@ -50,7 +50,7 @@ test('the band draws its line on top of what plugins beneath draw', async ($, on
   await $.turn.complete(turn(900, 0, 100))
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ plugin: 'guard', surface, ...BAND })
-    expect(await ui.find({ type: 'Text', text: /cache 90%/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /\uf472 90%/ })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /ctx/ })).toBeUndefined() // the status line has it
     expect(await ui.find({ type: 'Text', text: /next steps/ })).toBeDefined()
     await ui.unmount()
@@ -68,9 +68,9 @@ test('turn one: cache line without "cache cold"; the TTL counts down, then expir
   await $.session.start({ cwd: '/r' })
   await $.turn.complete(turn(0, 900, 100))
   const ui = await $.ui.mount({ plugin: 'guard', surface: 'terminal', ...BAND })
-  expect(await ui.find({ type: 'Text', text: /ttl 5:00/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /\uf520 5:00/ })).toBeDefined()
   await clock.advance(60_000)
-  expect(await ui.find({ type: 'Text', text: /ttl 4:00/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /\uf520 4:00/ })).toBeDefined()
   await clock.advance(240_000)
   expect(await ui.find({ type: 'Text', text: /cache expired/ })).toBeDefined()
   await ui.unmount()
@@ -86,7 +86,7 @@ test('/clear forgets the last turn', async ($, on) => {
   await $.session.end({ reason: 'clear', sessionId: 's', resume: { sessionId: 's' } })
   const ui = await $.ui.mount({ plugin: 'guard', surface: 'terminal', ...BAND })
   expect(await ui.find({ type: 'Text', text: /cache/ })).toBeUndefined()
-  expect(await ui.find({ type: 'Text', text: /☀/ })).toBeUndefined() // nothing left to show
+  expect(await ui.find({ type: 'Text', text: /\ue30d/ })).toBeUndefined() // nothing left to show
   await ui.unmount()
 })
 
@@ -101,12 +101,12 @@ test('the spinner suffix carries the TTL once a turn has ended', async ($, on) =
   const SPINNER = { component: 'Spinner', props: { word: 'Working', message: null, suffix: '…' } } as const
   await $.session.start({ cwd: '/r' })
   const before = await $.ui.mount({ plugin: 'guard', surface: 'terminal', ...SPINNER })
-  expect(await before.find({ type: 'Text', text: /ttl/ })).toBeUndefined()
+  expect(await before.find({ type: 'Text', text: /\uf520/ })).toBeUndefined()
   await before.unmount()
   await $.turn.complete(turn(900, 0, 100))
   await clock.advance(60_000)
   const after = await $.ui.mount({ plugin: 'guard', surface: 'terminal', ...SPINNER })
-  expect(await after.find({ type: 'Text', text: /ttl 4:00…/ })).toBeDefined()
+  expect(await after.find({ type: 'Text', text: /\uf520 4:00…/ })).toBeDefined()
   await after.unmount()
 })
 
@@ -121,7 +121,7 @@ test('/weather opens a pane listing the turns', async ($, on) => {
   await $.turn.complete(turn(900, 0, 100))
   await $.turn.complete(turn(100, 800, 100))
   const ui = await $.ui.mount({ plugin: 'guard', surface: 'terminal', component: 'Pane', requestId: 'weather', props: {} })
-  expect(await ui.find({ type: 'Text', text: /turn 2  ctx 12%  cache 10%/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /turn 2 .* 12% {2}\uf472 10%/ })).toBeDefined()
   expect(await ui.find({ type: 'Button', text: /Close/ })).toBeDefined()
   await ui.unmount()
 })

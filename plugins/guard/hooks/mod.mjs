@@ -4,7 +4,7 @@ import { atom, read, update } from 'claude-code'
 import { evaluateSpawn } from '../core/engine.mjs'
 import { logRequest } from '../core/otel.mjs'
 import { rules } from '../core/rules.mjs'
-import { TTL_MS, clock, forecast, glyph, sparkCells } from './weather.mjs'
+import { ICON, TTL_MS, clock, forecast, glyph, sparkCells } from './weather.mjs'
 
 // The last main-loop turn: its usage, when it ended, and how many turns this conversation has had.
 const weather = atom({ plugin: 'guard', key: 'weather' }, null)
@@ -101,10 +101,18 @@ export function register(on) {
     const h = await read($, history)
     const { Box, Text, Raster } = $.ui.resolve(e)
     const dim = (children) => Text({ dimColor: true, children: [children] })
-    const parts = f.segments.flatMap((x, i) => [i ? dim(' · ') : null, Text({ color: TONE_COLOR[x.tone], dimColor: x.tone === 'ok', children: [x.text] })])
+    const sep = () => dim('  │  ')
+    // Icon, space, value: dim while fine, coloured when not.
+    const label = (x) => (ICON[x.kind] ? `${ICON[x.kind]} ${x.value}` : x.value)
+    const parts = f.segments.flatMap((x, i) => [i ? sep() : null, Text({ color: TONE_COLOR[x.tone], dimColor: x.tone === 'ok', children: [label(x)] })])
     const line = Box({
       flexDirection: 'row',
-      children: [Text({ color: TONE_COLOR[toneOf(f.ctx)], children: [glyph(f.ctx) ? `${glyph(f.ctx)} ` : '']}), ...parts.filter(Boolean), h.length > 1 ? dim('  ') : null, h.length > 1 ? spark(Raster, 'weather-spark', h.map((x) => x.ctx ?? 0), 1) : null].filter(Boolean),
+      children: [
+        glyph(f.ctx) ? Text({ color: TONE_COLOR[toneOf(f.ctx)], dimColor: toneOf(f.ctx) === 'ok', children: [`${glyph(f.ctx)}  `] }) : null,
+        ...parts,
+        h.length > 1 ? sep() : null,
+        h.length > 1 ? spark(Raster, 'weather-spark', h.map((x) => x.ctx ?? 0), 1) : null,
+      ].filter(Boolean),
     })
     return Box({ flexDirection: 'column', children: below ? [line, below] : [line] })
   })
@@ -114,7 +122,7 @@ export function register(on) {
     const w = await read($, weather)
     if (!w) return next(e)
     const left = ttlMs - ((await $.clock.now()) - w.at)
-    return next(left > 0 ? { ...e, props: { ...e.props, suffix: ` · ttl ${clock(left)}…` } } : e)
+    return next(left > 0 ? { ...e, props: { ...e.props, suffix: ` · ${ICON.ttl} ${clock(left)}…` } } : e)
   })
 
   // /weather: the history at full size.
@@ -128,14 +136,30 @@ export function register(on) {
     const w = await read($, weather)
     const h = await read($, history)
     const left = w ? ttlMs - ((await $.clock.now()) - w.at) : null
-    const bar = left == null ? '' : '▰'.repeat(Math.round((20 * Math.max(0, left)) / ttlMs)).padEnd(20, '▱')
+    const filled = left == null ? 0 : Math.round((20 * Math.max(0, left)) / ttlMs)
     return Box({
       flexDirection: 'column',
       children: [
         h.length ? Text({ dimColor: true, children: ['context %, one bar per turn'] }) : Text({ dimColor: true, children: ['No turns yet.'] }),
         h.length ? spark(Raster, 'weather-pane', h.map((x) => x.ctx ?? 0), 4) : null,
-        ...h.slice(-8).map((x, i, rows) => Text({ children: [`turn ${w.turns - (rows.length - 1 - i)}  ctx ${x.ctx ?? '?'}%  cache ${x.hit ?? '?'}%`] })),
-        left == null ? null : Text({ color: TONE_COLOR[left <= 60_000 ? 'warn' : 'ok'], children: [left > 0 ? `ttl ${bar} ${clock(left)}` : 'cache expired'] }),
+        ...h.slice(-8).map((x, i, rows) =>
+          Text({ children: [`turn ${w.turns - (rows.length - 1 - i)}  ${glyph(x.ctx) || ' '}  ${x.ctx ?? '?'}%  ${ICON.cache} ${x.hit ?? '?'}%`] }),
+        ),
+        // The TTL gauge: a heavy rule for what is left, a light one for what is spent.
+        left == null
+          ? null
+          : Box({
+              flexDirection: 'row',
+              children:
+                left > 0
+                  ? [
+                      Text({ children: [`${ICON.ttl} `] }),
+                      Text({ color: TONE_COLOR[left <= 60_000 ? 'warn' : 'ok'] ?? '#a6e3a1', children: ['━'.repeat(filled)] }),
+                      Text({ dimColor: true, children: ['─'.repeat(20 - filled)] }),
+                      Text({ children: [` ${clock(left)}`] }),
+                    ]
+                  : [Text({ color: TONE_COLOR.bad, children: ['cache expired'] })],
+            }),
         Button({ label: 'Close', hotkey: 'q', onPress: () => $.ui.close({ id: PANE }) }),
       ].filter(Boolean),
     })
