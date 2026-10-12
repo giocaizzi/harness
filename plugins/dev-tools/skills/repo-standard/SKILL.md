@@ -17,7 +17,7 @@ description: The baseline every repository should meet (CI with one aggregate `c
 - **Task runner** exposing `help`, `lint`, `test`, `check` (= lint + test); `make` preferred, else the repo's own runner (`npm run`, `just`, `task`). CI calls the runner, not the tools.
 - **Secret scan** in CI (gitleaks).
 - **PR title check**: the title is a Conventional Commit (see `conventional-commits`), required next to `check`.
-- **Dependency update bot**: Dependabot or Renovate.
+- **Dependency update bot**: Dependabot or Renovate. Always grouped, never one PR per dependency: one group per ecosystem for CI actions and container images; for language packages one `minor-patch` group, one `major` group (breaking changes reviewed apart) and one security-updates group (Dependabot `groups` with `update-types` / `applies-to: security-updates`; Renovate `group:all`-style presets).
 - **`AGENTS.md`** with `CLAUDE.md` symlinked to it.
 - **Squash-only merge**, commit built from the PR title and body; **delete the branch on merge**.
 - **Protected default branch**: changes only via PR, requires `check` + the title check, no bypass for anyone.
