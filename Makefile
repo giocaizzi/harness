@@ -22,8 +22,8 @@ lint: validate ## Repo invariant checks, plus shellcheck and PSScriptAnalyzer wh
 test: ## Run the plugins' hook tests (Node 22+), their mod tests (`claude plugin test`), then the skill script tests.
 	@node --test $(wildcard plugins/*/core/*.test.mjs plugins/*/hooks/*.test.mjs)
 	@for d in $(sort $(dir $(patsubst %/,%,$(dir $(wildcard plugins/*/tests/*.test.ts))))); do claude plugin test $$d || exit 1; done
-	@bash tests/heavy.test.sh
-	@if command -v pwsh >/dev/null; then pwsh -NoProfile -File tests/heavy.test.ps1; else echo "pwsh not found, heavy.ps1 tests skipped"; fi
+	@bash tests/host-hygiene.test.sh
+	@if command -v pwsh >/dev/null; then pwsh -NoProfile -File tests/host-hygiene.test.ps1; else echo "pwsh not found, host-hygiene .ps1 tests skipped"; fi
 
 new-agent: ## Scaffold src/agents/<NAME>/.  Usage: make new-agent NAME=<name> PLUGIN=<plugin>
 	@scripts/new-agent.sh "$(NAME)" "$(PLUGIN)"

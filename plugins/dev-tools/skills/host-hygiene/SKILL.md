@@ -1,23 +1,35 @@
 ---
 name: host-hygiene
-description: Keeping a shared dev machine healthy when several agents run at once - disk floor, load cap, heavy-command semaphore, device leases, service cleanup, plan-quota awareness. Use before builds, emulators or simulators, full test suites or parallel agents, or when the host is slow.
+description: Keeping a shared dev machine healthy when several agents run at once - disk floor, load cap, heavy-command semaphore, device leases, service registry, stale-worktree sweep, plan-quota awareness. Use before builds, emulators or simulators, full test suites, long-running services or parallel agents, or when the host is slow.
 ---
 
 # Host hygiene
 
-Agents share one machine. Let the machine's load and your plan's quota set how much runs at once, not a fixed count. Run heavy commands through this skill's `scripts/heavy.sh <command...>` (`scripts/heavy.ps1` on Windows), resolved from this skill's directory, unless the repo ships its own heavy wrapper: then use that one, since a second semaphore creates a second, parallel limit that defeats the first. Knobs: `HEAVY_SLOTS` (1), `HEAVY_LOAD_MAX` (0.75 x CPUs, at most 30; Windows `HEAVY_CPU_MAX`, 75%), `HEAVY_DISK_MIN_GB` (20); `--status` shows holders and waiters.
+Agents share one machine. Let its load and your plan's quota set how much runs at once, not a fixed count. **Repo tooling wins:** if the repo ships its own heavy wrapper or lease script, use it; a second semaphore is a second, parallel limit that defeats the first.
+
+## Scripts
+
+In this skill's `scripts/`, `.sh` on macOS/Linux and `.ps1` on Windows. Env, defaults and the lock-path contract are in the header of `lib.sh` / `lib.ps1`.
+
+- `heavy.sh <cmd...>`: run a build, precommit or full suite in a machine-wide heavy slot; `--status` shows slots, waiters, leases and services.
+- `lease.sh <class> [--device <id>] -- <cmd...>`: heavy slot, then the one lease for a device class (simulator, emulator); shuts down a device it booted.
+- `register-service.sh <name> -- <cmd...>`: run a database, dev server or watcher registered under its owner, unregistered on exit; `--list` shows them.
+- `sweep-stale.sh [--apply]`: list (default) or remove worktrees idle for 24 h, unused by any process and clean.
 
 ## Rules
 
-- **Disk first.** Before a build, install, emulator boot or test run, check free space (`df -h /`). Below roughly 20 GB, don't start: clean your own leftovers first. Never delete another session's files.
-- **Heavy work goes through one shared semaphore** (builds, precommit, full suites, device runs). It also waits for the one-minute load to fall under a cap instead of failing. Wait; don't wrap it in your own retry loop.
-- **One agent, one heavy job at a time.**
-- **Devices are leased.** One iOS and one Android device machine-wide. Take the heavy slot before the lease, since the reverse order deadlocks. Only the holder releases. Boot a simulator or emulator only inside a lease and shut down what you started; a booted device with no lease is stale.
-- **Stop things precisely.** Wait on a PID or a file. Never `pgrep -f` or `pkill` a pattern: other sessions run identical scripts and you will match theirs.
-- **Register long-running services** (databases, dev servers, watchers) so they are torn down on exit. Don't leave orphans.
-- **Worktrees:** one per task, removed when its PR merges. In heavy repos each one duplicates dependencies and file watchers.
-- **Quota.** Before fanning out agents, check plan usage with the harness CLI (Claude Code: `cd /tmp && claude -p "/usage"`; Copilot CLI: `/usage`) and back off near the limit. After a quota reset, stagger resumes: waking every agent at once spikes load.
+- **Disk first.** Below the floor (20 GB) don't start: clean your own leftovers. Never delete another session's files.
+- **Heavy work goes through the semaphore** and waits for a slot and for load; don't wrap it in your own retry loop. One heavy job per agent.
+- **Devices are leased:** slot first, then lease. Boot a simulator or emulator only inside a lease; a booted device with no lease is stale and anyone may shut it down.
+- **Release only what you hold.** Never delete a lock, lease or registry entry whose pid is not yours.
+- **Stop things precisely:** wait on a pid or a file. Never `pgrep -f` or `pkill` a pattern.
+- **Register long-running services;** stop yours before you finish.
+- **Worktrees:** one per task, removed when its PR merges. Never install into another task's tree.
+- **Quota.** Before fanning out, check plan usage (Claude Code: `cd /tmp && claude -p "/usage"`; Copilot CLI: `/usage`) and back off near the limit. Stagger resumes after a reset.
+- **End with a cleanup line** in your final report: what you started, what you stopped, what is left running and why.
+
+Why each rule exists, and the incidents behind it: [references/lessons.md](references/lessons.md) (read when designing host tooling or debugging a stuck lock).
 
 ## When the repo has no host tooling
 
-Write the limits above as a runbook in `docs/` that points to this skill's script, and link it from `AGENTS.md`. Record incidents there too (what overloaded the machine and which rule now prevents it), so the rule outlives the memory of the outage.
+Write the limits above as a runbook in `docs/` that points to these scripts, and link it from `AGENTS.md`. Record incidents there too (what overloaded the machine and which rule now prevents it).

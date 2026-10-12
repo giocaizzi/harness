@@ -8,7 +8,7 @@ Agent guardrails as hooks: one `hooks/hooks.json` and one Node script that run t
 |---|---|---|---|
 | `skill-enforcer` | PreToolUse (shell) | Claude, Copilot, VS Code | Before `git commit`, `gh pr`, `glab mr`, `az repos pr`, worktree, release and secrets commands, denies once per session until the matching skill is loaded. |
 | `title-guard` | PreToolUse (shell) | Claude, Copilot, VS Code | Denies `git commit -m`, `gh pr create --title`, `glab mr create|update --title` or `az repos pr create|update --title` whose subject is not a Conventional Commit header, every time. |
-| `host-guard` | PreToolUse (shell) | Claude, Copilot, VS Code | Denies a heavy build or test run once when load, CPU or free disk is past its cap, pointing to `host-hygiene`'s `heavy.sh`; commands already run through a heavy wrapper pass. |
+| `host-guard` | PreToolUse (shell) | Claude, Copilot, VS Code | Denies a heavy build or test run once when load, CPU or free disk is past its cap, pointing to `host-hygiene`'s `heavy.sh` and `lease.sh`; commands already run through a heavy or lease wrapper pass. |
 | `risky-ask` | PreToolUse (shell) | Claude, Copilot, VS Code | Asks before `rm -r`, force-push, `git reset --hard`, `terraform apply`, `gh pr merge --admin`, `az repos pr --bypass-policy`, with a blast-radius preview; deletes under a temp dir or of a clean worktree that is pushed or has a merged PR pass. |
 | `pip-deny` | PreToolUse (shell) | Claude, Copilot, VS Code | In a uv repo, denies `pip`, `pip3`, `pipx`, `python -m pip` and `poetry` every time; `uv pip` passes. In a poetry, pipenv or pip repo they run, with one note per session. |
 | `stop-check` | Stop | Claude, Copilot, VS Code | Runs `make check` before the agent stops; on failure blocks once with the output tail. |
