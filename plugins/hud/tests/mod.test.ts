@@ -138,7 +138,7 @@ test('the band shows the PR with its checks and the unpushed work, in brackets',
       stderr: '',
       isStdoutTruncated: false,
       isStderrTruncated: false,
-      stdout: e.argv[0] === 'gh' ? JSON.stringify({ number: 56, url: 'https://github.com/o/r/pull/56', statusCheckRollup: [{ status: 'COMPLETED', conclusion: 'SUCCESS' }] }) : e.argv[1] === 'rev-list' ? '0\t2' : e.argv[1] === 'diff' ? ' 3 files changed, 12 insertions(+), 4 deletions(-)' : '?? new.txt\n',
+      stdout: e.argv[1] === 'remote' ? 'git@github.com:o/r.git\n' : e.argv[0] === 'gh' ? JSON.stringify({ number: 56, url: 'https://github.com/o/r/pull/56', statusCheckRollup: [{ status: 'COMPLETED', conclusion: 'SUCCESS' }] }) : e.argv[1] === 'rev-list' ? '0\t2' : e.argv[1] === 'diff' ? ' 3 files changed, 12 insertions(+), 4 deletions(-)' : '?? new.txt\n',
     },
   }))
   bottom(on)
@@ -206,7 +206,7 @@ test('a merged PR says merged instead of its checks', async ($, on) => {
   on('session.start', () => ({ cwd: '/r' }))
   on('command.register', () => ({ value: undefined }))
   on('process.run', (_$, e) => ({
-    value: { exitCode: 0, stderr: '', isStdoutTruncated: false, isStderrTruncated: false, stdout: e.argv[0] === 'gh' ? JSON.stringify({ number: 62, url: 'https://x/62', state: 'MERGED', statusCheckRollup: [{ status: 'IN_PROGRESS' }] }) : '' },
+    value: { exitCode: 0, stderr: '', isStdoutTruncated: false, isStderrTruncated: false, stdout: e.argv[1] === 'remote' ? 'git@github.com:o/r.git\n' : e.argv[0] === 'gh' ? JSON.stringify({ number: 62, url: 'https://x/62', state: 'MERGED', statusCheckRollup: [{ status: 'IN_PROGRESS' }] }) : '' },
   }))
   bottom(on)
   await $.session.start({ cwd: '/r' })
