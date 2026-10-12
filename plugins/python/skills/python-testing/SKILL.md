@@ -30,3 +30,7 @@ Hardcode values unless randomness is what's under test, and use named semantic d
 ## Keep `make check` fast
 
 `make check` gates every push and every agent stop, so a serial suite that takes tens of minutes slows all work. Run tests in parallel with `pytest -n auto` (pytest-xdist; make the tests order- and state-independent first) and keep a slow-test budget. Note the wall time of the full suite in the repo's `AGENTS.md`.
+
+## Give every test a timeout
+
+Use `pytest-timeout` with a per-test limit set in the pytest config (`timeout = 300` under `[tool.pytest.ini_options]`) so a hung test fails with a traceback instead of holding the CI job until the forge's job limit. Set the limit several times above the slowest legitimate test (check with `pytest --durations=15`, and remember CI runners are slower than a laptop), and raise it per test with `@pytest.mark.timeout(n)` only with a reason. Without it nothing distinguishes a stuck test from a slow suite.
