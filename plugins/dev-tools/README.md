@@ -1,6 +1,6 @@
 # `dev-tools` plugin
 
-General development tooling — git, GitHub, conventional commits, semantic versioning, automated releases.
+General development tooling — git, GitHub/GitLab/Azure DevOps, conventional commits, semantic versioning, automated releases.
 
 ## Skills
 
@@ -10,6 +10,7 @@ General development tooling — git, GitHub, conventional commits, semantic vers
 | `semver` | Semantic Versioning 2.0.0 — choosing major, minor, and patch from compatibility impact. |
 | `release-please` | Automated versioning, changelog, and tagging from Conventional Commits. |
 | `github-workflow` | Stacked PRs, auto-merge, merge queues, and rulesets with required CI checks. |
+| `repo-standard` | Repo baseline checklist and its mapping onto GitHub, GitLab and Azure DevOps. |
 | `ship` | Commit as Conventional Commits, push and open a PR (`/ship`). |
 | `land` | Watch CI, merge via auto-merge or queue, sync and clean up (`/land`). |
 | `pr-fix` | Fix unresolved review comments and failing CI on a PR (`/pr-fix`). |
