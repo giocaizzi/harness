@@ -20,7 +20,6 @@ const tokens = (n) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n))
 const HISTORY_TURNS = 24
 const BAND_TURNS = 8
 const TONE_COLOR = { ok: undefined, warn: '#f9e2af', bad: '#f38ba8' }
-const toneOf = (percent) => (percent >= 80 ? 'bad' : percent >= 50 ? 'warn' : 'ok')
 
 // A bar chart of the history as one Raster; a value of unknown context counts as empty.
 const spark = (Raster, key, values, rows, lo, hi) =>
@@ -53,7 +52,9 @@ async function refreshRepo($) {
   }
   const pr = await run(['gh', 'pr', 'view', '--json', 'number,statusCheckRollup'])
   const counts = await run(['git', 'rev-list', '--left-right', '--count', '@{u}...HEAD'])
-  await update($, repo, () => repoState(pr ? JSON.parse(pr) : null, counts))
+  const shortstat = await run(['git', 'diff', '--shortstat', 'HEAD'])
+  const porcelain = await run(['git', 'status', '--porcelain'])
+  await update($, repo, () => repoState(pr ? JSON.parse(pr) : null, counts, shortstat, porcelain))
 }
 
 // The rate-limit windows' percent used, by kind (five_hour, seven_day); empty when unavailable.
@@ -110,7 +111,7 @@ export function register(on) {
 
   // Our line under whatever the plugins beneath draw (next-steps and the like), never in its place: last in the
   // band, it sits right above the prompt, and a blank row such a plugin leads with stays above the band.
-  // The context % is in the status line already, so the band says the context as a glyph and the cache facts.
+  // The context % and its weather glyph are in the status line; the band says the work in flight and the cache facts.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const below = await next(e)
     if (e.props.hasSurvey) return below
@@ -125,18 +126,23 @@ export function register(on) {
     const part = (text, tone) => bracket(Text({ color: TONE_COLOR[tone], dimColor: tone === 'ok', children: [text] }))
     const label = (x) => (ICON[x.kind] ? `${ICON[x.kind]} ${x.value}` : x.value)
     const r = await read($, repo)
+    const c = r?.changes
+    // Uncommitted work: files changed, lines added and removed, untracked files.
+    const changes = c && (c.files || c.untracked) ? [c.files ? `~${c.files} +${c.added} -${c.removed}` : '', c.untracked ? `?${c.untracked}` : ''].filter(Boolean).join(' ') : null
     const ahead = r && (r.ahead || r.behind) ? `${r.ahead ? `\u2191${r.ahead}` : ''}${r.ahead && r.behind ? ' ' : ''}${r.behind ? `\u2193${r.behind}` : ''}` : null
     const parts = [
-      r?.pr ? part(`\uf407 #${r.pr.number}${r.pr.ci ? ` ${CI_ICON[r.pr.ci]}` : ''}`, CI_TONE[r.pr.ci] ?? 'ok') : null,
+      r?.pr ? part(`\uf407 #${r.pr.number}${r.pr.ci ? ` ${CI_ICON[r.pr.ci]} ${r.pr.passed}/${r.pr.total}` : ''}`, CI_TONE[r.pr.ci] ?? 'ok') : null,
       ahead ? part(ahead, 'ok') : null,
+      changes ? part(changes, 'ok') : null,
       ...f.segments.map((x) => part(label(x), x.tone)),
       h.length > 1 ? bracket(spark(Raster, 'weather-spark', h.map((x) => x.ctx ?? 0), 1, ...sparkRange(h.map((x) => x.ctx ?? 0)))) : null,
     ].filter(Boolean)
     if (!parts.length) return below
+    // One column in from the edge, as the status line is drawn.
     const line = Box({
       flexDirection: 'row',
+      paddingLeft: 1,
       children: [
-        glyph(f.ctx) ? Text({ color: TONE_COLOR[toneOf(f.ctx)], dimColor: toneOf(f.ctx) === 'ok', children: [`${glyph(f.ctx)} `] }) : null,
         ...parts.flatMap((p, i) => [i ? Text({ children: [' '] }) : null, ...p]),
       ].filter(Boolean),
     })
