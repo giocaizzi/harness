@@ -7,6 +7,8 @@ description: Landing changes on main via pull requests: stacked PRs with `gh sta
 
 `main` only changes through a pull request that passed CI. Humans and agents never push to it, never bypass the rules, and never merge by hand when the platform can merge once checks pass.
 
+This skill is the GitHub mechanics. The repo checklist (aggregate `check`, title check, squash, protection) and the GitLab / Azure DevOps equivalents are in `repo-standard`.
+
 ## Landing a change
 
 1. **Small PRs, stacked when layered.** One logical change per PR. If work has more than one reviewable layer (schema → API → UI), stack them instead of one large PR.
@@ -58,19 +60,17 @@ Start with `"enforcement": "evaluate"` where available, then switch to `"active"
 
 ## CI that gates merges
 
-- Required checks must be **stable job names**: renaming a job silently unblocks the rule or blocks all PRs.
 - With a merge queue, run the same checks on `merge_group` as well as `pull_request`. Without that trigger, queued merges never get their checks and fail.
   ```yaml
   on:
     pull_request:
     merge_group:
   ```
-- Prefer one final aggregate job (`needs: [...]`, `if: always()`) as the single required check, so matrix changes don't touch the ruleset.
-- A path-filtered workflow that is skipped leaves its required check pending; use the aggregate job or avoid path filters on required workflows.
+- A path-filtered workflow that is skipped leaves its required check pending; use the aggregate `check` job (see `repo-standard`) or avoid path filters on required workflows.
 
 ## Squash merges and PR titles
 
-With squash-only repos, the PR title is the commit on `main` and drives release automation. Require a `Validate PR title` check next to the CI aggregate and pin `squash_merge_commit_title: PR_TITLE` / `squash_merge_commit_message: PR_BODY`; details and gotchas are in `conventional-commits`.
+With squash-only repos, the PR title is the commit on `main` and drives release automation. Require a `Validate PR title` check next to `check` and pin the squash commit to the PR title and body; the settings and gotchas are in `conventional-commits`.
 
 ## Merge queue availability
 
@@ -82,7 +82,7 @@ Keep one canonical standard in a single repo (`<owner>/.github`): a prose standa
 
 New repos start from a template repository that already carries the standard files (CI with the aggregate `check`, PR-title and label-guard workflows, Dependabot, Makefile, `AGENTS.md`), then one onboarding command applies settings, labels and workflows and adds the ruleset once `check` is green. On a personal account nothing applies the standard automatically, so the audit must run on a schedule with a read-only token and fail on an empty scope.
 
-Apply in this order, lowest risk first: repo settings, labels, CI with one aggregate `check` job, and only then the ruleset that requires it. A ruleset applied to a repo without that check blocks every merge. Re-run the audit after each repo; it must report no drift.
+Roll out in the order `repo-standard` gives, labels with the settings, and re-run the audit after each repo; it must report no drift.
 
 ## Before handoff
 
