@@ -14,7 +14,7 @@ Agent rules enforced as hooks, from one plugin, for Claude Code, Copilot CLI and
 | `hooks/stop.mjs` | `make check` before the agent stops (was the dotfiles `stop-make-check.sh`/`.ps1`). |
 | `hooks/lint.mjs` | shellcheck / PSScriptAnalyzer after an edit (was the dotfiles `post-edit-lint.sh`/`.ps1`). |
 | `hooks/awake.mjs` | Keep-awake keeper tied to the harness process. |
-| `hooks/mod.mjs` | Claude Code mod (`modules` in `hooks.json`, ignored by Copilot CLI and VS Code): usage throttle and the token-weather band. `hooks/weather.mjs` holds its pure display logic, shared with `hooks/statusline.mjs`; `types/index.d.ts` declares its `$.state`. |
+| `hooks/mod.mjs` | Claude Code mod (`modules` in `hooks.json`, ignored by Copilot CLI and VS Code): usage throttle, the token-weather band, spinner suffix and `/weather` pane. `hooks/weather.mjs` holds its pure display logic, shared with `hooks/statusline.mjs`; `types/index.d.ts` declares its `$.state`. |
 | `hooks/statusline.mjs` | Copilot CLI status line (`statusLine.command`): the token-weather line from the status JSON Copilot pipes on stdin. |
 
 Events:
@@ -90,7 +90,15 @@ echo '{"hook_event_name":"PreToolUse","session_id":"t","tool_name":"Bash","tool_
   | CLAUDE_PLUGIN_DATA="$(mktemp -d)" node plugins/guard/hooks/guard.mjs
 ```
 
-In a live Claude session the band shows `ctx N%` at once and `cache N% · ttl M:SS` after the first turn. In Copilot CLI the status line shows `ctx N%` at once and `cache N%` after the first turn. In a uv repo: `pip install x` and `poetry add x` are denied; in a poetry or requirements repo they run, with one note. In any session: ending a turn in a repo whose `make check` fails continues the turn once with the failure; `pmset -g assertions | grep caffeinate` (macOS) or `systemd-inhibit --list` (Linux) shows the keeper; `git commit -m "bad"` is denied with the Conventional Commit hint; `rm -rf build` shows the permission prompt with a `Would affect:` preview; `rm -rf /tmp/x` runs without asking.
+In a live Claude session the band shows `cache N% · ttl M:SS` after the first turn, with a glyph for the context fullness and a sparkline after two turns; `/weather` opens the history pane. In Copilot CLI the status line shows `ctx N%` at once and `cache N%` after the first turn. In a uv repo: `pip install x` and `poetry add x` are denied; in a poetry or requirements repo they run, with one note. In any session: ending a turn in a repo whose `make check` fails continues the turn once with the failure; `pmset -g assertions | grep caffeinate` (macOS) or `systemd-inhibit --list` (Linux) shows the keeper; `git commit -m "bad"` is denied with the Conventional Commit hint; `rm -rf build` shows the permission prompt with a `Would affect:` preview; `rm -rf /tmp/x` runs without asking.
+
+## Grafana
+
+Each deny or ask (`guard.decision`, from the command hook) and each usage-throttle denial (`guard.throttle`, from the Claude mod) is sent as one OTLP/HTTP log record to `$OTEL_EXPORTER_OTLP_ENDPOINT/v1/logs`. Nothing is sent when that variable is unset: the work machines (chezmoi strips `OTEL_*` there) and any Copilot or VS Code launch without it stay silent. The auth headers come from `OTEL_EXPORTER_OTLP_HEADERS` and are never logged; a send that fails or takes longer than 2 s is dropped and the decision stands.
+
+The resource carries `service.name=guard` plus `OTEL_RESOURCE_ATTRIBUTES` (`service.namespace`, `host.name`). In Loki: stream labels `service_name`, `host_name`, `service_namespace`; structured metadata `rule`, `action`, `tool`, `harness`, `window`, `percent`.
+
+Verify: after a denied command, `{service_name="guard"}` in Grafana Explore shows the record; `sum by (rule) (count_over_time({service_name="guard"} | rule != "" [1h]))` counts denials per rule.
 
 ## Troubleshooting
 
