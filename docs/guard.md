@@ -14,8 +14,8 @@ Agent rules enforced as hooks, from one plugin, for Claude Code, Copilot CLI and
 | `hooks/stop.mjs` | `make check` before the agent stops (was the dotfiles `stop-make-check.sh`/`.ps1`). |
 | `hooks/lint.mjs` | shellcheck / PSScriptAnalyzer after an edit (was the dotfiles `post-edit-lint.sh`/`.ps1`). |
 | `hooks/awake.mjs` | Keep-awake keeper tied to the harness process. |
-| `hooks/mod.mjs` | Claude Code mod (`modules` in `hooks.json`, ignored by Copilot CLI and VS Code): usage throttle, the token-weather band, spinner suffix and `/weather` pane. `hooks/weather.mjs` holds its pure display logic, shared with `hooks/statusline.mjs`; `types/index.d.ts` declares its `$.state`. |
-| `hooks/statusline.mjs` | Copilot CLI status line (`statusLine.command`): the token-weather line from the status JSON Copilot pipes on stdin. |
+| `hooks/mod.mjs` | Claude Code mod (`modules` in `hooks.json`, ignored by Copilot CLI and VS Code): usage throttle, the token-weather band and `/weather` pane. `hooks/weather.mjs` holds its pure display logic, shared with `hooks/statusline.mjs`; `types/index.d.ts` declares its `$.state`. |
+| `hooks/statusline.mjs` | Status line for both CLIs (`statusLine.command`), from the status JSON piped on stdin: `claude` argument draws Claude Code's two lines (user, git, GCP project, path, model, context, 5h and 7d battery with reset, cost); no argument draws Copilot CLI's token-weather line. |
 
 Events:
 
@@ -64,6 +64,10 @@ VS Code: add `giocaizzi/harness` to `chat.plugins.marketplaces` (with `chat.plug
 Copilot CLI token weather: in `~/.copilot/settings.json` (Windows: `%USERPROFILE%\.copilot\settings.json`) set
 `"statusLine": { "type": "command", "command": "node ~/.copilot/installed-plugins/giocaizzi-harness/guard/hooks/statusline.mjs" }`.
 
+Claude Code status line: in `~/.claude/settings.json` set
+`"statusLine": { "type": "command", "command": "node ~/.claude/plugins/marketplaces/giocaizzi-harness/plugins/guard/hooks/statusline.mjs claude" }`
+(the marketplace clone has a stable path; the plugin cache path changes with every version). Needs `node` 22+ and, for the icons, a Nerd Font.
+
 Managed machines enable it from the dotfiles settings (`enabledPlugins: { "guard@giocaizzi-harness": true }` in both the Claude and the Copilot settings templates).
 
 ## Verify
@@ -90,7 +94,7 @@ echo '{"hook_event_name":"PreToolUse","session_id":"t","tool_name":"Bash","tool_
   | CLAUDE_PLUGIN_DATA="$(mktemp -d)" node plugins/guard/hooks/guard.mjs
 ```
 
-In a live Claude session the band shows `cache N% · ttl M:SS` after the first turn, with a weather icon for the context fullness and a sparkline after two turns (Nerd Font icons: the terminal needs a Nerd Font, else they show as boxes); `/weather` opens the history pane. In Copilot CLI the status line shows `ctx N%` at once and `cache N%` after the first turn. In a uv repo: `pip install x` and `poetry add x` are denied; in a poetry or requirements repo they run, with one note. In any session: ending a turn in a repo whose `make check` fails continues the turn once with the failure; `pmset -g assertions | grep caffeinate` (macOS) or `systemd-inhibit --list` (Linux) shows the keeper; `git commit -m "bad"` is denied with the Conventional Commit hint; `rm -rf build` shows the permission prompt with a `Would affect:` preview; `rm -rf /tmp/x` runs without asking.
+In a live Claude session the band shows `cache N% · ttl M:SS` after the first turn, with a weather icon for the context fullness and a sparkline of the last 8 turns after two turns (Nerd Font icons: the terminal needs a Nerd Font, else they show as boxes); `/weather` opens the history pane. In Copilot CLI the status line shows `ctx N%` at once and `cache N%` after the first turn. In a uv repo: `pip install x` and `poetry add x` are denied; in a poetry or requirements repo they run, with one note. In any session: ending a turn in a repo whose `make check` fails continues the turn once with the failure; `pmset -g assertions | grep caffeinate` (macOS) or `systemd-inhibit --list` (Linux) shows the keeper; `git commit -m "bad"` is denied with the Conventional Commit hint; `rm -rf build` shows the permission prompt with a `Would affect:` preview; `rm -rf /tmp/x` runs without asking.
 
 ## Grafana
 

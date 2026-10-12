@@ -90,26 +90,6 @@ test('/clear forgets the last turn', async ($, on) => {
   await ui.unmount()
 })
 
-test('the spinner suffix carries the TTL once a turn has ended', async ($, on) => {
-  const clock = mock.clock(on)
-  on('session.usage', () => usage(10))
-  on('settings.read', () => ({ value: { promptCacheTtl: '5m' } }))
-  on('turn.complete', () => ({ text: 'ok' }))
-  on('session.start', () => ({ cwd: '/r' }))
-  on('command.register', () => ({ value: undefined }))
-  on('ui.render', { component: 'Spinner' }, ($$, e) => $$.ui.resolve(e).Text({ children: [`${e.props.word}${e.props.suffix}`] }))
-  const SPINNER = { component: 'Spinner', props: { word: 'Working', message: null, suffix: '…' } } as const
-  await $.session.start({ cwd: '/r' })
-  const before = await $.ui.mount({ plugin: 'guard', surface: 'terminal', ...SPINNER })
-  expect(await before.find({ type: 'Text', text: /\uf520/ })).toBeUndefined()
-  await before.unmount()
-  await $.turn.complete(turn(900, 0, 100))
-  await clock.advance(60_000)
-  const after = await $.ui.mount({ plugin: 'guard', surface: 'terminal', ...SPINNER })
-  expect(await after.find({ type: 'Text', text: /\uf520 4:00…/ })).toBeDefined()
-  await after.unmount()
-})
-
 test('/weather opens a pane listing the turns', async ($, on) => {
   mock.clock(on)
   on('session.usage', () => usage(10))
@@ -122,6 +102,7 @@ test('/weather opens a pane listing the turns', async ($, on) => {
   await $.turn.complete(turn(100, 800, 100))
   const ui = await $.ui.mount({ plugin: 'guard', surface: 'terminal', component: 'Pane', requestId: 'weather', props: {} })
   expect(await ui.find({ type: 'Text', text: /turn 2 .* 12% {2}\uf472 10%/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /last turn: 100 in · 100 read · 800 written · 1 out/ })).toBeDefined()
   expect(await ui.find({ type: 'Button', text: /Close/ })).toBeDefined()
   await ui.unmount()
 })

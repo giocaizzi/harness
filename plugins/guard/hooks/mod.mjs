@@ -12,7 +12,9 @@ const weather = atom({ plugin: 'guard', key: 'weather' }, null)
 const history = atom({ plugin: 'guard', key: 'history' }, [])
 
 const PANE = 'weather'
+const tokens = (n) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n))
 const HISTORY_TURNS = 24
+const BAND_TURNS = 8
 const TONE_COLOR = { ok: undefined, warn: '#f9e2af', bad: '#f38ba8' }
 const toneOf = (percent) => (percent >= 80 ? 'bad' : percent >= 50 ? 'warn' : 'ok')
 
@@ -99,10 +101,10 @@ export function register(on) {
     const now = await $.clock.now()
     const f = forecast({ percent: await contextPercent($), usage: w?.usage, turns: w?.turns ?? 0, ttlMs, sinceMs: w ? now - w.at : undefined, showCtx: false })
     if (!f.segments.length) return below
-    const h = await read($, history)
+    const h = (await read($, history)).slice(-BAND_TURNS)
     const { Box, Text, Raster } = $.ui.resolve(e)
     const dim = (children) => Text({ dimColor: true, children: [children] })
-    const sep = () => dim('  │  ')
+    const sep = () => dim(' \ue0b1 ')
     // Icon, space, value: dim while fine, coloured when not.
     const label = (x) => (ICON[x.kind] ? `${ICON[x.kind]} ${x.value}` : x.value)
     const parts = f.segments.flatMap((x, i) => [i ? sep() : null, Text({ color: TONE_COLOR[x.tone], dimColor: x.tone === 'ok', children: [label(x)] })])
@@ -119,14 +121,6 @@ export function register(on) {
     // leads its block with one (next-steps does). The engine's own drawing under the band takes no rows.
     const alone = !below || below.type === 'engine'
     return Box({ flexDirection: 'column', marginTop: alone ? 1 : 0, children: below ? [below, line] : [line] })
-  })
-
-  // The spinner says how long the prompt cache lasts while a turn runs.
-  on('ui.render', { component: 'Spinner' }, async ($, e, next) => {
-    const w = await read($, weather)
-    if (!w) return next(e)
-    const left = ttlMs - ((await $.clock.now()) - w.at)
-    return next(left > 0 ? { ...e, props: { ...e.props, suffix: ` · ${ICON.ttl} ${clock(left)}…` } } : e)
   })
 
   // /weather: the history at full size.
@@ -149,6 +143,7 @@ export function register(on) {
         ...h.slice(-8).map((x, i, rows) =>
           Text({ children: [`turn ${w.turns - (rows.length - 1 - i)}  ${glyph(x.ctx) || ' '}  ${x.ctx ?? '?'}%  ${ICON.cache} ${x.hit ?? '?'}%`] }),
         ),
+        w ? Text({ dimColor: true, children: [`last turn: ${tokens(w.usage.input_tokens)} in · ${tokens(w.usage.cache_read_input_tokens)} read · ${tokens(w.usage.cache_creation_input_tokens)} written · ${tokens(w.usage.output_tokens)} out`] }) : null,
         // The TTL gauge: a heavy rule for what is left, a light one for what is spent.
         left == null
           ? null
