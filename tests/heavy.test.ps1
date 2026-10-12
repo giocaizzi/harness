@@ -6,8 +6,8 @@ $env:HEAVY_STATE_DIR = Join-Path $tmp 'state'
 $env:HEAVY_DISK_MIN_GB = '0'
 $shell = (Get-Process -Id $PID).Path
 $script:fails = 0
-function Test-Equal($name, $got, $want) {
-    if ("$got" -eq "$want") { "ok - $name" } else { "not ok - ${name}: got '$got', want '$want'"; $script:fails++ }
+function Test-Equal([string]$Name, $Got, $Want) {
+    if ("$Got" -eq "$Want") { "ok - $Name" } else { "not ok - ${Name}: got '$Got', want '$Want'"; $script:fails++ }
 }
 New-Item -ItemType Directory -Path $tmp | Out-Null
 $log = Join-Path $tmp 'log'
@@ -19,20 +19,20 @@ try {
     Start-Sleep -Milliseconds 1000
     $b = Start-Process $shell -ArgumentList '-NoProfile', '-File', $heavy, $shell, '-NoProfile', '-Command', $fast -PassThru
     $a, $b | Wait-Process
-    Test-Equal 'concurrent runs serialize' ((Get-Content $log) -join ' ') 'start end start end'
+    Test-Equal -Name 'concurrent runs serialize' -Got ((Get-Content $log) -join ' ') -Want 'start end start end'
 
     & $shell -NoProfile -File $heavy $shell -NoProfile -Command 'exit 7'
-    Test-Equal 'exit code propagates' $LASTEXITCODE 7
+    Test-Equal -Name 'exit code propagates' -Got $LASTEXITCODE -Want 7
 
     # A holder that exits without releasing leaves an abandoned mutex; the next run takes it.
     $name = 'Global\heavy' + ($env:HEAVY_STATE_DIR -replace '[^A-Za-z0-9]', '_') + '-1'
     & $shell -NoProfile -Command "`$m = New-Object Threading.Mutex(`$false, '$name'); [void]`$m.WaitOne(); exit 0"
     & $shell -NoProfile -File $heavy $shell -NoProfile -Command 'exit 0' 2>$null
-    Test-Equal 'stale slot recovered' $LASTEXITCODE 0
+    Test-Equal -Name 'stale slot recovered' -Got $LASTEXITCODE -Want 0
 
     $env:HEAVY_DISK_MIN_GB = '999999999'
     & $shell -NoProfile -File $heavy $shell -NoProfile -Command "New-Item '$tmp/ran'" 2>$null
-    Test-Equal 'low disk refuses' "$LASTEXITCODE $(Test-Path "$tmp/ran")" '1 False'
+    Test-Equal -Name 'low disk refuses' -Got "$LASTEXITCODE $(Test-Path "$tmp/ran")" -Want '1 False'
 } finally {
     Remove-Item -Recurse -Force $tmp
 }
