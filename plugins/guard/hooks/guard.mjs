@@ -10,6 +10,7 @@ import { dirname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { deniedBy, evaluateCommand, isHeavy, isRisky, previewCommand, withPreview, worktreeFacts } from '../core/engine.mjs'
 import { cpuPercentFrom } from '../core/host.mjs'
+import { emit } from '../core/otel.mjs'
 import { rules } from '../core/rules.mjs'
 
 // Claude Bash/PowerShell, Copilot bash/powershell, VS Code run_in_terminal. VS Code ignores matchers, so every
@@ -108,6 +109,7 @@ async function onShell(input, state, deps) {
     const reminded = new Set(state.reminded)
     const d = evaluateCommand({ command, loadedSkills: new Set(state.loaded), state: { reminded }, host, ...facts, rules })
     state.reminded = [...reminded]
+    if (d.action === 'deny' || d.action === 'ask') await deps.emit?.('guard.decision', { rule: d.rule, action: d.action, tool: String(input.tool_name ?? ''), session_id: input.session_id })
     if (d.action === 'deny') return preToolUse('deny', d.reason)
     if (d.action === 'ask') {
       const argv = previewCommand(d.rule, command)
@@ -116,6 +118,7 @@ async function onShell(input, state, deps) {
     return d.context ? note(d.context) : {}
   } catch (err) {
     // Fail open for reminders, closed for risky commands.
+    if (isRisky(command, rules)) await deps.emit?.('guard.decision', { rule: 'guard-error', action: 'deny', tool: String(input.tool_name ?? ''), session_id: input.session_id })
     return isRisky(command, rules) ? preToolUse('deny', `The command guard failed, so this risky command was not run: ${err?.message ?? err}`) : {}
   }
 }
@@ -149,6 +152,9 @@ export async function handle(input, deps) {
   return out
 }
 
+// Which harness runs the hook, from the data dir variable each one sets.
+const harness = () => (process.env.CLAUDE_PLUGIN_DATA ? 'claude' : process.env.COPILOT_PLUGIN_DATA ? 'copilot' : 'other')
+
 async function main() {
   let input = {}
   try {
@@ -160,7 +166,7 @@ async function main() {
   if (!input.hook_event_name && process.argv[2]) input.hook_event_name = process.argv[2]
   const dataDir = process.env.CLAUDE_PLUGIN_DATA || process.env.COPILOT_PLUGIN_DATA || join(tmpdir(), 'guard-plugin')
   // Never exit non-zero: Copilot denies a preToolUse whose hook fails. The risky path fails closed inside onShell.
-  const out = await handle(input, { dataDir, env: process.env, hostFacts, run, pythonManager }).catch(() => ({}))
+  const out = await handle(input, { dataDir, env: process.env, hostFacts, run, pythonManager, emit: (event, attrs) => emit(process.env, event, { ...attrs, harness: harness() }) }).catch(() => ({}))
   if (out.stdout) process.stdout.write(out.stdout)
   if (out.stderr) process.stderr.write(out.stderr)
 }
