@@ -1,0 +1,113 @@
+// Rule data for the shared engine. Plain module (not JSON) so a Claude Code mod can import it.
+export const rules = {
+  "skills": [
+    {
+      "id": "commit",
+      "match": "\\bgit\\s+commit\\b",
+      "skills": [
+        "conventional-commits",
+        "ship"
+      ],
+      "why": "commit messages must be Conventional Commits"
+    },
+    {
+      "id": "pr",
+      "match": "\\bgh\\s+(pr\\s+(create|merge|ready)|stack)\\b",
+      "skills": [
+        "github-workflow",
+        "ship",
+        "land"
+      ],
+      "why": "PRs land through auto-merge or the merge queue"
+    },
+    {
+      "id": "ruleset",
+      "match": "\\bgh\\s+api\\b.*\\b(rulesets|protection)\\b",
+      "skills": [
+        "github-workflow"
+      ],
+      "why": "rulesets and branch protection have a house policy"
+    },
+    {
+      "id": "worktree",
+      "match": "\\bgit\\s+worktree\\s+add\\b",
+      "skills": [
+        "wt",
+        "host-hygiene"
+      ],
+      "why": "worktrees are one per task and removed on merge"
+    },
+    {
+      "id": "release",
+      "match": "\\b(release-please|npm\\s+version|git\\s+tag)\\b",
+      "skills": [
+        "release-please",
+        "semver"
+      ],
+      "why": "versions and tags are owned by release automation"
+    },
+    {
+      "id": "secrets",
+      "match": "\\bbws?\\s+(secret|run|get|list|unlock|login)\\b",
+      "skills": [
+        "secrets-handling"
+      ],
+      "why": "secrets are never printed or inlined"
+    }
+  ],
+  "heavy": [
+    {
+      "id": "build",
+      "match": "\\b(eas\\s+build|xcodebuild|gradlew?\\s+(assemble|build)|docker\\s+build|npm\\s+run\\s+build|cargo\\s+build|maestro\\s+test)\\b"
+    },
+    {
+      "id": "tests",
+      "match": "\\b(pytest|vitest|jest|npm\\s+(run\\s+)?test|make\\s+(test|check))\\b"
+    }
+  ],
+  "risky": [
+    {
+      "id": "rm",
+      "match": "\\brm\\s+-[a-z]*r[a-z]*f?\\b|\\bremove-item\\b.*-recurse",
+      "why": "recursive delete"
+    },
+    {
+      "id": "worktree-rm",
+      "match": "\\bgit\\s+worktree\\s+remove\\b.*(--force|\\s-f\\b)",
+      "why": "discards uncommitted work in a worktree"
+    },
+    {
+      "id": "reset",
+      "match": "\\bgit\\s+reset\\s+--hard\\b",
+      "why": "discards local work"
+    },
+    {
+      "id": "force",
+      "match": "\\bgit\\s+push\\b.*(--force|\\s-f\\b)",
+      "why": "rewrites remote history"
+    },
+    {
+      "id": "terraform",
+      "match": "\\bterraform\\s+(apply|destroy)\\b",
+      "why": "changes real infrastructure"
+    },
+    {
+      "id": "merge",
+      "match": "\\bgh\\s+pr\\s+merge\\b.*--admin",
+      "why": "bypasses merge rules"
+    }
+  ],
+  "titles": {
+    "types": ["feat", "fix", "perf", "refactor", "revert", "docs", "style", "test", "build", "ci", "chore"],
+    "why": "squash merge makes the PR title the commit on main, and release automation reads it"
+  },
+  "host": {
+    "loadCap": 30,
+    "cpuPercentCap": 90,
+    "freeFloorGb": 20
+  },
+  "usage": {
+    "warnPercent": 70,
+    "throttlePercent": 90
+  }
+}
