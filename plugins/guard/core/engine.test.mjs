@@ -185,3 +185,16 @@ test('worktrees: unpushed, dirty, failing git, main checkout or subdir still ask
 test('git worktree remove without --force is not risky', () => {
   assert.equal(decide('git worktree remove /r/x').action, 'allow');
 });
+
+test('pip and pipx are denied every time; uv and quoted mentions pass', () => {
+  const state = fresh();
+  for (const c of ['pip install x', 'pip3 install -r r.txt', 'pipx run black', 'python3 -m pip install x', 'cd a && pip', 'PIP install x']) {
+    const r = evaluateCommand({ command: c, state, host: calm, rules });
+    assert.equal(r.action, 'deny', c);
+    assert.equal(r.rule, 'pip', c);
+  }
+  assert.equal(evaluateCommand({ command: 'pip install x', state, host: calm, rules }).action, 'deny');
+  for (const c of ['uv pip install x', 'uv add x', 'pip-compile r.in', 'pipenv sync', 'echo "pip install x"', 'grep pipeline f']) {
+    assert.equal(evaluateCommand({ command: c, state: fresh(), host: calm, rules }).action, 'allow', c);
+  }
+});
