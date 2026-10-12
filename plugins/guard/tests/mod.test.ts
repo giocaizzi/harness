@@ -39,7 +39,7 @@ test('subagents are allowed below the throttle level', async ($, on) => {
   expect(r.deny).toBeUndefined()
 })
 
-test('the band draws its line on top of what plugins beneath draw', async ($, on) => {
+test('the band draws its line under what plugins beneath draw', async ($, on) => {
   mock.clock(on)
   on('session.usage', () => usage(10))
   on('ui.render', { component: 'AbovePrompt' }, ($$, e) => {
