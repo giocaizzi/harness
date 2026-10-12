@@ -119,7 +119,8 @@ export const rules = {
   "host": {
     "loadCap": 30,
     "cpuPercentCap": 90,
-    "freeFloorGb": 20
+    "freeFloorGb": 20,
+    "wrapper": "\\bheavy\\.(sh|ps1)\\b"
   },
   "usage": {
     "warnPercent": 70,
