@@ -27,9 +27,15 @@ Optional short noun for the subsystem. Reuse the vocabulary already in the repo'
 
 Anything that forces consumers to change code, config, or behaviour is breaking: removed or renamed public API or flag, changed defaults, dropped runtime support. Mark with `!` and/or a `BREAKING CHANGE:` footer. Forgetting it makes release automation cut a patch instead of a major, so re-read the diff and ask whether a consumer would have to change anything. The footer should say what broke and how to migrate, since release notes are generated from it.
 
-## PR titles
+## PR titles and squash merges
 
-Same header format, no body or footers (those go in the description). In squash-merge repos the title becomes the commit message, so its accuracy decides the release.
+Same header format as commits; body and footers go in the PR description. In squash-merge repos only the PR title and description survive onto `main`, so they decide the release:
+
+- **Per-commit types are discarded.** Pick the type once, on the title; the branch's own commits are only history.
+- **Pin the squash settings** to `squash_merge_commit_title: PR_TITLE` and `squash_merge_commit_message: PR_BODY`. The defaults (`COMMIT_OR_PR_TITLE`, `COMMIT_MESSAGES`) use the lone commit's message for a one-commit PR (ignoring a corrected title) and concatenate every commit message, fixups and duplicate trailers included.
+- **Footers must be in the PR description**, as real lines with no indentation: `BREAKING CHANGE:`, `Refs:`, `Co-Authored-By:`. A footer only in a branch commit is lost.
+- **Validate the title in CI**, required on `main`: job `Validate PR title`, trigger `pull_request` types `opened, edited, synchronize, reopened` (without `edited`, fixing a title does not re-run the check). Read the title from an env var, never interpolate it into the script. Skip release-please's own `release-please--*` PRs at the step level, never the job: a job-level skip leaves a required check unreported and blocks every release PR. The reference workflow is `standard/workflows/pr-title.yml` in `giocaizzi/.github`.
+- **A wrong title after merge** means a revert and a correct recommit, not a force-push.
 
 ## History
 
