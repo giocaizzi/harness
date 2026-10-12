@@ -58,7 +58,7 @@ check "timed-out waiter keeps the holder's slot" "$(cat "$L/heavy.lock.1/pid")" 
   d=$L/heavy.lock.1
   host_reclaim "$d" "$(dead_pid)" host_slot_pid 2>/dev/null
   check "reclaim restores a live holder's lock" "$?:$(cat "$d/pid"):$(count "$L"/*.stale.*)" "1:$holder:0"
-  # shellcheck disable=SC2329 # called by host_reclaim
+  # shellcheck disable=SC2317,SC2329 # called by host_reclaim
   racy() { mkdir -p "$d"; echo new >"$d/pid"; host_slot_pid "$1"; }
   host_reclaim "$d" "$(dead_pid)" racy 2>/dev/null
   check "reclaim never nests into a re-created lock" "$(cat "$d/pid"):$([ -e "$d/heavy.lock.1.stale.$$" ] && echo nested)" "new:"

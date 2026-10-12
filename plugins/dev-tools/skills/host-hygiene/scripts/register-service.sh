@@ -12,7 +12,7 @@ reg=$HOST_LOCK_DIR/host-services
 if [ "${1:-}" = --list ]; then host_services; exit 0; fi
 name=${1:-}; [ $# -gt 0 ] && shift
 [ "${1:-}" = -- ] && shift
-[ -n "$name" ] && [ $# -gt 0 ] || { echo "usage: register-service.sh <name> [--] <command...> | --list" >&2; exit 2; }
+if [ -z "$name" ] || [ $# -eq 0 ]; then echo "usage: register-service.sh <name> [--] <command...> | --list" >&2; exit 2; fi
 
 mkdir -p "$reg"
 entry=$reg/$$
