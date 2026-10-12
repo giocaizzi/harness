@@ -4,7 +4,7 @@ import { atom, read, update } from 'claude-code'
 import { evaluateSpawn } from '../core/engine.mjs'
 import { logRequest } from '../core/otel.mjs'
 import { rules } from '../core/rules.mjs'
-import { ICON, TTL_MS, clock, forecast, glyph, sparkCells, sparkRange } from './weather.mjs'
+import { ICON, TTL_MS, alerts, battery, clock, forecast, glyph, sparkCells, sparkRange } from './weather.mjs'
 
 // The last main-loop turn: its usage, when it ended, and how many turns this conversation has had.
 const weather = atom({ plugin: 'guard', key: 'weather' }, null)
@@ -12,7 +12,9 @@ const weather = atom({ plugin: 'guard', key: 'weather' }, null)
 const history = atom({ plugin: 'guard', key: 'history' }, [])
 
 const PANE = 'weather'
+const tokens = (n) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n))
 const HISTORY_TURNS = 24
+const BAND_TURNS = 8
 const TONE_COLOR = { ok: undefined, warn: '#f9e2af', bad: '#f38ba8' }
 const toneOf = (percent) => (percent >= 80 ? 'bad' : percent >= 50 ? 'warn' : 'ok')
 
@@ -52,9 +54,19 @@ async function emitThrottle($, w) {
   }
 }
 
+// The rate-limit windows' percent used, by kind (five_hour, seven_day); empty when unavailable.
+async function windows($) {
+  try {
+    return Object.fromEntries((await $.session.usage()).rateLimits.map((r) => [r.kind, r.percentUsed]))
+  } catch {
+    return {} // usage unavailable
+  }
+}
+
 export function register(on) {
   let ttlMs = TTL_MS['5m']
   let tick
+  let warned // the turn whose cache expiry was announced
 
   // Draw at once (the context part needs no turn); a reload keeps $.state, so the last turn stays.
   on('session.start', async ($, e, next) => {
@@ -68,7 +80,15 @@ export function register(on) {
     await $.command.register({ name: 'weather', description: 'Show the context and prompt-cache history in a pane' })
     tick?.cancel()
     tick = $.clock.every(1000, async () => {
-      if (await read($, weather)) $.ui.invalidate('ui.render')
+      const w = await read($, weather)
+      if (!w) return
+      $.ui.invalidate('ui.render')
+      // One toast a minute before the cache expires, once per turn.
+      const left = ttlMs - ((await $.clock.now()) - w.at)
+      if (left > 0 && left <= 60_000 && warned !== w.at) {
+        warned = w.at
+        $.ui.toast(`Prompt cache expires in ${clock(left)}`)
+      }
     })
     return next(e)
   })
@@ -82,9 +102,13 @@ export function register(on) {
   on('turn.complete', async ($, e, next) => {
     if (!e.agentId && e.usage) {
       const at = await $.clock.now()
-      await update($, weather, (w) => ({ usage: e.usage, at, turns: (w?.turns ?? 0) + 1 }))
+      const lim = await windows($)
       const { ctx, hit } = forecast({ percent: await contextPercent($), usage: e.usage, turns: 2 })
-      await update($, history, (h) => [...h, { ctx, hit }].slice(-HISTORY_TURNS))
+      const a = alerts(ctx, lim.five_hour ?? 0, (await read($, weather))?.alert)
+      await update($, weather, (w) => ({ usage: e.usage, at, turns: (w?.turns ?? 0) + 1, alert: a.now }))
+      await update($, history, (h) => [...h, { ctx, hit, five: lim.five_hour ?? null, seven: lim.seven_day ?? null }].slice(-HISTORY_TURNS))
+      for (const text of a.toasts) $.ui.toast(text)
+      if (a.isLoud) await $.audio.play({ asset: 'sounds/alert.wav' }).catch(() => {}) // macOS only; elsewhere nothing plays
     }
     return next(e)
   })
@@ -99,10 +123,10 @@ export function register(on) {
     const now = await $.clock.now()
     const f = forecast({ percent: await contextPercent($), usage: w?.usage, turns: w?.turns ?? 0, ttlMs, sinceMs: w ? now - w.at : undefined, showCtx: false })
     if (!f.segments.length) return below
-    const h = await read($, history)
+    const h = (await read($, history)).slice(-BAND_TURNS)
     const { Box, Text, Raster } = $.ui.resolve(e)
     const dim = (children) => Text({ dimColor: true, children: [children] })
-    const sep = () => dim('  │  ')
+    const sep = () => dim(' \ue0b1 ')
     // Icon, space, value: dim while fine, coloured when not.
     const label = (x) => (ICON[x.kind] ? `${ICON[x.kind]} ${x.value}` : x.value)
     const parts = f.segments.flatMap((x, i) => [i ? sep() : null, Text({ color: TONE_COLOR[x.tone], dimColor: x.tone === 'ok', children: [label(x)] })])
@@ -119,14 +143,6 @@ export function register(on) {
     // leads its block with one (next-steps does). The engine's own drawing under the band takes no rows.
     const alone = !below || below.type === 'engine'
     return Box({ flexDirection: 'column', marginTop: alone ? 1 : 0, children: below ? [below, line] : [line] })
-  })
-
-  // The spinner says how long the prompt cache lasts while a turn runs.
-  on('ui.render', { component: 'Spinner' }, async ($, e, next) => {
-    const w = await read($, weather)
-    if (!w) return next(e)
-    const left = ttlMs - ((await $.clock.now()) - w.at)
-    return next(left > 0 ? { ...e, props: { ...e.props, suffix: ` · ${ICON.ttl} ${clock(left)}…` } } : e)
   })
 
   // /weather: the history at full size.
@@ -149,6 +165,12 @@ export function register(on) {
         ...h.slice(-8).map((x, i, rows) =>
           Text({ children: [`turn ${w.turns - (rows.length - 1 - i)}  ${glyph(x.ctx) || ' '}  ${x.ctx ?? '?'}%  ${ICON.cache} ${x.hit ?? '?'}%`] }),
         ),
+        ...[['5h', 'five'], ['7d', 'seven']].flatMap(([label, key]) => {
+          const series = h.map((x) => x[key] ?? 0)
+          const now = h.at(-1)?.[key]
+          return now == null ? [] : [Text({ children: [`${battery(now)} ${label} ${Math.round(now)}%`] }), spark(Raster, `weather-${key}`, series, 1, 0, 100)]
+        }),
+        w ? Text({ dimColor: true, children: [`last turn: ${tokens(w.usage.input_tokens)} in · ${tokens(w.usage.cache_read_input_tokens)} read · ${tokens(w.usage.cache_creation_input_tokens)} written · ${tokens(w.usage.output_tokens)} out`] }) : null,
         // The TTL gauge: a heavy rule for what is left, a light one for what is spent.
         left == null
           ? null
