@@ -52,7 +52,8 @@ test('heavy command through the heavy wrapper is not denied, and the deny points
   const strained = { load1: 45, freeGb: 100 };
   assert.equal(evaluateCommand({ command: '~/skills/host-hygiene/scripts/heavy.sh npm run build', state: fresh(), host: strained, rules }).action, 'allow');
   assert.equal(evaluateCommand({ command: 'pwsh heavy.ps1 -- npm test', state: fresh(), host: { cpuPercent: 97, freeGb: 100 }, rules }).action, 'allow');
-  assert.match(evaluateCommand({ command: 'npm run build', state: fresh(), host: strained, rules }).reason, /scripts\/heavy\.sh/);
+  assert.equal(evaluateCommand({ command: 'scripts/lease.sh ios-sim -- maestro test flow.yaml', state: fresh(), host: strained, rules }).action, 'allow');
+  assert.match(evaluateCommand({ command: 'npm run build', state: fresh(), host: strained, rules }).reason, /scripts\/heavy\.sh.*scripts\/lease\.sh/);
 });
 
 test('heavy command on a healthy host passes; low disk counts as strained', () => {

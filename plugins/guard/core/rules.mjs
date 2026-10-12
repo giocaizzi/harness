@@ -120,7 +120,7 @@ export const rules = {
     "loadCap": 30,
     "cpuPercentCap": 90,
     "freeFloorGb": 20,
-    "wrapper": "\\bheavy\\.(sh|ps1)\\b"
+    "wrapper": "\\b(heavy|lease)\\.(sh|ps1)\\b"
   },
   "usage": {
     "warnPercent": 70,
