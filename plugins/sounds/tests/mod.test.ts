@@ -51,7 +51,7 @@ test('each way a turn ends plays its own sound', async ($, on) => {
   await $.turn.complete({ ...base, reason: 'aborted', isAborted: true })
   await $.turn.complete({ ...base, reason: 'error', isAborted: false })
   await $.turn.complete({ ...base, reason: 'answer', isAborted: false, agentId: 'a1' })
-  expect(clips).toEqual(['sounds/done.wav', 'sounds/chime.wav', 'sounds/error.wav', 'sounds/tick.wav'])
+  expect(clips).toEqual(['sounds/done.wav', 'sounds/error.wav', 'sounds/tick.wav']) // an interrupt is silent by default
 })
 
 test('a sound set to off plays nothing; a long-turn threshold skips short turns', { options: { soundDone: 'done', soundAborted: 'off', doneAfterSeconds: 30 } }, async ($, on) => {

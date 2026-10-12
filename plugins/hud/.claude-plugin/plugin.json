@@ -1,6 +1,6 @@
 {
   "name": "hud",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Heads-up display for Claude Code and Copilot CLI: token-weather band and /weather pane, PR and CI strip, spinner that names the running tool (Claude mod), and a two-line status line for both CLIs",
   "author": {
     "name": "giocaizzi",

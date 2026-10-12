@@ -1,6 +1,6 @@
 {
   "name": "sounds",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Toasts and configurable sounds for Claude Code: usage limits, context, prompt-cache expiry and every way a turn ends (Claude mod)",
   "author": {
     "name": "giocaizzi",
@@ -138,9 +138,9 @@
     "soundAborted": {
       "type": "string",
       "title": "Sound: turn interrupted",
-      "description": "Plays when a turn is interrupted.",
+      "description": "Plays when a turn is interrupted, including a message sent mid-turn instead of queued.",
       "required": false,
-      "default": "chime",
+      "default": "off",
       "options": [
         "off",
         "chime",

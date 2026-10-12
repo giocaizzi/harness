@@ -137,7 +137,7 @@ test('the band shows the PR with its checks and the unpushed work, in brackets',
       stderr: '',
       isStdoutTruncated: false,
       isStderrTruncated: false,
-      stdout: e.argv[0] === 'gh' ? JSON.stringify({ number: 56, statusCheckRollup: [{ status: 'COMPLETED', conclusion: 'SUCCESS' }] }) : '0\t2',
+      stdout: e.argv[0] === 'gh' ? JSON.stringify({ number: 56, statusCheckRollup: [{ status: 'COMPLETED', conclusion: 'SUCCESS' }] }) : e.argv[1] === 'rev-list' ? '0\t2' : e.argv[1] === 'diff' ? ' 3 files changed, 12 insertions(+), 4 deletions(-)' : '?? new.txt\n',
     },
   }))
   bottom(on)
@@ -145,7 +145,8 @@ test('the band shows the PR with its checks and the unpushed work, in brackets',
   await $.session.start({ cwd: '/r' })
   await $.turn.complete(turn(900, 0, 100))
   const ui = await $.ui.mount({ plugin: 'hud', surface: 'terminal', ...BAND })
-  expect(await ui.find({ type: 'Text', text: /\uf407 #56 \u2713/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /\uf407 #56 \u2713 1\/1/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /~3 \+12 -4 \?1/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /\u21912/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /^\[$/ })).toBeDefined()
   await ui.unmount()

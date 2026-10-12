@@ -77,7 +77,8 @@ export function claudeStatusline(status, facts) {
   const line2 = [paint(C.blue, '└') + paint(C.pink, `[${path}]`)]
   if (status.model?.display_name) line2.push(paint(C.white, status.model.display_name))
   const ctx = status.context_window?.used_percentage
-  if (ctx != null) line2.push(paint(tone(ctx), `ctx:${Math.trunc(ctx)}%`))
+  // The weather glyph is the context's: sunny while roomy, a storm near full.
+  if (ctx != null) line2.push(paint(tone(ctx), `${glyph(ctx) ? `${glyph(ctx)} ` : ''}ctx:${Math.trunc(ctx)}%`))
   for (const [label, w] of [['5h', status.rate_limits?.five_hour], ['7d', status.rate_limits?.seven_day]]) {
     if (w?.used_percentage == null) continue
     const pct = Math.trunc(w.used_percentage)
