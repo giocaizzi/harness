@@ -214,15 +214,58 @@ test('git worktree remove without --force is not risky', () => {
   assert.equal(decide('git worktree remove /r/x').action, 'allow');
 });
 
-test('pip and pipx are denied every time; uv and quoted mentions pass', () => {
+test('in a uv repo pip, pipx and poetry are denied every time; uv and quoted mentions pass', () => {
   const state = fresh();
+  const run = (command, s = state) => evaluateCommand({ command, state: s, host: calm, python: 'uv', rules });
   for (const c of ['pip install x', 'pip3 install -r r.txt', 'pipx run black', 'python3 -m pip install x', 'cd a && pip', 'PIP install x']) {
-    const r = evaluateCommand({ command: c, state, host: calm, rules });
+    const r = run(c);
     assert.equal(r.action, 'deny', c);
     assert.equal(r.rule, 'pip', c);
   }
-  assert.equal(evaluateCommand({ command: 'pip install x', state, host: calm, rules }).action, 'deny');
-  for (const c of ['uv pip install x', 'uv add x', 'pip-compile r.in', 'pipenv sync', 'echo "pip install x"', 'grep pipeline f']) {
-    assert.equal(evaluateCommand({ command: c, state: fresh(), host: calm, rules }).action, 'allow', c);
+  assert.equal(run('pip install x').action, 'deny');
+  for (const c of ['poetry add x', 'poetry install', 'cd a && poetry lock']) {
+    assert.equal(run(c).rule, 'poetry', c);
+    assert.equal(run(c).action, 'deny', c);
   }
+  for (const c of ['uv pip install x', 'uv add x', 'pip-compile r.in', 'pipenv sync', 'echo "pip install x"', 'grep pipeline f', 'cat poetry.lock']) {
+    assert.equal(run(c, fresh()).action, 'allow', c);
+  }
+});
+
+test('outside a uv repo pip and poetry are allowed, with a note once per session', () => {
+  for (const [python, c] of [['poetry', 'pip install x'], ['pip', 'pip install -r requirements.txt'], ['poetry', 'poetry add x'], [null, 'pipx run black']]) {
+    const state = fresh();
+    const first = evaluateCommand({ command: c, state, host: calm, python, rules });
+    assert.equal(first.action, 'allow', c);
+    assert.match(first.context, python ? new RegExp(`uses ${python}`) : /no uv project/, c);
+    assert.match(first.context, /uv is preferred/);
+    assert.deepEqual(evaluateCommand({ command: c, state, host: calm, python, rules }), { action: 'allow' }, c);
+  }
+});
+
+test('the note does not hide a risky command', () => {
+  assert.equal(evaluateCommand({ command: 'pip install x && rm -rf build', state: fresh(), host: calm, python: 'pip', rules }).action, 'ask');
+});
+
+test('GitLab and Azure DevOps titles must be Conventional Commits', () => {
+  const run = (command) => evaluateCommand({ command, loadedSkills: new Set(['ship']), state: fresh(), host: calm, rules });
+  for (const c of ['glab mr create --title "Add thing" -d x', 'glab mr create -t "fix stuff"', 'glab mr update 3 --title=\'Update\'', 'az repos pr create --title "Add thing" -t main', 'az repos pr update --id 4 --title "feat: Add"']) {
+    const r = run(c);
+    assert.equal(r.action, 'deny', c);
+    assert.equal(r.rule, 'title', c);
+  }
+  for (const c of ['glab mr create -t "feat(api): add thing" -d x', 'glab mr create --fill', 'az repos pr create --title "fix: handle x" -t "Main Branch"', 'az repos pr update --id 4 --auto-complete true']) {
+    assert.equal(run(c).action, 'allow', c);
+  }
+});
+
+test('glab and az PR commands need the PR skills; an az policy bypass asks', () => {
+  for (const c of ['glab mr create --fill', 'glab mr merge 3 --auto-merge', 'az repos pr create --title "feat: x"', 'az repos pr update --id 4 --auto-complete true']) {
+    const r = evaluateCommand({ command: c, state: fresh(), host: calm, rules });
+    assert.equal(r.rule, 'pr', c);
+    assert.match(r.reason, /repo-standard/, c);
+  }
+  const ask = (c) => evaluateCommand({ command: c, loadedSkills: new Set(['land']), state: fresh(), host: calm, rules }).action;
+  assert.equal(ask('az repos pr update --id 4 --bypass-policy true --bypass-policy-reason x'), 'ask');
+  assert.equal(ask('az repos pr update --id 4 --bypass-policy false'), 'allow');
 });

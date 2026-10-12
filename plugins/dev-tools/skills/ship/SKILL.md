@@ -9,10 +9,10 @@ Take the working tree to an open PR. Arguments (`$ARGUMENTS`): an optional hint 
 
 1. **Not on the default branch.** If on `main`, stop and start a branch (see `wt`). Pushing to the default branch is never the intent.
 2. **Look before staging.** Read `git status` and the diff. Never stage secrets, `.env` files or build output; if a value looks like a credential, stop and say so (see `secrets-handling`).
-3. **Commit in logical units**, each a Conventional Commit (see `conventional-commits`) explaining what and why. Several small commits beat one large one.
-4. **Check.** Run `make check` when the repo has it; do not push a failing tree.
+3. **Commit in logical units**, each a Conventional Commit (see `conventional-commits`) explaining what and why, unless the repo has its own commit convention. Several small commits beat one large one.
+4. **Check.** Run `make check`, or the repo's own check command; do not push a failing tree.
 5. **Push** with upstream tracking.
-6. **Open the PR** if the branch has none: `gh pr create`, `--draft` when asked. Arm merging with `land`, not here.
+6. **Open the PR** (GitLab: MR) if the branch has none, with the forge's CLI (`gh pr create`, `glab mr create`, `az repos pr create`; detection and flags in `repo-standard`), as a draft when asked. Arm merging with `land`, not here.
    - **Title:** `type(scope): lowercase description`. With squash merge it becomes the commit on `main`, so pick the type for the whole PR.
    - **Body:** the repo's PR template if it has one, else `## What`, `## Why`, `## Verification` (commands run and their result, checks skipped and why).
    - **Footers last, one per line, no indentation:** `BREAKING CHANGE:`, `Refs: #n`, then attribution. The squash commit body is the PR description, so a footer only in a branch commit is lost.

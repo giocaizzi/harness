@@ -14,17 +14,19 @@ export function executable(command) {
     .replace(/(-c\s+)?("(?:[^"\\]|\\.)*"|'[^']*')/g, (m, c) => (c ? m : '""'));
 }
 
-// The literal subject of `git commit -m` / `gh pr create --title`, or null when it cannot be read statically
-// (heredoc, $(...), no -m). ponytail: first -m only, no shell parser; unreadable forms are allowed.
+// The literal subject of `git commit -m` or of a PR/MR title flag, or null when it cannot be read statically
+// (heredoc, $(...), no flag). ponytail: first flag only, no shell parser; unreadable forms are allowed.
 const QUOTED = `("(?:[^"\\\\$\`]|\\\\.)*"|'[^']*')`;
+const TITLED = [
+  [String.raw`\bgit\s+commit\b`, '-[a-zA-Z]*m|--message'],
+  [String.raw`\bgh\s+pr\s+create\b`, '--title|-t'],
+  [String.raw`\bglab\s+mr\s+(?:create|update)\b`, '--title|-t'],
+  [String.raw`\baz\s+repos\s+pr\s+(?:create|update)\b`, '--title'], // az's -t is --target-branch
+];
 export function titleOf(command) {
   const code = executable(command);
-  const re = /\bgit\s+commit\b/.test(code)
-    ? new RegExp(`\\bgit\\s+commit\\b[^\\n|;&]*?\\s(?:-[a-zA-Z]*m|--message)[\\s=]*${QUOTED}`)
-    : /\bgh\s+pr\s+create\b/.test(code)
-      ? new RegExp(`\\bgh\\s+pr\\s+create\\b[^\\n|;&]*?\\s(?:--title|-t)[\\s=]*${QUOTED}`)
-      : null;
-  const m = re && command.match(re);
+  const t = TITLED.find(([cmd]) => new RegExp(cmd).test(code));
+  const m = t && command.match(new RegExp(`${t[0]}[^\\n|;&]*?\\s(?:${t[1]})[\\s=]*${QUOTED}`));
   return m ? m[1].slice(1, -1).split('\n')[0].trim() : null;
 }
 
@@ -36,6 +38,9 @@ export function badTitle(command, rules) {
 }
 
 const hit = (rules, command) => rules.find((r) => new RegExp(r.match, 'i').test(executable(command)));
+
+// The deny rule a command hits, so adapters gather repo facts (the Python manager) only when one applies.
+export const deniedBy = (command, rules) => hit(rules.deny ?? [], command);
 
 // Targets of every recursive delete (`rm -r`, `Remove-Item -Recurse`, `git worktree remove --force`) in a command,
 // as written. Redirections are dropped; quoted, $(...) or glob targets come through as-is and are judged unsafe later.
@@ -118,10 +123,13 @@ function safeRemoval(command, rules, env, worktrees) {
   return targets.length > 0 && targets.every((t) => isTempPath(t, env) || worktrees[t]?.safe === true);
 }
 
-export function evaluateCommand({ command, loadedSkills = new Set(), state, host = {}, env = {}, worktrees = {}, rules }) {
-  // Hard denies come first and fire every time, like the title guard.
-  const denied = hit(rules.deny ?? [], command)
-  if (denied) return { action: 'deny', rule: denied.id, reason: denied.why }
+// `python`: the Python manager of the repo in cwd ('uv', 'poetry', 'pipenv', 'pip'; null for none), for deny rules with `when`.
+export function evaluateCommand({ command, loadedSkills = new Set(), state, host = {}, env = {}, worktrees = {}, python = null, rules }) {
+  // Hard denies come first and fire every time, like the title guard. A `when` rule denies only in a repo
+  // that adopted that manager; elsewhere it lets the command through with a once-per-session note.
+  const denied = deniedBy(command, rules)
+  if (denied && (!denied.when || denied.when === python)) return { action: 'deny', rule: denied.id, reason: denied.why }
+  const note = denied && !state.reminded.has(denied.id) ? denied.id : null
 
   const exempt = safeRemoval(command, rules, env, worktrees);
   const risky = rules.risky.find((r) => new RegExp(r.match, 'i').test(executable(command)) && !(exempt && REMOVAL.has(r.id)));
@@ -167,7 +175,10 @@ export function evaluateCommand({ command, loadedSkills = new Set(), state, host
         'first, then retry the same command.',
     };
   }
-  return { action: 'allow' };
+  if (!note) return { action: 'allow' };
+  state.reminded.add(note);
+  const uses = python ? `This repo uses ${python}` : 'This directory has no uv project';
+  return { action: 'allow', rule: note, context: `${uses}, so \`${note}\` is allowed here; uv is preferred where the repo adopts it.` };
 }
 
 export function usageLevel(percent, rules) {
