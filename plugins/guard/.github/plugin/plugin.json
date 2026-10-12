@@ -1,6 +1,6 @@
 {
   "name": "guard",
-  "version": "0.10.1",
+  "version": "0.11.0",
   "description": "Agent guardrails for Claude Code, Copilot CLI and VS Code: skill enforcer, Conventional Commit title guard, pip deny, host guard, risky-command ask with blast radius, make check on stop, post-edit lint, keep-awake, plus a Claude-only usage throttle, token weather on Claude and Copilot CLI",
   "author": {
     "name": "giocaizzi",
@@ -18,6 +18,209 @@
     "vscode"
   ],
   "types": "./types/index.d.ts",
+  "userConfig": {
+    "soundLimit5h": {
+      "type": "string",
+      "title": "Sound: 5-hour limit",
+      "description": "Plays when the 5-hour window passes 80%, 90% and 100%.",
+      "required": false,
+      "default": "warn",
+      "options": [
+        "off",
+        "chime",
+        "ping",
+        "alert",
+        "warn",
+        "error",
+        "done",
+        "tick"
+      ]
+    },
+    "soundLimit7d": {
+      "type": "string",
+      "title": "Sound: 7-day limit",
+      "description": "Plays when the 7-day window passes 80%, 90% and 100%.",
+      "required": false,
+      "default": "warn",
+      "options": [
+        "off",
+        "chime",
+        "ping",
+        "alert",
+        "warn",
+        "error",
+        "done",
+        "tick"
+      ]
+    },
+    "soundLimitSpend": {
+      "type": "string",
+      "title": "Sound: spend limit",
+      "description": "Plays when a gateway spend limit passes 80%, 90% and 100%.",
+      "required": false,
+      "default": "warn",
+      "options": [
+        "off",
+        "chime",
+        "ping",
+        "alert",
+        "warn",
+        "error",
+        "done",
+        "tick"
+      ]
+    },
+    "soundContext": {
+      "type": "string",
+      "title": "Sound: context",
+      "description": "Plays when the context window passes 80% and 90%.",
+      "required": false,
+      "default": "alert",
+      "options": [
+        "off",
+        "chime",
+        "ping",
+        "alert",
+        "warn",
+        "error",
+        "done",
+        "tick"
+      ]
+    },
+    "soundCacheExpiring": {
+      "type": "string",
+      "title": "Sound: cache expiring",
+      "description": "Plays one minute before the prompt cache expires.",
+      "required": false,
+      "default": "ping",
+      "options": [
+        "off",
+        "chime",
+        "ping",
+        "alert",
+        "warn",
+        "error",
+        "done",
+        "tick"
+      ]
+    },
+    "soundCacheExpired": {
+      "type": "string",
+      "title": "Sound: cache expired",
+      "description": "Plays when the prompt cache has expired.",
+      "required": false,
+      "default": "warn",
+      "options": [
+        "off",
+        "chime",
+        "ping",
+        "alert",
+        "warn",
+        "error",
+        "done",
+        "tick"
+      ]
+    },
+    "soundDone": {
+      "type": "string",
+      "title": "Sound: turn finished",
+      "description": "Plays when a turn ends with an answer and took at least the seconds below.",
+      "required": false,
+      "default": "done",
+      "options": [
+        "off",
+        "chime",
+        "ping",
+        "alert",
+        "warn",
+        "error",
+        "done",
+        "tick"
+      ]
+    },
+    "soundAborted": {
+      "type": "string",
+      "title": "Sound: turn interrupted",
+      "description": "Plays when a turn is interrupted.",
+      "required": false,
+      "default": "chime",
+      "options": [
+        "off",
+        "chime",
+        "ping",
+        "alert",
+        "warn",
+        "error",
+        "done",
+        "tick"
+      ]
+    },
+    "soundRefused": {
+      "type": "string",
+      "title": "Sound: model refused",
+      "description": "Plays when the model refuses a turn.",
+      "required": false,
+      "default": "error",
+      "options": [
+        "off",
+        "chime",
+        "ping",
+        "alert",
+        "warn",
+        "error",
+        "done",
+        "tick"
+      ]
+    },
+    "soundError": {
+      "type": "string",
+      "title": "Sound: API error",
+      "description": "Plays when an API error or the context limit ends a turn.",
+      "required": false,
+      "default": "error",
+      "options": [
+        "off",
+        "chime",
+        "ping",
+        "alert",
+        "warn",
+        "error",
+        "done",
+        "tick"
+      ]
+    },
+    "soundSubagent": {
+      "type": "string",
+      "title": "Sound: subagent finished",
+      "description": "Plays when a subagent finishes a turn.",
+      "required": false,
+      "default": "tick",
+      "options": [
+        "off",
+        "chime",
+        "ping",
+        "alert",
+        "warn",
+        "error",
+        "done",
+        "tick"
+      ]
+    },
+    "doneAfterSeconds": {
+      "type": "number",
+      "title": "Sound: shortest turn",
+      "description": "Turns shorter than this many seconds do not play the finished sound; 0 plays after every answer.",
+      "required": false,
+      "default": 0
+    },
+    "soundGain": {
+      "type": "number",
+      "title": "Sound volume",
+      "description": "Linear gain from 0 to 4.",
+      "required": false,
+      "default": 1
+    }
+  },
   "agents": [
     "./copilot/"
   ]

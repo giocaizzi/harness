@@ -18,15 +18,36 @@ export const glyph = (ctx) => (ctx == null ? '' : ctx < 25 ? '\ue30d' : ctx < 50
 // A battery for how much of a rate-limit window is left (nf-fa-battery_0..4, full to empty as `used` rises).
 export const battery = (used) => String.fromCharCode(0xf244 - Math.min(4, Math.max(0, Math.round((100 - used) / 25))))
 
-// What a turn's end raises: the context crossing 80 and 90, the 5-hour window passing 90. `before` is what was raised
-// already, so a level is announced once and again only after it was left.
-export function alerts(ctx, five, before = { ctx: 0, five: false }) {
-  const level = ctx >= 90 ? 90 : ctx >= 80 ? 80 : 0
-  const hot = five >= 90
-  const toasts = []
-  if (level > before.ctx) toasts.push(level === 90 ? `Context ${ctx}%: compact now` : `Context ${ctx}%: compact soon`)
-  if (hot && !before.five) toasts.push(`5h window ${Math.round(five)}% used`)
-  return { toasts, now: { ctx: level, five: hot }, isLoud: (level === 90 && before.ctx < 90) || (hot && !before.five) }
+// The limits that raise a toast and a sound: the sound setting, the label, and the percent each reads.
+export const LIMITS = [
+  { key: 'soundLimit5h', kind: 'five_hour', label: '5h window' },
+  { key: 'soundLimit7d', kind: 'seven_day', label: '7d window' },
+  { key: 'soundLimitSpend', kind: 'spend_limit', label: 'Spend limit' },
+]
+const levelOf = (pct) => (pct >= 100 ? 100 : pct >= 90 ? 90 : pct >= 80 ? 80 : 0)
+
+// What a turn's end raises: the context and each limit crossing 80, 90 and 100. `before` holds the levels raised
+// already, so a level is announced once and again only after it was left. Each alert names the sound setting it plays.
+export function alerts(ctx, limits, before = {}) {
+  const now = { ctx: levelOf(ctx ?? 0) >= 90 ? 90 : levelOf(ctx ?? 0) }
+  const out = []
+  if (now.ctx > (before.ctx ?? 0)) out.push({ key: 'soundContext', text: now.ctx === 90 ? `Context ${ctx}%: compact now` : `Context ${ctx}%: compact soon` })
+  for (const { key, kind, label } of LIMITS) {
+    const pct = limits[kind]
+    now[kind] = pct == null ? 0 : levelOf(pct)
+    if (now[kind] > (before[kind] ?? 0)) out.push({ key, text: now[kind] === 100 ? `${label} reached` : `${label} ${Math.round(pct)}% used` })
+  }
+  return { alerts: out, now }
+}
+
+// The sound setting a finished turn plays, if any: a subagent's, an interrupt, a refusal, an error, or an answer
+// that took at least `doneAfterSeconds`.
+export function turnSound(e, doneAfterSeconds = 0) {
+  if (e.agentId) return 'soundSubagent'
+  if (e.reason === 'aborted') return 'soundAborted'
+  if (e.reason === 'refusal') return 'soundRefused'
+  if (e.reason === 'error') return 'soundError'
+  return e.durationMs >= doneAfterSeconds * 1000 ? 'soundDone' : null
 }
 
 // Cells of a bar chart, row-major [codePoint, color, background] triplets, one column per value (0-100). Heights
