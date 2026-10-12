@@ -72,6 +72,12 @@ Start with `"enforcement": "evaluate"` where available, then switch to `"active"
 
 Merge queue is a repository-level ruleset rule and is not offered on every repository: it depends on ownership and plan (for example organization-owned repos; private repos need a qualifying plan). On a repo that cannot have one, fall back to auto-merge + required checks + "require branches to be up to date". Check availability before promising a queue.
 
+## Standardizing many repos
+
+Keep one canonical standard in a single repo (`<owner>/.github`): a prose standard in `docs/`, machine-readable parts (ruleset JSON, labels, repo settings) in `standard/`, and a read-only audit script that reports drift per repo. Change the standard there first, then the repos.
+
+Apply in this order, lowest risk first: repo settings, labels, CI with one aggregate `check` job, and only then the ruleset that requires it. A ruleset applied to a repo without that check blocks every merge. Re-run the audit after each repo; it must report no drift.
+
 ## Before handoff
 
 - PR is small, titled as a Conventional Commit (see `conventional-commits`), and auto-merge is armed.
