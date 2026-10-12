@@ -111,7 +111,7 @@ test('/weather opens a pane listing the turns', async ($, on) => {
   await ui.unmount()
 })
 
-test('a turn ending at 90% context toasts once and plays the alert', async ($, on) => {
+test('a turn ending at 90% context toasts once and plays the alert', { options: { soundDone: 'off' } }, async ($, on) => {
   mock.clock(on)
   on('session.usage', () => usageWith(91, 20))
   on('turn.complete', () => ({ text: 'ok' }))
@@ -133,6 +133,37 @@ test('the pane shows the 5h window from the turns', async ($, on) => {
   const ui = await $.ui.mount({ plugin: 'guard', surface: 'terminal', component: 'Pane', requestId: 'weather', props: {} })
   expect(await ui.find({ type: 'Text', text: /5h 40%/ })).toBeDefined()
   await ui.unmount()
+})
+
+const sounds = (on) => {
+  const clips: string[] = []
+  on('audio.play', (_$, e) => (clips.push(e.clip.asset ?? ''), { value: undefined }) as never)
+  return clips
+}
+
+test('each way a turn ends plays its own sound', async ($, on) => {
+  mock.clock(on)
+  on('session.usage', () => usage(10))
+  on('turn.complete', () => ({ text: 'ok' }))
+  const clips = sounds(on)
+  const base = { answer: '', durationMs: 5, turnId: 't' }
+  await $.turn.complete({ ...base, reason: 'answer', isAborted: false })
+  await $.turn.complete({ ...base, reason: 'aborted', isAborted: true })
+  await $.turn.complete({ ...base, reason: 'error', isAborted: false })
+  await $.turn.complete({ ...base, reason: 'answer', isAborted: false, agentId: 'a1' })
+  expect(clips).toEqual(['sounds/done.wav', 'sounds/chime.wav', 'sounds/error.wav', 'sounds/tick.wav'])
+})
+
+test('a sound set to off plays nothing; a long-turn threshold skips short turns', { options: { soundDone: 'done', soundAborted: 'off', doneAfterSeconds: 30 } }, async ($, on) => {
+  mock.clock(on)
+  on('session.usage', () => usage(10))
+  on('turn.complete', () => ({ text: 'ok' }))
+  const clips = sounds(on)
+  const base = { answer: '', turnId: 't', isAborted: false }
+  await $.turn.complete({ ...base, reason: 'answer', durationMs: 5000 })
+  await $.turn.complete({ ...base, reason: 'aborted', durationMs: 5000, isAborted: true })
+  await $.turn.complete({ ...base, reason: 'answer', durationMs: 31_000 })
+  expect(clips).toEqual(['sounds/done.wav'])
 })
 
 test('a throttle denial posts a record to the collector when the session exports to one', async ($, on) => {
