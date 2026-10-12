@@ -1,6 +1,6 @@
 # guard plugin
 
-Agent rules enforced as hooks, from one plugin, for Claude Code and Copilot CLI on macOS, Linux and Windows. It replaces `giocaizzi/agent-mods` (Claude mod + Copilot extension) and the hook scripts that lived in the dotfiles.
+Agent rules enforced as hooks, from one plugin, for Claude Code and Copilot CLI on macOS, Linux and Windows.
 
 ## Architecture
 
