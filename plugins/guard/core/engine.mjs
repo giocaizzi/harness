@@ -160,8 +160,9 @@ export function evaluateCommand({ command, loadedSkills = new Set(), state, host
       rule: 'host',
       reason:
         `The host is strained (${host.load1 != null ? `load ${host.load1}` : `cpu ${host.cpuPercent}%`}, ${host.freeGb} GB free; caps ${host.load1 != null ? loadCap : `${cpuPercentCap}%`} / ${freeFloorGb} GB). ` +
-        'Load the `host-hygiene` skill and run the command through its scripts/heavy.sh (scripts/heavy.ps1 on Windows), ' +
-        'or the repo\'s own heavy wrapper if it ships one: it waits for a slot and for load instead of failing.',
+        'Load the `host-hygiene` skill and run the command through its scripts/heavy.sh (scripts/heavy.ps1 on Windows; ' +
+        'scripts/lease.sh or lease.ps1 for a simulator or emulator run), or the repo\'s own heavy wrapper if it ships one: ' +
+        'it waits for a slot and for load instead of failing.',
     };
   }
 
