@@ -89,7 +89,8 @@ export function register(on) {
     return next(e)
   })
 
-  // Our line on top of whatever the plugins beneath draw (next-steps and the like), never in its place.
+  // Our line under whatever the plugins beneath draw (next-steps and the like), never in its place: last in the
+  // band, it sits right above the prompt, and a blank row such a plugin leads with stays above the band.
   // The context % is in the status line already, so the band says the context as a glyph and the cache facts.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const below = await next(e)
@@ -114,7 +115,7 @@ export function register(on) {
         h.length > 1 ? spark(Raster, 'weather-spark', h.map((x) => x.ctx ?? 0), 1) : null,
       ].filter(Boolean),
     })
-    return Box({ flexDirection: 'column', children: below ? [line, below] : [line] })
+    return Box({ flexDirection: 'column', children: below ? [below, line] : [line] })
   })
 
   // The spinner says how long the prompt cache lasts while a turn runs.
