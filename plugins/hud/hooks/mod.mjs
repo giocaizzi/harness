@@ -6,7 +6,7 @@ import { registerAgents } from './agents.mjs'
 import { registerContext } from './context.mjs'
 import { registerFooter } from './footer.mjs'
 import { registerTools } from './tools.mjs'
-import { ICON, TTL_MS, battery, clock, forecast, fullAt, glyph, repoState, sparkCells, sparkRange, tokens, when } from './weather.mjs'
+import { ICON, TTL_MS, azurePr, battery, clock, forecast, forgeOf, fullAt, githubPr, gitlabMr, glyph, repoState, sparkCells, sparkRange, tokens, when } from './weather.mjs'
 
 // The last main-loop turn: its usage, when it ended, and how many turns this conversation has had.
 const weather = atom({ plugin: 'hud', key: 'weather' }, null)
@@ -23,7 +23,7 @@ const KEEP_TURNS = 200
 const repo = atom({ plugin: 'hud', key: 'repo' }, null)
 const REPO_REFRESH_MS = 60_000
 // Checks passed, failed, or some still running (an hourglass: nf-fa-hourglass_half).
-const CI_ICON = { pass: '\u2713', fail: '\u2717', pending: '\uf252' }
+const CI_ICON = { pass: '\u2713', fail: '\u2717', pending: ICON.pending }
 const CI_TONE = { pass: 'ok', fail: 'bad', pending: 'warn' }
 
 const PANE = 'weather'
@@ -58,7 +58,8 @@ async function contextPercent($) {
   }
 }
 
-// The branch's PR (with its checks) and unpushed work; either part is null where git or gh cannot say.
+// The branch's PR (with its checks) from the forge the origin remote names, unpushed work and uncommitted changes;
+// each part is null where git or the forge's CLI (gh, glab, az) cannot say.
 async function refreshRepo($) {
   const run = async (argv) => {
     try {
@@ -68,11 +69,28 @@ async function refreshRepo($) {
       return null // not a repository, or the tool is missing
     }
   }
-  const pr = await run(['gh', 'pr', 'view', '--json', 'number,url,state,statusCheckRollup'])
+  const json = async (argv) => {
+    const out = await run(argv)
+    try {
+      return out ? JSON.parse(out) : null
+    } catch {
+      return null // not JSON: an old CLI or a prompt
+    }
+  }
+  const forge = forgeOf((await run(['git', 'remote', 'get-url', 'origin']))?.trim())
+  let pr = null
+  if (forge === 'github') pr = githubPr(await json(['gh', 'pr', 'view', '--json', 'number,url,state,statusCheckRollup']))
+  if (forge === 'gitlab') pr = gitlabMr(await json(['glab', 'mr', 'view', '--output', 'json']))
+  if (forge === 'azure') {
+    const branch = (await run(['git', 'branch', '--show-current']))?.trim()
+    const list = branch ? await json(['az', 'repos', 'pr', 'list', '--source-branch', branch, '--status', 'all', '--top', '1', '--output', 'json']) : null
+    const id = list?.[0]?.pullRequestId
+    pr = azurePr(list, id ? await json(['az', 'repos', 'pr', 'policy', 'list', '--id', String(id), '--output', 'json']) : null)
+  }
   const counts = await run(['git', 'rev-list', '--left-right', '--count', '@{u}...HEAD'])
   const shortstat = await run(['git', 'diff', '--shortstat', 'HEAD'])
   const porcelain = await run(['git', 'status', '--porcelain'])
-  await update($, repo, () => repoState(pr ? JSON.parse(pr) : null, counts, shortstat, porcelain))
+  await update($, repo, () => repoState(pr, counts, shortstat, porcelain))
 }
 
 // The rate-limit windows by kind (five_hour, seven_day): percent used and the reset in epoch ms; empty when unavailable.
@@ -169,21 +187,23 @@ export function register(on) {
     // Uncommitted work: files changed, lines added and removed, untracked files.
     const changes = c && (c.files || c.untracked) ? [c.files ? `~${c.files} +${c.added} -${c.removed}` : '', c.untracked ? `?${c.untracked}` : ''].filter(Boolean).join(' ') : null
     const ahead = r && (r.ahead || r.behind) ? `${r.ahead ? `\u2191${r.ahead}` : ''}${r.ahead && r.behind ? ' ' : ''}${r.behind ? `\u2193${r.behind}` : ''}` : null
-    // The PR number opens the PR on a click; the checks after it carry their colour.
+    // Every part is `[icon value]`. The PR number opens the PR on a click; what follows it says its state or checks.
+    const prState = (pr) =>
+      pr.state === 'merged'
+        ? Text({ color: '#cba6f7', children: [` ${ICON.merged} merged`] })
+        : pr.state === 'closed'
+          ? Text({ dimColor: true, children: [' closed'] })
+          : pr.ci
+            ? Text({ color: TONE_COLOR[CI_TONE[pr.ci]], dimColor: pr.ci === 'pass', children: [` ${CI_ICON[pr.ci]} ${pr.passed}/${pr.total}`] })
+            : null
     const prPart = r?.pr
       ? bracket(
           Box({
             flexDirection: 'row',
             children: [
-              r.pr.url ? Link({ href: r.pr.url, label: `\uf407 #${r.pr.number}` }) : Text({ children: [`\uf407 #${r.pr.number}`] }),
-              // A merged or closed PR says so; an open one says its checks.
-              r.pr.state === 'merged'
-                ? Text({ color: '#cba6f7', children: [' \uf419 merged'] })
-                : r.pr.state === 'closed'
-                  ? Text({ dimColor: true, children: [' closed'] })
-                  : r.pr.ci
-                    ? Text({ color: TONE_COLOR[CI_TONE[r.pr.ci]], dimColor: r.pr.ci === 'pass', children: [` ${CI_ICON[r.pr.ci]} ${r.pr.passed}/${r.pr.total}`] })
-                    : null,
+              Text({ dimColor: true, children: [`${ICON.pr} `] }),
+              r.pr.url ? Link({ href: r.pr.url, label: `#${r.pr.number}` }) : Text({ children: [`#${r.pr.number}`] }),
+              prState(r.pr),
             ].filter(Boolean),
           }),
         )
@@ -193,16 +213,17 @@ export function register(on) {
     const full = [['5h', 'five'], ['7d', 'seven']].flatMap(([label, key]) => {
       const last = all.at(-1)?.[key]
       const at = fullAt(all.map((x) => ({ at: x.at, pct: x[key]?.pct ?? null })), last?.resetsAt)
-      return at == null ? [] : [part(`\uf244 ${label} full ~${when(at, now)}`, 'warn')]
+      return at == null ? [] : [part(`${ICON.forecast} ${label} full ~${when(at, now)}`, 'warn')]
     })
+    const ctxs = h.map((x) => x.ctx ?? 0)
     const parts = [
       prPart,
-      ahead ? part(ahead, 'ok') : null,
-      changes ? part(changes, 'ok') : null,
-      running ? part(`\uf0c0 ${running}`, 'ok') : null,
+      ahead ? part(`${ICON.sync} ${ahead}`, 'ok') : null,
+      changes ? part(`${ICON.changes} ${changes}`, 'ok') : null,
+      running ? part(`${ICON.agents} ${running}`, 'ok') : null,
       ...full,
       ...f.segments.map((x) => part(label(x), x.tone)),
-      h.length > 1 ? bracket(spark(Raster, 'weather-spark', h.map((x) => x.ctx ?? 0), 1, ...sparkRange(h.map((x) => x.ctx ?? 0)))) : null,
+      h.length > 1 ? bracket(Box({ flexDirection: 'row', children: [Text({ dimColor: true, children: [`${ICON.trend} `] }), spark(Raster, 'weather-spark', ctxs, 1, ...sparkRange(ctxs))] })) : null,
     ].filter(Boolean)
     if (!parts.length) return below
     // One column in from the edge, as the status line is drawn.

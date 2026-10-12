@@ -7,7 +7,7 @@ import { readFileSync } from 'node:fs'
 import { homedir, hostname, userInfo } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { battery, forecast, glyph } from './weather.mjs'
+import { ICON, battery, forecast, glyph } from './weather.mjs'
 
 export function copilotWeather(status) {
   const c = status?.context_window ?? {}
@@ -17,10 +17,15 @@ export function copilotWeather(status) {
   // More input than the last call means more than one call, so a low hit rate is worth a hint.
   const turns = c.total_input_tokens > (c.last_call_input_tokens ?? 0) ? 2 : 1
   const f = forecast({ percent: c.current_context_used_percentage ?? c.used_percentage ?? undefined, usage, turns })
-  // Copilot bills premium requests, not dollars.
+  // Every part `[icon value]`, as Claude's status line and band draw theirs. Copilot bills premium requests, not dollars.
   const req = status?.cost?.total_premium_requests
-  const text = req > 0 ? `${f.text} · ${req} req` : f.text
-  return glyph(f.ctx) ? `${glyph(f.ctx)} ${text}` : text
+  return [
+    f.ctx == null ? null : `[${glyph(f.ctx)} ${f.ctx}%]`,
+    ...f.segments.filter((x) => x.kind !== 'ctx').map((x) => `[${ICON[x.kind]} ${x.value}]`),
+    req > 0 ? `[${ICON.cost} ${req} req]` : null,
+  ]
+    .filter(Boolean)
+    .join(' ')
 }
 
 // Catppuccin Mocha, as 24-bit ANSI.
@@ -69,25 +74,26 @@ export function gitState(cwd) {
 export function claudeStatusline(status, facts) {
   const cwd = status.workspace?.current_dir ?? status.cwd
   const path = cwd ? (facts.home && cwd.startsWith(facts.home) ? `~${cwd.slice(facts.home.length)}` : cwd) : '~'
-  const line1 = [paint(C.blue, '┌') + `[${paint(C.white, facts.user)} from ${paint(C.white, facts.host)}]`]
-  if (facts.git?.branch) line1.push(paint(C.red, `[ ${facts.git.branch}${facts.git.dirty ? ' *' : ''}]`))
-  if (facts.gcp) line1.push(paint(C.yellow, `[${facts.gcp}]`))
-  if (status.session_name) line1.push(paint(C.blue, `(${status.session_name})`))
+  // Every part `[icon value]`: brackets dim, the value coloured by what it says.
+  const part = (icon, value, color) => `${paint(C.grey, '[')}${paint(color, `${icon} ${value}`)}${paint(C.grey, ']')}`
+  const line1 = [part(ICON.user, `${facts.user}@${facts.host}`, C.white)]
+  if (facts.git?.branch) line1.push(part(ICON.branch, `${facts.git.branch}${facts.git.dirty ? ' *' : ''}`, C.red))
+  if (facts.gcp) line1.push(part(ICON.cloud, facts.gcp, C.yellow))
+  if (status.session_name) line1.push(part(ICON.session, status.session_name, C.blue))
 
-  const line2 = [paint(C.blue, '└') + paint(C.pink, `[${path}]`)]
-  if (status.model?.display_name) line2.push(paint(C.white, status.model.display_name))
+  const line2 = [part(ICON.path, path, C.pink)]
+  if (status.model?.display_name) line2.push(part(ICON.model, status.model.display_name, C.white))
   const ctx = status.context_window?.used_percentage
   // The weather glyph is the context's: sunny while roomy, a storm near full.
-  if (ctx != null) line2.push(paint(tone(ctx), `${glyph(ctx) ? `${glyph(ctx)} ` : ''}ctx:${Math.trunc(ctx)}%`))
+  if (ctx != null) line2.push(part(glyph(ctx), `${Math.trunc(ctx)}%`, tone(ctx)))
   for (const [label, w] of [['5h', status.rate_limits?.five_hour], ['7d', status.rate_limits?.seven_day]]) {
     if (w?.used_percentage == null) continue
     const pct = Math.trunc(w.used_percentage)
-    const reset = w.resets_at ? paint(C.grey, `/${remaining(w.resets_at, facts.now)}`) : ''
-    line2.push(paint(tone(pct), `${battery(pct)} ${label}:${pct}%`) + reset)
+    line2.push(part(battery(pct), `${label} ${pct}%${w.resets_at ? ` ${remaining(w.resets_at, facts.now)}` : ''}`, tone(pct)))
   }
   const usd = status.cost?.total_cost_usd
-  if (usd != null) line2.push(paint(C.grey, `$${usd.toFixed(2)}`))
-  return `${line1.join(' ')}\n${line2.join(' ')}\n`
+  if (usd != null) line2.push(part(ICON.cost, usd.toFixed(2), C.grey))
+  return `${paint(C.blue, '┌')}${line1.join(' ')}\n${paint(C.blue, '└')}${line2.join(' ')}\n`
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {

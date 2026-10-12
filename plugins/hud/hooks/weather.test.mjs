@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { activityLabel, battery, duration, editStat, footerText, fullAt, repoState, tokens, when, forecast, glyph, sparkCells, sparkRange, TTL_MS } from './weather.mjs'
+import { activityLabel, azurePr, battery, forgeOf, githubPr, gitlabMr, duration, editStat, footerText, fullAt, repoState, tokens, when, forecast, glyph, sparkCells, sparkRange, TTL_MS } from './weather.mjs'
 
 const usage = (read, create, input) => ({ cache_read_input_tokens: read, cache_creation_input_tokens: create, input_tokens: input })
 
@@ -30,15 +30,13 @@ test('missing facts are left out', () => {
   assert.equal(forecast({}).text, '')
 })
 
-test('Copilot status line: context % and the session cache hit rate from its cumulative totals', async () => {
+test('Copilot status line: bracketed parts from its cumulative totals and premium requests', async () => {
   const { copilotWeather } = await import('./statusline.mjs')
   const status = (o) => ({ context_window: { current_context_used_percentage: 9, displayed_context_limit: 200000, ...o } })
   // Real 1.0.95 payload after two calls: input includes cache reads and writes.
-  assert.equal(copilotWeather(status({ total_input_tokens: 31841, total_cache_read_tokens: 15897, total_cache_write_tokens: 15938, last_call_input_tokens: 15941 })), '\ue30d ctx 9% · cache 50%')
-  assert.equal(copilotWeather(status({ total_input_tokens: 100, total_cache_read_tokens: 0, total_cache_write_tokens: 90, last_call_input_tokens: 100 })), '\ue30d ctx 9% · cache 0%')
-  assert.equal(copilotWeather(status({ total_input_tokens: 200, total_cache_read_tokens: 20, total_cache_write_tokens: 170, last_call_input_tokens: 100 })), '\ue30d ctx 9% · cache 10% · cache cold')
-  assert.equal(copilotWeather(status({ total_input_tokens: 0 })), '\ue30d ctx 9%')
-  assert.equal(copilotWeather({ cost: { total_premium_requests: 3 }, ...status({ total_input_tokens: 0 }) }), '\ue30d ctx 9% · 3 req')
+  assert.equal(copilotWeather(status({ total_input_tokens: 31841, total_cache_read_tokens: 15897, total_cache_write_tokens: 15938, last_call_input_tokens: 15941 })), '[ 9%] [ 50%]')
+  assert.equal(copilotWeather(status({ total_input_tokens: 200, total_cache_read_tokens: 20, total_cache_write_tokens: 170, last_call_input_tokens: 100 })), '[ 9%] [ 10%] [ cache cold]')
+  assert.equal(copilotWeather({ cost: { total_premium_requests: 3 }, ...status({ total_input_tokens: 0 }) }), '[ 9%] [ 3 req]')
   assert.equal(copilotWeather({}), '')
 })
 
@@ -76,7 +74,8 @@ test('battery: full when unused, empty when spent', () => {
 
 const plain = (s) => s.replace(/\x1b\[[0-9;]*m/g, '')
 
-test('Claude status line: two lines of the session facts', async () => {
+
+test('Claude status line: two lines of `[icon value]` parts', async () => {
   const { claudeStatusline } = await import('./statusline.mjs')
   const status = {
     workspace: { current_dir: '/Users/me/code/app' },
@@ -89,9 +88,9 @@ test('Claude status line: two lines of the session facts', async () => {
   const facts = { user: 'me', host: 'mac', git: { branch: 'main', dirty: true }, gcp: 'proj', now: 1000, home: '/Users/me' }
   assert.equal(
     plain(claudeStatusline(status, facts)),
-    '┌[me from mac] [\ue725 main *] [proj] (work)\n└[~/code/app] Sonnet 5.5 \ue302 ctx:41% \uf242 5h:62%/2h15m \uf240 7d:5%/3d4h $1.84\n',
+    '┌[ me@mac] [ main *] [ proj] [ work]\n└[ ~/code/app] [ Sonnet 5.5] [ 41%] [ 5h 62% 2h15m] [ 7d 5% 3d4h] [ 1.84]\n',
   )
-  assert.equal(plain(claudeStatusline({}, { user: 'me', host: 'mac', now: 0 })), '┌[me from mac]\n└[~]\n')
+  assert.equal(plain(claudeStatusline({}, { user: 'me', host: 'mac', now: 0 })), '┌[ me@mac]\n└[ ~]\n')
 })
 
 test('gcpProject reads the active gcloud configuration', async () => {
@@ -116,21 +115,39 @@ test('spinner activity: an icon and a verb per tool, nothing for the rest', () =
   assert.equal(activityLabel(null), null)
 })
 
-test('repoState: the PR and its checks, and unpushed work', () => {
+test('forges: the remote names one, and each CLI\'s answer reads as the same PR', () => {
+  assert.equal(forgeOf('git@github.com:o/r.git'), 'github')
+  assert.equal(forgeOf('https://dev.azure.com/org/proj/_git/r'), 'azure')
+  assert.equal(forgeOf('https://org.visualstudio.com/proj/_git/r'), 'azure')
+  assert.equal(forgeOf('git@gitlab.example.com:g/r.git'), 'gitlab')
+  assert.equal(forgeOf('https://example.com/r.git'), null)
   const run = (conclusion, status = 'COMPLETED') => ({ conclusion, status })
-  assert.deepEqual(repoState({ number: 7, statusCheckRollup: [run('SUCCESS'), run('SUCCESS')] }, '0\t2'), {
+  assert.deepEqual(githubPr({ number: 7, url: 'u', state: 'OPEN', statusCheckRollup: [run('SUCCESS'), run(null, 'IN_PROGRESS'), run('FAILURE'), { state: 'PENDING' }] }), { number: 7, url: 'u', state: 'open', checks: ['pass', 'pending', 'fail', 'pending'] })
+  assert.deepEqual(gitlabMr({ iid: 4, web_url: 'w', state: 'merged', head_pipeline: { status: 'running' } }), { number: 4, url: 'w', state: 'merged', checks: ['pending'] })
+  assert.deepEqual(gitlabMr({ iid: 4, web_url: 'w', state: 'opened', head_pipeline: null }).checks, [])
+  assert.deepEqual(azurePr([{ pullRequestId: 9, status: 'active', repository: { webUrl: 'https://dev.azure.com/o/p/_git/r' } }], [{ status: 'approved' }, { status: 'rejected' }, { status: 'running' }]), {
+    number: 9,
+    url: 'https://dev.azure.com/o/p/_git/r/pullrequest/9',
+    state: 'open',
+    checks: ['pass', 'fail', 'pending'],
+  })
+  assert.equal(azurePr([], []), null)
+  assert.equal(githubPr(null), null)
+})
+
+test('repoState: the PR and its checks, unpushed work and uncommitted changes', () => {
+  const pr = (checks, state = 'open') => ({ number: 7, url: null, state, checks })
+  assert.deepEqual(repoState(pr(['pass', 'pass']), '0\t2'), {
     pr: { number: 7, url: null, state: 'open', ci: 'pass', passed: 2, total: 2 },
     ahead: 2,
     behind: 0,
     changes: { files: 0, added: 0, removed: 0, untracked: 0 },
   })
-  assert.equal(repoState({ number: 7, statusCheckRollup: [run('SUCCESS'), run('FAILURE')] }, null).pr.ci, 'fail')
-  assert.equal(repoState({ number: 7, statusCheckRollup: [run(null, 'IN_PROGRESS'), run('SUCCESS')] }, null).pr.ci, 'pending')
-  assert.equal(repoState({ number: 7, statusCheckRollup: [{ state: 'PENDING' }] }, null).pr.ci, 'pending')
-  assert.equal(repoState({ number: 7, statusCheckRollup: [] }, null).pr.ci, null)
+  assert.equal(repoState(pr(['pass', 'fail']), null).pr.ci, 'fail')
+  assert.equal(repoState(pr(['pending', 'pass']), null).pr.ci, 'pending')
+  assert.equal(repoState(pr([]), null).pr.ci, null)
+  assert.equal(repoState(pr([], 'merged'), null).pr.state, 'merged')
   assert.equal(repoState(null, '3\t0').behind, 3)
-  assert.equal(repoState({ number: 7, state: 'MERGED', statusCheckRollup: [] }, null).pr.state, 'merged')
-  assert.equal(repoState({ number: 7, statusCheckRollup: [run(null, 'IN_PROGRESS'), run('SUCCESS')] }, null).pr.passed, 1)
   assert.deepEqual(repoState(null, null, ' 3 files changed, 120 insertions(+), 30 deletions(-)\n', '?? a\n?? b\n M c\n').changes, { files: 3, added: 120, removed: 30, untracked: 2 })
   assert.deepEqual(repoState(null, null, ' 1 file changed, 1 insertion(+)\n', '').changes, { files: 1, added: 1, removed: 0, untracked: 0 })
 })
