@@ -34,13 +34,14 @@ Each plugin's README lists the skills, agents and hooks it ships.
 | Marketplace `.claude-plugin/marketplace.json` | yes | yes | yes, via `chat.plugins.marketplaces` |
 | Skills (`api`, `python`, `javascript`, `dev-tools`) | yes | yes | yes |
 | Agents (`api-reviewer`, `scout`, `escalate`) | yes, `agents/*.md` | yes, `copilot/*.agent.md` | yes, `agents/*.md` (Claude format): tool names and `sonnet`/`haiku`/`opus` are mapped; other model ids (`escalate`) use the picked model; `effort` is ignored |
+| `dev-tools` `host-hygiene` scripts (`heavy.sh` macOS/Linux, `heavy.ps1` Windows) | yes | yes | yes |
 | `guard` command hooks (skill enforcer, title guard, host guard, pip deny, risky ask, skill tracker) | yes | yes | yes, Local agent (`chat.useHooks`) |
 | `guard` post-edit lint, stop `make check` | yes | yes | yes |
 | `guard` keep-awake | yes | yes | yes, while the window is open |
 | `guard` usage throttle | yes (mod) | no: no mods API, no rate-limit windows | no: no mods API |
 | `guard` token weather | yes, band above the prompt (mod) | yes, status line (`statusLine.command`) | no: no status-line hook |
 
-Hosts: everything runs on macOS, Linux and Windows; the hooks need `node` 22+ on PATH. Checked live on macOS only: Windows is pending ([#25](https://github.com/giocaizzi/harness/issues/25)) and the Linux and Windows keep-awake keepers are unit-tested only. Details per hook: [docs/guard.md](docs/guard.md).
+Hosts: everything runs on macOS, Linux and Windows; the hooks need `node` 22+ on PATH. Checked live on macOS only (`heavy.ps1` runs in CI under Linux PowerShell): Windows is pending ([#25](https://github.com/giocaizzi/harness/issues/25)) and the Linux and Windows keep-awake keepers are unit-tested only. Details per hook: [docs/guard.md](docs/guard.md).
 
 ---
 
