@@ -12,9 +12,10 @@ export const rules = {
     },
     {
       "id": "pr",
-      "match": "\\bgh\\s+(pr\\s+(create|merge|ready)|stack)\\b",
+      "match": "\\bgh\\s+(pr\\s+(create|merge|ready)|stack)\\b|\\bglab\\s+mr\\s+(create|merge)\\b|\\baz\\s+repos\\s+pr\\s+(create|update)\\b",
       "skills": [
         "github-workflow",
+        "repo-standard",
         "ship",
         "land"
       ],
@@ -58,8 +59,15 @@ export const rules = {
   "deny": [
     {
       "id": "pip",
+      "when": "uv",
       "match": "(?<!uv )(?<![\\w-])(pipx|pip3?|python3? -m pip)(\\s|$)",
-      "why": "Python tooling is uv only: use uv add / uv run / uvx, not pip or pipx."
+      "why": "This repo uses uv: use uv add / uv run / uvx, not pip or pipx."
+    },
+    {
+      "id": "poetry",
+      "when": "uv",
+      "match": "(?<![\\w./-])poetry(\\s|$)",
+      "why": "This repo uses uv: use uv add / uv sync / uv run, not poetry."
     }
   ],
   "heavy": [
@@ -100,7 +108,7 @@ export const rules = {
     },
     {
       "id": "merge",
-      "match": "\\bgh\\s+pr\\s+merge\\b.*--admin",
+      "match": "\\bgh\\s+pr\\s+merge\\b.*--admin|\\baz\\s+repos\\s+pr\\s+(create|update)\\b.*--bypass-policy\\b(?![\\s=]+false)",
       "why": "bypasses merge rules"
     }
   ],

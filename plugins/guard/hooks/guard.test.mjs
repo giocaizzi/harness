@@ -1,14 +1,14 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, existsSync } from 'node:fs'
+import { mkdtempSync, existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { handle } from './guard.mjs'
+import { handle, pythonManager } from './guard.mjs'
 
 const calm = async () => ({ load1: 1, freeGb: 100 })
 const setup = (deps = {}) => {
   const dataDir = mkdtempSync(join(tmpdir(), 'guard-test-'))
-  return (input) => handle({ session_id: 's1', cwd: '/', ...input }, { dataDir, env: {}, hostFacts: calm, run: async () => null, ...deps })
+  return (input) => handle({ session_id: 's1', cwd: '/', ...input }, { dataDir, env: {}, hostFacts: calm, run: async () => null, pythonManager, ...deps })
 }
 const pre = (tool_name, command) => ({ hook_event_name: 'PreToolUse', tool_name, tool_input: { command } })
 const decision = (out) => (out.stdout ? JSON.parse(out.stdout).hookSpecificOutput : undefined)
@@ -96,4 +96,51 @@ test('a squash-merged worktree (merged PR found by gh in the worktree) is not as
   const h = setup({ run })
   assert.equal(decision(await h(pre('Bash', 'rm -rf /r/.claude/worktrees/x'))), undefined)
   assert.ok(calls.some(([cmd, cwd]) => cmd === 'gh' && cwd === '/r/.claude/worktrees/x'))
+})
+
+// A throwaway repo with the given files (path -> content), returning its root.
+const repo = (files) => {
+  const root = mkdtempSync(join(tmpdir(), 'guard-repo-'))
+  mkdirSync(join(root, '.git'))
+  for (const [f, body] of Object.entries(files)) {
+    mkdirSync(join(root, f, '..'), { recursive: true })
+    writeFileSync(join(root, f), body)
+  }
+  return root
+}
+
+test('pythonManager reads the repo around cwd', () => {
+  const cases = [
+    [{ 'uv.lock': '', 'pyproject.toml': '[project]\n' }, 'uv'],
+    [{ 'pyproject.toml': '[project]\nname = "x"\n' }, 'uv'],
+    [{ 'pyproject.toml': '[project]\n', 'requirements-dev.txt': '' }, 'uv'],
+    [{ 'pyproject.toml': '[tool.poetry]\n' }, 'poetry'],
+    [{ 'pyproject.toml': '[project]\n', 'poetry.lock': '' }, 'poetry'],
+    [{ 'Pipfile.lock': '' }, 'pipenv'],
+    [{ 'requirements.txt': '' }, 'pip'],
+    [{ 'pyproject.toml': '[tool.ruff]\n', 'requirements.txt': '' }, 'pip'],
+    [{ 'README.md': '' }, null],
+  ]
+  for (const [files, want] of cases) assert.equal(pythonManager(repo(files)), want, JSON.stringify(files))
+  const nested = repo({ 'uv.lock': '', 'src/pkg/a.py': '' })
+  assert.equal(pythonManager(join(nested, 'src', 'pkg')), 'uv')
+  assert.equal(pythonManager(join(nested, 'missing')), 'uv')
+})
+
+test('pip and poetry are denied in a uv repo, allowed with a note once in a poetry or pip repo', async () => {
+  const h = setup()
+  const uv = repo({ 'uv.lock': '' })
+  for (const c of ['pip install x', 'poetry add x']) {
+    const d = decision(await h({ ...pre('Bash', c), cwd: uv }))
+    assert.equal(d.permissionDecision, 'deny', c)
+    assert.match(d.permissionDecisionReason, /uses uv/)
+  }
+  for (const [files, manager] of [[{ 'poetry.lock': '' }, 'poetry'], [{ 'requirements.txt': '' }, 'pip']]) {
+    const h2 = setup()
+    const cwd = repo(files)
+    const first = decision(await h2({ ...pre('PowerShell', 'pip install x'), cwd }))
+    assert.equal(first.permissionDecision, undefined, manager)
+    assert.match(first.additionalContext, new RegExp(`uses ${manager}.*uv is preferred`))
+    assert.equal(decision(await h2({ ...pre('PowerShell', 'pip install x'), cwd })), undefined, 'note once per session')
+  }
 })
