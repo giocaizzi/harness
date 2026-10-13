@@ -38,6 +38,7 @@ Each plugin's README lists the skills, agents and hooks it ships.
 | Skills | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Agents | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Guardrails (`guard`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Denial log to Grafana (`guard`) | ✅ | ✅ | 🟡 | ✅ | ✅ | ✅ |
 | Confirm risky commands | ✅ | ✅ | ✅ | 🟡 denies | 🟡 denies | ✅ |
 | Status line (`hud`) | ✅ | ✅ | — | — | — | ✅ |
 | Live HUD band and pane (`hud`) | ✅ | — | — | — | — | — |
