@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { evaluateCommand, evaluateSpawn, usageLevel, worktreeFacts } from './engine.mjs';
+import { codexRules, evaluateCommand, evaluateSpawn, nativeAsk, opencodeAsks, usageLevel, worktreeFacts } from './engine.mjs';
 import { rules } from './rules.mjs';
 
 const fresh = () => ({ reminded: new Set() });
@@ -34,6 +34,30 @@ test('risky commands always ask, even after a reminder', () => {
     assert.equal(evaluateCommand({ command, state, host: calm, rules }).action, 'ask', command);
     assert.equal(evaluateCommand({ command, state, host: calm, rules }).action, 'ask', command);
   }
+});
+
+test('nativeAsk: only a plain command starting with a risky prefix is left to the harness prompt', () => {
+  assert.equal(nativeAsk('rm -rf ~/x', 'rm', rules), true);
+  assert.equal(nativeAsk('  git reset --hard  ', 'reset', rules), true);
+  assert.equal(nativeAsk('git push -f origin x', 'force', rules), true);
+  for (const [command, rule] of [
+    ['cd x && rm -rf y', 'rm'], // another command first
+    ['rm -rf y; ls', 'rm'],
+    ['rm -rf $(pwd)', 'rm'],
+    ['rm  -rf y', 'rm'], // double space: the harness matcher would not see the prefix
+    ['FOO=1 rm -rf y', 'rm'],
+    ['rm -rfv y', 'rm'],
+    ['git push origin x --force', 'force'], // flag not in prefix position
+    ['gh pr merge 1 --admin', 'merge'], // no prefixes
+  ])
+    assert.equal(nativeAsk(command, rule, rules), false, command);
+});
+
+test('every prefix is risky under its own rule, and renders for Codex and opencode', () => {
+  for (const r of rules.risky)
+    for (const p of r.prefixes ?? []) assert.match(`${p.join(' ')} x`, new RegExp(r.match, 'i'), p.join(' '));
+  assert.match(codexRules(rules), /^prefix_rule\(pattern = \["rm","-rf"\], decision = "prompt", justification = "guard: recursive delete"\)$/m);
+  assert.equal(opencodeAsks(rules)['git reset --hard *'], 'ask');
 });
 
 test('a plain push and rm of a file are not risky', () => {

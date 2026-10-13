@@ -1,15 +1,55 @@
 // opencode plugin: the guard's rules on opencode's plugin hooks (https://opencode.ai/docs/plugins/).
 // scripts/install.mjs writes a one-line stub into ~/.config/opencode/plugins/ that re-exports this file.
-// opencode cannot ask from a plugin, so a risky command is denied (as on Codex).
+// A plugin cannot ask (opencode 1.19 declares `permission.ask` but never calls it), so the `config` hook adds
+// `permission.bash` ask entries for the risky prefixes and opencode asks itself; any other risky form is denied.
 import { createGuard } from './bridge.mjs'
+import { nativeAsk, opencodeAsks } from '../core/engine.mjs'
+import { rules } from '../core/rules.mjs'
+
+const ASKS = opencodeAsks(rules)
+// A config key that rules on bash: `bash` or the `*` catch-all.
+const bashKeys = (perm) => (perm && typeof perm === 'object' ? Object.entries(perm).filter(([k]) => k === 'bash' || k === '*').map(([, v]) => v) : [perm])
+const denies = (perm) => bashKeys(perm).some((v) => v === 'deny' || (v && typeof v === 'object' && Object.values(v).includes('deny')))
+
+// The permission config with the asks appended last to `bash` (opencode's last matching rule wins), so they
+// override the user's allows. `bash` moves after `*` for the same reason.
+export function withAsks(perm) {
+  const p = typeof perm === 'string' ? { '*': perm } : { ...perm }
+  const bash = typeof p.bash === 'string' ? { '*': p.bash } : { ...p.bash }
+  delete p.bash
+  for (const k of Object.keys(ASKS)) delete bash[k]
+  return { ...p, bash: { ...bash, ...ASKS } }
+}
 
 export const GuardPlugin = async ({ client, directory }, deps) => {
-  const guard = createGuard({ harness: 'opencode', noAsk: true, deps })
+  let asks = false // the config hook added the asks
+  const guard = createGuard({
+    harness: 'opencode',
+    noAsk: true,
+    deps: {
+      // opencode asks only when the asks are in, the command is a covered form and no session rule (an API
+      // caller's `tools: { bash: true }`) overrides them; anything unsure is denied.
+      nativeAsk: async (command, rule, input) => {
+        if (!asks || !nativeAsk(command, rule, rules)) return false
+        const s = await client.session.get({ path: { id: input.session_id } }).catch(() => null)
+        return Boolean(s?.data) && !(s.data.permission ?? []).some((r) => r.permission === 'bash' || r.permission === '*')
+      },
+      ...deps,
+    },
+  })
   const notes = new Map() // callID -> note for the tool output (the pip note outside uv repos)
   const blocked = new Set() // sessions whose last stop make check already blocked
   const text = (t) => (typeof t === 'string' ? t : '')
 
   return {
+    // ponytail: a user deny on bash (or `*`) anywhere skips the asks, so they never weaken it; the guard denies there.
+    config: async (cfg) => {
+      const agents = Object.values(cfg.agent ?? {}).filter((a) => a?.permission)
+      if (denies(cfg.permission) || agents.some((a) => denies(a.permission))) return
+      cfg.permission = withAsks(cfg.permission ?? {})
+      for (const a of agents) a.permission = withAsks(a.permission)
+      asks = true
+    },
     'tool.execute.before': async (input, output) => {
       const d = await guard.preTool({ sessionId: input.sessionID, cwd: directory, tool: String(input.tool).toLowerCase(), input: output.args ?? {} })
       if (d.decision === 'deny' || d.decision === 'ask') throw new Error(d.reason)

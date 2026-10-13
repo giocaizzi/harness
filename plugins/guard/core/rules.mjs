@@ -80,31 +80,38 @@ export const rules = {
       "match": "\\b(pytest|vitest|jest|npm\\s+(run\\s+)?test|make\\s+(test|check))\\b"
     }
   ],
+  // `prefixes`: the plain forms the harness itself asks for where a hook cannot (Codex prompt rules, opencode
+  // `permission.bash` ask). A risky command outside them is denied there.
   "risky": [
     {
       "id": "rm",
       "match": "\\brm\\s+-[a-z]*r[a-z]*f?\\b|\\bremove-item\\b.*-recurse",
-      "why": "recursive delete"
+      "why": "recursive delete",
+      "prefixes": [["rm", "-r"], ["rm", "-R"], ["rm", "-rf"], ["rm", "-fr"], ["rm", "-Rf"], ["rm", "-fR"]]
     },
     {
       "id": "worktree-rm",
       "match": "\\bgit\\s+worktree\\s+remove\\b.*(--force|\\s-f\\b)",
-      "why": "discards uncommitted work in a worktree"
+      "why": "discards uncommitted work in a worktree",
+      "prefixes": [["git", "worktree", "remove", "--force"], ["git", "worktree", "remove", "-f"]]
     },
     {
       "id": "reset",
       "match": "\\bgit\\s+reset\\s+--hard\\b",
-      "why": "discards local work"
+      "why": "discards local work",
+      "prefixes": [["git", "reset", "--hard"]]
     },
     {
       "id": "force",
       "match": "\\bgit\\s+push\\b.*(--force|\\s-f\\b)",
-      "why": "rewrites remote history"
+      "why": "rewrites remote history",
+      "prefixes": [["git", "push", "--force"], ["git", "push", "-f"], ["git", "push", "--force-with-lease"]]
     },
     {
       "id": "terraform",
       "match": "\\bterraform\\s+(apply|destroy)\\b",
-      "why": "changes real infrastructure"
+      "why": "changes real infrastructure",
+      "prefixes": [["terraform", "apply"], ["terraform", "destroy"]]
     },
     {
       "id": "merge",

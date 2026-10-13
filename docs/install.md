@@ -34,12 +34,14 @@ Plugins (skills, the guard's hooks and sounds' Stop hook) come from the marketpl
 codex plugin marketplace add giocaizzi/harness
 codex plugin add dev-tools@giocaizzi-harness        # and api, python, javascript, guard, sounds
 git clone https://github.com/giocaizzi/harness ~/.local/share/giocaizzi-harness
-make -C ~/.local/share/giocaizzi-harness install HARNESS=codex   # agents -> ~/.codex/agents ($CODEX_HOME)
+make -C ~/.local/share/giocaizzi-harness install HARNESS=codex   # agents -> ~/.codex/agents, guard prompt rules -> ~/.codex/rules ($CODEX_HOME)
 ```
+
+The prompt rules (`rules/giocaizzi-guard.rules`) make Codex itself ask before a plain risky command (`rm -rf x`, `git reset --hard`); without them, or when they are older than the installed guard, the guard denies those commands instead.
 
 Then trust the guard's and sounds' hooks once per version: `/hooks` in a Codex session, review, trust. Untrusted plugin hooks are skipped.
 
-Update: `codex plugin marketplace upgrade`, then `git -C ~/.local/share/giocaizzi-harness pull` and the `make install` line again. Check: `codex plugin list` shows the plugins installed; `codex debug prompt-input hi` lists `dev-tools:*` skills; in a uv project, asking Codex to run `pip install x` is blocked with "This repo uses uv".
+Update: `codex plugin marketplace upgrade`, then `git -C ~/.local/share/giocaizzi-harness pull` and the `make install` line again. Check: `codex plugin list` shows the plugins installed; `codex debug prompt-input hi` lists `dev-tools:*` skills; in a uv project, asking Codex to run `pip install x` is blocked with "This repo uses uv"; asking it to run `rm -rf build` shows Codex's approval prompt with "guard: recursive delete".
 
 ## opencode
 

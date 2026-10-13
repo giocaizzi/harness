@@ -3,7 +3,9 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { handle, pythonManager } from './guard.mjs'
+import { CODEX_RULES, codexAsks, handle, pythonManager } from './guard.mjs'
+import { codexRules } from '../core/engine.mjs'
+import { rules } from '../core/rules.mjs'
 
 const calm = async () => ({ load1: 1, freeGb: 100 })
 const setup = (deps = {}) => {
@@ -51,6 +53,24 @@ test('noAsk turns a risky ask into a deny that tells the agent why', async () =>
   const d = decision(await setup({ noAsk: true })(pre('Bash', 'rm -rf ~/x')))
   assert.equal(d.permissionDecision, 'deny')
   assert.match(d.permissionDecisionReason, /cannot ask for confirmation/)
+})
+
+test('noAsk leaves a risky command the harness prompts for to the harness, denies the rest', async () => {
+  const h = setup({ noAsk: true, nativeAsk: async (command, rule) => command === 'rm -rf ~/x' && rule === 'rm' })
+  assert.equal(decision(await h(pre('Bash', 'rm -rf ~/x'))), undefined)
+  assert.equal(decision(await h(pre('Bash', 'cd / && rm -rf ~/x'))).permissionDecision, 'deny')
+})
+
+test('Codex prompts only with this version of the installed prompt rules', () => {
+  const home = mkdtempSync(join(tmpdir(), 'codex-home-'))
+  assert.equal(codexAsks({ CODEX_HOME: home }), null)
+  mkdirSync(join(home, 'rules'))
+  writeFileSync(join(home, 'rules', CODEX_RULES), 'prefix_rule(pattern = ["rm", "-r"], decision = "prompt")\n')
+  assert.equal(codexAsks({ CODEX_HOME: home }), null)
+  writeFileSync(join(home, 'rules', CODEX_RULES), codexRules(rules))
+  const asks = codexAsks({ CODEX_HOME: home })
+  assert.equal(asks('git reset --hard', 'reset'), true)
+  assert.equal(asks('git reset --hard; ls', 'reset'), false)
 })
 
 test('title guard denies a non-conventional commit every time, on bash and PowerShell', async () => {
