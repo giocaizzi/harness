@@ -12,6 +12,7 @@ export function registerFooter(on) {
     const t = (await read($, turns)).findLast((x) => x.durationMs === e.props.durationMs)
     if (!own || !t) return own
     const { Box, Text } = $.ui.resolve(e)
-    return Box({ flexDirection: 'row', children: [own, Text({ dimColor: true, children: [` · ${footerText(t)}`] })] })
+    // flexWrap moves the tail whole onto its own line when the row is narrow, instead of wrapping it in a column.
+    return Box({ flexDirection: 'row', flexWrap: 'wrap', children: [own, Text({ dimColor: true, wrap: 'truncate-end', children: [` · ${footerText(t)}`] })] })
   })
 }

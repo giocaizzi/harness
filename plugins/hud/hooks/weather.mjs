@@ -120,12 +120,12 @@ export const tokens = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1000 
 // A duration as the transcript writes one: 850ms, 4.2s, 1m 4s.
 export const duration = (ms) => (ms < 1000 ? `${Math.round(ms)}ms` : ms < 60_000 ? `${(ms / 1000).toFixed(1)}s` : `${Math.floor(ms / 60_000)}m ${Math.round((ms % 60_000) / 1000)}s`)
 
-// The turn footer's tail after the engine's `Baked for 3s`: tokens in and out, cache hit rate, and what the turn cost.
+// The turn footer's tail after the engine's `Baked for 3s`, kept short: ↑tokens in ↓out ↺cache hit rate, and what the turn cost.
 export function footerText(t) {
   const u = t.usage
   const input = u.input_tokens + u.cache_read_input_tokens + u.cache_creation_input_tokens
   const hit = input ? Math.round((100 * u.cache_read_input_tokens) / input) : null
-  return [`${tokens(input)} in`, `${tokens(u.output_tokens)} out`, hit == null ? null : `${hit}% cached`, t.cost == null ? null : `$${t.cost.toFixed(2)}`].filter(Boolean).join(' · ')
+  return [`↑${tokens(input)}`, `↓${tokens(u.output_tokens)}`, hit == null ? null : `↺${hit}%`, t.cost == null ? null : `$${t.cost.toFixed(2)}`].filter(Boolean).join(' ')
 }
 
 // Lines an edit adds and removes, read off the call's input: `+12 -4` (Edit, MultiEdit), `+40` (Write), else null.
@@ -160,8 +160,8 @@ export function when(ms, now) {
 
 // Cells of a bar chart, row-major [codePoint, color, background] triplets, one column per value (0-100). Heights
 // span lo..hi (the tallest bar fills `rows`, the lowest keeps one eighth so it shows); colours are 0xRRGGBB by the
-// value itself. 0x01000000 is the default background.
-export const TONE_RGB = { ok: 0xa6e3a1, warn: 0xf9e2af, bad: 0xf38ba8 }
+// value itself: grey while fine, amber and red under pressure. 0x01000000 is the default background.
+export const TONE_RGB = { ok: 0x7f849c, warn: 0xf9e2af, bad: 0xf38ba8 }
 export function sparkCells(values, rows, lo = 0, hi = 100) {
   const out = []
   for (let r = 0; r < rows; r++) {
