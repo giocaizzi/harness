@@ -13,10 +13,11 @@ const tmp = () => mkdtempSync(join(tmpdir(), 'guard-test-'))
 delete process.env.GUARD_STOP_CHECK
 delete process.env.GUARD_STOP_TIMEOUT_MS
 
-const stopRun = (calls, make, git = { status: 0, stdout: 'x' }) => (cmd, args) => {
+const stopRun = (calls, make, git = { status: 0, stdout: 'x' }, targets = ['check']) => (cmd, args) => {
   calls.push(`${cmd} ${args.join(' ')}`)
   if (cmd === 'git') return git
-  return args[0] === '-n' ? { status: 0 } : make
+  if (args[0] === '-n') return { status: targets.includes(args[1]) ? 0 : 2 }
+  return make
 }
 
 test('stop: blocks once with the output tail when make check fails', () => {
@@ -27,7 +28,15 @@ test('stop: blocks once with the output tail when make check fails', () => {
   assert.match(out.reason, /make check failed[\s\S]*FAIL x$/)
   assert.deepEqual(out.hookSpecificOutput, { hookEventName: 'Stop', decision: 'block', reason: out.reason }) // VS Code
   assert.ok(out.reason.split('\n').length <= 41)
-  assert.deepEqual(calls.filter((c) => c.startsWith('make')), ['make -n check', 'make check'])
+  assert.deepEqual(calls.filter((c) => c.startsWith('make')), ['make -n check-fast', 'make -n check', 'make check'])
+})
+
+test('stop: prefers make check-fast when the Makefile defines it', () => {
+  const calls = []
+  const make = { status: 2, stdout: 'FAIL y\n', stderr: '' }
+  const out = stopCheck({ cwd: '/r' }, stopRun(calls, make, { status: 2 }, ['check-fast', 'check']))
+  assert.match(out.reason, /^make check-fast failed/)
+  assert.deepEqual(calls.filter((c) => c.startsWith('make')), ['make -n check-fast', 'make check-fast'])
 })
 
 test('stop: passes when stop_hook_active, no check target, no make, or green', () => {

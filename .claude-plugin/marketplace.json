@@ -13,7 +13,7 @@
       "name": "python",
       "source": "./plugins/python",
       "description": "Python development and testing best practices",
-      "version": "1.5.1",
+      "version": "1.5.2",
       "keywords": [
         "python",
         "development",
@@ -66,7 +66,7 @@
       "name": "guard",
       "source": "./plugins/guard",
       "description": "Agent guardrails for Claude Code, Copilot CLI, VS Code, Codex, opencode and pi: skill enforcer, title guard, pip deny, host guard, risky-command ask, make check on stop, post-edit lint, keep-awake; Claude-only usage throttle",
-      "version": "0.16.0",
+      "version": "0.17.0",
       "keywords": [
         "hooks",
         "guardrails",

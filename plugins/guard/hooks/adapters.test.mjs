@@ -7,6 +7,9 @@ import { join } from 'node:path'
 import { GuardPlugin } from './opencode.mjs'
 import guardExtension from './pi.mjs'
 
+// These tests expect the stop check to run; a developer's own GUARD_STOP_CHECK=off must not leak in.
+delete process.env.GUARD_STOP_CHECK
+
 const dir = (files = {}) => {
   const d = mkdtempSync(join(tmpdir(), 'adapter-test-'))
   for (const [name, content] of Object.entries(files)) writeFileSync(join(d, name), content)
