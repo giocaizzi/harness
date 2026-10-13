@@ -33,6 +33,26 @@ test('the Skill tool (either harness spelling) and a typed slash command count a
   }
 })
 
+test('Codex, pi and opencode ways of loading a skill count as loaded', async () => {
+  for (const load of [
+    { hook_event_name: 'UserPromptSubmit', prompt: '$ship now' },
+    { hook_event_name: 'UserPromptSubmit', prompt: '/skill:ship' },
+    pre('Bash', 'sed -n 1,200p /x/plugins/cache/h/dev-tools/1.0.0/skills/ship/SKILL.md'),
+    { hook_event_name: 'PreToolUse', tool_name: 'read', tool_input: { path: 'C:\\h\\skills\\ship\\SKILL.md' } },
+    { hook_event_name: 'PreToolUse', tool_name: 'skill', tool_input: { name: 'ship' } },
+  ]) {
+    const h = setup()
+    await h(load)
+    assert.equal(decision(await h(pre('Bash', 'git commit'))), undefined, JSON.stringify(load))
+  }
+})
+
+test('noAsk turns a risky ask into a deny that tells the agent why', async () => {
+  const d = decision(await setup({ noAsk: true })(pre('Bash', 'rm -rf ~/x')))
+  assert.equal(d.permissionDecision, 'deny')
+  assert.match(d.permissionDecisionReason, /cannot ask for confirmation/)
+})
+
 test('title guard denies a non-conventional commit every time, on bash and PowerShell', async () => {
   const h = setup()
   await h({ hook_event_name: 'UserPromptSubmit', prompt: '/ship' })
