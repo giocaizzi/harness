@@ -85,9 +85,9 @@ export const rules = {
   "risky": [
     {
       "id": "rm",
-      "match": "\\brm\\s+-[a-z]*r[a-z]*f?\\b|\\bremove-item\\b.*-recurse",
+      "match": "\\brm\\s+(?:-[\\w-]+\\s+)*(?:-[a-z]*r[a-z]*|--recursive)\\b|\\bremove-item\\b.*-recurse",
       "why": "recursive delete",
-      "prefixes": [["rm", "-r"], ["rm", "-R"], ["rm", "-rf"], ["rm", "-fr"], ["rm", "-Rf"], ["rm", "-fR"]]
+      "prefixes": [["rm", "-r"], ["rm", "-R"], ["rm", "-rf"], ["rm", "-fr"], ["rm", "-Rf"], ["rm", "-fR"], ["rm", "--recursive"]]
     },
     {
       "id": "worktree-rm",
