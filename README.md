@@ -31,6 +31,22 @@ Each plugin's README lists the skills, agents and hooks it ships.
 
 ---
 
+## Compatibility
+
+| | Claude Code | Copilot CLI | VS Code | Codex | opencode | pi |
+|---|:-:|:-:|:-:|:-:|:-:|:-:|
+| Skills | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Agents | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Guardrails (`guard`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Confirm risky commands | ✅ | ✅ | ✅ | 🟡 denies | 🟡 denies | ✅ |
+| Status line (`hud`) | ✅ | ✅ | — | — | — | ✅ |
+| Live HUD band and pane (`hud`) | ✅ | — | — | — | — | — |
+| Sounds and toasts (`sounds`) | ✅ | — | — | — | — | 🟡 |
+
+✅ supported · 🟡 partial · — the harness has no way to do it. Runs on macOS, Linux and Windows. Details, reasons and open issues: [docs/compatibility.md](docs/compatibility.md).
+
+---
+
 ## Install
 
 | Harness | Install |
