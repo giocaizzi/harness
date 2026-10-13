@@ -47,7 +47,7 @@ Claude Code:
 
 Copilot CLI:
 - `/model [--session|--global|--repo|--local] [MODEL|auto TIER]` sets model and reasoning effort; auto tiers are `efficiency`, `balance`, `intelligence`.
-- A custom agent's `model` is a string and inherits the default if unset. Valid values are undocumented, so this plugin's agents leave it unset: pick the tier with `/model`. Agent files have no effort property.
+- A custom agent's `model` is a string and inherits the default if unset; this plugin's agents leave it unset. Agent files have no effort property: set `model` and `effortLevel` per agent in user settings under `subagents.agents.<plugin>:<agent>` (e.g. `dev-tools:scout`), or interactively with `/subagents`. A model the account lacks falls back to an available one.
 
 Codex:
 - Custom agents are TOML in `~/.codex/agents/` (`make install HARNESS=codex` copies this plugin's): `model` and `model_reasoning_effort` per agent, `sandbox_mode` (scout is `read-only`). Unset `model` inherits the session's; `/model` changes it. Use the OpenAI rows of the table.
@@ -56,7 +56,7 @@ opencode:
 - Subagents are Markdown in `~/.config/opencode/agents/` (`make install HARNESS=opencode`), run through the `task` tool or an `@name` mention. `model` is `provider/id`; unset inherits the session's. `permission` limits a subagent (scout denies `edit`).
 
 pi:
-- No subagents by design: run lookups in the main session, or start a second `pi -p` for an isolated one. `/model` and `--thinking <level>` set model and effort.
+- This repo's `subagent` tool (`agent`, `task`) runs an agent from this plugin in its own `pi -p` session with the session's model. `/model` and `--thinking <level>` set model and effort.
 
 ## Verify before relying on the table
 
