@@ -111,6 +111,8 @@ async function onShell(input, state, deps) {
     state.reminded = [...reminded]
     if (d.action === 'deny' || d.action === 'ask') await deps.emit?.('guard.decision', { rule: d.rule, action: d.action, tool: String(input.tool_name ?? ''), session_id: input.session_id })
     if (d.action === 'deny') return preToolUse('deny', d.reason)
+    // Codex and opencode have no `ask`: a risky command is denied and the user runs it.
+    if (d.action === 'ask' && deps.noAsk) return preToolUse('deny', `${d.reason}\nThis harness cannot ask for confirmation, so the command was not run: ask the user to run it.`)
     if (d.action === 'ask') {
       const argv = previewCommand(d.rule, command)
       return preToolUse('ask', argv ? withPreview(d.reason, await deps.run(argv, input.cwd).catch(() => '')) : d.reason)
@@ -135,12 +137,15 @@ export async function handle(input, deps) {
     return out
   }
   if (event === 'UserPromptSubmit') {
-    // A slash command the user typed counts as the skill having been loaded.
-    const m = /^\s*\/([\w:-]+)/.exec(input.prompt ?? '')
+    // A skill the user named counts as loaded: `/name` (Claude, Copilot, opencode), `/skill:name` (pi), `$name` (Codex).
+    const m = /^\s*(?:\/(?:skill:)?|\$)([\w:-]+)/.exec(input.prompt ?? '')
     if (m) state.loaded.push(m[1])
   } else if (event === 'PreToolUse') {
     const tool = String(input.tool_name ?? '').toLowerCase()
-    if (tool === 'skill' && input.tool_input?.skill) state.loaded.push(String(input.tool_input.skill))
+    const t = input.tool_input ?? {}
+    // Codex and pi have no skill tool: the agent reads SKILL.md with a shell or read tool, which counts too.
+    for (const m of `${t.command ?? ''} ${t.file_path ?? t.path ?? t.filePath ?? ''}`.matchAll(/skills[\\/]([\w-]+)[\\/]SKILL\.md/g)) state.loaded.push(m[1])
+    if (tool === 'skill' && (t.skill || t.name)) state.loaded.push(String(t.skill || t.name))
     else if (SHELLS.has(tool)) out = await onShell(input, state, deps)
   }
   state.loaded = [...new Set(state.loaded)]
@@ -166,7 +171,9 @@ async function main() {
   if (!input.hook_event_name && process.argv[2]) input.hook_event_name = process.argv[2]
   const dataDir = process.env.CLAUDE_PLUGIN_DATA || process.env.COPILOT_PLUGIN_DATA || join(tmpdir(), 'guard-plugin')
   // Never exit non-zero: Copilot denies a preToolUse whose hook fails. The risky path fails closed inside onShell.
-  const out = await handle(input, { dataDir, env: process.env, hostFacts, run, pythonManager, emit: (event, attrs) => emit(process.env, event, { ...attrs, harness: harness() }) }).catch(() => ({}))
+  // `--no-ask` comes from the Codex hooks file (hooks/codex.json), which build_agents.py generates.
+  const noAsk = process.argv.includes('--no-ask')
+  const out = await handle(input, { dataDir, env: process.env, hostFacts, run, pythonManager, noAsk, emit: (event, attrs) => emit(process.env, event, { ...attrs, harness: noAsk ? 'codex' : harness() }) }).catch(() => ({}))
   if (out.stdout) process.stdout.write(out.stdout)
   if (out.stderr) process.stderr.write(out.stderr)
 }

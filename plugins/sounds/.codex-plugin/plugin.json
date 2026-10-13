@@ -1,0 +1,236 @@
+{
+  "name": "sounds",
+  "version": "0.2.1",
+  "description": "Toasts, configurable sounds and system notifications for Claude Code: usage limits, context, prompt-cache expiry, every way a turn ends, questions waiting and PR checks finishing (Claude mod)",
+  "author": {
+    "name": "giocaizzi",
+    "url": "https://github.com/giocaizzi"
+  },
+  "repository": "https://github.com/giocaizzi/harness",
+  "license": "MIT",
+  "keywords": [
+    "sounds",
+    "notifications",
+    "mod",
+    "claude-code"
+  ],
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "soundLimit5h": {
+      "type": "string",
+      "title": "Sound: 5-hour limit",
+      "description": "Plays when the 5-hour window passes 80%, 90% and 100%.",
+      "required": false,
+      "default": "warn",
+      "options": [
+        "off",
+        "chime",
+        "ping",
+        "alert",
+        "warn",
+        "error",
+        "done",
+        "tick"
+      ]
+    },
+    "soundLimit7d": {
+      "type": "string",
+      "title": "Sound: 7-day limit",
+      "description": "Plays when the 7-day window passes 80%, 90% and 100%.",
+      "required": false,
+      "default": "warn",
+      "options": [
+        "off",
+        "chime",
+        "ping",
+        "alert",
+        "warn",
+        "error",
+        "done",
+        "tick"
+      ]
+    },
+    "soundLimitSpend": {
+      "type": "string",
+      "title": "Sound: spend limit",
+      "description": "Plays when a gateway spend limit passes 80%, 90% and 100%.",
+      "required": false,
+      "default": "warn",
+      "options": [
+        "off",
+        "chime",
+        "ping",
+        "alert",
+        "warn",
+        "error",
+        "done",
+        "tick"
+      ]
+    },
+    "soundContext": {
+      "type": "string",
+      "title": "Sound: context",
+      "description": "Plays when the context window passes 80% and 90%.",
+      "required": false,
+      "default": "alert",
+      "options": [
+        "off",
+        "chime",
+        "ping",
+        "alert",
+        "warn",
+        "error",
+        "done",
+        "tick"
+      ]
+    },
+    "soundCacheExpiring": {
+      "type": "string",
+      "title": "Sound: cache expiring",
+      "description": "Plays one minute before the prompt cache expires.",
+      "required": false,
+      "default": "ping",
+      "options": [
+        "off",
+        "chime",
+        "ping",
+        "alert",
+        "warn",
+        "error",
+        "done",
+        "tick"
+      ]
+    },
+    "soundCacheExpired": {
+      "type": "string",
+      "title": "Sound: cache expired",
+      "description": "Plays when the prompt cache has expired.",
+      "required": false,
+      "default": "warn",
+      "options": [
+        "off",
+        "chime",
+        "ping",
+        "alert",
+        "warn",
+        "error",
+        "done",
+        "tick"
+      ]
+    },
+    "soundDone": {
+      "type": "string",
+      "title": "Sound: turn finished",
+      "description": "Plays when a turn ends with an answer and took at least the seconds below.",
+      "required": false,
+      "default": "done",
+      "options": [
+        "off",
+        "chime",
+        "ping",
+        "alert",
+        "warn",
+        "error",
+        "done",
+        "tick"
+      ]
+    },
+    "soundAborted": {
+      "type": "string",
+      "title": "Sound: turn interrupted",
+      "description": "Plays when a turn is interrupted, including a message sent mid-turn instead of queued.",
+      "required": false,
+      "default": "off",
+      "options": [
+        "off",
+        "chime",
+        "ping",
+        "alert",
+        "warn",
+        "error",
+        "done",
+        "tick"
+      ]
+    },
+    "soundRefused": {
+      "type": "string",
+      "title": "Sound: model refused",
+      "description": "Plays when the model refuses a turn.",
+      "required": false,
+      "default": "error",
+      "options": [
+        "off",
+        "chime",
+        "ping",
+        "alert",
+        "warn",
+        "error",
+        "done",
+        "tick"
+      ]
+    },
+    "soundError": {
+      "type": "string",
+      "title": "Sound: API error",
+      "description": "Plays when an API error or the context limit ends a turn.",
+      "required": false,
+      "default": "error",
+      "options": [
+        "off",
+        "chime",
+        "ping",
+        "alert",
+        "warn",
+        "error",
+        "done",
+        "tick"
+      ]
+    },
+    "soundSubagent": {
+      "type": "string",
+      "title": "Sound: subagent finished",
+      "description": "Plays when a subagent finishes a turn.",
+      "required": false,
+      "default": "tick",
+      "options": [
+        "off",
+        "chime",
+        "ping",
+        "alert",
+        "warn",
+        "error",
+        "done",
+        "tick"
+      ]
+    },
+    "doneAfterSeconds": {
+      "type": "number",
+      "title": "Sound: shortest turn",
+      "description": "Turns shorter than this many seconds do not play the finished sound; 0 plays after every answer.",
+      "required": false,
+      "default": 0
+    },
+    "soundGain": {
+      "type": "number",
+      "title": "Sound volume",
+      "description": "Linear gain from 0 to 4.",
+      "required": false,
+      "default": 1
+    },
+    "notify": {
+      "type": "boolean",
+      "title": "Notify: system notifications",
+      "description": "Send a system notification when a long turn finishes or ends badly, when Claude asks a question, and when the PR checks finish (with the hud plugin).",
+      "required": false,
+      "default": true
+    },
+    "notifyAfterSeconds": {
+      "type": "number",
+      "title": "Notify: shortest turn",
+      "description": "Turns shorter than this many seconds raise no 'finished' notification.",
+      "required": false,
+      "default": 60
+    }
+  },
+  "hooks": "./hooks/codex.json"
+}

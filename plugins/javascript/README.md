@@ -13,8 +13,8 @@ JavaScript and TypeScript development — ES6+, Node.js, React and Next.js.
 ## Install
 
 ```bash
-# Claude Code / Copilot CLI
+# Claude Code / Copilot CLI / Codex (codex plugin add)
 /plugin install javascript@giocaizzi-harness
 ```
 
-See the [repository README](../../README.md) for marketplace setup and local-development instructions.
+Every harness (Codex, opencode and pi included), updates and local development: [docs/install.md](../../docs/install.md).

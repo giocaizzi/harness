@@ -1,7 +1,7 @@
 {
   "name": "guard",
-  "version": "0.13.0",
-  "description": "Agent guardrails for Claude Code, Copilot CLI and VS Code: skill enforcer, Conventional Commit title guard, pip deny, host guard, risky-command ask with blast radius, make check on stop, post-edit lint, keep-awake, plus a Claude-only usage throttle",
+  "version": "0.14.0",
+  "description": "Agent guardrails for Claude Code, Copilot CLI, VS Code, Codex, opencode and pi: skill enforcer, Conventional Commit title guard, pip deny, host guard, risky-command ask with blast radius, make check on stop, post-edit lint, keep-awake, plus a Claude-only usage throttle",
   "author": {
     "name": "giocaizzi",
     "url": "https://github.com/giocaizzi"

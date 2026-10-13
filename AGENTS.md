@@ -1,6 +1,6 @@
 # AGENTS.md — contributor guide
 
-This repository is a **cross-harness plugin marketplace** for AI coding assistants. It distributes a set of plugins (each plugin contains skills and optionally agents) that work identically under **Claude Code** and **GitHub Copilot CLI**, and is compatible with VS Code Copilot's agent-plugins preview.
+This repository is a **cross-harness plugin marketplace** for AI coding assistants. It distributes a set of plugins (each plugin contains skills and optionally agents and hooks) for **Claude Code**, **GitHub Copilot CLI**, **VS Code Copilot** (agent plugins), **Codex CLI**, **opencode** and **pi**. What each harness gets and why: [docs/compatibility.md](docs/compatibility.md); install runbook: [docs/install.md](docs/install.md).
 
 Read this file before making changes. Then run `make help` to see the build/validate commands.
 
@@ -23,7 +23,13 @@ VS Code Copilot (agent plugins) detects a plugin with `.claude-plugin/plugin.jso
 
 Empirically tested: if you put both `foo.md` and `foo.agent.md` in the same `agents/` directory, Claude double-loads and the second one wins. So the two harnesses' agent files **must live in different directories**, and each harness must read a `plugin.json` that points to its directory.
 
-This repo treats everything that is identical (skills, plugin metadata) as one source of truth and **generates the per-harness artifacts** that diverge (agent files + the Copilot-specific `plugin.json`).
+This repo treats everything that is identical (skills, plugin metadata) as one source of truth and **generates the per-harness artifacts** that diverge (agent files, the Copilot and Codex `plugin.json`, the Codex hooks file).
+
+The other three harnesses read the same sources differently (details in [docs/compatibility.md](docs/compatibility.md)):
+
+- **Codex** resolves `.claude-plugin/marketplace.json` and the plugins' skills as-is, but reads `.codex-plugin/plugin.json` first, rejects a hooks file with `modules`, and takes agents only as TOML in `~/.codex/agents`. So the build generates `.codex-plugin/plugin.json` (pointing at `hooks/codex.json`), `hooks/codex.json`, and `codex/<name>.toml`, which `scripts/install.mjs` copies.
+- **opencode** has no plugin bundles or marketplace: `scripts/install.mjs` copies skills and the generated `opencode/<name>.md` agents and writes a plugin stub that loads `plugins/guard/hooks/opencode.mjs`.
+- **pi** installs the whole repo as a package from the root `package.json` (`pi` key: skills and `plugins/guard/hooks/pi.mjs`). It has no subagents.
 
 ---
 
@@ -57,12 +63,18 @@ This repo treats everything that is identical (skills, plugin metadata) as one s
 │       │   └── <name>.md
 │       ├── copilot/                   GENERATED — Copilot agents only, `<name>.agent.md`
 │       │   └── <name>.agent.md
-│       ├── hooks/                     AUTHORED — hooks.json + Node hook scripts (guard plugin; both harnesses)
+│       ├── codex/                     GENERATED — Codex agents, `<name>.toml`
+│       ├── opencode/                  GENERATED — opencode subagents, `<name>.md`
+│       ├── .codex-plugin/plugin.json  GENERATED — Codex reads this (Claude manifest + `hooks: ./hooks/codex.json`)
+│       ├── hooks/                     AUTHORED — hooks.json + Node hook scripts; codex.json is GENERATED
 │       └── core/                      AUTHORED — pure rule engine the hooks import (guard plugin)
 │
 ├── scripts/
-│   ├── build_agents.py           src/agents/ + .claude-plugin/plugin.json → agents/, copilot/, .github/plugin/plugin.json
+│   ├── build_agents.py           src/agents/ + manifests → agents/, copilot/, codex/, opencode/, .github/plugin/, .codex-plugin/, hooks/codex.json
+│   ├── install.mjs               copies Codex agents / opencode skills, agents and guard stub from a checkout
 │   └── validate.py               full repo invariant checks
+├── tests/e2e/                    drives Codex, opencode and pi against a scripted model (`make e2e`)
+├── package.json                  pi package manifest (`pi` key)
 │
 ├── Makefile                      canonical command surface
 ├── AGENTS.md                     this file
@@ -80,7 +92,10 @@ This repo treats everything that is identical (skills, plugin metadata) as one s
 | `plugins/<plugin>/.github/plugin/plugin.json` | **Generated** | Read by Copilot. Identical to the Claude manifest plus `"agents": ["./copilot/"]`. Never edit. |
 | `plugins/<plugin>/agents/<name>.md` | **Generated** | Claude agent. Never edit. |
 | `plugins/<plugin>/copilot/<name>.agent.md` | **Generated** | Copilot agent. Never edit. |
-| `plugins/<plugin>/hooks/`, `core/` | Authored | Hooks for both harnesses (only `guard` has them). See [docs/guard.md](docs/guard.md). |
+| `plugins/<plugin>/codex/<name>.toml`, `opencode/<name>.md` | **Generated** | Codex and opencode agents. Never edit. |
+| `plugins/<plugin>/.codex-plugin/plugin.json`, `hooks/codex.json` | **Generated** | Codex manifest and hooks file. Never edit. |
+| `plugins/<plugin>/hooks/`, `core/` | Authored | Hooks: `hooks.json` for Claude, Copilot, VS Code; `opencode.mjs`, `pi.mjs` over `bridge.mjs` for the in-process harnesses. See [docs/guard.md](docs/guard.md). |
+| `package.json` | Authored | pi package: `pi.skills` and `pi.extensions`. |
 | `.claude-plugin/marketplace.json` | Authored | One entry per plugin; versions must match per-plugin `plugin.json`. |
 
 ---
@@ -93,6 +108,8 @@ This repo treats everything that is identical (skills, plugin metadata) as one s
 | `make build` | Generate agent files **and** the per-plugin Copilot `plugin.json`. |
 | `make validate` | Build sync + plugin manifest hygiene + SKILL.md spec + marketplace ↔ disk + README ↔ disk. |
 | `make check` | `make lint` + `make test` (standard entrypoint, run by CI; `make lint` is an alias for `make validate`). |
+| `make e2e` | Codex, opencode and pi against a scripted model in throwaway homes (skips a CLI that is missing; CI runs it on Linux, macOS and Windows). |
+| `make install HARNESS="codex opencode"` | Copy what Codex and opencode cannot take from the marketplace into their config dirs. |
 | `make new-agent NAME=<name> PLUGIN=<plugin>` | Scaffold a new agent under `src/agents/<name>/`. |
 | `make new-skill PLUGIN=<plugin> NAME=<name>` | Scaffold `plugins/<plugin>/skills/<name>/SKILL.md`. |
 | `make clean` | Remove all generated files. |
@@ -102,7 +119,7 @@ This repo treats everything that is identical (skills, plugin metadata) as one s
 If `make validate` fails, check the common drift points first:
 - version mismatch between `plugins/<plugin>/.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, and, when applicable, `pyproject.toml`
 - missing or stale README table rows after adding or renaming a skill or agent
-- stale generated files after editing `src/agents/` or plugin manifests; rerun `make build`, then `make validate`
+- stale generated files after editing `src/agents/`, plugin manifests or a `hooks/hooks.json`; rerun `make build`, then `make validate`
 
 ## Hooks (the `guard` plugin)
 
@@ -113,6 +130,7 @@ If `make validate` fails, check the common drift points first:
 - A hook script must never exit non-zero by accident: Copilot denies a `PreToolUse` whose hook fails. Fail open for reminders; the risky-command ask fails closed on purpose.
 - Use `${CLAUDE_PLUGIN_ROOT}` in commands and `CLAUDE_PLUGIN_DATA` for state: both CLIs set them; VS Code sets only `CLAUDE_PLUGIN_ROOT`, so read `CLAUDE_PLUGIN_DATA` with a fallback.
 - VS Code ignores `matcher`: every hook of an event runs, so each script checks `tool_name` itself. One `command` field runs under bash and PowerShell, so keep it to `node "<path>" <args>`.
+- Codex reads `hooks/codex.json`, generated from `hooks.json`; opencode and pi run `hooks/opencode.mjs` and `hooks/pi.mjs`, which go through `hooks/bridge.mjs` to the same handlers. A new hook script needs its event mapped in both adapters (and a case in `adapters.test.mjs`), or a row in docs/compatibility.md saying why not.
 - Rules are data in `plugins/guard/core/rules.mjs`; `core/engine.mjs` stays pure (no I/O). Bump the `guard` version (plugin.json + marketplace entry) for every behaviour change: installed caches update only on a version change.
 
 ---
@@ -127,6 +145,8 @@ Each agent lives in `src/agents/<name>/`:
 | `body.md` | Yes | The system prompt. Same for both harnesses. |
 | `claude.yaml` | No | Keys to add or override for the Claude Code output. `make new-agent` creates it by default, but you may omit or delete it if you do not need Claude-specific overrides. |
 | `copilot.yaml` | No | Keys to add or override for the Copilot CLI output. `make new-agent` creates it by default, but you may omit or delete it if you do not need Copilot-specific overrides. |
+| `codex.yaml` | No | Codex-only keys (`model`, `model_reasoning_effort`, `sandbox_mode`, ...). Codex gets only `name`, `description` and the body from the shared files. |
+| `opencode.yaml` | No | opencode-only frontmatter (`model` as `provider/id`, `permission`, ...). opencode gets only `description`, `mode: subagent` and the body from the shared files. |
 
 ### Build behavior
 
@@ -135,9 +155,11 @@ For each agent the build script produces:
 ```
 plugins/<plugin>/agents/<name>.md          ← agent.yaml merged with claude.yaml  (Claude reads this)
 plugins/<plugin>/copilot/<name>.agent.md   ← agent.yaml merged with copilot.yaml (Copilot reads this)
+plugins/<plugin>/codex/<name>.toml         ← name, description + codex.yaml, body as developer_instructions (scripts/install.mjs copies it)
+plugins/<plugin>/opencode/<name>.md        ← description, mode: subagent + opencode.yaml (scripts/install.mjs copies it)
 ```
 
-Per-harness keys win over shared keys on conflict. The `plugin` field is stripped from both outputs (it's repo-level routing, not part of harness frontmatter).
+Per-harness keys win over shared keys on conflict. The `plugin` field is stripped from every output (it's repo-level routing, not part of harness frontmatter). A shared `model` reaches Claude, Copilot and VS Code only: it names a Claude tier, which Codex and opencode do not understand.
 
 For each plugin the build script also produces:
 
@@ -179,6 +201,8 @@ These are load-bearing — the layout breaks if any of them slip.
 | Marketplace.json sits at `.claude-plugin/marketplace.json` (repo root). | Claude reads here; Copilot CLI and VS Code fall back to `.claude-plugin/marketplace.json` when looking up marketplaces. |
 | No `.plugin/plugin.json` or root `plugin.json` in a plugin. | VS Code would detect another plugin format and skip the Claude layout. |
 | Skill `name` is kebab-case and equals its directory. | VS Code skips any other skill silently. |
+| No Claude-only key (`modules`) reaches Codex. | Codex rejects the whole hooks file; `hooks/codex.json` is generated without it. |
+| `package.json` `pi.skills` is `["./plugins/*/skills"]` and `pi.extensions` loads `plugins/guard/hooks/pi.mjs`. | pi installs the repo from it. |
 
 `validate.py` enforces each of these.
 
@@ -239,11 +263,16 @@ Use semantic versioning (MAJOR.MINOR.PATCH) at three levels:
 
 ## Installation reference
 
+Full runbook: [docs/install.md](docs/install.md).
+
 | Harness | Install marketplace | Install one plugin |
 |---|---|---|
 | Claude Code | `/plugin marketplace add giocaizzi/harness` | `/plugin install <plugin>@giocaizzi-harness` |
 | GitHub Copilot CLI | `copilot plugin marketplace add giocaizzi/harness` | `copilot plugin install <plugin>@giocaizzi-harness` |
 | VS Code Copilot | Add `giocaizzi/harness` to `chat.plugins.marketplaces` | `@agentPlugins` in the Extensions view, or **Chat: Install Plugin From Source** |
+| Codex CLI | `codex plugin marketplace add giocaizzi/harness` | `codex plugin add <plugin>@giocaizzi-harness`; agents: `make install HARNESS=codex` |
+| opencode | — | `make install HARNESS=opencode` from a clone |
+| pi | — | `pi install git:github.com/giocaizzi/harness` (the whole repo) |
 
 The repo-root `.claude-plugin/marketplace.json` is what both CLI harnesses fetch. Each plugin then exposes the right manifest to the right harness via `.claude-plugin/plugin.json` (Claude) and `.github/plugin/plugin.json` (Copilot).
 
@@ -254,4 +283,7 @@ The repo-root `.claude-plugin/marketplace.json` is what both CLI harnesses fetch
 - Claude Code — [plugins](https://code.claude.com/docs/en/plugins) · [plugin reference](https://code.claude.com/docs/en/plugins-reference) · [marketplaces](https://code.claude.com/docs/en/plugin-marketplaces) · [subagents](https://code.claude.com/docs/en/sub-agents)
 - GitHub Copilot CLI — [about plugins](https://docs.github.com/en/copilot/concepts/agents/copilot-cli/about-cli-plugins) · [plugin reference](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-plugin-reference) · [custom agents](https://docs.github.com/en/copilot/reference/custom-agents-configuration)
 - VS Code Copilot — [agent plugins (preview)](https://code.visualstudio.com/docs/copilot/customization/agent-plugins) · [agent skills](https://code.visualstudio.com/docs/copilot/customization/agent-skills)
+- Codex CLI — [plugins](https://learn.chatgpt.com/docs/plugins) · [hooks](https://learn.chatgpt.com/docs/hooks) · [subagents](https://learn.chatgpt.com/docs/agent-configuration/subagents)
+- opencode — [plugins](https://opencode.ai/docs/plugins/) · [agents](https://opencode.ai/docs/agents/) · [skills](https://opencode.ai/docs/skills/)
+- pi — [packages](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/packages.md) · [extensions](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/extensions.md)
 - Agent Skills standard — [agentskills.io](https://agentskills.io/specification)

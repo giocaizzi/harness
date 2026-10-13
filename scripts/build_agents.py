@@ -1,14 +1,20 @@
 #!/usr/bin/env python3
-"""Generate dual-harness plugin artifacts.
+"""Generate the per-harness plugin artifacts.
 
 For every agent in src/agents/<name>/ the script writes:
   plugins/<plugin>/agents/<name>.md          ← Claude Code agent (.md)
   plugins/<plugin>/copilot/<name>.agent.md   ← Copilot CLI agent (.agent.md)
+  plugins/<plugin>/codex/<name>.toml         ← Codex custom agent (TOML), installed by scripts/install.mjs
+  plugins/<plugin>/opencode/<name>.md        ← opencode subagent, installed by scripts/install.mjs
 
 For every plugin in plugins/<plugin>/ with .claude-plugin/plugin.json the script writes:
   plugins/<plugin>/.github/plugin/plugin.json   ← Copilot manifest, derived from the
                                                   Claude one, with `agents: ["./copilot/"]`
                                                   added so Copilot scans the copilot/ dir.
+  plugins/<plugin>/.codex-plugin/plugin.json    ← Codex manifest; with hooks, it points Codex at
+  plugins/<plugin>/hooks/codex.json               hooks/codex.json: hooks.json without the Claude
+                                                  `modules` key (Codex rejects the file otherwise),
+                                                  the guard run with `--no-ask` (Codex has no ask).
 
 Why two locations?
   Claude scans agents/ for any *.md (including *.agent.md), so Copilot files MUST live
@@ -20,6 +26,11 @@ Agent source layout:
   src/agents/<name>/body.md         shared system prompt
   src/agents/<name>/claude.yaml     Claude-only overrides (optional)
   src/agents/<name>/copilot.yaml    Copilot-only overrides (optional)
+  src/agents/<name>/codex.yaml      Codex-only keys (optional; e.g. sandbox_mode, model)
+  src/agents/<name>/opencode.yaml   opencode-only keys (optional; e.g. permission, model)
+
+Codex and opencode get only `name`/`description` from agent.yaml: a shared `model` names a Claude tier,
+which neither understands, so they inherit the session model unless their own file sets one.
 """
 
 from __future__ import annotations
@@ -28,6 +39,8 @@ import argparse
 import json
 import sys
 from pathlib import Path
+
+import tomllib
 
 import yaml
 
@@ -64,6 +77,23 @@ def _render(frontmatter: dict, body: str) -> str:
     return f"---\n{fm}\n---\n\n{body.strip()}\n"
 
 
+def _render_toml(data: dict) -> str:
+    # JSON string escapes are valid TOML basic-string escapes; tomllib round-trips the result as a check.
+    def value(v: object) -> str:
+        if isinstance(v, bool):
+            return "true" if v else "false"
+        if isinstance(v, (int, float)):
+            return str(v)
+        if isinstance(v, str):
+            return json.dumps(v, ensure_ascii=False)
+        raise ValueError(f"unsupported TOML value: {v!r}")
+
+    out = "".join(f"{k} = {value(v)}\n" for k, v in data.items())
+    if tomllib.loads(out) != data:
+        raise ValueError("TOML round-trip mismatch")
+    return out
+
+
 def _build_agent(name: str, *, check: bool) -> bool:
     src = SRC_AGENTS / name
     if not (src / "agent.yaml").exists() or not (src / "body.md").exists():
@@ -73,6 +103,8 @@ def _build_agent(name: str, *, check: bool) -> bool:
     shared = _load_yaml(src / "agent.yaml")
     claude_overrides = _load_yaml(src / "claude.yaml")
     copilot_overrides = _load_yaml(src / "copilot.yaml")
+    codex_overrides = _load_yaml(src / "codex.yaml")
+    opencode_overrides = _load_yaml(src / "opencode.yaml")
     body = (src / "body.md").read_text()
 
     if shared.get("name") != name:
@@ -92,9 +124,14 @@ def _build_agent(name: str, *, check: bool) -> bool:
     claude_fm = {**base, **claude_overrides}
     copilot_fm = {**base, **copilot_overrides}
 
+    codex = {"name": name, "description": shared["description"], **codex_overrides, "developer_instructions": body.strip() + "\n"}
+    opencode_fm = {"description": shared["description"], "mode": "subagent", **opencode_overrides}
+
     targets = {
         plugin_dir / "agents" / f"{name}.md": _render(claude_fm, body),
         plugin_dir / "copilot" / f"{name}.agent.md": _render(copilot_fm, body),
+        plugin_dir / "codex" / f"{name}.toml": _render_toml(codex),
+        plugin_dir / "opencode" / f"{name}.md": _render(opencode_fm, body),
     }
 
     ok = True
@@ -112,6 +149,37 @@ def _build_agent(name: str, *, check: bool) -> bool:
 
 
 # --------------------------------------------------------------------------- manifests
+
+
+def _sync(path: Path, content: str, *, check: bool) -> bool:
+    rel = path.relative_to(REPO_ROOT)
+    if check:
+        if not path.exists() or path.read_text() != content:
+            print(f"  OUT OF SYNC: {rel}", file=sys.stderr)
+            return False
+        return True
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content)
+    print(f"  written: {rel}")
+    return True
+
+
+def _build_codex(plugin_dir: Path, *, check: bool) -> bool:
+    data = json.loads((plugin_dir / ".claude-plugin" / "plugin.json").read_text())
+    hooks_file = plugin_dir / "hooks" / "hooks.json"
+    ok = True
+    if hooks_file.exists():
+        hooks = json.loads(hooks_file.read_text())
+        codex_hooks = {k: v for k, v in hooks.items() if k != "modules"}
+        codex_hooks.setdefault("hooks", {})
+        for groups in codex_hooks["hooks"].values():
+            for group in groups:
+                for hook in group.get("hooks", []):
+                    if "/hooks/guard.mjs" in hook.get("command", ""):
+                        hook["command"] += " --no-ask"
+        ok = _sync(plugin_dir / "hooks" / "codex.json", json.dumps(codex_hooks, indent=2) + "\n", check=check)
+        data = {**data, "hooks": "./hooks/codex.json"}
+    return _sync(plugin_dir / ".codex-plugin" / "plugin.json", json.dumps(data, indent=2) + "\n", check=check) and ok
 
 
 def _build_copilot_manifest(plugin_dir: Path, *, check: bool) -> bool:
@@ -164,6 +232,9 @@ def main() -> None:
 
     print(f"{verb} {len(plugins)} Copilot manifest(s): {', '.join(p.name for p in plugins) or '(none)'}")
     ok_manifests = all(_build_copilot_manifest(p, check=args.check) for p in plugins)
+
+    print(f"{verb} {len(plugins)} Codex manifest(s)")
+    ok_manifests = all(_build_codex(p, check=args.check) for p in plugins) and ok_manifests
 
     if not (ok_agents and ok_manifests):
         if args.check:

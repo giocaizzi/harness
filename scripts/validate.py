@@ -22,6 +22,7 @@ Checks:
      and equals its directory (VS Code skips others silently), hook events are ones
      VS Code maps, and hook commands use no `${CLAUDE_PLUGIN_DATA}` token (VS Code
      expands only `${CLAUDE_PLUGIN_ROOT}`).
+  9. pi reads the repo-root package.json: its `pi` key loads every plugin's skills and the guard extension.
 """
 
 from __future__ import annotations
@@ -313,6 +314,24 @@ def check_build_sync(r: Reporter) -> None:
         r.ok("all agents in sync")
 
 
+def check_pi_package(r: Reporter) -> None:
+    r.section("pi package (root package.json)")
+    path = REPO_ROOT / "package.json"
+    if not path.exists():
+        r.fail("package.json: missing (pi installs the repo from it)")
+        return
+    pi = _load_json(path).get("pi", {})
+    if pi.get("skills") != ["./plugins/*/skills"]:
+        r.fail('package.json: pi.skills must be ["./plugins/*/skills"] so every plugin\'s skills load')
+    for ext in pi.get("extensions", []):
+        if not (REPO_ROOT / ext).exists():
+            r.fail(f"package.json: pi extension {ext} does not exist")
+    if "./plugins/guard/hooks/pi.mjs" not in pi.get("extensions", []):
+        r.fail("package.json: pi.extensions must load ./plugins/guard/hooks/pi.mjs")
+    else:
+        r.ok("pi package loads all skills and the guard extension")
+
+
 def main() -> None:
     r = Reporter()
     check_native_validator(r)
@@ -322,6 +341,7 @@ def main() -> None:
     check_build_sync(r)
     check_hooks(r)
     check_vscode(r)
+    check_pi_package(r)
     check_readme(r)
 
     print()

@@ -20,15 +20,34 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # Required status check. `if: always()` so a failed `secrets` job fails
+  # Every harness CLI on every OS against a scripted model (tests/e2e): installs, hooks, skills, agents.
+  e2e:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - run: npm install -g @openai/codex opencode-ai @earendil-works/pi-coding-agent
+      - run: node tests/e2e/run.mjs # `make e2e`; called directly because Windows runners have no make
+        env:
+          E2E_REQUIRE: 1
+
+  # Required status check. `if: always()` so a failed `secrets` or `e2e` job fails
   # `check` instead of skipping it (a skipped required check counts as passing).
   check:
-    needs: [secrets]
+    needs: [secrets, e2e]
     if: always()
     runs-on: ubuntu-latest
     steps:
       - if: needs.secrets.result != 'success'
         run: echo "::error::secrets job ${{ needs.secrets.result }}" && exit 1
+      - if: needs.e2e.result != 'success'
+        run: echo "::error::e2e job ${{ needs.e2e.result }}" && exit 1
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
         with:
