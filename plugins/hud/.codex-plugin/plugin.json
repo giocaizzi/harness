@@ -1,0 +1,20 @@
+{
+  "name": "hud",
+  "version": "0.4.1",
+  "description": "Heads-up display for Claude Code and Copilot CLI: token-weather band with PR, git and limit forecasts, turn footer, tool rows, spinner, /weather, /subagents and /ctx panes (Claude mod), and a two-line status line for both CLIs",
+  "author": {
+    "name": "giocaizzi",
+    "url": "https://github.com/giocaizzi"
+  },
+  "repository": "https://github.com/giocaizzi/harness",
+  "license": "MIT",
+  "keywords": [
+    "statusline",
+    "ui",
+    "mod",
+    "claude-code",
+    "copilot-cli"
+  ],
+  "types": "./types/index.d.ts",
+  "hooks": "./hooks/codex.json"
+}
