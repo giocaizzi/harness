@@ -263,19 +263,43 @@ const remote = (on) => {
   on('ui.render', { component: 'AssistantMessage' }, ($, e) => $.ui.resolve(e).Markdown({ text: e.props.text }))
 }
 
-for (const [name, env, label] of [
-  ['with its glyph', {}, ' #12'],
-  ['without a glyph under NO_COLOR', { NO_COLOR: '1' }, '#12'],
-] as const) {
-  test(`a reply's #N links to the issue, ${name}`, async ($, on) => {
-    mock.clock(on)
-    mock.env(on, env)
-    remote(on)
-    await $.session.start({ cwd: '/r' })
-    for (const surface of ['terminal', 'desktop'] as const) {
-      const ui = await $.ui.mount({ plugin: 'hud', surface, ...REPLY })
-      expect(await ui.find({ type: 'Markdown', text: `Fixed in [${label}](https://github.com/o/r/issues/12), see \`#13\`.` })).toBeDefined()
-      await ui.unmount()
-    }
-  })
-}
+// Under NO_COLOR the rewrite is plain markdown handed to the engine; in colour the reply is a tree of our own, its
+// line with the reference a Text row holding a Link.
+test("a reply's #N links to the issue as plain markdown under NO_COLOR", async ($, on) => {
+  mock.clock(on)
+  mock.env(on, { NO_COLOR: '1' })
+  remote(on)
+  await $.session.start({ cwd: '/r' })
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await $.ui.mount({ plugin: 'hud', surface, ...REPLY })
+    expect(await ui.find({ type: 'Markdown', text: 'Fixed in [#12](https://github.com/o/r/issues/12), see `#13`.' })).toBeDefined()
+    await ui.unmount()
+  }
+})
+
+test("a reply's #N is a coloured link with its glyph, and a secret is masked", async ($, on) => {
+  mock.clock(on)
+  mock.env(on, {})
+  remote(on)
+  await $.session.start({ cwd: '/r' })
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await $.ui.mount({ plugin: 'hud', surface, component: 'AssistantMessage', props: { text: 'Fixed in #12, key ghp_abcdefghijklmnopqrstuvwx1234.', isFirstOfReply: true } })
+    const link = await ui.find({ type: 'Link' })
+    expect(link?.props.href).toBe('https://github.com/o/r/issues/12')
+    expect(await ui.find({ type: 'Text', text: '\uf41b #12' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: '••••••••' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /ghp_abcdef/ })).toBeUndefined()
+    await ui.unmount()
+  }
+})
+
+const OFF = Object.fromEntries(['replyRefs', 'replyState', 'replySecrets', 'replyUrls', 'replyPaths', 'replyFileLinks', 'replyCommits', 'replyTimes', 'replyStatus'].map((k) => [k, 'off']))
+test('with every reply feature off the reply is left to the engine', { options: OFF }, async ($, on) => {
+  mock.clock(on)
+  mock.env(on, {})
+  remote(on)
+  await $.session.start({ cwd: '/r' })
+  const ui = await $.ui.mount({ plugin: 'hud', surface: 'terminal', ...REPLY })
+  expect(await ui.find({ type: 'Markdown', text: 'Fixed in #12, see `#13`.' })).toBeDefined()
+  await ui.unmount()
+})
