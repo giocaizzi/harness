@@ -44,10 +44,13 @@ test('opencode: the config hook appends bash asks last, and a covered risky comm
 })
 
 test('opencode: `run --auto` approves asks itself, so the guard denies', async () => {
-  const client = { session: { get: async () => ({ data: {} }) } }
-  const hooks = await GuardPlugin({ client, directory: dir() }, { ...deps(), argv: ['bun', '/$bunfs/root/src/index.js', 'run', '--auto', 'go'] })
-  await hooks.config({ permission: { bash: 'allow' } })
-  await assert.rejects(hooks['tool.execute.before']({ tool: 'bash', sessionID: 's', callID: 'c' }, { args: { command: 'rm -rf build' } }), /cannot ask/)
+  // Every yargs spelling of the flag (the re-review found `--auto=true` slipping through `includes`).
+  for (const flag of [['--auto'], ['--auto=true'], ['--auto', 'true'], ['--auto=1']]) {
+    const client = { session: { get: async () => ({ data: {} }) } }
+    const hooks = await GuardPlugin({ client, directory: dir() }, { ...deps(), argv: ['bun', '/$bunfs/root/src/index.js', 'run', ...flag, 'go'] })
+    await hooks.config({ permission: { bash: 'allow' } })
+    await assert.rejects(hooks['tool.execute.before']({ tool: 'bash', sessionID: 's', callID: 'c' }, { args: { command: 'rm -rf build' } }), /cannot ask/, flag.join(' '))
+  }
 })
 
 test('opencode: a user deny on bash skips the asks, so the guard keeps denying', async () => {

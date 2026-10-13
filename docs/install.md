@@ -37,7 +37,7 @@ git clone https://github.com/giocaizzi/harness ~/.local/share/giocaizzi-harness
 make -C ~/.local/share/giocaizzi-harness install HARNESS=codex   # agents -> ~/.codex/agents, guard prompt rules -> ~/.codex/rules ($CODEX_HOME)
 ```
 
-The prompt rules (`rules/giocaizzi-guard.rules`) make Codex itself ask before a plain risky command (`rm -rf build`, `git reset --hard`); without them, when they are older than the installed guard, or with an AI `approvals_reviewer` in `config.toml`, the guard denies those commands instead.
+The prompt rules (`rules/giocaizzi-guard.rules`) make Codex itself ask before a plain risky command (`rm -rf build`, `git reset --hard`); without them, when they are older than the installed guard, or when the session's approvals go to Codex's AI reviewer (`approvals_reviewer`, `--approve-for-me`), the guard denies those commands instead.
 
 Then trust the guard's and sounds' hooks once per version: `/hooks` in a Codex session, review, trust. Untrusted plugin hooks are skipped.
 

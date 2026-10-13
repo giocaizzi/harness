@@ -61,14 +61,22 @@ test('noAsk leaves a risky command the harness prompts for to the harness, denie
   assert.equal(decision(await h(pre('Bash', 'cd / && rm -rf ~/x'))).permissionDecision, 'deny')
 })
 
+const turnContext = (reviewer) => JSON.stringify({ type: 'turn_context', payload: { approval_policy: 'on-request', approvals_reviewer: reviewer } }) + '\n'
+const transcript = (...lines) => {
+  const file = join(mkdtempSync(join(tmpdir(), 'codex-rollout-')), 'rollout.jsonl')
+  writeFileSync(file, lines.join(''))
+  return file
+}
+
 test('Codex prompts only with this version of the installed prompt rules', async () => {
   const home = mkdtempSync(join(tmpdir(), 'codex-home-'))
-  assert.equal(codexAsks({ CODEX_HOME: home }), null)
+  const human = transcript(turnContext('user'))
+  assert.equal(codexAsks({ CODEX_HOME: home }, human), null)
   mkdirSync(join(home, 'rules'))
   writeFileSync(join(home, 'rules', CODEX_RULES), 'prefix_rule(pattern = ["rm", "-r"], decision = "prompt")\n')
-  assert.equal(codexAsks({ CODEX_HOME: home }), null)
+  assert.equal(codexAsks({ CODEX_HOME: home }, human), null)
   writeFileSync(join(home, 'rules', CODEX_RULES), codexRules(rules))
-  const asks = codexAsks({ CODEX_HOME: home })
+  const asks = codexAsks({ CODEX_HOME: home }, human)
   assert.equal(asks('git reset --hard', 'reset'), true)
   assert.equal(asks('git reset --hard; ls', 'reset'), false)
   assert.equal(asks('git reset --hard $NOPE', 'reset'), false)
@@ -78,21 +86,19 @@ test('Codex prompts only with this version of the installed prompt rules', async
     assert.equal(decision(await h(pre('Bash', command)))?.permissionDecision, 'deny', command)
 })
 
-test('Codex: an AI approvals reviewer in the user or project config means no native ask', () => {
+test('Codex: only a human approvals reviewer in the latest turn context gets the native ask', () => {
   const home = mkdtempSync(join(tmpdir(), 'codex-home-'))
-  const cwd = mkdtempSync(join(tmpdir(), 'codex-proj-'))
   mkdirSync(join(home, 'rules'))
   writeFileSync(join(home, 'rules', CODEX_RULES), codexRules(rules))
-  writeFileSync(join(home, 'config.toml'), 'approvals_reviewer = "user"\n')
-  assert.notEqual(codexAsks({ CODEX_HOME: home }, cwd), null)
-  for (const toml of ['approvals_reviewer = "auto_review"\n', '[profiles.fast]\napprovals_reviewer = "guardian_subagent"\n', 'profiles.x.approvals_reviewer="auto_review"\n']) {
-    writeFileSync(join(home, 'config.toml'), toml)
-    assert.equal(codexAsks({ CODEX_HOME: home }, cwd), null, toml)
-  }
-  writeFileSync(join(home, 'config.toml'), '')
-  mkdirSync(join(cwd, '.codex'))
-  writeFileSync(join(cwd, '.codex', 'config.toml'), 'approvals_reviewer = "auto_review"\n')
-  assert.equal(codexAsks({ CODEX_HOME: home }, cwd), null)
+  assert.notEqual(codexAsks({ CODEX_HOME: home }, transcript(turnContext('user'))), null)
+  // An AI reviewer from any source (config, profile, -c, --approve-for-me) shows here; the latest turn wins.
+  assert.equal(codexAsks({ CODEX_HOME: home }, transcript(turnContext('auto_review'))), null)
+  assert.equal(codexAsks({ CODEX_HOME: home }, transcript(turnContext('user'), turnContext('guardian_subagent'))), null)
+  // No turn context, no field, no readable transcript: fail closed.
+  assert.equal(codexAsks({ CODEX_HOME: home }, transcript('{"type":"session_meta"}\n')), null)
+  assert.equal(codexAsks({ CODEX_HOME: home }, transcript(JSON.stringify({ type: 'turn_context', payload: {} }) + '\n')), null)
+  assert.equal(codexAsks({ CODEX_HOME: home }, join(home, 'missing.jsonl')), null)
+  assert.equal(codexAsks({ CODEX_HOME: home }, undefined), null)
 })
 
 test('title guard denies a non-conventional commit every time, on bash and PowerShell', async () => {

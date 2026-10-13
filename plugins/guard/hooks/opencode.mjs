@@ -32,7 +32,9 @@ export const GuardPlugin = async ({ client, directory }, deps) => {
       // approves every ask itself, so it gets the deny. ponytail: `run --attach <url> --auto` approves from the
       // client process, whose argv this server-side plugin cannot see.
       nativeAsk: async (command, rule, input) => {
-        if (!asks || (deps?.argv ?? process.argv).includes('--auto') || !nativeAsk(command, rule, rules)) return false
+        // Any `--auto` spelling yargs takes (`--auto`, `--auto=true`, `--auto true`) except an explicit false.
+        const auto = (deps?.argv ?? process.argv).some((a) => a.startsWith('--auto') && a !== '--auto=false')
+        if (!asks || auto || !nativeAsk(command, rule, rules)) return false
         const s = await client.session.get({ path: { id: input.session_id } }).catch(() => null)
         return Boolean(s?.data) && !(s.data.permission ?? []).some((r) => r.permission === 'bash' || r.permission === '*')
       },
