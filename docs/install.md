@@ -2,7 +2,7 @@
 
 Runbook for every supported harness. What each one gets: [compatibility.md](compatibility.md). The hooks need `node` 22+ on PATH; everything works on macOS, Linux and Windows.
 
-Plugins: `api`, `python`, `javascript`, `dev-tools`, `guard`, `hud`, `sounds` (the last two do something in Claude Code and pi, `hud`'s status line also in Copilot CLI).
+Plugins: `api`, `python`, `javascript`, `dev-tools`, `guard`, `hud`, `sounds` (`hud` does something in Claude Code and pi, its status line also in Copilot CLI; `sounds` in Claude Code, pi, Codex and opencode).
 
 ## Claude Code
 
@@ -28,16 +28,16 @@ Settings (`chat.plugins.enabled` on): `"chat.plugins.marketplaces": ["giocaizzi/
 
 ## Codex CLI
 
-Plugins (skills and the guard's hooks) come from the marketplace; agents from a checkout, since Codex plugins carry none.
+Plugins (skills, the guard's hooks and sounds' Stop hook) come from the marketplace; agents from a checkout, since Codex plugins carry none.
 
 ```bash
 codex plugin marketplace add giocaizzi/harness
-codex plugin add dev-tools@giocaizzi-harness        # and api, python, javascript, guard
+codex plugin add dev-tools@giocaizzi-harness        # and api, python, javascript, guard, sounds
 git clone https://github.com/giocaizzi/harness ~/.local/share/giocaizzi-harness
 make -C ~/.local/share/giocaizzi-harness install HARNESS=codex   # agents -> ~/.codex/agents ($CODEX_HOME)
 ```
 
-Then trust the guard's hooks once per version: `/hooks` in a Codex session, review, trust. Untrusted plugin hooks are skipped.
+Then trust the guard's and sounds' hooks once per version: `/hooks` in a Codex session, review, trust. Untrusted plugin hooks are skipped.
 
 Update: `codex plugin marketplace upgrade`, then `git -C ~/.local/share/giocaizzi-harness pull` and the `make install` line again. Check: `codex plugin list` shows the plugins installed; `codex debug prompt-input hi` lists `dev-tools:*` skills; in a uv project, asking Codex to run `pip install x` is blocked with "This repo uses uv".
 
@@ -50,7 +50,7 @@ git clone https://github.com/giocaizzi/harness ~/.local/share/giocaizzi-harness
 make -C ~/.local/share/giocaizzi-harness install HARNESS=opencode
 ```
 
-That copies the skills to `~/.config/opencode/skills/`, the agents to `~/.config/opencode/agents/`, and writes `~/.config/opencode/plugins/giocaizzi-guard.js`, a stub that loads `plugins/guard/hooks/opencode.mjs` from the checkout (`$XDG_CONFIG_HOME` moves all three). A skill or agent of the same name already there is replaced; the installer records what it wrote in `.giocaizzi-harness.json` and removes what a later run no longer ships.
+That copies the skills to `~/.config/opencode/skills/`, the agents to `~/.config/opencode/agents/`, and writes `~/.config/opencode/plugins/giocaizzi-guard.js` and `giocaizzi-sounds.js`, stubs that load `plugins/guard/hooks/opencode.mjs` and `plugins/sounds/hooks/opencode.mjs` from the checkout (`$XDG_CONFIG_HOME` moves all of them). A skill or agent of the same name already there is replaced; the installer records what it wrote in `.giocaizzi-harness.json` and removes what a later run no longer ships.
 
 Update: `git pull` in the checkout (the guard updates with it), then the `make install` line again for skills and agents. Check: `opencode debug skill` lists `ship`; `opencode agent list` shows `scout`.
 

@@ -54,3 +54,17 @@ export function ciNotice(previous, value) {
   if (!a || !b || a.number !== b.number || a.ci !== 'pending' || b.ci === 'pending' || !b.ci) return null
   return b.ci === 'fail' ? `Checks failed on #${b.number}` : `Checks passed on #${b.number}`
 }
+
+// The plugin.json defaults, for the harnesses without per-plugin settings (pi, Codex, opencode): the clip per alert
+// or turn ending.
+export const CLIPS = { soundContext: 'alert', soundDone: 'done', soundAborted: null, soundRefused: 'error', soundError: 'error', soundSubagent: 'tick' }
+
+// What a finished run raises there: the clips to play, the notices to show, and the context levels raised so far
+// (`before` for the next run).
+export function settle({ durationMs, aborted, error, agentId, pct, before }) {
+  const e = { durationMs, agentId, reason: aborted ? 'aborted' : error ? 'error' : 'done' }
+  const { alerts: raised, now } = alerts(pct, {}, before)
+  const clips = [CLIPS[turnSound(e)], ...raised.map((a) => CLIPS[a.key])].filter(Boolean)
+  const notices = [turnNotice(e), ...raised.map((a) => a.text)].filter(Boolean)
+  return { clips: [...new Set(clips)], notices, now }
+}

@@ -14,7 +14,8 @@ For every plugin in plugins/<plugin>/ with .claude-plugin/plugin.json the script
   plugins/<plugin>/.codex-plugin/plugin.json    ← Codex manifest; with hooks, it points Codex at
   plugins/<plugin>/hooks/codex.json               hooks/codex.json: hooks.json without the Claude
                                                   `modules` key (Codex rejects the file otherwise),
-                                                  the guard run with `--no-ask` (Codex has no ask).
+                                                  the guard run with `--no-ask` (Codex has no ask),
+                                                  plus the Codex-only hooks of hooks/codex-only.json.
 
 Why two locations?
   Claude scans agents/ for any *.md (including *.agent.md), so Copilot files MUST live
@@ -177,7 +178,11 @@ def _build_codex(plugin_dir: Path, *, check: bool) -> bool:
                 for hook in group.get("hooks", []):
                     if "/hooks/guard.mjs" in hook.get("command", ""):
                         hook["command"] += " --no-ask"
-        ok = _sync(plugin_dir / "hooks" / "codex.json", json.dumps(codex_hooks, indent=2) + "\n", check=check)
+        codex_only = plugin_dir / "hooks" / "codex-only.json"
+        if codex_only.exists():
+            for event, groups in json.loads(codex_only.read_text())["hooks"].items():
+                codex_hooks["hooks"].setdefault(event, []).extend(groups)
+        ok =_sync(plugin_dir / "hooks" / "codex.json", json.dumps(codex_hooks, indent=2) + "\n", check=check)
         data = {**data, "hooks": "./hooks/codex.json"}
     return _sync(plugin_dir / ".codex-plugin" / "plugin.json", json.dumps(data, indent=2) + "\n", check=check) and ok
 
