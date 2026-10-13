@@ -19,7 +19,8 @@ Checks:
   7. Every file a plugin's hooks/hooks.json names (command scripts, mod modules) exists.
   8. VS Code reads each plugin as Claude format: no `.plugin/plugin.json` or root
      `plugin.json` (they win VS Code's format detection), skill `name` is kebab-case
-     and equals its directory (VS Code skips others silently), hook events are ones
+     and equals its directory (VS Code skips others silently), frontmatter is strict YAML
+     (Copilot CLI and VS Code reject it otherwise), hook events are ones
      VS Code maps, and hook commands use no `${CLAUDE_PLUGIN_DATA}` token (VS Code
      expands only `${CLAUDE_PLUGIN_ROOT}`).
   9. pi reads the repo-root package.json: its `pi` key loads every plugin's skills and the guard extension.
@@ -34,6 +35,8 @@ import subprocess
 import sys
 import tomllib
 from pathlib import Path
+
+import yaml
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PLUGINS_ROOT = REPO_ROOT / "plugins"
@@ -281,6 +284,11 @@ def check_vscode(r: Reporter) -> None:
             if (plugin_dir / shadow).exists():
                 errors.append(f"{shadow} exists: VS Code would read it instead of .claude-plugin/plugin.json")
         for skill_md in sorted(plugin_dir.glob("skills/*/SKILL.md")):
+            front = skill_md.read_text().split("---", 2)[1]
+            try:
+                yaml.safe_load(front)  # Copilot CLI and VS Code parse it strictly; Claude Code does not
+            except yaml.YAMLError as exc:
+                errors.append(f"skills/{skill_md.parent.name}: frontmatter is not valid YAML ({str(exc).splitlines()[0]}); quote the value")
             m = re.search(r"^name:\s*[\"']?([^\"'\n]+?)[\"']?\s*$", skill_md.read_text(), re.M)
             name = m.group(1) if m else None
             if name != skill_md.parent.name or not KEBAB.match(name):
