@@ -30,3 +30,12 @@ test('emit: no request without an endpoint; failures are swallowed', async () =>
     throw new Error('down')
   })
 })
+
+test('emit: GUARD_-prefixed copies stand in for the OTEL_* the harness stripped', async () => {
+  let sent
+  await emit({ GUARD_OTEL_EXPORTER_OTLP_ENDPOINT: 'http://g', GUARD_OTEL_EXPORTER_OTLP_HEADERS: 'k=v' }, 'guard.decision', {}, async (url, init) => (sent = { url, init }))
+  assert.equal(sent.url, 'http://g/v1/logs')
+  assert.equal(sent.init.headers.k, 'v')
+  await emit({ OTEL_EXPORTER_OTLP_ENDPOINT: 'http://o', GUARD_OTEL_EXPORTER_OTLP_ENDPOINT: 'http://g' }, 'guard.decision', {}, async (url) => (sent = { url }))
+  assert.equal(sent.url, 'http://o/v1/logs')
+})

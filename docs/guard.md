@@ -97,7 +97,7 @@ In a uv repo: `pip install x` and `poetry add x` are denied; in a poetry or requ
 
 ## Grafana
 
-Each deny or ask (`guard.decision`, from the command hook) and each usage-throttle denial (`guard.throttle`, from the Claude mod) is sent as one OTLP/HTTP log record to `$OTEL_EXPORTER_OTLP_ENDPOINT/v1/logs`. Nothing is sent when that variable is unset: the work machines (chezmoi strips `OTEL_*` there) and any Copilot or VS Code launch without it stay silent. The auth headers come from `OTEL_EXPORTER_OTLP_HEADERS` and are never logged; a send that fails or takes longer than 2 s is dropped and the decision stands.
+Each deny or ask (`guard.decision`, from the command hook) and each usage-throttle denial (`guard.throttle`, from the Claude mod) is sent as one OTLP/HTTP log record to `$OTEL_EXPORTER_OTLP_ENDPOINT/v1/logs`. Claude Code and Copilot CLI strip `OTEL_*` from command hooks, so the hook falls back to `GUARD_OTEL_EXPORTER_OTLP_ENDPOINT`, `GUARD_OTEL_EXPORTER_OTLP_HEADERS` and `GUARD_OTEL_RESOURCE_ATTRIBUTES` from the shell that launched the harness (the dotfiles export them on personal machines with an endpoint). Nothing is sent when neither is set: the work machines and a VS Code started outside such a shell stay silent. The auth headers come from `OTEL_EXPORTER_OTLP_HEADERS` and are never logged; a send that fails or takes longer than 2 s is dropped and the decision stands.
 
 The resource carries `service.name=guard` plus `OTEL_RESOURCE_ATTRIBUTES` (`service.namespace`, `host.name`). In Loki: stream labels `service_name`, `host_name`, `service_namespace`; structured metadata `rule`, `action`, `tool`, `harness`, `window`, `percent`.
 
