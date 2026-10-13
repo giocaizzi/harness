@@ -1,6 +1,6 @@
 ---
 name: subagent-orchestration
-description: Routing work to subagents and models in Claude Code and Copilot CLI - hub-and-spoke delegation, four model tiers, effort levels, escalation and verifying delegated results. Use when spawning subagents, splitting work in parallel, or choosing a model or effort for a task.
+description: Routing work to subagents and models in Claude Code, Copilot CLI, Codex, opencode and pi - hub-and-spoke delegation, four model tiers, effort levels, escalation and verifying delegated results. Use when spawning subagents, splitting work in parallel, or choosing a model or effort for a task.
 ---
 
 # Subagent orchestration
@@ -48,6 +48,15 @@ Claude Code:
 Copilot CLI:
 - `/model [--session|--global|--repo|--local] [MODEL|auto TIER]` sets model and reasoning effort; auto tiers are `efficiency`, `balance`, `intelligence`.
 - A custom agent's `model` is a string and inherits the default if unset. Valid values are undocumented, so this plugin's agents leave it unset: pick the tier with `/model`. Agent files have no effort property.
+
+Codex:
+- Custom agents are TOML in `~/.codex/agents/` (`make install HARNESS=codex` copies this plugin's): `model` and `model_reasoning_effort` per agent, `sandbox_mode` (scout is `read-only`). Unset `model` inherits the session's; `/model` changes it. Use the OpenAI rows of the table.
+
+opencode:
+- Subagents are Markdown in `~/.config/opencode/agents/` (`make install HARNESS=opencode`), run through the `task` tool or an `@name` mention. `model` is `provider/id`; unset inherits the session's. `permission` limits a subagent (scout denies `edit`).
+
+pi:
+- No subagents by design: run lookups in the main session, or start a second `pi -p` for an isolated one. `/model` and `--thinking <level>` set model and effort.
 
 ## Verify before relying on the table
 

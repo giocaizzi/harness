@@ -30,8 +30,8 @@ General development tooling — git, GitHub/GitLab/Azure DevOps, conventional co
 ## Install
 
 ```bash
-# Claude Code / Copilot CLI
+# Claude Code / Copilot CLI / Codex (codex plugin add)
 /plugin install dev-tools@giocaizzi-harness
 ```
 
-See the [repository README](../../README.md) for marketplace setup and local-development instructions.
+Every harness (Codex, opencode and pi included), updates and local development: [docs/install.md](../../docs/install.md).
