@@ -29,7 +29,7 @@ The other three harnesses read the same sources differently (details in [docs/co
 
 - **Codex** resolves `.claude-plugin/marketplace.json` and the plugins' skills as-is, but reads `.codex-plugin/plugin.json` first, rejects a hooks file with `modules`, and takes agents only as TOML in `~/.codex/agents`. So the build generates `.codex-plugin/plugin.json` (pointing at `hooks/codex.json`), `hooks/codex.json` (plus a plugin's Codex-only `hooks/codex-only.json`, e.g. sounds' Stop hook), and `codex/<name>.toml`, which `scripts/install.mjs` copies.
 - **opencode** has no plugin bundles or marketplace: `scripts/install.mjs` copies skills and the generated `opencode/<name>.md` agents and writes plugin stubs that load `plugins/guard/hooks/opencode.mjs` and `plugins/sounds/hooks/opencode.mjs`.
-- **pi** installs the whole repo as a package from the root `package.json` (`pi` key: skills and the extensions `guard`, `hud`, `sounds` `hooks/pi.mjs` and `dev-tools/pi/subagent.mjs`, which runs the Claude-format agents as a `subagent` tool).
+- **pi** installs the whole repo as a package from the root `package.json` (`pi` key: skills and the extensions `guard` and `sounds` `hooks/pi.mjs`, `hud` `hooks/pi-entry.mjs` and `dev-tools/pi/subagent.mjs`, which runs the Claude-format agents as a `subagent` tool).
 
 ---
 

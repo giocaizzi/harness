@@ -1,6 +1,33 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import hudExtension, { piStatus, readRepo } from './pi.mjs'
+import hudExtension, { linkMessage, piStatus, readRepo } from './pi.mjs'
+import { repoOf } from './links.mjs'
+
+test('linkMessage: text blocks of an assistant message get links; other roles and blocks are left alone', () => {
+  const origin = repoOf('git@github.com:o/r.git')
+  const msg = { role: 'assistant', content: [{ type: 'thinking', thinking: '#1' }, { type: 'text', text: 'fixed #2' }] }
+  const out = linkMessage(msg, origin, false)
+  assert.equal(out.content[0], msg.content[0])
+  assert.equal(out.content[1].text, 'fixed [#2](https://github.com/o/r/issues/2)')
+  assert.equal(linkMessage({ role: 'user', content: [{ type: 'text', text: '#2' }] }, origin, false), null)
+  assert.equal(linkMessage({ role: 'assistant', content: [{ type: 'text', text: 'none' }] }, origin, false), null)
+  assert.equal(linkMessage(msg, null, false), null)
+})
+
+test('message_end links the reply once the repo is read, only with a UI that takes links', async () => {
+  const handlers = {}
+  const origin = repoOf('git@github.com:o/r.git')
+  let links = true
+  hudExtension({ on: (e, f) => (handlers[e] = f) }, { readRepo: async () => ({ links: origin }), hyperlinks: async () => links })
+  const ctx = { hasUI: true, getContextUsage: () => null, ui: { setStatus: () => {} } }
+  handlers.session_start({}, ctx)
+  await new Promise((r) => setTimeout(r, 0))
+  const e = { message: { role: 'assistant', content: [{ type: 'text', text: 'see #3' }] } }
+  assert.match((await handlers.message_end(e, ctx)).message.content[0].text, /\[.*#3\]\(https:\/\/github\.com\/o\/r\/issues\/3\)/)
+  assert.equal(await handlers.message_end(e, { ...ctx, hasUI: false }), undefined)
+  links = false
+  assert.equal(await handlers.message_end(e, ctx), undefined)
+})
 
 test('piStatus: context, model, PR with checks, sync and changes; missing parts left out', () => {
   const repo = { pr: { number: 7, state: 'open', ci: 'pass', passed: 3, total: 3 }, ahead: 2, behind: 0, changes: { files: 1, added: 4, removed: 1, untracked: 1 } }
