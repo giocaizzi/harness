@@ -1,6 +1,6 @@
 ---
 name: python-testing
-description: pytest conventions for Python tests: fixtures vs factories, deterministic test data, TDD for bugs. Use when writing or reviewing Python tests.
+description: "pytest conventions for Python tests: fixtures vs factories, deterministic test data, TDD for bugs. Use when writing or reviewing Python tests."
 ---
 
 # Python Testing
