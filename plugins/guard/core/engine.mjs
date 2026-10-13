@@ -214,6 +214,27 @@ export function isRisky(command, rules) {
   return rules.risky.some((r) => new RegExp(r.match, 'i').test(executable(command)));
 }
 
+// Where a hook cannot ask (Codex, opencode), the harness's own prompt rules ask for the risky rule's `prefixes`.
+// True when such a rule surely covers the command: single-spaced plain words only, so the harness parses it
+// into the same words and matches the prefix. Anything a shell expands or Codex declines to parse (`$`, globs,
+// `~`, quotes, escapes, operators) is not, and is denied: Codex then skips its prompt rules.
+const PLAIN_WORD = /^[\w./@%+=:,-]+$/;
+export function nativeAsk(command, ruleId, rules) {
+  const words = command.trim().split(' ');
+  if (!words.every((w) => PLAIN_WORD.test(w))) return false;
+  const prefixes = rules.risky.find((r) => r.id === ruleId)?.prefixes ?? [];
+  return prefixes.some((p) => p.every((t, i) => words[i] === t));
+}
+
+// The Codex execpolicy file (`$CODEX_HOME/rules/`) that prompts for every risky prefix.
+export const codexRules = (rules) =>
+  rules.risky
+    .flatMap((r) => (r.prefixes ?? []).map((p) => `prefix_rule(pattern = ${JSON.stringify(p)}, decision = "prompt", justification = ${JSON.stringify(`guard: ${r.why}`)})\n`))
+    .join('');
+
+// opencode `permission.bash` entries that ask for every risky prefix (its wildcard `x *` also matches `x`).
+export const opencodeAsks = (rules) => Object.fromEntries(rules.risky.flatMap((r) => (r.prefixes ?? []).map((p) => [`${p.join(' ')} *`, 'ask'])));
+
 // Blast radius: a read-only argv (no shell) that shows what a risky command would touch, or null.
 // Only plain path tokens are passed through; anything with shell syntax gets no preview.
 const SAFE_TOKEN = /^[\w./~@%+=:,-]+$/;
