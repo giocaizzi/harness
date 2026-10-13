@@ -16,6 +16,7 @@ General development tooling — git, GitHub/GitLab/Azure DevOps, conventional co
 | `pr-fix` | Fix unresolved review comments and failing CI on a PR (`/pr-fix`). |
 | `wt` | Start a task in its own worktree from an issue or slug (`/wt`). |
 | `host-hygiene` | Shared-host rules and scripts: disk floor, load cap, heavy-command semaphore, device leases, service registry, stale-worktree sweep, quota-aware agent fan-out. |
+| `unattended-runs` | Overnight, autopilot and headless runs: `GUARD_UNATTENDED`, what guard denies, worktree and quota prep, what to leave for a human. |
 | `docs-sync` | Update docs and runbooks the diff made stale (`/docs-sync`). |
 | `secrets-handling` | Bitwarden (bw, bws), keyrings and encrypted config; secrets never printed or inlined. |
 | `subagent-orchestration` | Hub-and-spoke delegation, model tiers, effort levels, escalation and verification. |
