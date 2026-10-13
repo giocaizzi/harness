@@ -2,7 +2,7 @@
 
 Runbook for every supported harness. What each one gets: [compatibility.md](compatibility.md). The hooks need `node` 22+ on PATH; everything works on macOS, Linux and Windows.
 
-Plugins: `api`, `python`, `javascript`, `dev-tools`, `guard`, `hud`, `sounds` (the last two do something only in Claude Code, `hud`'s status line also in Copilot CLI).
+Plugins: `api`, `python`, `javascript`, `dev-tools`, `guard`, `hud`, `sounds` (the last two do something in Claude Code and pi, `hud`'s status line also in Copilot CLI).
 
 ## Claude Code
 
@@ -60,7 +60,7 @@ Update: `git pull` in the checkout (the guard updates with it), then the `make i
 pi install git:github.com/giocaizzi/harness
 ```
 
-pi reads the repo's `package.json`: every plugin's skills and the guard extension. Update: `pi update --extensions`. Check: `pi list` shows the package; `/skill:ship` loads a skill. pi has no subagents, so no agents ([#67](https://github.com/giocaizzi/harness/issues/67)).
+pi reads the repo's `package.json`: every plugin's skills and four extensions: the guard, a `subagent` tool that runs `scout`, `escalate` and `api-reviewer` in their own pi sessions, hud's footer and sounds' alerts. Update: `pi update --extensions`. Check: `pi list` shows the package; `/skill:ship` loads a skill; asking for a scout runs the `subagent` tool.
 
 ## From a checkout (development)
 

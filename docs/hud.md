@@ -25,7 +25,8 @@ Heads-up display: what the session costs and where the work stands, drawn by a C
 - **Spinner.** A `tool.call` hook records the running tool; the `Spinner` hook draws its icon and verb (` Running`, ` Searching`, ` Editing`, ` Reading`, ` Browsing`, ` Delegating`, ` Calling`) as the `message`, else the engine's own word.
 - **Status line in Node, not bash.** One tested script for both CLIs, on every OS. The GCP project is read from gcloud's config files, never by running `gcloud`.
 - **Copilot.** No mods API, so no band, pane or spinner ([#47](https://github.com/giocaizzi/harness/issues/47)); Copilot pipes `context_window` and `cost` to its status line, which shows `ctx N% · cache N%` with the session's hit rate and `N req` premium requests (no per-turn usage, no cache TTL, no dollars). VS Code has no status-line hook.
-- **Codex, opencode, pi.** No mods API and no status-line command, so `hud` does nothing there; pi's extension UI could host it ([#68](https://github.com/giocaizzi/harness/issues/68)).
+- **pi.** `hooks/pi.mjs` draws the status line's parts in pi's footer (`ctx.ui.setStatus`): the context weather and percent, the model, the PR with its checks, unpushed and uncommitted work, with the same icons and forge readers (`weather.mjs`). Refreshed at session start and after each run; no band, pane, spinner or limit forecast (pi exposes no plan windows).
+- **Codex, opencode.** No mods API and no status-line command, so `hud` does nothing there ([#68](https://github.com/giocaizzi/harness/issues/68)).
 
 ## Install
 
