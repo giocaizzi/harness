@@ -1,6 +1,6 @@
 # `sounds` plugin
 
-Toasts and configurable sounds for Claude Code (a mod), and the turn and context alerts with the default clips for pi (`hooks/pi.mjs`). No skills or agents. Architecture and runbook: [docs/sounds.md](../../docs/sounds.md).
+Toasts and configurable sounds for Claude Code (a mod), and the turn and context alerts with the default clips for pi (`hooks/pi.mjs`), Codex (a `Stop` hook, `hooks/codex.mjs`) and opencode (`hooks/opencode.mjs`). No skills or agents. Architecture and runbook: [docs/sounds.md](../../docs/sounds.md).
 
 ## Alerts and sounds
 
@@ -20,5 +20,7 @@ Each sound is a picker in `/config` over `off`, `chime`, `ping`, `alert`, `warn`
 ## Install
 
 ```bash
-/plugin install sounds@giocaizzi-harness
+/plugin install sounds@giocaizzi-harness     # Claude Code
+codex plugin add sounds@giocaizzi-harness    # Codex; trust the hook in /hooks
+make install HARNESS=opencode                # opencode, from a checkout
 ```

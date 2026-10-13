@@ -19,5 +19,6 @@ test('opencode: skills, agents and a plugin stub that points at this checkout; s
   assert.ok(existsSync(join(dir, 'skills', 'ship', 'SKILL.md')))
   assert.ok(existsSync(join(dir, 'agents', 'scout.md')))
   assert.match(readFileSync(join(dir, 'plugins', 'giocaizzi-guard.js'), 'utf8'), /export \* from "file:.*plugins\/guard\/hooks\/opencode\.mjs"/)
+  assert.match(readFileSync(join(dir, 'plugins', 'giocaizzi-sounds.js'), 'utf8'), /export \* from "file:.*plugins\/sounds\/hooks\/opencode\.mjs"/)
   assert.ok(!existsSync(join(dir, 'skills', 'gone')))
 })

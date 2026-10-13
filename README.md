@@ -25,7 +25,7 @@ Works with [Claude Code](https://code.claude.com/), [GitHub Copilot CLI](https:/
 | [`dev-tools`](plugins/dev-tools/README.md) | General development tooling — git, GitHub, conventional commits, semantic versioning. |
 | [`guard`](plugins/guard/README.md) | Guardrail hooks for every harness — skill enforcer, commit-title guard, host guard, pip deny, risky-command ask, `make check` on stop. |
 | [`hud`](plugins/hud/README.md) | Heads-up display — token-weather band and pane, PR and CI strip, tool-naming spinner (Claude Code); status line for Claude Code, Copilot CLI and pi. |
-| [`sounds`](plugins/sounds/README.md) | Toasts and configurable sounds for limits, context, cache expiry and every way a turn ends (Claude Code; pi with the default clips). |
+| [`sounds`](plugins/sounds/README.md) | Toasts and configurable sounds for limits, context, cache expiry and every way a turn ends (Claude Code; pi, Codex and opencode with the default clips). |
 
 Each plugin's README lists the skills, agents and hooks it ships.
 
@@ -41,7 +41,7 @@ Each plugin's README lists the skills, agents and hooks it ships.
 | Confirm risky commands | ✅ | ✅ | ✅ | 🟡 denies | 🟡 denies | ✅ |
 | Status line (`hud`) | ✅ | ✅ | — | — | — | ✅ |
 | Live HUD band and pane (`hud`) | ✅ | — | — | — | — | — |
-| Sounds and toasts (`sounds`) | ✅ | — | — | — | — | 🟡 |
+| Sounds and toasts (`sounds`) | ✅ | — | — | 🟡 | 🟡 | 🟡 |
 
 ✅ supported · 🟡 partial · — the harness has no way to do it. Runs on macOS, Linux and Windows. Details, reasons and open issues: [docs/compatibility.md](docs/compatibility.md).
 
