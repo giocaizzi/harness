@@ -247,3 +247,35 @@ test('/ctx draws the breakdown grid and one row per category', async ($, on) => 
   expect(await ui.find({ type: 'Raster' })).toBeDefined()
   await ui.unmount()
 })
+
+// A reply's work-item references become links to the origin's forge, with the kind's glyph unless NO_COLOR is set.
+const REPLY = { component: 'AssistantMessage', props: { text: 'Fixed in #12, see `#13`.', isFirstOfReply: true } } as const
+const remote = (on) => {
+  on('settings.read', () => ({ value: {} }))
+  on('session.start', () => ({ cwd: '/r' }))
+  on('command.register', () => ({ value: undefined }))
+  // A fork: origin is mine, upstream the parent the references link to.
+  const out = { 'git remote': 'origin\nupstream\n', 'git remote get-url origin': 'git@github.com:me/r.git\n', 'git remote get-url upstream': 'git@github.com:o/r.git\n' }
+  on('process.run', (_$, e) => {
+    const stdout = out[e.argv.join(' ')]
+    return { value: { exitCode: stdout ? 0 : 1, stderr: '', isStdoutTruncated: false, isStderrTruncated: false, stdout: stdout ?? '' } }
+  })
+  on('ui.render', { component: 'AssistantMessage' }, ($, e) => $.ui.resolve(e).Markdown({ text: e.props.text }))
+}
+
+for (const [name, env, label] of [
+  ['with its glyph', {}, ' #12'],
+  ['without a glyph under NO_COLOR', { NO_COLOR: '1' }, '#12'],
+] as const) {
+  test(`a reply's #N links to the issue, ${name}`, async ($, on) => {
+    mock.clock(on)
+    mock.env(on, env)
+    remote(on)
+    await $.session.start({ cwd: '/r' })
+    for (const surface of ['terminal', 'desktop'] as const) {
+      const ui = await $.ui.mount({ plugin: 'hud', surface, ...REPLY })
+      expect(await ui.find({ type: 'Markdown', text: `Fixed in [${label}](https://github.com/o/r/issues/12), see \`#13\`.` })).toBeDefined()
+      await ui.unmount()
+    }
+  })
+}

@@ -5,6 +5,7 @@ import { atom, read, update } from 'claude-code'
 import { registerAgents } from './agents.mjs'
 import { registerContext } from './context.mjs'
 import { registerFooter } from './footer.mjs'
+import { linkRepo, linkify } from './links.mjs'
 import { registerTools } from './tools.mjs'
 import { ICON, TTL_MS, azurePr, battery, clock, forecast, forgeOf, fullAt, githubPr, gitlabMr, glyph, repoState, sparkCells, sparkRange, tokens, when } from './weather.mjs'
 
@@ -19,6 +20,8 @@ const turns = atom({ plugin: 'hud', key: 'turns' }, [])
 const agents = atom({ plugin: 'hud', key: 'agents' }, [])
 const KEEP_TURNS = 200
 
+// The repository a reply's work-item references link to (links.mjs linkRepo); null: no remote or another forge.
+let linkTo = null
 // The branch's PR, unpushed work and uncommitted changes (the band says them).
 const repo = atom({ plugin: 'hud', key: 'repo' }, null)
 const REPO_REFRESH_MS = 60_000
@@ -78,6 +81,7 @@ async function refreshRepo($) {
     }
   }
   const forge = forgeOf((await run(['git', 'remote', 'get-url', 'origin']))?.trim())
+  linkTo = await linkRepo(run)
   let pr = null
   if (forge === 'github') pr = githubPr(await json(['gh', 'pr', 'view', '--json', 'number,url,state,statusCheckRollup']))
   if (forge === 'gitlab') pr = gitlabMr(await json(['glab', 'mr', 'view', '--output', 'json']))
@@ -238,6 +242,16 @@ export function register(on) {
     // leads its block with one (next-steps does). The engine's own drawing under the band takes no rows.
     const alone = !below || below.type === 'engine'
     return Box({ flexDirection: 'column', marginTop: alone ? 1 : 0, children: below ? [below, line] : [line] })
+  })
+
+  // Work-item references in a reply (#123, !45, owner/repo#12, AB#77) drawn as links to the forge (upstream, else origin), with the
+  // kind's glyph unless NO_COLOR is set. Display only: the stored message keeps the model's text. Markdown carries no
+  // colour, so the link takes the renderer's own.
+  on('ui.render', { component: 'AssistantMessage' }, async ($, e, next) => {
+    if (!linkTo) return next(e)
+    const glyph = !(await $.env.get('NO_COLOR'))
+    const text = linkify(e.props.text, linkTo, { glyph })
+    return next(text === e.props.text ? e : { ...e, props: { ...e.props, text } })
   })
 
   // /weather: the history at full size.
