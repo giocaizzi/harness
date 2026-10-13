@@ -15,7 +15,7 @@ Agent guardrails as hooks: one rule engine that runs under Claude Code, GitHub C
 | `post-edit-lint` | PostToolUse (edit tools) | all | shellcheck on edited `.sh`/`.bash`, PSScriptAnalyzer on `.ps1`; findings go back to the agent. Missing linter: skip. |
 | `keep-awake` | SessionStart | all | Keeps the machine awake while the harness runs (VS Code: while the window is open): `caffeinate -w` (macOS), `systemd-inhibit` (Linux), `SetThreadExecutionState` (Windows). |
 | `usage-throttle` | mod `agent.spawn` | Claude | Refuses new subagents at 90% of the worst plan window. Copilot exposes no rate-limit windows. |
-| `decision-log` | PreToolUse (shell), mod `agent.spawn` | all (throttle: Claude) | Sends each deny, ask and throttle denial as an OTLP log record to the collector in `OTEL_EXPORTER_OTLP_ENDPOINT`; nothing without it. See [docs/guard.md](../../docs/guard.md#grafana). |
+| `decision-log` | PreToolUse (shell), mod `agent.spawn` | all (throttle: Claude) | Sends each deny, ask and throttle denial as an OTLP log record to the collector in `OTEL_EXPORTER_OTLP_ENDPOINT` (or its `GUARD_` copy, since Claude Code and Copilot strip `OTEL_*` from hooks); nothing without it. See [docs/guard.md](../../docs/guard.md#grafana). |
 | `skill-tracker` | PreToolUse (Skill, a read of `SKILL.md`), UserPromptSubmit (`/skill`, `/skill:name`, `$skill`) | all | Records loaded skills and typed slash commands for the skill enforcer. |
 
 ## Install

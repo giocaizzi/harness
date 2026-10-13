@@ -1,6 +1,8 @@
 // Guard decisions as OTLP/HTTP JSON log records, for the OTel collector the harness already exports to.
 // Off unless OTEL_EXPORTER_OTLP_ENDPOINT is set; the headers (Bearer, Cloudflare Access) come from
 // OTEL_EXPORTER_OTLP_HEADERS and are never logged. Every failure is swallowed: a decision never waits on telemetry.
+// Claude Code and Copilot CLI strip OTEL_* from a command hook's environment, so each variable falls back
+// to a GUARD_-prefixed copy (GUARD_OTEL_EXPORTER_OTLP_ENDPOINT, ...) that the launching shell exports.
 const TIMEOUT_MS = 2000
 
 // `k=v,k=v` (percent-encoded values), as OTEL_EXPORTER_OTLP_HEADERS and OTEL_RESOURCE_ATTRIBUTES spell them.
@@ -52,7 +54,8 @@ export function logRequest({ endpoint, headers, resource }, event, attrs, now = 
 
 export async function emit(env, event, attrs, fetchFn = fetch) {
   try {
-    const req = logRequest({ endpoint: env.OTEL_EXPORTER_OTLP_ENDPOINT, headers: env.OTEL_EXPORTER_OTLP_HEADERS, resource: env.OTEL_RESOURCE_ATTRIBUTES }, event, attrs)
+    const v = (k) => env[k] || env[`GUARD_${k}`]
+    const req = logRequest({ endpoint: v('OTEL_EXPORTER_OTLP_ENDPOINT'), headers: v('OTEL_EXPORTER_OTLP_HEADERS'), resource: v('OTEL_RESOURCE_ATTRIBUTES') }, event, attrs)
     if (req) await fetchFn(req.url, { method: 'POST', headers: req.headers, body: req.body, signal: AbortSignal.timeout(TIMEOUT_MS) })
   } catch {
     // collector unreachable or slow: the decision stands
