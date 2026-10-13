@@ -111,6 +111,10 @@ async function onShell(input, state, deps) {
     state.reminded = [...reminded]
     if (d.action === 'deny' || d.action === 'ask') await deps.emit?.('guard.decision', { rule: d.rule, action: d.action, tool: String(input.tool_name ?? ''), session_id: input.session_id })
     if (d.action === 'deny') return preToolUse('deny', d.reason)
+    // Unattended run (GUARD_UNATTENDED=1): nobody can answer an ask, so it becomes a deny and the agent picks another way.
+    if (d.action === 'ask' && /^(1|true|on)$/i.test(deps.env?.GUARD_UNATTENDED ?? '')) {
+      return preToolUse('deny', `${d.reason}\nUnattended run (GUARD_UNATTENDED): nobody can confirm this, so the command was not run. Pick another approach, or leave it for the user.`)
+    }
     // Codex and opencode hooks cannot ask: the harness's own prompt rule asks for the plain forms (`deps.nativeAsk`),
     // anything else is denied and the user runs it.
     if (d.action === 'ask' && deps.noAsk) {

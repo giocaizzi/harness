@@ -63,6 +63,16 @@ Codex runs the same command hooks (`hooks/codex.json`) with Claude's event names
 - **`ask` is the harness's own prompt.** Under `claude -p` or a non-interactive Copilot run nobody can answer, so the risky command does not run.
 - **The skill enforcer counts the `skill` tool.** Claude's `Skill`, Copilot CLI's and VS Code's `skill` record the loaded skill; a skill read any other way is not seen, so the reminder fires once and the retry passes.
 
+## Unattended and auto-approve runs
+
+Hooks run before the harness applies its permission mode, so a deny holds under accept-edits, bypass, `--allow-all`, `--auto` and `-a never` alike. Only the risky-command `ask` depends on the mode.
+
+- **`GUARD_UNATTENDED=1`** (also `true`, `on`) makes `handle` turn every risky `ask` into a deny: "Unattended run: nobody can confirm this, so the command was not run. Pick another approach, or leave it for the user." It sits before the `noAsk` branch, so it covers every harness the same way (Codex through `--no-ask`, opencode and pi through `bridge.mjs`), including a plain command a native prompt would have covered. Safe deletes (temp dirs, clean pushed or merged worktrees) still pass, since they never ask. Export it in the shell that launches the harness; hooks inherit the environment.
+- **Without it**, an interactive session waits at the first risky command until someone answers, and a headless run (`claude -p`, `copilot -p`, `codex exec`, `opencode run`, `pi -p`) cannot ask, so the command does not run. Codex under approval `never` rejects a prompt rule; `opencode run --auto` approves every ask, so the guard denies there.
+- **Not verified live:** whether Claude Code's bypass mode, Copilot CLI's `--allow-all` and VS Code's auto-approve still show a hook `ask`. Treat the risky ask as unreliable there and set `GUARD_UNATTENDED=1`, which does not depend on it. (A live probe of Claude bypass was refused by the session's own auto-mode classifier, so it was not run.)
+- **Other gates that can pause an overnight run:** the host guard (load over 30, CPU over 90 %, under 20 GB free) delays heavy builds and tests; the Claude-only usage throttle pauses near 90 % of the plan window; the stop hook runs `make check` once. Codex hooks do nothing until trusted in `/hooks`.
+- **Agent-side rules** (worktree per task, no reliance on denied commands, report what was blocked): the `dev-tools` skill `unattended-runs`.
+
 ## Install
 
 Every harness, including updates and the Codex hook trust: [install.md](install.md). In short: `guard@giocaizzi-harness` from the marketplace in Claude Code, Copilot CLI, VS Code and Codex; `make install HARNESS=opencode` from a clone for opencode; `pi install git:github.com/giocaizzi/harness` for pi.
