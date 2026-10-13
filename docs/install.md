@@ -83,4 +83,4 @@ make check   # manifests, generated files, skills, README sync, node tests, `cla
 make e2e     # Codex, opencode, pi against a scripted model; no login needed
 ```
 
-`make e2e` skips a CLI that is not installed. Install them with `npm install -g @openai/codex opencode-ai @earendil-works/pi-coding-agent` (chezmoi does this on the personal machines).
+`make e2e` skips a CLI that is not installed. Install them with `npm install -g @openai/codex opencode-ai @earendil-works/pi-coding-agent`.
