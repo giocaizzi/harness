@@ -153,8 +153,8 @@ test('repoState: the PR and its checks, unpushed work and uncommitted changes', 
 })
 
 test('footer text, durations and token counts', () => {
-  assert.equal(footerText({ usage: { input_tokens: 100, cache_read_input_tokens: 9000, cache_creation_input_tokens: 900, output_tokens: 1200 }, cost: 0.041 }), '10.0k in · 1.2k out · 90% cached · $0.04')
-  assert.equal(footerText({ usage: { input_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0, output_tokens: 5 }, cost: null }), '0 in · 5 out')
+  assert.equal(footerText({ usage: { input_tokens: 100, cache_read_input_tokens: 9000, cache_creation_input_tokens: 900, output_tokens: 1200 }, cost: 0.041 }), '↑10.0k ↓1.2k ↺90% $0.04')
+  assert.equal(footerText({ usage: { input_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0, output_tokens: 5 }, cost: null }), '↑0 ↓5')
   assert.deepEqual([850, 4200, 64_000].map(duration), ['850ms', '4.2s', '1m 4s'])
   assert.deepEqual([950, 12_300, 1_200_000].map(tokens), ['950', '12.3k', '1.2M'])
 })

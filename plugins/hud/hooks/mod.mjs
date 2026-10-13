@@ -177,6 +177,8 @@ export function register(on, options = {}) {
         const prev = t.at(-1)?.usd
         return [...t, { durationMs: e.durationMs, usage: e.usage, usd: usd ?? null, cost: usd != null && prev != null ? usd - prev : null }].slice(-KEEP_TURNS)
       })
+      // The footer can draw before this turn lands; draw it again so it gets its numbers.
+      $.ui.invalidate('ui.render')
       const at = await $.clock.now()
       const lim = await windows($)
       const { ctx, hit } = forecast({ percent: await contextPercent($), usage: e.usage, turns: 2 })
