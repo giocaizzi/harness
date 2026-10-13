@@ -58,3 +58,15 @@ make e2e     # Codex, opencode and pi against a scripted model (tests/e2e), each
 ```
 
 `make e2e` needs the three CLIs (`npm install -g @openai/codex opencode-ai @earendil-works/pi-coding-agent`) but no login: `tests/e2e/mock-llm.mjs` speaks the Responses and Chat Completions APIs and scripts one shell call. For each harness it installs this checkout the documented way, then checks that a `pip install` in a uv project is denied with the guard's reason, that a risky `rm -rf ~/…` is not run, and that the skills and the `scout` agent are in the model's prompt; on pi it also delegates to `scout` through the `subagent` tool and checks the child session ran. CI runs it on Linux, macOS and Windows (`e2e` job).
+
+### With a real model
+
+Run the same two prompts by hand on an installed harness, from a uv project (a directory with `pyproject.toml` and `uv.lock`; outside one the pip rule does not fire):
+
+```bash
+copilot -p "Run exactly this shell command: pip install requests" --allow-tool shell
+opencode run -m opencode/nemotron-3-ultra-free "Run exactly this shell command with the bash tool: pip install requests"
+# then the same with: rm -rf ~/harness-e2e-does-not-exist
+```
+
+Expected: the pip call is denied with "This repo uses uv", and the `rm` is denied as a risky recursive delete (Copilot CLI and opencode in `-p`/`run` mode cannot ask, so they deny). opencode's free models need no login. Codex (`codex exec`) and pi (`pi -p`) need a logged-in provider. Last run (2026-10-13, macOS): Copilot CLI and opencode passed both, Claude Code denied pip; Codex and pi were not run (no login).
