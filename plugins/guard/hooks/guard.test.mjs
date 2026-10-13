@@ -117,6 +117,18 @@ test('risky commands ask every time; safe temp deletes pass', async () => {
   for (const c of ['rm -rf /tmp/x', 'rm -rf $TMPDIR/x']) assert.equal(decision(await h(pre('Bash', c))), undefined, c)
 })
 
+test('GUARD_UNATTENDED turns a risky ask into a deny, with or without a native ask; safe deletes still pass', async () => {
+  const env = { GUARD_UNATTENDED: '1', TMPDIR: '/var/folders/ab/T/' }
+  for (const deps of [{ env }, { env, noAsk: true, nativeAsk: async () => true }]) {
+    const h = setup(deps)
+    const d = decision(await h(pre('Bash', 'rm -rf ~/x')))
+    assert.equal(d.permissionDecision, 'deny')
+    assert.match(d.permissionDecisionReason, /Unattended run/)
+    assert.equal(decision(await h(pre('Bash', 'rm -rf /tmp/x'))), undefined)
+  }
+  assert.equal(decision(await setup({ env: { GUARD_UNATTENDED: '0' } })(pre('Bash', 'rm -rf ~/x'))).permissionDecision, 'ask')
+})
+
 test('heavy command on a strained host is denied once', async () => {
   const h = setup({ hostFacts: async () => ({ load1: 50, freeGb: 100 }) })
   assert.equal(decision(await h(pre('Bash', 'npm run build'))).permissionDecision, 'deny')
