@@ -1,32 +1,64 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import hudExtension, { linkMessage, piStatus, readRepo } from './pi.mjs'
+import hudExtension, { PI_DEFAULTS, piFacts, piOptions, piStatus, readRepo, rewriteMessage } from './pi.mjs'
 import { repoOf } from './links.mjs'
+import { createFacts } from './rewrite.mjs'
 
-test('linkMessage: text blocks of an assistant message get links; other roles and blocks are left alone', () => {
-  const origin = repoOf('git@github.com:o/r.git')
-  const msg = { role: 'assistant', content: [{ type: 'thinking', thinking: '#1' }, { type: 'text', text: 'fixed #2' }] }
-  const out = linkMessage(msg, origin, false)
+test('rewriteMessage: text blocks of an assistant message are rewritten; other roles and blocks are left alone', () => {
+  const msg = { role: 'assistant', content: [{ type: 'thinking', thinking: 'x' }, { type: 'text', text: 'fixed x' }] }
+  const out = rewriteMessage(msg, (t) => t.replace(/x$/, 'y'))
   assert.equal(out.content[0], msg.content[0])
-  assert.equal(out.content[1].text, 'fixed [#2](https://github.com/o/r/issues/2)')
-  assert.equal(linkMessage({ role: 'user', content: [{ type: 'text', text: '#2' }] }, origin, false), null)
-  assert.equal(linkMessage({ role: 'assistant', content: [{ type: 'text', text: 'none' }] }, origin, false), null)
-  assert.equal(linkMessage(msg, null, false), null)
+  assert.equal(out.content[1].text, 'fixed y')
+  assert.equal(rewriteMessage({ role: 'user', content: [{ type: 'text', text: 'x' }] }, () => 'y'), null)
+  assert.equal(rewriteMessage({ role: 'assistant', content: [{ type: 'text', text: 'none' }] }, (t) => t), null)
 })
 
-test('message_end links the reply once the repo is read, only with a UI that takes links', async () => {
+test('piOptions: hud.json in the config dir over the pi defaults; none or broken JSON gives the defaults', () => {
+  const seen = []
+  const read = (p) => (seen.push(p), '{"editor":"zed","replyTimes":"on"}')
+  assert.deepEqual(piOptions({ PI_CODING_AGENT_DIR: '/cfg' }, read), { replyTimes: 'on', editor: 'zed' })
+  assert.match(seen[0], /cfg[/\\]hud\.json$/)
+  piOptions({ HOME: '/h' }, read)
+  assert.match(seen[1], /h[/\\]\.pi[/\\]agent[/\\]hud\.json$/)
+  assert.deepEqual(piOptions({ HOME: '/h' }, () => 'not json'), PI_DEFAULTS)
+  assert.deepEqual(piOptions({ HOME: '/h' }, () => { throw new Error('ENOENT') }), PI_DEFAULTS)
+})
+
+test('piFacts: stat, commit and state through node and the runner', async () => {
+  const calls = []
+  const f = piFacts('/repo', async (argv, cwd) => (calls.push([argv.join(' '), cwd]), argv[1] === 'cat-file' && argv[3] === 'abc1234^{commit}' ? '' : null))
+  f.stat(import.meta.dirname)
+  f.stat('/no/such/path/here')
+  f.commit('abc1234')
+  f.commit('def5678')
+  await f.settle()
+  assert.equal(f.stat(import.meta.dirname), 'dir')
+  assert.equal(f.stat('/no/such/path/here'), null)
+  assert.equal(f.commit('abc1234'), true)
+  assert.equal(f.commit('def5678'), false)
+  assert.deepEqual(calls[0], ['git cat-file -e abc1234^{commit}', '/repo'])
+})
+
+test('message_end rewrites the reply once the repo is read; without a UI that takes links only secrets are masked', async () => {
   const handlers = {}
   const origin = repoOf('git@github.com:o/r.git')
   let links = true
-  hudExtension({ on: (e, f) => (handlers[e] = f) }, { readRepo: async () => ({ links: origin }), hyperlinks: async () => links })
-  const ctx = { hasUI: true, getContextUsage: () => null, ui: { setStatus: () => {} } }
+  const facts = () => createFacts({ state: async () => ({ kind: 'pr', state: 'merged' }) })
+  hudExtension({ on: (e, f) => (handlers[e] = f) }, { readRepo: async () => ({ links: origin }), hyperlinks: async () => links, options: {}, facts })
+  const ctx = { hasUI: true, cwd: '/r', getContextUsage: () => null, ui: { setStatus: () => {} } }
   handlers.session_start({}, ctx)
   await new Promise((r) => setTimeout(r, 0))
-  const e = { message: { role: 'assistant', content: [{ type: 'text', text: 'see #3' }] } }
-  assert.match((await handlers.message_end(e, ctx)).message.content[0].text, /\[.*#3\]\(https:\/\/github\.com\/o\/r\/issues\/3\)/)
-  assert.equal(await handlers.message_end(e, { ...ctx, hasUI: false }), undefined)
+  const e = { message: { role: 'assistant', content: [{ type: 'text', text: 'see #3, key ghp_abcdefghijklmnopqrstuvwx1234' }] } }
+  // The state lookup is waited for (the message is stored once): the merged glyph is there at once, no colour marks.
+  const text = (await handlers.message_end(e, ctx)).message.content[0].text
+  assert.match(text, /\[ #3\]\(https:\/\/github\.com\/o\/r\/issues\/3\)/)
+  assert.match(text, / ghp_••••••••/)
+  assert.doesNotMatch(text, /[﷐-﷒]/)
+  const plain = (await handlers.message_end(e, { ...ctx, hasUI: false })).message.content[0].text
+  assert.equal(plain, 'see #3, key ghp_••••••••')
   links = false
-  assert.equal(await handlers.message_end(e, ctx), undefined)
+  assert.equal((await handlers.message_end(e, ctx)).message.content[0].text, plain)
+  assert.equal(await handlers.message_end({ message: { role: 'assistant', content: [{ type: 'text', text: 'see #3' }] } }, { ...ctx, hasUI: false }), undefined)
 })
 
 test('piStatus: context, model, PR with checks, sync and changes; missing parts left out', () => {
