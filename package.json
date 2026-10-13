@@ -10,7 +10,7 @@
     "extensions": [
       "./plugins/guard/hooks/pi.mjs",
       "./plugins/dev-tools/pi/subagent.mjs",
-      "./plugins/hud/hooks/pi.mjs",
+      "./plugins/hud/hooks/pi-entry.mjs",
       "./plugins/sounds/hooks/pi.mjs"
     ],
     "skills": [

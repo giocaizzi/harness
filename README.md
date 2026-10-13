@@ -24,7 +24,7 @@ Works with [Claude Code](https://code.claude.com/), [GitHub Copilot CLI](https:/
 | [`javascript`](plugins/javascript/README.md) | JavaScript/TypeScript, React, Next.js. |
 | [`dev-tools`](plugins/dev-tools/README.md) | General development tooling — git, GitHub, conventional commits, semantic versioning. |
 | [`guard`](plugins/guard/README.md) | Guardrail hooks for every harness — skill enforcer, commit-title guard, host guard, pip deny, risky-command ask, `make check` on stop. |
-| [`hud`](plugins/hud/README.md) | Heads-up display — token-weather band and pane, PR and CI strip, tool-naming spinner (Claude Code); status line for Claude Code, Copilot CLI and pi. |
+| [`hud`](plugins/hud/README.md) | Heads-up display — token-weather band and pane, PR and CI strip, tool-naming spinner (Claude Code); status line for Claude Code, Copilot CLI and pi; clickable `#123` / `!45` / `AB#77` references in replies (Claude Code, pi). |
 | [`sounds`](plugins/sounds/README.md) | Toasts and configurable sounds for limits, context, cache expiry and every way a turn ends (Claude Code; pi, Codex and opencode with the default clips). |
 
 Each plugin's README lists the skills, agents and hooks it ships.
@@ -41,6 +41,7 @@ Each plugin's README lists the skills, agents and hooks it ships.
 | Denial log to Grafana (`guard`) | ✅ | ✅ | 🟡 | ✅ | ✅ | ✅ |
 | Confirm risky commands | ✅ | ✅ | ✅ | 🟡 plain forms; others denied | 🟡 plain forms; others denied | ✅ |
 | Status line (`hud`) | ✅ | ✅ | — | — | — | ✅ |
+| Clickable work-item references (`hud`) | ✅ | — | — | — | — | ✅ |
 | Live HUD band and pane (`hud`) | ✅ | — | — | — | — | — |
 | Sounds and toasts (`sounds`) | ✅ | — | — | 🟡 | 🟡 | 🟡 |
 
