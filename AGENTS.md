@@ -27,8 +27,8 @@ This repo treats everything that is identical (skills, plugin metadata) as one s
 
 The other three harnesses read the same sources differently (details in [docs/compatibility.md](docs/compatibility.md)):
 
-- **Codex** resolves `.claude-plugin/marketplace.json` and the plugins' skills as-is, but reads `.codex-plugin/plugin.json` first, rejects a hooks file with `modules`, and takes agents only as TOML in `~/.codex/agents`. So the build generates `.codex-plugin/plugin.json` (pointing at `hooks/codex.json`), `hooks/codex.json`, and `codex/<name>.toml`, which `scripts/install.mjs` copies.
-- **opencode** has no plugin bundles or marketplace: `scripts/install.mjs` copies skills and the generated `opencode/<name>.md` agents and writes a plugin stub that loads `plugins/guard/hooks/opencode.mjs`.
+- **Codex** resolves `.claude-plugin/marketplace.json` and the plugins' skills as-is, but reads `.codex-plugin/plugin.json` first, rejects a hooks file with `modules`, and takes agents only as TOML in `~/.codex/agents`. So the build generates `.codex-plugin/plugin.json` (pointing at `hooks/codex.json`), `hooks/codex.json` (plus a plugin's Codex-only `hooks/codex-only.json`, e.g. sounds' Stop hook), and `codex/<name>.toml`, which `scripts/install.mjs` copies.
+- **opencode** has no plugin bundles or marketplace: `scripts/install.mjs` copies skills and the generated `opencode/<name>.md` agents and writes plugin stubs that load `plugins/guard/hooks/opencode.mjs` and `plugins/sounds/hooks/opencode.mjs`.
 - **pi** installs the whole repo as a package from the root `package.json` (`pi` key: skills and the extensions `guard`, `hud`, `sounds` `hooks/pi.mjs` and `dev-tools/pi/subagent.mjs`, which runs the Claude-format agents as a `subagent` tool).
 
 ---
@@ -66,12 +66,12 @@ The other three harnesses read the same sources differently (details in [docs/co
 │       ├── codex/                     GENERATED — Codex agents, `<name>.toml`
 │       ├── opencode/                  GENERATED — opencode subagents, `<name>.md`
 │       ├── .codex-plugin/plugin.json  GENERATED — Codex reads this (Claude manifest + `hooks: ./hooks/codex.json`)
-│       ├── hooks/                     AUTHORED — hooks.json + Node hook scripts; codex.json is GENERATED
+│       ├── hooks/                     AUTHORED — hooks.json (+ codex-only.json) + Node hook scripts; codex.json is GENERATED
 │       └── core/                      AUTHORED — pure rule engine the hooks import (guard plugin)
 │
 ├── scripts/
 │   ├── build_agents.py           src/agents/ + manifests → agents/, copilot/, codex/, opencode/, .github/plugin/, .codex-plugin/, hooks/codex.json
-│   ├── install.mjs               copies Codex agents / opencode skills, agents and guard stub from a checkout
+│   ├── install.mjs               copies Codex agents / opencode skills, agents and guard/sounds stubs from a checkout
 │   └── validate.py               full repo invariant checks
 ├── tests/e2e/                    drives Codex, opencode and pi against a scripted model (`make e2e`)
 ├── package.json                  pi package manifest (`pi` key)
