@@ -13,7 +13,7 @@
 
 My personal marketplace with plugins for AI coding assistants, including skills, agents, slash commands and more.
 
-Compatible with most of AI harnesses — [Claude Code](https://code.claude.com/), [GitHub Copilot CLI](https://github.com/features/copilot/cli) and [VS Code](https://code.visualstudio.com/).
+Works with [Claude Code](https://code.claude.com/), [GitHub Copilot CLI](https://github.com/features/copilot/cli), [VS Code](https://code.visualstudio.com/) Copilot, [Codex CLI](https://github.com/openai/codex), [opencode](https://opencode.ai/) and [pi](https://pi.dev/), on macOS, Linux and Windows. What each harness gets: [docs/compatibility.md](docs/compatibility.md).
 
 ## Available plugins
 
@@ -23,70 +23,26 @@ Compatible with most of AI harnesses — [Claude Code](https://code.claude.com/)
 | [`python`](plugins/python/README.md) | Python development and testing best practices. |
 | [`javascript`](plugins/javascript/README.md) | JavaScript/TypeScript, React, Next.js. |
 | [`dev-tools`](plugins/dev-tools/README.md) | General development tooling — git, GitHub, conventional commits, semantic versioning. |
-| [`guard`](plugins/guard/README.md) | Guardrail hooks for both harnesses — skill enforcer, commit-title guard, host guard, risky-command ask. |
-| [`hud`](plugins/hud/README.md) | Heads-up display — token-weather band and pane, PR and CI strip, tool-naming spinner, status line for both CLIs. |
-| [`sounds`](plugins/sounds/README.md) | Toasts and configurable sounds for limits, context, cache expiry and every way a turn ends. |
+| [`guard`](plugins/guard/README.md) | Guardrail hooks for every harness — skill enforcer, commit-title guard, host guard, pip deny, risky-command ask, `make check` on stop. |
+| [`hud`](plugins/hud/README.md) | Heads-up display — token-weather band and pane, PR and CI strip, tool-naming spinner (Claude Code); status line for Claude Code and Copilot CLI. |
+| [`sounds`](plugins/sounds/README.md) | Toasts and configurable sounds for limits, context, cache expiry and every way a turn ends (Claude Code). |
 
 Each plugin's README lists the skills, agents and hooks it ships.
-
-## Compatibility
-
-| Plugin / feature | Claude Code | GitHub Copilot CLI | VS Code Copilot (agent plugins) |
-|---|---|---|---|
-| Marketplace `.claude-plugin/marketplace.json` | yes | yes | yes, via `chat.plugins.marketplaces` |
-| Skills (`api`, `python`, `javascript`, `dev-tools`) | yes | yes | yes |
-| Agents (`api-reviewer`, `scout`, `escalate`) | yes, `agents/*.md` | yes, `copilot/*.agent.md` | yes, `agents/*.md` (Claude format): tool names and `sonnet`/`haiku`/`opus` are mapped; other model ids (`escalate`) use the picked model; `effort` is ignored |
-| `dev-tools` `host-hygiene` scripts (`heavy`, `lease`, `register-service`, `sweep-stale`: `.sh` macOS/Linux, `.ps1` Windows) | yes | yes | yes |
-| `guard` command hooks (skill enforcer, title guard, host guard, pip deny, risky ask, skill tracker) | yes | yes | yes, Local agent (`chat.useHooks`) |
-| `guard` post-edit lint, stop `make check` | yes | yes | yes |
-| `guard` keep-awake | yes | yes | yes, while the window is open |
-| `guard` usage throttle | yes (mod) | no: no mods API, no rate-limit windows | no: no mods API |
-| `hud` band, pane, PR strip, spinner | yes (mod) | no: no mods API | no: no mods API |
-| `hud` status line | yes (`statusLine.command`) | yes (`statusLine.command`) | no: no status-line hook |
-| `sounds` toasts and sounds | yes (mod), sounds on macOS only | no: no mods API | no: no mods API |
-
-Hosts: everything runs on macOS, Linux and Windows; the hooks need `node` 22+ on PATH. Checked live on macOS only (the `host-hygiene` `.ps1` scripts run in CI under Linux PowerShell): Windows is pending ([#25](https://github.com/giocaizzi/harness/issues/25)) and the Linux and Windows keep-awake keepers are unit-tested only. Details per hook: [docs/guard.md](docs/guard.md).
 
 ---
 
 ## Install
 
-Install the marketplace and plugins under your preferred harness:
+| Harness | Install |
+|---|---|
+| Claude Code | `claude plugin marketplace add giocaizzi/harness`, then `claude plugin install <plugin>@giocaizzi-harness` |
+| GitHub Copilot CLI | `copilot plugin marketplace add giocaizzi/harness`, then `copilot plugin install <plugin>@giocaizzi-harness` |
+| VS Code Copilot | `"chat.plugins.marketplaces": ["giocaizzi/harness"]`, then install from `@agentPlugins` |
+| Codex CLI | `codex plugin marketplace add giocaizzi/harness`, then `codex plugin add <plugin>@giocaizzi-harness`; agents: `make install HARNESS=codex` from a clone |
+| opencode | `make install HARNESS=opencode` from a clone |
+| pi | `pi install git:github.com/giocaizzi/harness` |
 
-```bash
-# Add the marketplace
-/plugin marketplace add giocaizzi/harness
-# Then install the plugins you want to use
-/plugin install api@giocaizzi-harness
-/plugin install python@giocaizzi-harness
-/plugin install javascript@giocaizzi-harness
-/plugin install dev-tools@giocaizzi-harness
-/plugin install guard@giocaizzi-harness
-```
-
-### VS Code Copilot
-
-Add the marketplace to the settings (`chat.plugins.enabled` on):
-
-```jsonc
-"chat.plugins.marketplaces": ["giocaizzi/harness"]
-```
-
-Then install the plugins from `@agentPlugins` in the Extensions view, or run **Chat: Install Plugin From Source** with the repo URL. **Chat: Open Agent Customizations** lists what VS Code loaded. VS Code also picks up plugins installed by Copilot CLI.
-
-### Local development
-
-To run a plugin straight from a clone without installing it:
-
-```bash
-# Claude Code
-claude --plugin-dir ./plugins/api
-
-# GitHub Copilot CLI
-copilot plugin install ./plugins/api
-```
-
-VS Code: `"chat.pluginLocations": { "/abs/path/plugins/api": true }`.
+Updating, verifying, trusting Codex hooks and running from a checkout: [docs/install.md](docs/install.md).
 
 ---
 
@@ -94,5 +50,8 @@ VS Code: `"chat.pluginLocations": { "/abs/path/plugins/api": true }`.
 
 - Claude Code — [plugins](https://code.claude.com/docs/en/plugins) · [marketplaces](https://code.claude.com/docs/en/plugin-marketplaces)
 - GitHub Copilot CLI — [plugins overview](https://docs.github.com/en/copilot/concepts/agents/copilot-cli/about-cli-plugins) · [marketplace setup](https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/plugins-marketplace)
-- Agent Skills - [specification](https://agentskills.io/specification)
-- VSCode plugins - [plugins](https://code.visualstudio.com/docs/copilot/customization/agent-plugins)
+- VS Code — [agent plugins](https://code.visualstudio.com/docs/copilot/customization/agent-plugins)
+- Codex CLI — [plugins](https://learn.chatgpt.com/docs/plugins) · [hooks](https://learn.chatgpt.com/docs/hooks) · [subagents](https://learn.chatgpt.com/docs/agent-configuration/subagents)
+- opencode — [plugins](https://opencode.ai/docs/plugins/) · [skills](https://opencode.ai/docs/skills/) · [agents](https://opencode.ai/docs/agents/)
+- pi — [packages](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/packages.md) · [extensions](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/extensions.md)
+- Agent Skills — [specification](https://agentskills.io/specification)
