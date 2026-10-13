@@ -24,8 +24,8 @@ Works with [Claude Code](https://code.claude.com/), [GitHub Copilot CLI](https:/
 | [`javascript`](plugins/javascript/README.md) | JavaScript/TypeScript, React, Next.js. |
 | [`dev-tools`](plugins/dev-tools/README.md) | General development tooling — git, GitHub, conventional commits, semantic versioning. |
 | [`guard`](plugins/guard/README.md) | Guardrail hooks for every harness — skill enforcer, commit-title guard, host guard, pip deny, risky-command ask, `make check` on stop. |
-| [`hud`](plugins/hud/README.md) | Heads-up display — token-weather band and pane, PR and CI strip, tool-naming spinner (Claude Code); status line for Claude Code and Copilot CLI. |
-| [`sounds`](plugins/sounds/README.md) | Toasts and configurable sounds for limits, context, cache expiry and every way a turn ends (Claude Code). |
+| [`hud`](plugins/hud/README.md) | Heads-up display — token-weather band and pane, PR and CI strip, tool-naming spinner (Claude Code); status line for Claude Code, Copilot CLI and pi. |
+| [`sounds`](plugins/sounds/README.md) | Toasts and configurable sounds for limits, context, cache expiry and every way a turn ends (Claude Code; pi with the default clips). |
 
 Each plugin's README lists the skills, agents and hooks it ships.
 

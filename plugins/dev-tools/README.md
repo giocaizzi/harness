@@ -27,6 +27,8 @@ General development tooling — git, GitHub/GitLab/Azure DevOps, conventional co
 | `scout` | Read-only search and summarization on a cheap model; reports findings with evidence. |
 | `escalate` | Hard-problem solver on the strongest model, for work that stalled twice. |
 
+On pi, which has no subagents, `pi/subagent.mjs` runs these agents (and `api`'s `api-reviewer`) as a `subagent` tool, each in its own `pi -p` session.
+
 ## Install
 
 ```bash

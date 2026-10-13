@@ -29,7 +29,7 @@ The other three harnesses read the same sources differently (details in [docs/co
 
 - **Codex** resolves `.claude-plugin/marketplace.json` and the plugins' skills as-is, but reads `.codex-plugin/plugin.json` first, rejects a hooks file with `modules`, and takes agents only as TOML in `~/.codex/agents`. So the build generates `.codex-plugin/plugin.json` (pointing at `hooks/codex.json`), `hooks/codex.json`, and `codex/<name>.toml`, which `scripts/install.mjs` copies.
 - **opencode** has no plugin bundles or marketplace: `scripts/install.mjs` copies skills and the generated `opencode/<name>.md` agents and writes a plugin stub that loads `plugins/guard/hooks/opencode.mjs`.
-- **pi** installs the whole repo as a package from the root `package.json` (`pi` key: skills and `plugins/guard/hooks/pi.mjs`). It has no subagents.
+- **pi** installs the whole repo as a package from the root `package.json` (`pi` key: skills and the extensions `guard`, `hud`, `sounds` `hooks/pi.mjs` and `dev-tools/pi/subagent.mjs`, which runs the Claude-format agents as a `subagent` tool).
 
 ---
 
@@ -96,6 +96,7 @@ The other three harnesses read the same sources differently (details in [docs/co
 | `plugins/<plugin>/.codex-plugin/plugin.json`, `hooks/codex.json` | **Generated** | Codex manifest and hooks file. Never edit. |
 | `plugins/<plugin>/hooks/`, `core/` | Authored | Hooks: `hooks.json` for Claude, Copilot, VS Code; `opencode.mjs`, `pi.mjs` over `bridge.mjs` for the in-process harnesses. See [docs/guard.md](docs/guard.md). |
 | `package.json` | Authored | pi package: `pi.skills` and `pi.extensions`. |
+| `plugins/<plugin>/hooks/pi.mjs`, `plugins/dev-tools/pi/subagent.mjs` | Authored | pi extensions; tests beside them (`make test` globs `plugins/*/pi/*.test.mjs` too). |
 | `.claude-plugin/marketplace.json` | Authored | One entry per plugin; versions must match per-plugin `plugin.json`. |
 
 ---
