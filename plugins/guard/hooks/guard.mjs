@@ -5,10 +5,10 @@
 import { execFile } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync, readdirSync, statSync } from 'node:fs'
 import { statfs } from 'node:fs/promises'
-import { cpus, loadavg, platform, tmpdir } from 'node:os'
+import { cpus, homedir, loadavg, platform, tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { deniedBy, evaluateCommand, isHeavy, isRisky, previewCommand, withPreview, worktreeFacts } from '../core/engine.mjs'
+import { codexRules, deniedBy, evaluateCommand, isHeavy, isRisky, nativeAsk, previewCommand, withPreview, worktreeFacts } from '../core/engine.mjs'
 import { cpuPercentFrom } from '../core/host.mjs'
 import { emit } from '../core/otel.mjs'
 import { rules } from '../core/rules.mjs'
@@ -111,8 +111,12 @@ async function onShell(input, state, deps) {
     state.reminded = [...reminded]
     if (d.action === 'deny' || d.action === 'ask') await deps.emit?.('guard.decision', { rule: d.rule, action: d.action, tool: String(input.tool_name ?? ''), session_id: input.session_id })
     if (d.action === 'deny') return preToolUse('deny', d.reason)
-    // Codex and opencode have no `ask`: a risky command is denied and the user runs it.
-    if (d.action === 'ask' && deps.noAsk) return preToolUse('deny', `${d.reason}\nThis harness cannot ask for confirmation, so the command was not run: ask the user to run it.`)
+    // Codex and opencode hooks cannot ask: the harness's own prompt rule asks for the plain forms (`deps.nativeAsk`),
+    // anything else is denied and the user runs it.
+    if (d.action === 'ask' && deps.noAsk) {
+      if (await deps.nativeAsk?.(command, d.rule, input)) return {}
+      return preToolUse('deny', `${d.reason}\nThis harness cannot ask for confirmation for this form, so the command was not run: ask the user to run it.`)
+    }
     if (d.action === 'ask') {
       const argv = previewCommand(d.rule, command)
       return preToolUse('ask', argv ? withPreview(d.reason, await deps.run(argv, input.cwd).catch(() => '')) : d.reason)
@@ -157,6 +161,26 @@ export async function handle(input, deps) {
   return out
 }
 
+// Codex asks through the prompt rules `make install HARNESS=codex` writes. Only when the installed file is this
+// version's (a stale one may miss a prefix) does the guard leave a covered risky command to Codex.
+// The prompt must reach a human: the session's effective `approvals_reviewer` (config, profile, `-c`,
+// `--approve-for-me`) is in the rollout's last `turn_context`; anything but "user", or no record, denies.
+export const CODEX_RULES = 'giocaizzi-guard.rules'
+export function codexReviewer(transcript) {
+  const ctx = transcript.split('\n').filter((l) => l.includes('"turn_context"')).pop()
+  return ctx ? JSON.parse(ctx).payload?.approvals_reviewer : undefined
+}
+export function codexAsks(env, transcriptPath) {
+  try {
+    const home = env.CODEX_HOME || join(homedir(), '.codex')
+    if (readFileSync(join(home, 'rules', CODEX_RULES), 'utf8') !== codexRules(rules)) return null
+    if (codexReviewer(readFileSync(transcriptPath, 'utf8')) !== 'user') return null
+    return (command, rule) => nativeAsk(command, rule, rules)
+  } catch {
+    return null
+  }
+}
+
 // Which harness runs the hook, from the data dir variable each one sets.
 const harness = () => (process.env.CLAUDE_PLUGIN_DATA ? 'claude' : process.env.COPILOT_PLUGIN_DATA ? 'copilot' : 'other')
 
@@ -173,7 +197,7 @@ async function main() {
   // Never exit non-zero: Copilot denies a preToolUse whose hook fails. The risky path fails closed inside onShell.
   // `--no-ask` comes from the Codex hooks file (hooks/codex.json), which build_agents.py generates.
   const noAsk = process.argv.includes('--no-ask')
-  const out = await handle(input, { dataDir, env: process.env, hostFacts, run, pythonManager, noAsk, emit: (event, attrs) => emit(process.env, event, { ...attrs, harness: noAsk ? 'codex' : harness() }) }).catch(() => ({}))
+  const out = await handle(input, { dataDir, env: process.env, hostFacts, run, pythonManager, noAsk, nativeAsk: noAsk ? codexAsks(process.env, input.transcript_path) : null, emit: (event, attrs) => emit(process.env, event, { ...attrs, harness: noAsk ? 'codex' : harness() }) }).catch(() => ({}))
   if (out.stdout) process.stdout.write(out.stdout)
   if (out.stderr) process.stderr.write(out.stderr)
 }

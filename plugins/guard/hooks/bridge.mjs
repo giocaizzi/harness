@@ -20,7 +20,8 @@ const launchDetached = (argv) => {
   return child.pid
 }
 
-// `harness` names it in telemetry; `noAsk` turns an ask into a deny where the harness cannot ask.
+// `harness` names it in telemetry; `noAsk` turns an ask into a deny where the harness cannot ask, unless
+// `deps.nativeAsk(command, rule, input)` says the harness's own prompt covers it.
 export function createGuard({ harness, noAsk = false, dataDir = DATA_DIR, deps = {} }) {
   const d = {
     dataDir,

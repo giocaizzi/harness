@@ -79,7 +79,7 @@ const HARNESSES = {
         provider: { mock: { npm: '@ai-sdk/openai-compatible', name: 'mock', options: { baseURL: `http://127.0.0.1:${port}/v1`, apiKey: 'mock' }, models: { mock: { name: 'mock' } } } },
       }
       writeFileSync(join(env.XDG_CONFIG_HOME, 'opencode', 'opencode.json'), JSON.stringify(config))
-      return sh('opencode', ['run', 'run the command'], { env, cwd, input: '', allowFail: true })
+      return sh('opencode', ['run', 'run the command'], { env: { ...env, PWD: cwd }, cwd, input: '', allowFail: true })
     },
   },
   pi: {
@@ -91,13 +91,19 @@ const HARNESSES = {
     run(env, cwd, port) {
       const models = { providers: { mock: { baseUrl: `http://127.0.0.1:${port}/v1`, api: 'openai-completions', apiKey: 'mock', models: [{ id: 'mock' }] } } }
       writeFileSync(join(env.PI_CODING_AGENT_DIR, 'models.json'), JSON.stringify(models))
-      return sh('pi', ['-p', '--no-session', '--model', 'mock/mock', 'run the command'], { env, cwd, input: '', allowFail: true })
+      return sh('pi', ['-p', '--no-session', '--model', 'mock/mock', 'run the command'], { env: { ...env, PWD: cwd }, cwd, input: '', allowFail: true })
     },
   },
 }
 
-// What each harness must show; pi reaches the agents through the dev-tools `subagent` tool.
-const EXPECT = { codex: { agents: true }, opencode: { agents: true }, pi: { agents: true } }
+// What each harness must show; pi reaches the agents through the dev-tools `subagent` tool. `asked`: the
+// harness's own prompt for a plain risky command, which a non-interactive run rejects (Codex's prompt rules,
+// opencode's bash ask entries, pi's confirm dialog without a UI).
+const EXPECT = {
+  codex: { agents: true, asked: /approval required by policy/ },
+  opencode: { agents: true, asked: /permission requested: bash \(git reset --hard/ },
+  pi: { agents: true, asked: /Risky command/ },
+}
 
 async function check(name) {
   const h = HARNESSES[name]
@@ -109,14 +115,20 @@ async function check(name) {
     const cwd = project(root)
     for (const [command, expect] of [
       ['pip install requests', /uses uv/],
-      ['rm -rf ~/harness-e2e-does-not-exist', /cannot ask|risky|confirm/i],
+      // Harmless: every harness runs in the throwaway project, which is no git repo (opencode takes its directory
+      // from PWD, not the spawn cwd, so run() sets PWD for it and pi), and a wrongly allowed run changes nothing.
+      ['git reset --hard', EXPECT[name].asked],
+      // A form the harness's prompt rules do not cover: the guard denies it (pi still confirms).
+      ['cd . && rm -rf ~/harness-e2e-does-not-exist', /cannot ask|Risky command/],
     ]) {
       const m = await mock(command, root)
       const out = h.run(env, cwd, m.port)
       m.stop()
       const entries = m.entries()
       const result = entries.map((e) => e.result).find((r) => r !== null) ?? ''
-      if (!expect.test(result)) failures.push(`${command}: tool result ${JSON.stringify(result.slice(0, 200))} does not match ${expect}\n${out.stdout?.slice(-600)}\n${out.stderr?.slice(-600)}`)
+      // opencode ends the turn on a rejected ask; its `run` output names the request.
+      const seen = expect === EXPECT[name].asked ? `${result}\n${out.stdout}\n${out.stderr}` : result
+      if (!expect.test(seen)) failures.push(`${command}: tool result ${JSON.stringify(result.slice(0, 200))} does not match ${expect}\n${out.stdout?.slice(-600)}\n${out.stderr?.slice(-600)}`)
       if (command.startsWith('pip')) {
         if (!entries.some((e) => e.skills)) failures.push('skills (conventional-commits) not in the model prompt')
         if (EXPECT[name].agents && !entries.some((e) => e.agent)) failures.push('agent scout not in the model prompt')

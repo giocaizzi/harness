@@ -3,7 +3,9 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { handle, pythonManager } from './guard.mjs'
+import { CODEX_RULES, codexAsks, handle, pythonManager } from './guard.mjs'
+import { codexRules } from '../core/engine.mjs'
+import { rules } from '../core/rules.mjs'
 
 const calm = async () => ({ load1: 1, freeGb: 100 })
 const setup = (deps = {}) => {
@@ -51,6 +53,52 @@ test('noAsk turns a risky ask into a deny that tells the agent why', async () =>
   const d = decision(await setup({ noAsk: true })(pre('Bash', 'rm -rf ~/x')))
   assert.equal(d.permissionDecision, 'deny')
   assert.match(d.permissionDecisionReason, /cannot ask for confirmation/)
+})
+
+test('noAsk leaves a risky command the harness prompts for to the harness, denies the rest', async () => {
+  const h = setup({ noAsk: true, nativeAsk: async (command, rule) => command === 'rm -rf ~/x' && rule === 'rm' })
+  assert.equal(decision(await h(pre('Bash', 'rm -rf ~/x'))), undefined)
+  assert.equal(decision(await h(pre('Bash', 'cd / && rm -rf ~/x'))).permissionDecision, 'deny')
+})
+
+const turnContext = (reviewer) => JSON.stringify({ type: 'turn_context', payload: { approval_policy: 'on-request', approvals_reviewer: reviewer } }) + '\n'
+const transcript = (...lines) => {
+  const file = join(mkdtempSync(join(tmpdir(), 'codex-rollout-')), 'rollout.jsonl')
+  writeFileSync(file, lines.join(''))
+  return file
+}
+
+test('Codex prompts only with this version of the installed prompt rules', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'codex-home-'))
+  const human = transcript(turnContext('user'))
+  assert.equal(codexAsks({ CODEX_HOME: home }, human), null)
+  mkdirSync(join(home, 'rules'))
+  writeFileSync(join(home, 'rules', CODEX_RULES), 'prefix_rule(pattern = ["rm", "-r"], decision = "prompt")\n')
+  assert.equal(codexAsks({ CODEX_HOME: home }, human), null)
+  writeFileSync(join(home, 'rules', CODEX_RULES), codexRules(rules))
+  const asks = codexAsks({ CODEX_HOME: home }, human)
+  assert.equal(asks('git reset --hard', 'reset'), true)
+  assert.equal(asks('git reset --hard; ls', 'reset'), false)
+  assert.equal(asks('git reset --hard $NOPE', 'reset'), false)
+  // Forms Codex runs without consulting its prompt rules (security review of #76): the guard denies them.
+  const h = setup({ noAsk: true, nativeAsk: asks })
+  for (const command of ['rm -r $PWD/victim', 'rm -r victim*', 'rm -R "$PWD"/victim', 'rm -r vic\\tim', 'rm -r ~/x', 'git reset --hard $NOPE', 'git push --force origin $NOPE', 'terraform apply $NOPE'])
+    assert.equal(decision(await h(pre('Bash', command)))?.permissionDecision, 'deny', command)
+})
+
+test('Codex: only a human approvals reviewer in the latest turn context gets the native ask', () => {
+  const home = mkdtempSync(join(tmpdir(), 'codex-home-'))
+  mkdirSync(join(home, 'rules'))
+  writeFileSync(join(home, 'rules', CODEX_RULES), codexRules(rules))
+  assert.notEqual(codexAsks({ CODEX_HOME: home }, transcript(turnContext('user'))), null)
+  // An AI reviewer from any source (config, profile, -c, --approve-for-me) shows here; the latest turn wins.
+  assert.equal(codexAsks({ CODEX_HOME: home }, transcript(turnContext('auto_review'))), null)
+  assert.equal(codexAsks({ CODEX_HOME: home }, transcript(turnContext('user'), turnContext('guardian_subagent'))), null)
+  // No turn context, no field, no readable transcript: fail closed.
+  assert.equal(codexAsks({ CODEX_HOME: home }, transcript('{"type":"session_meta"}\n')), null)
+  assert.equal(codexAsks({ CODEX_HOME: home }, transcript(JSON.stringify({ type: 'turn_context', payload: {} }) + '\n')), null)
+  assert.equal(codexAsks({ CODEX_HOME: home }, join(home, 'missing.jsonl')), null)
+  assert.equal(codexAsks({ CODEX_HOME: home }, undefined), null)
 })
 
 test('title guard denies a non-conventional commit every time, on bash and PowerShell', async () => {
