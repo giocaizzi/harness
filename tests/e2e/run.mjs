@@ -34,10 +34,10 @@ function sh(cmd, args, opts = {}) {
 const has = (cmd) => sh(cmd, ['--version'], { allowFail: true }).status === 0
 
 // Start the mock on a free port with a scripted command; resolves to { port, log, stop }.
-async function mock(command, root) {
+async function mock(command, root, extraEnv = {}) {
   const log = join(root, 'mock.jsonl')
   const port = 40_000 + Math.floor(Math.random() * 20_000)
-  const child = spawn(process.execPath, [MOCK, String(port)], { env: { ...process.env, MOCK_COMMAND: command, MOCK_LOG: log }, stdio: 'ignore' })
+  const child = spawn(process.execPath, [MOCK, String(port)], { env: { ...process.env, MOCK_COMMAND: command, MOCK_LOG: log, ...extraEnv }, stdio: 'ignore' })
   await new Promise((r) => setTimeout(r, 300))
   const entries = () => (existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l)) : [])
   return { port, entries, stop: () => child.kill() }
@@ -96,8 +96,8 @@ const HARNESSES = {
   },
 }
 
-// What each harness must show. `agents: false` where the harness has no subagents (pi).
-const EXPECT = { codex: { agents: true }, opencode: { agents: true }, pi: { agents: false } }
+// What each harness must show; pi reaches the agents through the dev-tools `subagent` tool.
+const EXPECT = { codex: { agents: true }, opencode: { agents: true }, pi: { agents: true } }
 
 async function check(name) {
   const h = HARNESSES[name]
@@ -122,6 +122,15 @@ async function check(name) {
         if (EXPECT[name].agents && !entries.some((e) => e.agent)) failures.push('agent scout not in the model prompt')
       }
       rmSync(join(root, 'mock.jsonl'), { force: true })
+    }
+    if (name === 'pi') {
+      // The subagent tool: the parent delegates to scout, whose own session runs the command and answers "done".
+      const m = await mock('echo from-scout', root, { MOCK_SUBAGENT: '1' })
+      const out = h.run(env, cwd, m.port)
+      m.stop()
+      const results = m.entries().map((e) => e.result ?? '')
+      if (!results.some((r) => r.includes('from-scout')) || !results.includes('done'))
+        failures.push(`subagent: results ${JSON.stringify(results).slice(0, 300)}\n${out.stdout?.slice(-600)}\n${out.stderr?.slice(-600)}`)
     }
   } catch (err) {
     failures.push(String(err?.message ?? err))

@@ -1,6 +1,6 @@
 # `sounds` plugin
 
-Toasts and configurable sounds for Claude Code (a mod). No skills or agents. Architecture and runbook: [docs/sounds.md](../../docs/sounds.md).
+Toasts and configurable sounds for Claude Code (a mod), and the turn and context alerts with the default clips for pi (`hooks/pi.mjs`). No skills or agents. Architecture and runbook: [docs/sounds.md](../../docs/sounds.md).
 
 ## Alerts and sounds
 
