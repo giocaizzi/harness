@@ -5,7 +5,7 @@
 // that the guard's deny reached the model, that the skills and the scout agent are in its prompt, and that a
 // risky command is not run. A harness whose CLI is missing is skipped (failed with E2E_REQUIRE=1). Usage: node tests/e2e/run.mjs [harness...]
 import { spawn, spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -56,7 +56,7 @@ const HARNESSES = {
     install(home) {
       const env = { ...process.env, CODEX_HOME: home }
       sh('codex', ['plugin', 'marketplace', 'add', REPO], { env })
-      for (const p of ['guard', 'dev-tools']) sh('codex', ['plugin', 'add', `${p}@giocaizzi-harness`], { env })
+      for (const p of ['guard', 'dev-tools', 'sounds']) sh('codex', ['plugin', 'add', `${p}@giocaizzi-harness`], { env })
       sh(process.execPath, [join(REPO, 'scripts', 'install.mjs'), 'codex'], { env })
       return env
     },
@@ -123,6 +123,8 @@ async function check(name) {
       }
       rmSync(join(root, 'mock.jsonl'), { force: true })
     }
+    // sounds' Stop hook ran from the installed plugin: it keeps the session's alert levels in the plugin data dir.
+    if (name === 'codex' && !readdirSync(join(root, 'home'), { recursive: true }).some((f) => /sounds-codex-.*\.json$/.test(f))) failures.push('sounds: the Stop hook left no state')
     if (name === 'pi') {
       // The subagent tool: the parent delegates to scout, whose own session runs the command and answers "done".
       const m = await mock('echo from-scout', root, { MOCK_SUBAGENT: '1' })
