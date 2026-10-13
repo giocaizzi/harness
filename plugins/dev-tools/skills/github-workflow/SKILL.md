@@ -1,6 +1,6 @@
 ---
 name: github-workflow
-description: Landing changes on main via pull requests: stacked PRs with `gh stack`, auto-merge, merge queues, and rulesets that require CI. Use when opening, splitting or merging PRs, or setting up branch protection or merge-gating CI.
+description: "Landing changes on main via pull requests: stacked PRs with `gh stack`, auto-merge, merge queues, and rulesets that require CI. Use when opening, splitting or merging PRs, or setting up branch protection or merge-gating CI."
 ---
 
 ## Principle
