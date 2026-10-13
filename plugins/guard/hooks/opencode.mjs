@@ -28,9 +28,11 @@ export const GuardPlugin = async ({ client, directory }, deps) => {
     noAsk: true,
     deps: {
       // opencode asks only when the asks are in, the command is a covered form and no session rule (an API
-      // caller's `tools: { bash: true }`) overrides them; anything unsure is denied.
+      // caller's `tools: { bash: true }`) overrides them; anything unsure is denied. `opencode run --auto`
+      // approves every ask itself, so it gets the deny. ponytail: `run --attach <url> --auto` approves from the
+      // client process, whose argv this server-side plugin cannot see.
       nativeAsk: async (command, rule, input) => {
-        if (!asks || !nativeAsk(command, rule, rules)) return false
+        if (!asks || (deps?.argv ?? process.argv).includes('--auto') || !nativeAsk(command, rule, rules)) return false
         const s = await client.session.get({ path: { id: input.session_id } }).catch(() => null)
         return Boolean(s?.data) && !(s.data.permission ?? []).some((r) => r.permission === 'bash' || r.permission === '*')
       },

@@ -61,7 +61,7 @@ test('noAsk leaves a risky command the harness prompts for to the harness, denie
   assert.equal(decision(await h(pre('Bash', 'cd / && rm -rf ~/x'))).permissionDecision, 'deny')
 })
 
-test('Codex prompts only with this version of the installed prompt rules', () => {
+test('Codex prompts only with this version of the installed prompt rules', async () => {
   const home = mkdtempSync(join(tmpdir(), 'codex-home-'))
   assert.equal(codexAsks({ CODEX_HOME: home }), null)
   mkdirSync(join(home, 'rules'))
@@ -71,6 +71,28 @@ test('Codex prompts only with this version of the installed prompt rules', () =>
   const asks = codexAsks({ CODEX_HOME: home })
   assert.equal(asks('git reset --hard', 'reset'), true)
   assert.equal(asks('git reset --hard; ls', 'reset'), false)
+  assert.equal(asks('git reset --hard $NOPE', 'reset'), false)
+  // Forms Codex runs without consulting its prompt rules (security review of #76): the guard denies them.
+  const h = setup({ noAsk: true, nativeAsk: asks })
+  for (const command of ['rm -r $PWD/victim', 'rm -r victim*', 'rm -R "$PWD"/victim', 'rm -r vic\\tim', 'rm -r ~/x', 'git reset --hard $NOPE', 'git push --force origin $NOPE', 'terraform apply $NOPE'])
+    assert.equal(decision(await h(pre('Bash', command)))?.permissionDecision, 'deny', command)
+})
+
+test('Codex: an AI approvals reviewer in the user or project config means no native ask', () => {
+  const home = mkdtempSync(join(tmpdir(), 'codex-home-'))
+  const cwd = mkdtempSync(join(tmpdir(), 'codex-proj-'))
+  mkdirSync(join(home, 'rules'))
+  writeFileSync(join(home, 'rules', CODEX_RULES), codexRules(rules))
+  writeFileSync(join(home, 'config.toml'), 'approvals_reviewer = "user"\n')
+  assert.notEqual(codexAsks({ CODEX_HOME: home }, cwd), null)
+  for (const toml of ['approvals_reviewer = "auto_review"\n', '[profiles.fast]\napprovals_reviewer = "guardian_subagent"\n', 'profiles.x.approvals_reviewer="auto_review"\n']) {
+    writeFileSync(join(home, 'config.toml'), toml)
+    assert.equal(codexAsks({ CODEX_HOME: home }, cwd), null, toml)
+  }
+  writeFileSync(join(home, 'config.toml'), '')
+  mkdirSync(join(cwd, '.codex'))
+  writeFileSync(join(cwd, '.codex', 'config.toml'), 'approvals_reviewer = "auto_review"\n')
+  assert.equal(codexAsks({ CODEX_HOME: home }, cwd), null)
 })
 
 test('title guard denies a non-conventional commit every time, on bash and PowerShell', async () => {

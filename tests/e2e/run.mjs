@@ -79,7 +79,7 @@ const HARNESSES = {
         provider: { mock: { npm: '@ai-sdk/openai-compatible', name: 'mock', options: { baseURL: `http://127.0.0.1:${port}/v1`, apiKey: 'mock' }, models: { mock: { name: 'mock' } } } },
       }
       writeFileSync(join(env.XDG_CONFIG_HOME, 'opencode', 'opencode.json'), JSON.stringify(config))
-      return sh('opencode', ['run', 'run the command'], { env, cwd, input: '', allowFail: true })
+      return sh('opencode', ['run', 'run the command'], { env: { ...env, PWD: cwd }, cwd, input: '', allowFail: true })
     },
   },
   pi: {
@@ -91,7 +91,7 @@ const HARNESSES = {
     run(env, cwd, port) {
       const models = { providers: { mock: { baseUrl: `http://127.0.0.1:${port}/v1`, api: 'openai-completions', apiKey: 'mock', models: [{ id: 'mock' }] } } }
       writeFileSync(join(env.PI_CODING_AGENT_DIR, 'models.json'), JSON.stringify(models))
-      return sh('pi', ['-p', '--no-session', '--model', 'mock/mock', 'run the command'], { env, cwd, input: '', allowFail: true })
+      return sh('pi', ['-p', '--no-session', '--model', 'mock/mock', 'run the command'], { env: { ...env, PWD: cwd }, cwd, input: '', allowFail: true })
     },
   },
 }
@@ -115,7 +115,8 @@ async function check(name) {
     const cwd = project(root)
     for (const [command, expect] of [
       ['pip install requests', /uses uv/],
-      // Plain and harmless here (the project is no git repo), so a wrongly allowed run changes nothing.
+      // Harmless: every harness runs in the throwaway project, which is no git repo (opencode takes its directory
+      // from PWD, not the spawn cwd, so run() sets PWD for it and pi), and a wrongly allowed run changes nothing.
       ['git reset --hard', EXPECT[name].asked],
       // A form the harness's prompt rules do not cover: the guard denies it (pi still confirms).
       ['cd . && rm -rf ~/harness-e2e-does-not-exist', /cannot ask|Risky command/],

@@ -163,11 +163,23 @@ export async function handle(input, deps) {
 
 // Codex asks through the prompt rules `make install HARNESS=codex` writes. Only when the installed file is this
 // version's (a stale one may miss a prefix) does the guard leave a covered risky command to Codex.
+// An `approvals_reviewer` other than "user" (top level or in a profile, user or project config) routes the
+// prompt to Codex's AI reviewer, which can approve it, so the guard denies there.
+// ponytail: `--approve-for-me` and `-c approvals_reviewer=…` on the command line are invisible to a hook.
 export const CODEX_RULES = 'giocaizzi-guard.rules'
-export function codexAsks(env) {
+const REVIEWER = /^\s*(?:[\w."-]+\.)?approvals_reviewer\s*=(?!\s*["']user["'])/m
+const readOr = (file) => {
   try {
-    const file = join(env.CODEX_HOME || join(homedir(), '.codex'), 'rules', CODEX_RULES)
-    if (readFileSync(file, 'utf8') !== codexRules(rules)) return null
+    return readFileSync(file, 'utf8')
+  } catch {
+    return ''
+  }
+}
+export function codexAsks(env, cwd = '.') {
+  try {
+    const home = env.CODEX_HOME || join(homedir(), '.codex')
+    if (readFileSync(join(home, 'rules', CODEX_RULES), 'utf8') !== codexRules(rules)) return null
+    if ([join(home, 'config.toml'), join(cwd, '.codex', 'config.toml')].some((f) => REVIEWER.test(readOr(f)))) return null
     return (command, rule) => nativeAsk(command, rule, rules)
   } catch {
     return null
@@ -190,7 +202,7 @@ async function main() {
   // Never exit non-zero: Copilot denies a preToolUse whose hook fails. The risky path fails closed inside onShell.
   // `--no-ask` comes from the Codex hooks file (hooks/codex.json), which build_agents.py generates.
   const noAsk = process.argv.includes('--no-ask')
-  const out = await handle(input, { dataDir, env: process.env, hostFacts, run, pythonManager, noAsk, nativeAsk: noAsk ? codexAsks(process.env) : null, emit: (event, attrs) => emit(process.env, event, { ...attrs, harness: noAsk ? 'codex' : harness() }) }).catch(() => ({}))
+  const out = await handle(input, { dataDir, env: process.env, hostFacts, run, pythonManager, noAsk, nativeAsk: noAsk ? codexAsks(process.env, input.cwd) : null, emit: (event, attrs) => emit(process.env, event, { ...attrs, harness: noAsk ? 'codex' : harness() }) }).catch(() => ({}))
   if (out.stdout) process.stdout.write(out.stdout)
   if (out.stderr) process.stderr.write(out.stderr)
 }

@@ -36,10 +36,18 @@ test('opencode: the config hook appends bash asks last, and a covered risky comm
   assert.equal(cfg.agent.scout.permission.bash['git reset --hard *'], 'ask')
   assert.equal(cfg.agent.x.permission, undefined)
   const before = (command) => hooks['tool.execute.before']({ tool: 'bash', sessionID: 's', callID: 'c' }, { args: { command } })
-  await before('rm -rf ~/x')
-  await assert.rejects(before('cd . && rm -rf ~/x'), /cannot ask/)
+  await before('rm -rf build')
+  await assert.rejects(before('cd . && rm -rf build'), /cannot ask/)
+  await assert.rejects(before('rm -rf ~/x'), /cannot ask/) // `~` expands: not a plain word
   sessionPermission.push({ permission: 'bash', pattern: '*', action: 'allow' }) // an API caller's tools: { bash: true }
-  await assert.rejects(before('rm -rf ~/x'), /cannot ask/)
+  await assert.rejects(before('rm -rf build'), /cannot ask/)
+})
+
+test('opencode: `run --auto` approves asks itself, so the guard denies', async () => {
+  const client = { session: { get: async () => ({ data: {} }) } }
+  const hooks = await GuardPlugin({ client, directory: dir() }, { ...deps(), argv: ['bun', '/$bunfs/root/src/index.js', 'run', '--auto', 'go'] })
+  await hooks.config({ permission: { bash: 'allow' } })
+  await assert.rejects(hooks['tool.execute.before']({ tool: 'bash', sessionID: 's', callID: 'c' }, { args: { command: 'rm -rf build' } }), /cannot ask/)
 })
 
 test('opencode: a user deny on bash skips the asks, so the guard keeps denying', async () => {

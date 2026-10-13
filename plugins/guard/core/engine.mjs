@@ -215,13 +215,15 @@ export function isRisky(command, rules) {
 }
 
 // Where a hook cannot ask (Codex, opencode), the harness's own prompt rules ask for the risky rule's `prefixes`.
-// True when such a rule surely covers the command: one plain command (no operators, redirections or
-// substitutions) that starts with a prefix, single-spaced, so the harness's own matching sees the same thing.
+// True when such a rule surely covers the command: single-spaced plain words only, so the harness parses it
+// into the same words and matches the prefix. Anything a shell expands or Codex declines to parse (`$`, globs,
+// `~`, quotes, escapes, operators) is not, and is denied: Codex then skips its prompt rules.
+const PLAIN_WORD = /^[\w./@%+=:,-]+$/;
 export function nativeAsk(command, ruleId, rules) {
-  const c = command.trim();
-  if (/[;&|<>`\n]|\$\(/.test(c)) return false;
+  const words = command.trim().split(' ');
+  if (!words.every((w) => PLAIN_WORD.test(w))) return false;
   const prefixes = rules.risky.find((r) => r.id === ruleId)?.prefixes ?? [];
-  return prefixes.some((p) => c === p.join(' ') || c.startsWith(`${p.join(' ')} `));
+  return prefixes.some((p) => p.every((t, i) => words[i] === t));
 }
 
 // The Codex execpolicy file (`$CODEX_HOME/rules/`) that prompts for every risky prefix.

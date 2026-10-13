@@ -37,10 +37,25 @@ test('risky commands always ask, even after a reminder', () => {
 });
 
 test('nativeAsk: only a plain command starting with a risky prefix is left to the harness prompt', () => {
-  assert.equal(nativeAsk('rm -rf ~/x', 'rm', rules), true);
-  assert.equal(nativeAsk('  git reset --hard  ', 'reset', rules), true);
+  assert.equal(nativeAsk('rm -rf build/x', 'rm', rules), true);
+  assert.equal(nativeAsk('  git reset --hard', 'reset', rules), true);
   assert.equal(nativeAsk('git push -f origin x', 'force', rules), true);
   for (const [command, rule] of [
+    // Codex runs these without its prompt rules (it does not parse expansions): all ran unasked in review.
+    ['rm -r $PWD/victim', 'rm'],
+    ['rm -r victim*', 'rm'],
+    ['rm -R "$PWD"/victim', 'rm'],
+    ['rm -r vic\\tim', 'rm'],
+    ['rm -r ~/x', 'rm'],
+    ['rm -rf ~/x', 'rm'],
+    ['git reset --hard $NOPE', 'reset'],
+    ['git push --force origin $NOPE', 'force'],
+    ['terraform apply $NOPE', 'terraform'],
+    ["rm -r 'a b'", 'rm'],
+    ['rm -r {a,b}', 'rm'],
+    ['rm -r a?', 'rm'],
+    ['rm -r x # y', 'rm'],
+    ['rm -r\tx', 'rm'],
     ['cd x && rm -rf y', 'rm'], // another command first
     ['rm -rf y; ls', 'rm'],
     ['rm -rf $(pwd)', 'rm'],
