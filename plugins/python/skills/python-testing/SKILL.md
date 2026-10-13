@@ -29,7 +29,7 @@ Hardcode values unless randomness is what's under test, and use named semantic d
 
 ## Keep `make check` fast
 
-`make check` gates every push and every agent stop, so a serial suite that takes tens of minutes slows all work. Run tests in parallel with `pytest -n auto` (pytest-xdist; make the tests order- and state-independent first) and keep a slow-test budget. Note the wall time of the full suite in the repo's `AGENTS.md`.
+`make check` gates every push and every agent stop, so a serial suite that takes tens of minutes slows all work. Run tests in parallel with `pytest -n auto` (pytest-xdist; make the tests order- and state-independent first) and keep a slow-test budget. Note the wall time of the full suite in the repo's `AGENTS.md`. When the full suite still takes minutes, add a `make check-fast` target (lint, type check, fast tests): the guard's stop hook runs it instead of `check`, and CI keeps running the full suite.
 
 ## Give every test a timeout
 

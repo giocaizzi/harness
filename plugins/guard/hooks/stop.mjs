@@ -1,7 +1,8 @@
-// Stop hook (Claude Code and VS Code Stop, Copilot agentStop): run `make check` before the agent stops,
-// but only when the repo changed since the last green run. On failure, block the stop once and hand back
-// the output tail; a second stop (stop_hook_active) always passes, so it cannot loop. No make, no Makefile
-// or no `check` target: nothing to do. A timeout is reported, never treated as a failure.
+// Stop hook (Claude Code and VS Code Stop, Copilot agentStop): run `make check-fast` (when the Makefile
+// defines it; large repos keep the full suite for CI) or else `make check` before the agent stops, but only
+// when the repo changed since the last green run. On failure, block the stop once and hand back the output
+// tail; a second stop (stop_hook_active) always passes, so it cannot loop. No make, no Makefile or neither
+// target: nothing to do. A timeout is reported, never treated as a failure.
 // Env: GUARD_STOP_CHECK=off disables it; GUARD_STOP_TIMEOUT_MS overrides the timeout (default 1750 s).
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
@@ -47,19 +48,20 @@ export function stopCheck(input, run = spawnSync) {
   const cwd = input.cwd || process.cwd()
   const timeout = Number(process.env.GUARD_STOP_TIMEOUT_MS) || DEFAULT_TIMEOUT_MS
   const opts = { cwd, encoding: 'utf8', timeout, windowsHide: true }
-  if (run('make', ['-n', 'check'], opts).status !== 0) return null
+  const target = ['check-fast', 'check'].find((t) => run('make', ['-n', t], opts).status === 0)
+  if (!target) return null
   const fp = fingerprint(cwd, run)
   if (fp && fp === lastGreen(cwd)) return null
-  const r = run('make', ['check'], opts)
+  const r = run('make', [target], opts)
   if (r.status === 0) {
     if (fp) markGreen(cwd, fp)
     return null
   }
   if (r.error?.code === 'ETIMEDOUT') {
-    return { systemMessage: `make check did not finish within ${Math.round(timeout / 1000)} s; not blocking. Raise GUARD_STOP_TIMEOUT_MS or run it by hand.` }
+    return { systemMessage: `make ${target} did not finish within ${Math.round(timeout / 1000)} s; not blocking. Raise GUARD_STOP_TIMEOUT_MS or run it by hand.` }
   }
   const out = `${r.stdout ?? ''}${r.stderr ?? ''}`.trimEnd().split('\n').slice(-40).join('\n')
-  const reason = `make check failed; fix before finishing:\n${out || r.error?.message || `exit ${r.status}`}`
+  const reason = `make ${target} failed; fix before finishing:\n${out || r.error?.message || `exit ${r.status}`}`
   // Claude and Copilot CLI read the top-level decision; VS Code reads it from hookSpecificOutput.
   return { decision: 'block', reason, hookSpecificOutput: { hookEventName: 'Stop', decision: 'block', reason } }
 }

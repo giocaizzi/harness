@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { codexRules, evaluateCommand, evaluateSpawn, nativeAsk, opencodeAsks, usageLevel, worktreeFacts } from './engine.mjs';
+import { codexRules, evaluateCommand, evaluateSpawn, nativeAsk, opencodeAsks, removalTargets, usageLevel, worktreeFacts } from './engine.mjs';
 import { rules } from './rules.mjs';
 
 const fresh = () => ({ reminded: new Set() });
@@ -26,6 +26,14 @@ test('any-of skills: /ship satisfies the commit rule', () => {
 
 test('unrelated commands pass', () => {
   assert.equal(evaluateCommand({ command: 'ls -la', state: fresh(), host: calm, rules }).action, 'allow');
+});
+
+test('recursive delete is caught in every flag spelling, plain deletes are not (#80)', () => {
+  for (const command of ['rm -rf build', 'rm -R build', 'rm --recursive build', 'rm -v -r build', 'rm -f --recursive build', 'rm --force -r build', 'RM -RF build'])
+    assert.equal(evaluateCommand({ command, state: fresh(), host: calm, rules }).action, 'ask', command);
+  for (const command of ['rm build.txt', 'rm -f build.txt', 'rm -v build.txt', 'rm --force build.txt', 'npm run rm-cache'])
+    assert.notEqual(evaluateCommand({ command, state: fresh(), host: calm, rules }).action, 'ask', command);
+  assert.deepEqual(removalTargets('rm -v --recursive /tmp/a', rules), ['/tmp/a']);
 });
 
 test('risky commands always ask, even after a reminder', () => {
