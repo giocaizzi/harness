@@ -165,7 +165,7 @@ test('the turn footer adds tokens, cache hit rate and cost after the engine line
   await $.turn.complete({ ...turn(9000, 1000, 0), durationMs: 3000 })
   const ui = await $.ui.mount({ plugin: 'hud', surface: 'terminal', component: 'TurnDuration', props: { word: 'Baked', durationMs: 3000 } })
   expect(await ui.find({ type: 'Text', text: /Baked for 3s/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /10\.0k in · 1 out · 90% cached · \$0\.25/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /↑10\.0k ↓1 ↺90% \$0\.25/ })).toBeDefined()
   await ui.unmount()
 })
 

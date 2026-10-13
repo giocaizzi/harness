@@ -79,7 +79,7 @@
       "name": "hud",
       "source": "./plugins/hud",
       "description": "Heads-up display for Claude Code and Copilot CLI: token-weather band with PR, git and limit forecasts, turn footer, tool rows, spinner, /weather, /subagents and /ctx panes (Claude mod), a two-line status line for both CLIs, and reply rewrites (links, paths, commits, states, pass/fail, secrets, URLs, times) in Claude Code and pi",
-      "version": "0.7.0",
+      "version": "0.7.1",
       "keywords": [
         "statusline",
         "ui",
