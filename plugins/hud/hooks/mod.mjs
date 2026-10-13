@@ -5,7 +5,9 @@ import { atom, read, update } from 'claude-code'
 import { registerAgents } from './agents.mjs'
 import { registerContext } from './context.mjs'
 import { registerFooter } from './footer.mjs'
-import { linkRepo, linkify } from './links.mjs'
+import { linkRepo } from './links.mjs'
+import { toTree } from './markup.mjs'
+import { createFacts, fetchState, rewrite, settings } from './rewrite.mjs'
 import { registerTools } from './tools.mjs'
 import { ICON, TTL_MS, azurePr, battery, clock, forecast, forgeOf, fullAt, githubPr, gitlabMr, glyph, repoState, sparkCells, sparkRange, tokens, when } from './weather.mjs'
 
@@ -63,15 +65,29 @@ async function contextPercent($) {
 
 // The branch's PR (with its checks) from the forge the origin remote names, unpushed work and uncommitted changes;
 // each part is null where git or the forge's CLI (gh, glab, az) cannot say.
-async function refreshRepo($) {
-  const run = async (argv) => {
-    try {
-      const r = await $.process.run(argv, { timeoutMs: 8000 })
-      return r.exitCode === 0 ? r.stdout : null
-    } catch {
-      return null // not a repository, or the tool is missing
-    }
+// argv's stdout, or null where it fails or is missing.
+const runner = ($, timeoutMs = 8000) => async (argv) => {
+  try {
+    const r = await $.process.run(argv, { timeoutMs })
+    return r.exitCode === 0 ? r.stdout : null
+  } catch {
+    return null // not a repository, or the tool is missing
   }
+}
+
+// The reply rewrites' lookups (rewrite.mjs createFacts), cached for the session: files, commits, work-item states.
+const replyFacts = ($) =>
+  createFacts({
+    stat: async (p) => {
+      const s = await $.fs.stat(p).catch(() => null)
+      return s?.kind === 'file' || s?.kind === 'dir' ? s.kind : null
+    },
+    commit: async (sha) => (await runner($, 3000)(['git', 'cat-file', '-e', `${sha}^{commit}`])) !== null,
+    state: (r, ref) => fetchState(runner($, 8000), r, ref),
+  })
+
+async function refreshRepo($) {
+  const run = runner($)
   const json = async (argv) => {
     const out = await run(argv)
     try {
@@ -106,7 +122,9 @@ async function windows($) {
   }
 }
 
-export function register(on) {
+export function register(on, options = {}) {
+  let facts = null
+  let settling = false
   registerFooter(on)
   registerTools(on)
   registerAgents(on)
@@ -123,6 +141,7 @@ export function register(on) {
     } catch {
       // settings unreadable: the API default
     }
+    facts = replyFacts($)
     await refreshRepo($)
     await $.command.register({ name: 'weather', description: 'Show the context and prompt-cache history in a pane' })
     await $.command.register({ name: 'subagents', description: 'Show the subagents of this session in a pane' })
@@ -244,14 +263,26 @@ export function register(on) {
     return Box({ flexDirection: 'column', marginTop: alone ? 1 : 0, children: below ? [below, line] : [line] })
   })
 
-  // Work-item references in a reply (#123, !45, owner/repo#12, AB#77) drawn as links to the forge (upstream, else origin), with the
-  // kind's glyph unless NO_COLOR is set. Display only: the stored message keeps the model's text. Markdown carries no
-  // colour, so the link takes the renderer's own.
+  // Reply rewrites (rewrite.mjs): secrets masked, long URLs, work-item references with their state, paths and
+  // file:line, commits, timestamps and pass/fail, each a setting. Display only: the stored message keeps the model's
+  // text. A rewrite never waits: what is not known yet (a file, a commit, a state) is drawn as written, then drawn
+  // again once its lookup is in. Colour needs a tree of our own (markup.mjs), as markdown carries none.
   on('ui.render', { component: 'AssistantMessage' }, async ($, e, next) => {
-    if (!linkTo) return next(e)
-    const glyph = !(await $.env.get('NO_COLOR'))
-    const text = linkify(e.props.text, linkTo, { glyph })
-    return next(text === e.props.text ? e : { ...e, props: { ...e.props, text } })
+    const env = { NO_COLOR: await $.env.get('NO_COLOR') }
+    const o = settings(options, env, true)
+    facts ??= replyFacts($)
+    const cwd = await $.session.cwd().catch(() => null)
+    const ctx = { repo: linkTo, cwd, home: (await $.env.get('HOME')) ?? (await $.env.get('USERPROFILE')), now: await $.clock.now() }
+    const text = rewrite(e.props.text, o, ctx, facts)
+    if (facts.pending && !settling) {
+      settling = true
+      void facts.settle(10_000).then(() => {
+        settling = false
+        $.ui.invalidate('ui.render')
+      })
+    }
+    if (text === e.props.text) return next(e)
+    return toTree(text, $.ui.resolve(e), { first: e.props.isFirstOfReply }) ?? next({ ...e, props: { ...e.props, text } })
   })
 
   // /weather: the history at full size.

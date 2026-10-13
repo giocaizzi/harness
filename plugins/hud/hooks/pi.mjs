@@ -1,9 +1,14 @@
 // pi extension: hud's status line in pi's footer (ctx.ui.setStatus): the context weather, the model, the branch's PR
 // with its checks, unpushed and uncommitted work. Same parts and icons as the Claude band; refreshed at session start
-// and after each turn. Also makes the work-item references of each reply links (links.mjs). Loaded from the root
+// and after each turn. Also rewrites each reply (rewrite.mjs: links, paths, commits, secrets, ...). Loaded from the root
 // package.json.
 import { execFile } from 'node:child_process'
-import { linkRepo, linkify, styled } from './links.mjs'
+import { readFileSync } from 'node:fs'
+import { stat } from 'node:fs/promises'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
+import { linkRepo } from './links.mjs'
+import { createFacts, FEATURES, fetchState, rewrite, settings } from './rewrite.mjs'
 import { azurePr, forgeOf, githubPr, gitlabMr, glyph, ICON, repoState } from './weather.mjs'
 
 // The footer text from the facts; a part is left out where its fact is missing.
@@ -49,23 +54,54 @@ export async function readRepo(cwd, exec = run) {
   return { ...repoState(pr, counts, await exec(['git', 'diff', '--shortstat', 'HEAD'], cwd), await exec(['git', 'status', '--porcelain'], cwd)), links: await linkRepo((argv) => exec(argv, cwd)) }
 }
 
-// An assistant message with the references in its text blocks made markdown links, which pi's renderer draws as
-// OSC 8 hyperlinks; null when nothing changed. pi has no display-only hook: `message_end` replaces the stored message,
-// so the session file and the model's next turn see the links too.
-export function linkMessage(message, links, glyph) {
-  if (message?.role !== 'assistant' || !links || !Array.isArray(message.content)) return null
+// An assistant message with fn(text) applied to its text blocks; null when nothing changed. pi has no display-only
+// hook: `message_end` replaces the stored message, so the session file and the model's next turn see the rewrite
+// too (a masked secret leaves the context; a link keeps its target in the URL).
+export function rewriteMessage(message, fn) {
+  if (message?.role !== 'assistant' || !Array.isArray(message.content)) return null
   let changed = false
   const content = message.content.map((b) => {
     if (b.type !== 'text') return b
-    const text = linkify(b.text, links, { glyph })
+    const text = fn(b.text)
     changed ||= text !== b.text
     return text === b.text ? b : { ...b, text }
   })
   return changed ? { ...message, content } : null
 }
 
+// pi has no per-plugin settings: `hud.json` in pi's config directory (PI_CODING_AGENT_DIR, else ~/.pi/agent) takes
+// the Claude settings' keys. Times are off unless set there: a rewrite is stored, and "5h ago" would go stale.
+export const PI_DEFAULTS = { replyTimes: 'off' }
+export function piOptions(env = process.env, read = (p) => readFileSync(p, 'utf8')) {
+  const dir = env.PI_CODING_AGENT_DIR || join(env.HOME || env.USERPROFILE || homedir(), '.pi', 'agent')
+  try {
+    return { ...PI_DEFAULTS, ...JSON.parse(read(join(dir, 'hud.json'))) }
+  } catch {
+    return { ...PI_DEFAULTS } // none, or not JSON
+  }
+}
+
+// The rewrites' lookups in the session's directory (rewrite.mjs createFacts).
+export const piFacts = (cwd, exec = run) =>
+  createFacts({
+    stat: async (p) => {
+      try {
+        const s = await stat(p)
+        return s.isDirectory() ? 'dir' : s.isFile() ? 'file' : null
+      } catch {
+        return null // missing
+      }
+    },
+    commit: async (sha) => (await exec(['git', 'cat-file', '-e', `${sha}^{commit}`], cwd)) !== null,
+    state: (r, ref) => fetchState((argv) => exec(argv, cwd), r, ref),
+  })
+
+// Lookups a reply's rewrite waits for at most: the message is stored once, so it cannot be drawn again later.
+const SETTLE_MS = 1500
+
 export default function hudExtension(pi, deps = {}) {
   let repo = null
+  let facts = null
   const draw = (ctx) => {
     try {
       if (!ctx.hasUI) return
@@ -83,15 +119,30 @@ export default function hudExtension(pi, deps = {}) {
     }
     draw(ctx)
   }
-  pi.on('session_start', (_e, ctx) => void refresh(ctx))
+  pi.on('session_start', (_e, ctx) => {
+    facts = null // a new session, maybe in another directory
+    void refresh(ctx)
+  })
   pi.on('turn_end', (_e, ctx) => draw(ctx))
   pi.on('agent_settled', (_e, ctx) => void refresh(ctx))
-  // Only where a TUI draws the reply (not `pi -p` or JSON, whose text stays the model's) and the terminal draws OSC 8
-  // links (deps.hyperlinks, pi-tui's detection from pi-entry.mjs); elsewhere a link prints its URL beside it.
+  // The reply rewrites (rewrite.mjs), without colour: pi's markdown takes none, and an escape sequence would be stored.
+  // All of them only where a TUI draws the reply and the terminal draws OSC 8 links (deps.hyperlinks, pi-tui's
+  // detection from pi-entry.mjs), since elsewhere a link prints its URL beside it; there (`pi -p`, JSON, no OSC 8)
+  // secrets are still masked, plainly.
   pi.on('message_end', async (e, ctx) => {
     try {
-      if (!ctx.hasUI || !(await deps.hyperlinks?.())) return undefined
-      const message = linkMessage(e.message, repo?.links, styled(process.env))
+      const links = !!ctx.hasUI && !!(await deps.hyperlinks?.())
+      const all = settings(deps.options ?? piOptions(), process.env, false)
+      const secrets = all.f.replySecrets && { glyph: false, colour: false }
+      const o = links ? all : { ...all, f: { ...Object.fromEntries(FEATURES.map((k) => [k, null])), replySecrets: secrets } }
+      facts ??= (deps.facts ?? piFacts)(ctx.cwd)
+      const c = { repo: repo?.links ?? null, cwd: ctx.cwd, home: process.env.HOME ?? process.env.USERPROFILE, now: Date.now() }
+      const once = () => rewriteMessage(e.message, (t) => rewrite(t, o, c, facts))
+      let message = once()
+      if (facts.pending) {
+        await facts.settle(SETTLE_MS)
+        message = once()
+      }
       return message ? { message } : undefined
     } catch {
       return undefined // the session ended under us: leave the message as it is
