@@ -1,7 +1,7 @@
 {
   "name": "hud",
-  "version": "0.6.0",
-  "description": "Heads-up display for Claude Code and Copilot CLI: token-weather band with PR, git and limit forecasts, turn footer, tool rows, spinner, /weather, /subagents and /ctx panes (Claude mod), a two-line status line for both CLIs, and clickable work-item references in replies",
+  "version": "0.7.0",
+  "description": "Heads-up display for Claude Code and Copilot CLI: token-weather band with PR, git and limit forecasts, turn footer, tool rows, spinner, /weather, /subagents and /ctx panes (Claude mod), a two-line status line for both CLIs, and reply rewrites (links, paths, commits, states, pass/fail, secrets, URLs, times) in Claude Code and pi",
   "author": {
     "name": "giocaizzi",
     "url": "https://github.com/giocaizzi"
@@ -16,6 +16,183 @@
     "copilot-cli"
   ],
   "types": "./types/index.d.ts",
+  "userConfig": {
+    "glyphs": {
+      "type": "boolean",
+      "title": "Reply: glyphs",
+      "description": "Nerd Font glyphs in reply rewrites (a feature can turn its own off). NO_COLOR turns them off too.",
+      "required": false,
+      "default": true
+    },
+    "colour": {
+      "type": "boolean",
+      "title": "Reply: colour",
+      "description": "Colour in reply rewrites (a feature can turn its own off). NO_COLOR turns it off too.",
+      "required": false,
+      "default": true
+    },
+    "replySecrets": {
+      "type": "string",
+      "title": "Reply: mask secrets",
+      "description": "GitHub, OpenAI, Anthropic, AWS and Slack tokens, bearer tokens and private keys keep their prefix and lose the rest, code included. on: glyph and colour as set above; off; no-glyph; no-colour; plain (neither).",
+      "required": false,
+      "default": "on",
+      "options": [
+        "on",
+        "off",
+        "no-glyph",
+        "no-colour",
+        "plain"
+      ]
+    },
+    "replyUrls": {
+      "type": "string",
+      "title": "Reply: short URLs",
+      "description": "Long URLs drawn as owner/repo#12, group/proj!4, repo@sha, repo \u203a path:line or host and short path; the link stays. on: glyph and colour as set above; off; no-glyph; no-colour; plain (neither).",
+      "required": false,
+      "default": "on",
+      "options": [
+        "on",
+        "off",
+        "no-glyph",
+        "no-colour",
+        "plain"
+      ]
+    },
+    "replyRefs": {
+      "type": "string",
+      "title": "Reply: work-item links",
+      "description": "#123, !45, owner/repo#12 and AB#77 drawn as links to the forge of upstream, else origin. on: glyph and colour as set above; off; no-glyph; no-colour; plain (neither).",
+      "required": false,
+      "default": "on",
+      "options": [
+        "on",
+        "off",
+        "no-glyph",
+        "no-colour",
+        "plain"
+      ]
+    },
+    "replyState": {
+      "type": "string",
+      "title": "Reply: work-item state",
+      "description": "Open, merged, closed or draft glyph on a work-item reference, read from gh, glab or az and cached for the session. on: glyph and colour as set above; off; no-glyph; no-colour; plain (neither).",
+      "required": false,
+      "default": "on",
+      "options": [
+        "on",
+        "off",
+        "no-glyph",
+        "no-colour",
+        "plain"
+      ]
+    },
+    "replyPaths": {
+      "type": "string",
+      "title": "Reply: short paths",
+      "description": "Absolute paths drawn as <repo> \u203a path, <repo>[worktree] \u203a path or ~/path; only paths that exist. on: glyph and colour as set above; off; no-glyph; no-colour; plain (neither).",
+      "required": false,
+      "default": "on",
+      "options": [
+        "on",
+        "off",
+        "no-glyph",
+        "no-colour",
+        "plain"
+      ]
+    },
+    "replyFileLinks": {
+      "type": "string",
+      "title": "Reply: file links",
+      "description": "Paths and file:line[:col] made links that open the editor below; only files that exist. on: glyph and colour as set above; off; no-glyph; no-colour; plain (neither).",
+      "required": false,
+      "default": "on",
+      "options": [
+        "on",
+        "off",
+        "no-glyph",
+        "no-colour",
+        "plain"
+      ]
+    },
+    "replyCommits": {
+      "type": "string",
+      "title": "Reply: commit links",
+      "description": "Commit SHAs of the session repository drawn as links to the forge; only real commits. on: glyph and colour as set above; off; no-glyph; no-colour; plain (neither).",
+      "required": false,
+      "default": "on",
+      "options": [
+        "on",
+        "off",
+        "no-glyph",
+        "no-colour",
+        "plain"
+      ]
+    },
+    "replyTimes": {
+      "type": "string",
+      "title": "Reply: times",
+      "description": "ISO-8601 timestamps drawn as local time and how long ago. on: glyph and colour as set above; off; no-glyph; no-colour; plain (neither).",
+      "required": false,
+      "default": "on",
+      "options": [
+        "on",
+        "off",
+        "no-glyph",
+        "no-colour",
+        "plain"
+      ]
+    },
+    "replyStatus": {
+      "type": "string",
+      "title": "Reply: pass/fail",
+      "description": "pass, ok, \u2713 green; fail, error, \u2717 red; skipped, pending dim, in table cells, list items and name: status lines; counts after a table or list. on: glyph and colour as set above; off; no-glyph; no-colour; plain (neither).",
+      "required": false,
+      "default": "on",
+      "options": [
+        "on",
+        "off",
+        "no-glyph",
+        "no-colour",
+        "plain"
+      ]
+    },
+    "editor": {
+      "type": "string",
+      "title": "Reply: editor",
+      "description": "What a file link opens; custom uses the template below.",
+      "required": false,
+      "default": "vscode",
+      "options": [
+        "vscode",
+        "cursor",
+        "zed",
+        "idea",
+        "sublime",
+        "file",
+        "custom"
+      ]
+    },
+    "editorUrl": {
+      "type": "string",
+      "title": "Reply: custom editor URL",
+      "description": "For editor custom: a URL with {path} {line} {col}, e.g. nvim://open?file={path}&line={line}.",
+      "required": false,
+      "default": ""
+    },
+    "timeFormat": {
+      "type": "string",
+      "title": "Reply: time format",
+      "description": "both: 13 Oct 20:56 (5h ago); absolute; relative.",
+      "required": false,
+      "default": "both",
+      "options": [
+        "both",
+        "absolute",
+        "relative"
+      ]
+    }
+  },
   "agents": [
     "./copilot/"
   ]
