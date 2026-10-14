@@ -70,7 +70,7 @@ test('opencode: a user deny on bash skips the asks, so the guard keeps denying',
 test('opencode: a failing make check on idle is sent back once', async () => {
   const sent = []
   const client = { session: { prompt: async (p) => sent.push(p) } }
-  const hooks = await GuardPlugin({ client, directory: dir({ Makefile: 'check:\n\t@echo boom; exit 1\n' }) }, deps())
+  const hooks = await GuardPlugin({ client, directory: dir({ Makefile: 'check:\n\t@false\n' }) }, deps())
   const idle = () => hooks.event({ event: { type: 'session.idle', properties: { sessionID: 's' } } })
   await idle()
   await idle()
@@ -99,7 +99,7 @@ test('pi: deny blocks, ask confirms through the UI and blocks without one', asyn
 test('pi: a failing make check on settle is sent back once, an aborted run is left alone', async () => {
   const { handlers, sent, api } = fakePi()
   guardExtension(api, deps())
-  const ctx = { cwd: dir({ Makefile: 'check:\n\t@echo boom; exit 1\n' }) }
+  const ctx = { cwd: dir({ Makefile: 'check:\n\t@false\n' }) }
   await handlers.agent_settled({ aborted: true }, ctx)
   await handlers.agent_settled({ aborted: false }, ctx)
   await handlers.agent_settled({ aborted: false }, ctx)
