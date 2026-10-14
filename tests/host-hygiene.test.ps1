@@ -13,7 +13,7 @@ $env:HOST_HEAVY_SLOTS = '1'
 $env:HOST_CPU_CAP = '100'
 $shell = (Get-Process -Id $PID).Path
 function Invoke-Heavy([string]$Command) {
-    Start-Process $shell -ArgumentList "-NoProfile -File `"$heavy`" `"$shell`" -NoProfile -Command `"$Command`"" -PassThru
+    Start-Process $shell -ArgumentList "-NoProfile -File `"$heavy`" `"$shell`" -NoProfile -Command `"$Command`"" -WindowStyle Hidden -PassThru
 }
 $mutex1 = 'Global\host-heavy' + ($L -replace '[^A-Za-z0-9]', '_') + '-1'
 $script:fails = 0
@@ -21,7 +21,7 @@ function Test-Equal([string]$Name, $Got, $Want) {
     if ("$Got" -eq "$Want") { "ok - $Name" } else { "not ok - ${Name}: got '$Got', want '$Want'"; $script:fails++ }
 }
 function Invoke-Shell([string]$Command, [string]$Dir = $tmp) {
-    Start-Process $shell -ArgumentList '-NoProfile', '-Command', $Command -WorkingDirectory $Dir -PassThru
+    Start-Process $shell -ArgumentList '-NoProfile', '-Command', $Command -WorkingDirectory $Dir -WindowStyle Hidden -PassThru
 }
 function Get-DeadPid { $p = Invoke-Shell 'exit 0'; $p.WaitForExit(); $p.Id }
 function Invoke-SlotHolder { $h = Invoke-Shell "`$m = New-Object Threading.Mutex(`$false, '$mutex1'); [void]`$m.WaitOne(); Start-Sleep 8"; Start-Sleep 2; $h }
@@ -97,7 +97,7 @@ try {
     Test-Equal -Name '--device without device commands is refused' -Got $LASTEXITCODE -Want 2
 
     # register-service.ps1
-    $w = Start-Process $shell -ArgumentList "-NoProfile -File `"$reg`" db -- `"$shell`" -NoProfile -Command `"Start-Sleep 3`"" -PassThru
+    $w = Start-Process $shell -ArgumentList "-NoProfile -File `"$reg`" db -- `"$shell`" -NoProfile -Command `"Start-Sleep 3`"" -WindowStyle Hidden -PassThru
     Start-Sleep 2
     Test-Equal -Name 'service registered while running' -Got @(Select-String -Path (Join-Path $L "host-services/$($w.Id)") -Pattern '^name=db$').Count -Want 1
     Test-Equal -Name '--list shows it' -Got @(& $shell -NoProfile -File $reg --list | Select-String 'name=db').Count -Want 1
