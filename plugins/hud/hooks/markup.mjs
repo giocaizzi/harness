@@ -38,27 +38,49 @@ const unescape = (s) => s.replace(/\\([\\`*_{}[\]()#+\-.!|<>~])/g, '$1')
 // A link the Markdown element draws (only https, http and file; any other scheme is drawn as text).
 const LINK = /\[((?:\\.|[^\]\\\n])*)\]\(([^)\s]*)\)/
 const OTHER_SCHEME = /\]\((?!https?:|file:)[a-z][\w+.-]*:/i
-const OTHER_LINK = /\[((?:\\.|[^\]\\\n])*)\]\((?!https?:|file:)[a-z][\w+.-]*:[^)\s]*\)/gi
 const INLINE = new RegExp(`${MARK.source}|${LINK.source}|(\`+)([^\`]+?)\\5|\\*\\*(.+?)\\*\\*|(?<![\\w*])\\*(?![\\s*])(.+?)(?<![\\s*])\\*(?![\\w*])`, 'g')
 const CODE = { color: '#b4befe' } // the theme's inline code is lavender-blue
 
-// One markdown line's inline content as Text children: marked spans styled, links as Link, code, bold, italic.
-export function inline(s, el, base = {}) {
-  const out = []
+// One markdown line's inline content as flat runs { text, props, href }: marked spans styled, links with their
+// target, code, bold, italic.
+function spans(s, base = {}, href = undefined, out = []) {
   let at = 0
+  const plain = (t) => t && out.push({ text: unescape(t), props: base, href })
   for (const m of s.matchAll(INLINE)) {
-    if (m.index > at) out.push(unescape(s.slice(at, m.index)))
+    plain(s.slice(at, m.index))
     at = m.index + m[0].length
-    const [, style, marked, label, href, , code, bold, italic] = m
-    if (style !== undefined) out.push(el.Text({ ...base, ...STYLE[style], children: [unescape(marked)] }))
-    else if (href !== undefined) out.push(el.Link({ href, children: inline(label, el, base) }))
-    else if (code !== undefined) out.push(el.Text({ ...CODE, children: [code] }))
-    else if (bold !== undefined) out.push(el.Text({ ...base, bold: true, children: inline(bold, el, base) }))
-    else out.push(el.Text({ ...base, italic: true, children: inline(italic, el, base) }))
+    const [, style, marked, label, link, , code, bold, italic] = m
+    if (style !== undefined) out.push({ text: unescape(marked), props: { ...base, ...STYLE[style] }, href })
+    else if (link !== undefined) spans(label, base, link, out)
+    else if (code !== undefined) out.push({ text: code, props: CODE, href })
+    else if (bold !== undefined) spans(bold, { ...base, bold: true }, href, out)
+    else spans(italic, { ...base, italic: true }, href, out)
   }
-  if (at < s.length) out.push(unescape(s.slice(at)))
+  plain(s.slice(at))
+  return out
+}
+
+const drawRun = (r, el, base) => (r.props === base ? r.text : el.Text({ ...r.props, children: [r.text] }))
+
+// Runs as Text children: a link's runs inside one Link.
+function draw(rs, el, base = {}) {
+  const out = []
+  for (let i = 0; i < rs.length; i++) {
+    const { href } = rs[i]
+    if (!href) {
+      out.push(drawRun(rs[i], el, base))
+      continue
+    }
+    let j = i
+    while (j < rs.length && rs[j].href === href) j++
+    out.push(el.Link({ href, children: rs.slice(i, j).map((r) => drawRun(r, el, base)) }))
+    i = j - 1
+  }
   return out.length ? out : ['']
 }
+
+// One markdown line's inline content as Text children: marked spans styled, links as Link, code, bold, italic.
+export const inline = (s, el, base = {}) => draw(spans(s, base), el, base)
 
 // A line of its own: a heading bold, a list item with the engine's bullet, a quote dim, the rest inline.
 function row(line, el) {
@@ -71,6 +93,104 @@ function row(line, el) {
   return el.Text({ children: inline(line, el) })
 }
 
+// --- tables ------------------------------------------------------------------------------------------------------
+
+// Terminal cells a string takes: wide and fullwidth characters and emoji two, combining marks and joiners none, an
+// emoji presentation selector one more. An estimate the layout never depends on: each cell is a Box of its width.
+const WIDE = /[\u1100-\u115F\u2E80-\u303E\u3041-\u33FF\u3400-\u4DBF\u4E00-\u9FFF\uA000-\uA4CF\uAC00-\uD7A3\uF900-\uFAFF\uFE30-\uFE4F\uFF00-\uFF60\uFFE0-\uFFE6\u{20000}-\u{3FFFD}]|\p{Emoji_Presentation}/u
+const ZERO = /[\p{Mn}\p{Me}\u200B-\u200F\u2060\uFE00-\uFE0E]/u
+export const cellWidth = (s) => {
+  let w = 0
+  for (const ch of s) w += ch === '\uFE0F' ? 1 : ZERO.test(ch) ? 0 : WIDE.test(ch) ? 2 : 1
+  return w
+}
+
+// A table row's cells; a separator row (`|---|:-:|`) is null.
+const split = (line) => line.trim().replace(/^\|/, '').replace(/(?<!\\)\|$/, '').split(/(?<!\\)\|/).map((c) => c.trim())
+const cells = (line) => (SEPARATOR.test(line) && line.includes('-') ? null : split(line))
+const ALIGN = { left: 'flex-start', center: 'center', right: 'flex-end' }
+const alignOf = (sep) => (/^:-+:$/.test(sep) ? 'center' : /-:$/.test(sep) ? 'right' : 'left')
+
+// Runs wrapped into lines of at most `width` cells: at spaces, a word wider than the line split by character.
+function wrap(rs, width) {
+  const lines = [[]]
+  let used = 0
+  const put = (r, text) => {
+    const line = lines.at(-1)
+    const last = line.at(-1)
+    if (last && last.props === r.props && last.href === r.href) last.text += text
+    else line.push({ ...r, text })
+    used += cellWidth(text)
+  }
+  for (const r of rs) {
+    for (const word of r.text.split(/(\s+)/)) {
+      if (!word) continue
+      const w = cellWidth(word)
+      if (/^\s/.test(word)) {
+        if (used && used + w <= width) put(r, word)
+        continue
+      }
+      if (used && used + w > width) {
+        lines.push([])
+        used = 0
+      }
+      for (const ch of w > width ? [...word] : [word]) {
+        if (used && used + cellWidth(ch) > width) {
+          lines.push([])
+          used = 0
+        }
+        put(r, ch)
+      }
+    }
+  }
+  for (const line of lines) while (line.length && /^\s*$/.test(line.at(-1).text)) line.pop()
+  return lines
+}
+
+// A markdown table drawn as the engine draws one, its cells keeping their colour and links. Columns take their widest
+// cell, and when the table is wider than the room the widest give way, their cells wrapping. Every line of a row is a
+// Box row of fixed-width cell Boxes, so the borders stay straight whatever a cell's characters measure.
+function table(lines, el, room) {
+  const rows = lines.map(cells)
+  const sep = lines.find((_l, i) => rows[i] === null)
+  const body = rows.filter(Boolean)
+  const n = Math.max(...body.map((r) => r.length))
+  const aligns = sep ? split(sep).map(alignOf) : []
+  const content = rows.map((r, i) => r && Array.from({ length: n }, (_, c) => spans(r[c] ?? '', i === 0 && rows[1] === null ? { bold: true } : {})))
+  const natural = (rs) => rs.reduce((w, r) => w + cellWidth(r.text), 0)
+  const longest = (rs) => Math.max(1, ...rs.flatMap((r) => r.text.split(/\s+/).map(cellWidth)))
+  const w = Array.from({ length: n }, (_, c) => Math.max(1, ...content.filter(Boolean).map((r) => natural(r[c]))))
+  const floor = w.map((x, c) => Math.min(x, Math.max(3, Math.min(12, Math.max(...content.filter(Boolean).map((r) => longest(r[c])))))))
+  const avail = room ? room - (3 * n + 1) : Infinity
+  while (w.reduce((a, b) => a + b, 0) > avail) {
+    const c = w.reduce((best, x, i) => (x > floor[i] && (best < 0 || x > w[best]) ? i : best), -1)
+    if (c < 0) break
+    w[c]--
+  }
+  const dim = (s) => el.Text({ dimColor: true, children: [s] })
+  const rule = (l, m, r) => dim(l + w.map((x) => '─'.repeat(x + 2)).join(m) + r)
+  const out = [rule('┌', '┬', '┐')]
+  for (const r of content) {
+    if (!r) {
+      out.push(rule('├', '┼', '┤'))
+      continue
+    }
+    const wrapped = r.map((rs, c) => wrap(rs, w[c]))
+    const height = Math.max(...wrapped.map((l) => l.length))
+    for (let k = 0; k < height; k++) {
+      const kids = [dim('│ ')]
+      wrapped.forEach((ls, c) => {
+        const line = ls[k] ?? []
+        kids.push(el.Box({ width: w[c], flexShrink: 0, justifyContent: ALIGN[aligns[c] ?? 'left'], children: [el.Text({ wrap: 'truncate-end', children: draw(line, el) })] }))
+        kids.push(dim(c < n - 1 ? ' │ ' : ' │'))
+      })
+      out.push(el.Box({ flexDirection: 'row', children: kids }))
+    }
+  }
+  out.push(rule('└', '┴', '┘'))
+  return out
+}
+
 const FENCE = /^ {0,3}(```|~~~)/
 const isTable = (l) => /^\s*\|/.test(l)
 // A table row without the leading pipe, whose header the separator row below makes a table.
@@ -79,9 +199,10 @@ const startsTable = (lines, i) => isTable(lines[i]) || (/(?<!\\)\|/.test(lines[i
 const own = (l) => l.includes(OPEN) || OTHER_SCHEME.test(l)
 
 // The reply drawn as the engine would, but each line with a marked span (or a link the Markdown element would not
-// draw) as a Text row of its own; a table stays markdown, its marks dropped. null when nothing needs it: the
-// caller then hands the engine the text. first: the reply's opening block, which carries the `⏺` bullet.
-export function toTree(text, el, { first = false } = {}) {
+// draw) as a Text row of its own, and a table holding one as a table of our own. null when nothing needs it: the
+// caller then hands the engine the text. first: the reply's opening block, which carries the `⏺` bullet; columns:
+// the viewport's width, which the table fits (less the two-column gutter).
+export function toTree(text, el, { first = false, columns = 0 } = {}) {
   if (!text.includes(OPEN)) return null
   const lines = text.split('\n')
   const blocks = []
@@ -107,9 +228,11 @@ export function toTree(text, el, { first = false } = {}) {
     if (startsTable(lines, i)) {
       let j = i + 1
       while (j < lines.length && lines[j].trim() && /(?<!\\)\|/.test(lines[j])) j++
-      // Tables stay the engine's: it measures cells in terminal columns and fits the table to the terminal, which a
-      // tree of our own cannot know. So a table loses its colour, and a link the engine would not draw keeps its label.
-      md.push(...lines.slice(i, j).map((t) => unmark(t).replace(OTHER_LINK, '$1')))
+      const t = lines.slice(i, j)
+      if (t.some(own)) {
+        flush()
+        blocks.push(...table(t, el, columns && columns - 2))
+      } else md.push(...t)
       i = j - 1
       continue
     }
