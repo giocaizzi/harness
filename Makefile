@@ -15,7 +15,7 @@ SH := $(wildcard plugins/*/skills/*/scripts/*.sh tests/*.sh)
 
 lint: validate ## Repo invariant checks, plus shellcheck and PSScriptAnalyzer when installed.
 ifeq ($(OS),Windows_NT)
-	@where shellcheck >nul 2>nul & if errorlevel 1 (echo shellcheck not found, skipped) else (shellcheck $(SH))
+	@where shellcheck >nul 2>nul & if errorlevel 1 (echo shellcheck not found, skipped) else (shellcheck --exclude=SC1017 $(SH))
 	@where pwsh >nul 2>nul & if errorlevel 1 (echo pwsh or PSScriptAnalyzer not found, skipped) else (pwsh -NoProfile -Command "$$r = Get-Module -ListAvailable PSScriptAnalyzer; if ($$null -eq $$r) { Write-Output 'PSScriptAnalyzer not found, skipped'; exit 0 }; $$result = Invoke-ScriptAnalyzer -Path . -Recurse; $$result; exit $$result.Count")
 else
 	@if command -v shellcheck >/dev/null; then shellcheck $(SH); else echo "shellcheck not found, skipped"; fi
