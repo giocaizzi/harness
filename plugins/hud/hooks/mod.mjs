@@ -284,7 +284,7 @@ export function register(on, options = {}) {
       })
     }
     if (text === e.props.text) return next(e)
-    return toTree(text, $.ui.resolve(e), { first: e.props.isFirstOfReply }) ?? next({ ...e, props: { ...e.props, text } })
+    return toTree(text, $.ui.resolve(e), { first: e.props.isFirstOfReply, columns: e.viewport?.columns }) ?? next({ ...e, props: { ...e.props, text } })
   })
 
   // /weather: the history at full size.
