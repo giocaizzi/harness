@@ -38,6 +38,7 @@ const unescape = (s) => s.replace(/\\([\\`*_{}[\]()#+\-.!|<>~])/g, '$1')
 // A link the Markdown element draws (only https, http and file; any other scheme is drawn as text).
 const LINK = /\[((?:\\.|[^\]\\\n])*)\]\(([^)\s]*)\)/
 const OTHER_SCHEME = /\]\((?!https?:|file:)[a-z][\w+.-]*:/i
+const OTHER_LINK = /\[((?:\\.|[^\]\\\n])*)\]\((?!https?:|file:)[a-z][\w+.-]*:[^)\s]*\)/gi
 const INLINE = new RegExp(`${MARK.source}|${LINK.source}|(\`+)([^\`]+?)\\5|\\*\\*(.+?)\\*\\*|(?<![\\w*])\\*(?![\\s*])(.+?)(?<![\\s*])\\*(?![\\w*])`, 'g')
 const CODE = { color: '#b4befe' } // the theme's inline code is lavender-blue
 
@@ -59,35 +60,6 @@ export function inline(s, el, base = {}) {
   return out.length ? out : ['']
 }
 
-// Cells of a table row; a separator row (`|---|:-:|`) is null.
-const cells = (line) => {
-  if (/^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/.test(line)) return null
-  return line.trim().replace(/^\|/, '').replace(/(?<!\\)\|$/, '').split(/(?<!\\)\|/).map((c) => c.trim())
-}
-// Columns a cell takes once drawn: markers, link targets, emphasis and escapes are not drawn.
-const width = (s) => [...unescape(unmark(s).replace(LINK, '$1').replace(/\*\*|`/g, ''))].length
-
-function table(lines, el) {
-  const rows = lines.map(cells)
-  const body = rows.filter(Boolean)
-  const n = Math.max(...body.map((r) => r.length))
-  const w = Array.from({ length: n }, (_, i) => Math.max(...body.map((r) => width(r[i] ?? ''))))
-  const rule = (l, m, r) => el.Text({ dimColor: true, children: [l + w.map((x) => '─'.repeat(x + 2)).join(m) + r] })
-  const out = [rule('┌', '┬', '┐')]
-  rows.forEach((r, i) => {
-    if (!r) return void out.push(rule('├', '┼', '┤'))
-    const head = i === 0 && rows[1] === null
-    const kids = [el.Text({ dimColor: true, children: ['│'] })]
-    for (let c = 0; c < n; c++) {
-      const v = r[c] ?? ''
-      kids.push(' ', ...inline(v, el, head ? { bold: true } : {}), ' '.repeat(w[c] - width(v) + 1), el.Text({ dimColor: true, children: ['│'] }))
-    }
-    out.push(el.Text({ children: kids }))
-  })
-  out.push(rule('└', '┴', '┘'))
-  return out
-}
-
 // A line of its own: a heading bold, a list item with the engine's bullet, a quote dim, the rest inline.
 function row(line, el) {
   const h = /^ {0,3}#{1,6}\s+(.*)$/.exec(line)
@@ -101,10 +73,13 @@ function row(line, el) {
 
 const FENCE = /^ {0,3}(```|~~~)/
 const isTable = (l) => /^\s*\|/.test(l)
+// A table row without the leading pipe, whose header the separator row below makes a table.
+const SEPARATOR = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/
+const startsTable = (lines, i) => isTable(lines[i]) || (/(?<!\\)\|/.test(lines[i]) && SEPARATOR.test(lines[i + 1] ?? '') && lines[i + 1].includes('|'))
 const own = (l) => l.includes(OPEN) || OTHER_SCHEME.test(l)
 
 // The reply drawn as the engine would, but each line with a marked span (or a link the Markdown element would not
-// draw) as a Text row of its own, and a table holding one as a table of Text rows. null when nothing needs it: the
+// draw) as a Text row of its own; a table stays markdown, its marks dropped. null when nothing needs it: the
 // caller then hands the engine the text. first: the reply's opening block, which carries the `⏺` bullet.
 export function toTree(text, el, { first = false } = {}) {
   if (!text.includes(OPEN)) return null
@@ -129,14 +104,12 @@ export function toTree(text, el, { first = false } = {}) {
       md.push(l)
       continue
     }
-    if (isTable(l)) {
-      let j = i
-      while (j < lines.length && isTable(lines[j])) j++
-      const t = lines.slice(i, j)
-      if (t.some(own)) {
-        flush()
-        blocks.push(...table(t, el))
-      } else md.push(...t)
+    if (startsTable(lines, i)) {
+      let j = i + 1
+      while (j < lines.length && lines[j].trim() && /(?<!\\)\|/.test(lines[j])) j++
+      // Tables stay the engine's: it measures cells in terminal columns and fits the table to the terminal, which a
+      // tree of our own cannot know. So a table loses its colour, and a link the engine would not draw keeps its label.
+      md.push(...lines.slice(i, j).map((t) => unmark(t).replace(OTHER_LINK, '$1')))
       i = j - 1
       continue
     }

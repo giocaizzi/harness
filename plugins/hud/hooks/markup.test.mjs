@@ -36,9 +36,11 @@ test('toTree: null without a mark; marked lines are rows, the rest the engine Ma
   assert.equal(toTree(mark('ok', 'x'), el).children[0].children[0], '  ') // not the reply's first block: no bullet
 })
 
-test('toTree: a table with a mark is drawn as rows of cells, padded to the widest', () => {
-  const t = toTree(['| check | result |', '|---|---|', `| lint | ${mark('ok', '✓')} |`, `| \`e2e\` | ${mark('bad', '✗ failed')} |`].join('\n'), el)
-  assert.equal(draw(t.children[1]), ['┌───────┬──────────┐', '│ check │ result   │', '├───────┼──────────┤', '│ lint  │ ✓        │', '│ e2e   │ ✗ failed │', '└───────┴──────────┘'].join('\n'))
-  // A table without a mark stays markdown.
+test('toTree: a table stays markdown, its marks dropped and links the engine would not draw reduced to labels', () => {
+  const t = toTree(['| check | result |', '|:-:|---|', `| lint | ${mark('ok', '✓')} |`, `| [${mark('name', 'a.ts')}](vscode://file/a.ts) | [x](https://x.y) |`].join('\n'), el)
+  assert.equal(draw(t.children[1]), 'md(| check | result |\n|:-:|---|\n| lint | ✓ |\n| a.ts | [x](https://x.y) |)')
+  // Without the leading pipe too: the separator row makes it a table.
+  assert.equal(draw(toTree(`a | b\n--- | ---\nlint | ${mark('bad', '✗')}`, el).children[1]), 'md(a | b\n--- | ---\nlint | ✗)')
+  // The rest of the reply is still drawn as rows.
   assert.equal(draw(toTree(`${mark('ok', 'x')}\n\n| a |\n|---|\n| b |`, el).children[1]), 'x\n \nmd(| a |\n|---|\n| b |)')
 })

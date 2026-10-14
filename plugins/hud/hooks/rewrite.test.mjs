@@ -266,6 +266,19 @@ test('the pipeline: every feature at once, and fenced code untouched', async () 
   assert.equal(rewrite('', settings(), {}, facts), '')
 })
 
+test('a table drawn in characters is left as written, its paragraph whole; secrets are still masked', async () => {
+  const o = { opts: { ...plain, replyTimes: 'on', replyStatus: 'on' }, commits: ['e1500fb'] }
+  const ascii = '+------+---------+--------+\n| lint | e1500fb | passed |\n| e2e  | #2      | failed |\n+------+---------+--------+'
+  const box = '┌──────┬─────────┐\n│ lint │ passed  │\n├──────┼─────────┤\n│ docs │ e1500fb │\n└──────┴─────────┘'
+  const bare = '│ /home/me/code/r/src/app.ts │ ok │'
+  for (const t of [ascii, box, bare]) assert.equal((await go(t, o)).text, t, t)
+  // Only that paragraph: the text after a blank line is rewritten, the key inside is masked.
+  const { text } = await go(`${box}\n│ ghp_${'a'.repeat(36)} │\n\nsee e1500fb`, o)
+  assert.equal(text, `${box}\n│ ghp_•••••••• │\n\nsee [e1500fb](https://github.com/o/r/commit/e1500fb)`)
+  // A markdown separator row or a rule is no drawn table.
+  assert.equal((await go('| a |\n|---|\n| passed |\n\n---\n- e1500fb', o)).text, '| a |\n|---|\n| passed |\n\n---\n- [e1500fb](https://github.com/o/r/commit/e1500fb)')
+})
+
 test('createFacts: one lookup per key, undefined until known, a failing reader is null', async () => {
   let calls = 0
   const f = createFacts({ stat: async () => (calls++, 'file'), commit: async () => { throw new Error('no git') } })
