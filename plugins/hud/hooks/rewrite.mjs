@@ -56,23 +56,40 @@ const FENCE = /^ {0,3}(```|~~~)/
 // and spans another transform marked.
 const PROTECT = /(`+)[^`]*?\1|\[(?:\\.|[^\]\\\n])*\]\([^)\n]*\)|<[a-z][\w+.-]*:[^>\n]*>|\b[a-z][\w+.-]*:\/\/[^\s)>]+|﷐[^﷒]*﷒/g
 
-// Each line outside fenced code through fn(line).
-function lines(text, fn) {
+// A table already drawn in characters (`+---+`, `┌──┬──┐`, `│ a │`): its columns are padded to the text as written.
+const BORDER = /^\s*[+┌├└╭╰┏┣┗╔╠╚╒╞╘][-─━═=+┬┼┴┐┤┘╮╯┓┫┛╗╣╝╤╪╧┳╋┻╦╬╩ ]*$/
+const BOXED = /^\s*[│┃║]/
+// The lines left as written: fenced code (also an unclosed fence, while a reply streams in) and each paragraph
+// holding a drawn table, whose columns a rewrite of another width would shift.
+export function kept(text) {
+  const all = text.split('\n')
+  const keep = all.map(() => false)
   let fence = null
-  return text
-    .split('\n')
-    .map((l) => {
-      const f = FENCE.exec(l)?.[1]
-      if (fence) {
-        if (f === fence) fence = null
-        return l
-      }
-      if (f) {
-        fence = f
-        return l
-      }
-      return fn(l)
-    })
+  let start = 0
+  let drawn = false
+  const end = (i) => {
+    if (drawn) keep.fill(true, start, i)
+    start = i + 1
+    drawn = false
+  }
+  all.forEach((l, i) => {
+    const f = FENCE.exec(l)?.[1]
+    if (fence || f) {
+      if (fence && f === fence) fence = null
+      else if (!fence) fence = f
+      keep[i] = true
+      end(i)
+    } else if (!l.trim()) end(i)
+    else if ((BORDER.test(l) && /[-─━═]{3}/.test(l)) || BOXED.test(l)) drawn = true
+  })
+  end(all.length)
+  return all.map((l, i) => [l, keep[i]])
+}
+
+// Each line but the kept ones through fn(line).
+function lines(text, fn) {
+  return kept(text)
+    .map(([l, keep]) => (keep ? l : fn(l)))
     .join('\n')
 }
 
@@ -424,13 +441,11 @@ function status(text, ft) {
     if (n && n.ok + n.bad + n.skip >= 2) out.push('', summary(n, ft))
     n = null
   }
-  let fence = null
   let kind = null
-  for (const line of text.split('\n')) {
-    const f = FENCE.exec(line)?.[1]
-    if (fence || f) {
-      if (fence && f === fence) fence = null
-      else if (!fence) fence = f
+  for (const [line, keep] of kept(text)) {
+    if (keep) {
+      close()
+      kind = null
       out.push(line)
       continue
     }

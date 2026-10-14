@@ -293,6 +293,26 @@ test("a reply's #N is a coloured link with its glyph, and a secret is masked", a
   }
 })
 
+// Tables stay the engine's, which fits them to the terminal: a markdown table loses its colour but keeps its links,
+// and a table already drawn in characters is left as written.
+test('a markdown table in a coloured reply is drawn by the engine; a drawn table is left as written', async ($, on) => {
+  mock.clock(on)
+  mock.env(on, {})
+  remote(on)
+  await $.session.start({ cwd: '/r' })
+  const md = 'Fixed in #12.\n\n| issue | check |\n|---|---|\n| #12 | passed |\n| #13 | failed |'
+  let ui = await $.ui.mount({ plugin: 'hud', surface: 'terminal', component: 'AssistantMessage', props: { text: md, isFirstOfReply: true } })
+  const table = await ui.find({ type: 'Markdown', text: /^\| issue \| check \|/ })
+  expect(table?.props.text).toBe('| issue | check |\n|---|---|\n| [ #12](https://github.com/o/r/issues/12) | ✓ passed |\n| [ #13](https://github.com/o/r/issues/13) | ✗ failed |')
+  expect(await ui.find({ type: 'Text', text: /┌/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Link' })).toBeDefined() // the line above the table is still a row of our own
+  await ui.unmount()
+  const drawn = '+-----+--------+\n| #12 | passed |\n+-----+--------+'
+  ui = await $.ui.mount({ plugin: 'hud', surface: 'terminal', component: 'AssistantMessage', props: { text: drawn, isFirstOfReply: true } })
+  expect(await ui.find({ type: 'Markdown', text: drawn })).toBeDefined()
+  await ui.unmount()
+})
+
 const OFF = Object.fromEntries(['replyRefs', 'replyState', 'replySecrets', 'replyUrls', 'replyPaths', 'replyFileLinks', 'replyCommits', 'replyTimes', 'replyStatus'].map((k) => [k, 'off']))
 test('with every reply feature off the reply is left to the engine', { options: OFF }, async ($, on) => {
   mock.clock(on)
