@@ -12,6 +12,9 @@ $env:HOST_DISK_FLOOR_GB = '0'
 $env:HOST_HEAVY_SLOTS = '1'
 $env:HOST_CPU_CAP = '100'
 $shell = (Get-Process -Id $PID).Path
+function Invoke-Heavy([string]$Command) {
+    Start-Process $shell -ArgumentList "-NoProfile -File `"$heavy`" `"$shell`" -NoProfile -Command `"$Command`"" -PassThru
+}
 $mutex1 = 'Global\host-heavy' + ($L -replace '[^A-Za-z0-9]', '_') + '-1'
 $script:fails = 0
 function Test-Equal([string]$Name, $Got, $Want) {
@@ -28,17 +31,17 @@ try {
     # heavy.ps1
     $slow = "Add-Content '$log' start; Start-Sleep 2; Add-Content '$log' end"
     $fast = "Add-Content '$log' start; Add-Content '$log' end"
-    $a = Start-Process $shell -ArgumentList '-NoProfile', '-File', $heavy, $shell, '-NoProfile', '-Command', $slow -PassThru
+    $a = Invoke-Heavy $slow
     Start-Sleep -Milliseconds 1000
-    $b = Start-Process $shell -ArgumentList '-NoProfile', '-File', $heavy, $shell, '-NoProfile', '-Command', $fast -PassThru
+    $b = Invoke-Heavy $fast
     $a, $b | Wait-Process
     Test-Equal -Name 'one slot: concurrent runs serialize' -Got ((Get-Content $log) -join ' ') -Want 'start end start end'
 
     Remove-Item $log
     $env:HOST_HEAVY_SLOTS = '2'
-    $a = Start-Process $shell -ArgumentList '-NoProfile', '-File', $heavy, $shell, '-NoProfile', '-Command', $slow -PassThru
+    $a = Invoke-Heavy $slow
     Start-Sleep -Milliseconds 1000
-    $b = Start-Process $shell -ArgumentList '-NoProfile', '-File', $heavy, $shell, '-NoProfile', '-Command', $fast -PassThru
+    $b = Invoke-Heavy $fast
     $a, $b | Wait-Process
     $env:HOST_HEAVY_SLOTS = '1'
     Test-Equal -Name 'two slots: runs overlap' -Got ((Get-Content $log) -join ' ') -Want 'start start end end'
@@ -94,7 +97,7 @@ try {
     Test-Equal -Name '--device without device commands is refused' -Got $LASTEXITCODE -Want 2
 
     # register-service.ps1
-    $w = Start-Process $shell -ArgumentList '-NoProfile', '-File', $reg, 'db', '--', $shell, '-NoProfile', '-Command', 'Start-Sleep 3' -PassThru
+    $w = Start-Process $shell -ArgumentList "-NoProfile -File `"$reg`" db -- `"$shell`" -NoProfile -Command `"Start-Sleep 3`"" -PassThru
     Start-Sleep 2
     Test-Equal -Name 'service registered while running' -Got @(Select-String -Path (Join-Path $L "host-services/$($w.Id)") -Pattern '^name=db$').Count -Want 1
     Test-Equal -Name '--list shows it' -Got @(& $shell -NoProfile -File $reg --list | Select-String 'name=db').Count -Want 1
