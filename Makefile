@@ -14,16 +14,30 @@ check: lint test ## Standard entrypoint: lint + test.
 SH := $(wildcard plugins/*/skills/*/scripts/*.sh tests/*.sh)
 
 lint: validate ## Repo invariant checks, plus shellcheck and PSScriptAnalyzer when installed.
+ifeq ($(OS),Windows_NT)
+	@where shellcheck >nul 2>nul & if errorlevel 1 (echo shellcheck not found, skipped) else (shellcheck $(SH))
+	@where pwsh >nul 2>nul & if errorlevel 1 (echo pwsh or PSScriptAnalyzer not found, skipped) else (pwsh -NoProfile -Command "$$r = Get-Module -ListAvailable PSScriptAnalyzer; if ($$null -eq $$r) { Write-Output 'PSScriptAnalyzer not found, skipped'; exit 0 }; $$result = Invoke-ScriptAnalyzer -Path . -Recurse; $$result; exit $$result.Count")
+else
 	@if command -v shellcheck >/dev/null; then shellcheck $(SH); else echo "shellcheck not found, skipped"; fi
 	@if command -v pwsh >/dev/null && pwsh -NoProfile -Command 'exit !(Get-Module -ListAvailable PSScriptAnalyzer)'; then \
 		pwsh -NoProfile -Command '$$r = Invoke-ScriptAnalyzer -Path . -Recurse; $$r; exit $$r.Count'; \
 	else echo "pwsh or PSScriptAnalyzer not found, skipped"; fi
+endif
 
 test: ## Run the plugins' hook tests (Node 22+), their mod tests (`claude plugin test`), then the skill script tests.
 	@node --test $(wildcard plugins/*/core/*.test.mjs plugins/*/hooks/*.test.mjs plugins/*/pi/*.test.mjs tests/*.test.mjs)
-	@for d in $(sort $(dir $(patsubst %/,%,$(dir $(wildcard plugins/*/tests/*.test.ts))))); do claude plugin test $$d || exit 1; done
+ifeq ($(OS),Windows_NT)
+	@pwsh -NoProfile -Command "$$env:CLAUDE_CODE_ENABLE_FUNCTION_HOOKS = '1'; $$dirs = Get-ChildItem -Path plugins -Recurse -Filter *.test.ts | ForEach-Object { Split-Path $$_.DirectoryName -Parent } | Sort-Object -Unique; foreach ($$dir in $$dirs) { claude plugin test $$dir; if ($$LASTEXITCODE -ne 0) { exit $$LASTEXITCODE } }"
+else
+	@for d in $(sort $(patsubst %/tests/,%,$(dir $(wildcard plugins/*/tests/*.test.ts)))); do CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1 claude plugin test $$d || exit 1; done
+endif
+ifeq ($(OS),Windows_NT)
+	@where bash >nul 2>nul & if errorlevel 1 (echo bash not found, host-hygiene .sh tests skipped) else (bash tests/host-hygiene.test.sh)
+	@where pwsh >nul 2>nul & if errorlevel 1 (echo pwsh not found, host-hygiene .ps1 tests skipped) else (pwsh -NoProfile -File tests/host-hygiene.test.ps1)
+else
 	@bash tests/host-hygiene.test.sh
 	@if command -v pwsh >/dev/null; then pwsh -NoProfile -File tests/host-hygiene.test.ps1; else echo "pwsh not found, host-hygiene .ps1 tests skipped"; fi
+endif
 
 e2e: ## Drive each installed harness CLI (Codex, opencode, pi) against a scripted model in a throwaway home.
 	@node tests/e2e/run.mjs

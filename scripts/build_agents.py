@@ -56,7 +56,7 @@ PLUGINS_ROOT = REPO_ROOT / "plugins"
 def _load_yaml(path: Path) -> dict:
     if not path.exists():
         return {}
-    data = yaml.safe_load(path.read_text()) or {}
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     if not isinstance(data, dict):
         raise ValueError(f"{path}: expected a YAML mapping, got {type(data).__name__}")
     return data
@@ -106,7 +106,7 @@ def _build_agent(name: str, *, check: bool) -> bool:
     copilot_overrides = _load_yaml(src / "copilot.yaml")
     codex_overrides = _load_yaml(src / "codex.yaml")
     opencode_overrides = _load_yaml(src / "opencode.yaml")
-    body = (src / "body.md").read_text()
+    body = (src / "body.md").read_text(encoding="utf-8")
 
     if shared.get("name") != name:
         print(f"ERROR: {name}: agent.yaml `name` ({shared.get('name')!r}) must match dir name", file=sys.stderr)
@@ -139,12 +139,12 @@ def _build_agent(name: str, *, check: bool) -> bool:
     for path, content in targets.items():
         rel = path.relative_to(REPO_ROOT)
         if check:
-            if not path.exists() or path.read_text() != content:
+            if not path.exists() or path.read_text(encoding="utf-8") != content:
                 print(f"  OUT OF SYNC: {rel}", file=sys.stderr)
                 ok = False
         else:
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(content)
+            path.write_text(content, encoding="utf-8")
             print(f"  written: {rel}")
     return ok
 
@@ -155,22 +155,22 @@ def _build_agent(name: str, *, check: bool) -> bool:
 def _sync(path: Path, content: str, *, check: bool) -> bool:
     rel = path.relative_to(REPO_ROOT)
     if check:
-        if not path.exists() or path.read_text() != content:
+        if not path.exists() or path.read_text(encoding="utf-8") != content:
             print(f"  OUT OF SYNC: {rel}", file=sys.stderr)
             return False
         return True
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content)
+    path.write_text(content, encoding="utf-8")
     print(f"  written: {rel}")
     return True
 
 
 def _build_codex(plugin_dir: Path, *, check: bool) -> bool:
-    data = json.loads((plugin_dir / ".claude-plugin" / "plugin.json").read_text())
+    data = json.loads((plugin_dir / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
     hooks_file = plugin_dir / "hooks" / "hooks.json"
     ok = True
     if hooks_file.exists():
-        hooks = json.loads(hooks_file.read_text())
+        hooks = json.loads(hooks_file.read_text(encoding="utf-8"))
         codex_hooks = {k: v for k, v in hooks.items() if k != "modules"}
         codex_hooks.setdefault("hooks", {})
         for groups in codex_hooks["hooks"].values():
@@ -180,7 +180,7 @@ def _build_codex(plugin_dir: Path, *, check: bool) -> bool:
                         hook["command"] += " --no-ask"
         codex_only = plugin_dir / "hooks" / "codex-only.json"
         if codex_only.exists():
-            for event, groups in json.loads(codex_only.read_text())["hooks"].items():
+            for event, groups in json.loads(codex_only.read_text(encoding="utf-8"))["hooks"].items():
                 codex_hooks["hooks"].setdefault(event, []).extend(groups)
         ok =_sync(plugin_dir / "hooks" / "codex.json", json.dumps(codex_hooks, indent=2) + "\n", check=check)
         data = {**data, "hooks": "./hooks/codex.json"}
@@ -194,18 +194,18 @@ def _build_copilot_manifest(plugin_dir: Path, *, check: bool) -> bool:
         print(f"ERROR: {claude_manifest.relative_to(REPO_ROOT)}: missing (cannot derive Copilot manifest)", file=sys.stderr)
         return False
 
-    data = json.loads(claude_manifest.read_text())
+    data = json.loads(claude_manifest.read_text(encoding="utf-8"))
     copilot_data = {**data, "agents": ["./copilot/"]}
     content = json.dumps(copilot_data, indent=2) + "\n"
 
     rel = copilot_manifest.relative_to(REPO_ROOT)
     if check:
-        if not copilot_manifest.exists() or copilot_manifest.read_text() != content:
+        if not copilot_manifest.exists() or copilot_manifest.read_text(encoding="utf-8") != content:
             print(f"  OUT OF SYNC: {rel}", file=sys.stderr)
             return False
     else:
         copilot_manifest.parent.mkdir(parents=True, exist_ok=True)
-        copilot_manifest.write_text(content)
+        copilot_manifest.write_text(content, encoding="utf-8")
         print(f"  written: {rel}")
     return True
 

@@ -54,14 +54,14 @@ class Reporter:
         self.errors.append(msg)
 
     def section(self, title: str) -> None:
-        print(f"\n▸ {title}")
+        print(f"\n> {title}")
 
     def ok(self, msg: str) -> None:
-        print(f"  ✓ {msg}")
+        print(f"  OK {msg}")
 
 
 def _load_json(path: Path) -> dict:
-    return json.loads(path.read_text())
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def _load_toml(path: Path) -> dict:
@@ -77,6 +77,8 @@ def _run_claude_validate(target: Path) -> tuple[bool, str]:
         ["claude", "plugin", "validate", str(target)],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
     )
     return result.returncode == 0, (result.stdout + result.stderr).strip()
 
@@ -84,7 +86,7 @@ def _run_claude_validate(target: Path) -> tuple[bool, str]:
 def check_native_validator(r: Reporter) -> None:
     r.section("Native `claude plugin validate`")
     if shutil.which("claude") is None:
-        r.fail("claude CLI not found on PATH — install Claude Code to run native plugin validation")
+        r.fail("claude CLI not found on PATH - install Claude Code to run native plugin validation")
         return
 
     for plugin_dir in _discover_plugins():
@@ -115,14 +117,14 @@ def check_repo_specific_manifests(r: Reporter) -> None:
         except json.JSONDecodeError:
             continue
         if "skills" in data:
-            r.fail(f"{rel}: contains `skills` field — Claude Code rejects this; remove it (auto-discovery works for both harnesses)")
+            r.fail(f"{rel}: contains `skills` field - Claude Code rejects this; remove it (auto-discovery works for both harnesses)")
         if "agents" in data:
-            r.fail(f"{rel}: contains `agents` field — Claude Code reads this manifest; it must auto-discover the agents/ dir. The `agents` override belongs in .github/plugin/plugin.json (Copilot).")
+            r.fail(f"{rel}: contains `agents` field - Claude Code reads this manifest; it must auto-discover the agents/ dir. The `agents` override belongs in .github/plugin/plugin.json (Copilot).")
 
         copilot_manifest = plugin_dir / ".github" / "plugin" / "plugin.json"
         crel = copilot_manifest.relative_to(REPO_ROOT)
         if not copilot_manifest.exists():
-            r.fail(f"{crel}: missing — Copilot CLI needs this manifest (run `make build`)")
+            r.fail(f"{crel}: missing - Copilot CLI needs this manifest (run `make build`)")
             continue
         try:
             cdata = _load_json(copilot_manifest)
@@ -130,14 +132,14 @@ def check_repo_specific_manifests(r: Reporter) -> None:
             r.fail(f"{crel}: invalid JSON: {e}")
             continue
         if cdata.get("version") != data.get("version"):
-            r.fail(f"{crel}: version drift vs .claude-plugin/plugin.json ({cdata.get('version')!r} vs {data.get('version')!r}) — run `make build`")
+            r.fail(f"{crel}: version drift vs .claude-plugin/plugin.json ({cdata.get('version')!r} vs {data.get('version')!r}) - run `make build`")
         if cdata.get("agents") != ["./copilot/"]:
             r.fail(f"{crel}: must contain `\"agents\": [\"./copilot/\"]` so Copilot CLI scans the copilot/ dir (got {cdata.get('agents')!r})")
         r.ok(f"{plugin_dir.name} (Claude + Copilot manifests)")
 
 
 def check_marketplace(r: Reporter) -> None:
-    r.section("Marketplace ↔ plugins sync")
+    r.section("Marketplace <-> plugins sync")
     if not MARKETPLACE.exists():
         r.fail(f"{MARKETPLACE.relative_to(REPO_ROOT)}: missing")
         return
@@ -199,11 +201,11 @@ def check_repo_version_sync(r: Reporter) -> None:
 
 
 def check_readme(r: Reporter) -> None:
-    r.section("Root README ↔ plugins sync")
+    r.section("Root README <-> plugins sync")
     if not README.exists():
         r.fail("README.md: missing")
         return
-    text = README.read_text()
+    text = README.read_text(encoding="utf-8")
 
     for plugin_dir in _discover_plugins():
         name = plugin_dir.name
@@ -213,16 +215,16 @@ def check_readme(r: Reporter) -> None:
         if f"plugins/{name}/README.md" not in text:
             r.fail(f"README.md must link to plugins/{name}/README.md")
             continue
-        r.ok(f"root → {name}")
+        r.ok(f"root -> {name}")
 
-    r.section("Per-plugin README ↔ skills/agents sync")
+    r.section("Per-plugin README <-> skills/agents sync")
     for plugin_dir in _discover_plugins():
         readme = plugin_dir / "README.md"
         rel = readme.relative_to(REPO_ROOT)
         if not readme.exists():
-            r.fail(f"{rel}: missing — every plugin must ship a README.md")
+            r.fail(f"{rel}: missing - every plugin must ship a README.md")
             continue
-        ptext = readme.read_text()
+        ptext = readme.read_text(encoding="utf-8")
 
         skills_dir = plugin_dir / "skills"
         if skills_dir.exists():
@@ -230,7 +232,7 @@ def check_readme(r: Reporter) -> None:
                 if f"`{skill}`" not in ptext:
                     r.fail(f"{rel}: missing row for skill `{skill}`")
                 else:
-                    r.ok(f"{plugin_dir.name}/README.md → skill {skill}")
+                    r.ok(f"{plugin_dir.name}/README.md -> skill {skill}")
 
         agents_dir = plugin_dir / "agents"
         if agents_dir.exists():
@@ -239,12 +241,12 @@ def check_readme(r: Reporter) -> None:
                 if f"`{agent}`" not in ptext:
                     r.fail(f"{rel}: missing row for agent `{agent}`")
                 else:
-                    r.ok(f"{plugin_dir.name}/README.md → agent {agent}")
+                    r.ok(f"{plugin_dir.name}/README.md -> agent {agent}")
 
 
 def check_hooks(r: Reporter) -> None:
     """A plugin's hooks/hooks.json may only point at files it ships (both harnesses skip a missing one silently)."""
-    r.section("Plugin hooks ↔ files")
+    r.section("Plugin hooks <-> files")
     for plugin_dir in _discover_plugins():
         hooks_json = plugin_dir / "hooks" / "hooks.json"
         if not hooks_json.exists():
@@ -284,12 +286,12 @@ def check_vscode(r: Reporter) -> None:
             if (plugin_dir / shadow).exists():
                 errors.append(f"{shadow} exists: VS Code would read it instead of .claude-plugin/plugin.json")
         for skill_md in sorted(plugin_dir.glob("skills/*/SKILL.md")):
-            front = skill_md.read_text().split("---", 2)[1]
+            front = skill_md.read_text(encoding="utf-8").split("---", 2)[1]
             try:
                 yaml.safe_load(front)  # Copilot CLI and VS Code parse it strictly; Claude Code does not
             except yaml.YAMLError as exc:
                 errors.append(f"skills/{skill_md.parent.name}: frontmatter is not valid YAML ({str(exc).splitlines()[0]}); quote the value")
-            m = re.search(r"^name:\s*[\"']?([^\"'\n]+?)[\"']?\s*$", skill_md.read_text(), re.M)
+            m = re.search(r"^name:\s*[\"']?([^\"'\n]+?)[\"']?\s*$", skill_md.read_text(encoding="utf-8"), re.M)
             name = m.group(1) if m else None
             if name != skill_md.parent.name or not KEBAB.match(name):
                 errors.append(f"skills/{skill_md.parent.name}: name {name!r} must be kebab-case and equal the directory")
@@ -300,7 +302,7 @@ def check_vscode(r: Reporter) -> None:
             except json.JSONDecodeError:
                 hooks = {}  # check_hooks reports it
             errors += [f"hooks.json: event {e!r} is not one VS Code maps" for e in hooks if e not in VSCODE_HOOK_EVENTS]
-            if "${CLAUDE_PLUGIN_DATA}" in hooks_json.read_text():
+            if "${CLAUDE_PLUGIN_DATA}" in hooks_json.read_text(encoding="utf-8"):
                 errors.append("hooks.json: ${CLAUDE_PLUGIN_DATA} is not expanded by VS Code; read the env var in the script with a fallback")
         for e in errors:
             r.fail(f"{plugin_dir.relative_to(REPO_ROOT)}: {e}")
@@ -309,11 +311,13 @@ def check_vscode(r: Reporter) -> None:
 
 
 def check_build_sync(r: Reporter) -> None:
-    r.section("Generated agents ↔ src/agents/ sources")
+    r.section("Generated agents <-> src/agents/ sources")
     result = subprocess.run(
         [sys.executable, str(REPO_ROOT / "scripts" / "build_agents.py"), "--check"],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
     )
     if result.returncode != 0:
         for line in (result.stdout + result.stderr).splitlines():
@@ -354,11 +358,11 @@ def main() -> None:
 
     print()
     if r.errors:
-        print(f"✗ {len(r.errors)} error(s):", file=sys.stderr)
+        print(f"ERROR {len(r.errors)} error(s):", file=sys.stderr)
         for e in r.errors:
             print(f"  - {e}", file=sys.stderr)
         sys.exit(1)
-    print("✓ All checks passed.")
+    print("OK All checks passed.")
 
 
 if __name__ == "__main__":
