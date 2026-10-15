@@ -216,7 +216,7 @@ These are load-bearing — the layout breaks if any of them slip.
    ```bash
    make new-skill PLUGIN=<plugin> NAME=<skill-name>
    ```
-3. Fill in the `description` (10–1024 chars, agent-triggering phrase) and the body of `SKILL.md`.
+3. Fill in the `description` (10–1024 chars, agent-triggering phrase) and the body of `SKILL.md`, following [docs/skills.md](docs/skills.md).
 4. Bump the plugin version in `plugins/<plugin>/.claude-plugin/plugin.json` and the matching entry in `.claude-plugin/marketplace.json`.
 5. Add a row to the **Skills** table in `README.md`.
 6. Run `make validate`.
