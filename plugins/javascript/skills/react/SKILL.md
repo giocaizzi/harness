@@ -11,7 +11,7 @@ Target React 19+ with function components and hooks, TypeScript, per https://rea
 
 - Organize by feature/domain. Prefer composition over inheritance; extract reusable stateful logic into custom hooks.
 - Keep components small, single-purpose, testable. Separate presentational from container components so UI stays reusable.
-- Atomic design vocabulary (atoms, molecules, organisms, templates, pages) for UI libraries; design tokens centralized in the Tailwind config.
+- Atomic design for the UI kit and its lint rules: the `atomic-design` skill. Design tokens centralized in the Tailwind config.
 - Type props with interfaces; use React's built-in types (`React.ComponentProps`, etc.) and union types for variants.
 
 ## State, effects, performance
