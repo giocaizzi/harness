@@ -26,6 +26,10 @@ To bump a version, land the right Conventional Commit and let the Release PR app
 
 Config snippets (extra-files types, monorepo layout, changelog sections) are in [references/config-recipes.md](references/config-recipes.md); read when editing `release-please-config.json`.
 
+## Maintenance line
+
+To patch an old minor after `main` has moved on, run release-please on a `release/X.Y.x` branch cut from the release tag, with its own Release PR. Every fix also lands on `main` as its own PR, or the next `main` release regresses it. Steps, workflow changes and gotchas (branch protection, tags, "latest" release): [references/release-flow.md](references/release-flow.md#maintenance-line).
+
 ## Manual release (last resort)
 
 Only if release-please is broken or an emergency cut is needed. The manifest, every tracked version file (check `extra-files`) and the tag must end up consistent, or the next automated release gets confused: set the version in all of them, update `CHANGELOG.md`, then `git tag -a vX.Y.Z`, push the tag, `gh release create vX.Y.Z`. After the next merge to `main`, verify a fresh Release PR opens correctly.
