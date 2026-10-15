@@ -74,7 +74,7 @@ test('an ask nobody answers is denied after the timeout', async ($, on) => {
   on('tool.check', ask)
   on('tool.call', { tool: 'AskUserQuestion' }, () => new Promise(() => {}))
   const pending = $.tool.check(call)
-  await clock.advance(5 * 60_000)
+  await clock.advance(60_000)
   const r = await pending
   expect(r.decision).toBe('deny')
   expect(r.reason).toContain("isn't there")
