@@ -31,3 +31,20 @@ gh release create vX.Y.Z --notes-from-tag
 ```
 
 After the next merge to `main`, verify release-please reads the manifest correctly and opens a fresh Release PR.
+
+## Maintenance line
+
+Patch `X.Y` (for example a `3.1.1` hotfix) while `main` is on a later minor or major.
+
+1. **Cut the branch from the release tag:** `git branch release/X.Y.x vX.Y.0 && git push origin release/X.Y.x`.
+2. **Run release-please on it, on that branch only.** In its copy of the release-please workflow, trigger on `push: branches: [main, "release/**"]` and pass `target-branch: ${{ github.ref_name }}` to `googleapis/release-please-action`. It then keeps its own Release PR and patch line there; the manifest on the release branch carries the patch version and `main`'s manifest is untouched.
+3. **Run CI on PRs into the line.** The CI workflow's `pull_request.branches` filter must include `release/**` on both `main` and the release branch: a PR's workflow comes from its base branch.
+4. **Land the fix** as a `fix:` PR into `release/X.Y.x`. release-please opens `chore(release): X.Y.(Z+1)` there; merging it tags `vX.Y.(Z+1)` and the tag-triggered CD runs as usual.
+5. **Port the fix to `main`** as its own PR (cherry-pick, Conventional Commit title), unless `main` already has it.
+6. **Retire the line** when no longer supported: delete the branch; the tags keep the commits.
+
+Gotchas:
+
+- **Protection:** a ruleset scoped to `main` does not cover `release/**`. Decide explicitly whether the line needs the same required checks, and add the pattern to the ruleset if so.
+- **Tags:** a repo without components keeps bare `vX.Y.Z` tags on both lines, so versions must never collide: the line only ever bumps the patch of `X.Y`.
+- **"Latest" release:** GitHub marks a newly published release as latest unless told otherwise, so a maintenance release can take over the badge from `main`'s newer one. After it publishes, check with `gh release view` and restore with `gh release edit <main's newest tag> --latest`.
