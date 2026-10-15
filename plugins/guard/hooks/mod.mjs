@@ -22,6 +22,7 @@ async function emitThrottle($, w) {
 }
 
 // Permission asks deny after this long without an answer, so an unattended session never waits forever.
+// GUARD_ASK_TIMEOUT_MS overrides it; 0 turns it off (the engine's dialog waits for an answer).
 export const ASK_TIMEOUT_MS = 60_000
 // Tools whose own dialog is the question (askUserQuestionTimeout covers AskUserQuestion); left to the engine.
 const PERSON_TOOLS = new Set(['AskUserQuestion', 'ExitPlanMode'])
@@ -36,16 +37,26 @@ function trackMode($, e, next) {
 
 const summary =(input) => String(input?.command ?? input?.file_path ?? input?.url ?? input?.pattern ?? '').slice(0, 500)
 
-// Puts the ask in the plugin's own dialog and denies when nobody answers within ASK_TIMEOUT_MS.
-async function askWithTimeout($, e, reason) {
+// GUARD_ASK_TIMEOUT_MS when it is a whole number of ms >= 0, else the default; unreadable env: the default.
+async function askTimeoutMs($) {
+  try {
+    const v = await $.env.get('GUARD_ASK_TIMEOUT_MS')
+    return /^\d+$/.test(v ?? '') ? Number(v) : ASK_TIMEOUT_MS
+  } catch {
+    return ASK_TIMEOUT_MS
+  }
+}
+
+// Puts the ask in the plugin's own dialog and denies when nobody answers within `ms`.
+async function askWithTimeout($, e, reason, ms) {
   let expire
   const timedOut = new Promise((resolve) => (expire = resolve))
-  const timer = $.clock.after(ASK_TIMEOUT_MS, () => expire('timeout'))
-  const asked = $.ui.ask(`Allow ${e.tool}? ${summary(e.input)}\n${reason ?? ''}\nDenied after ${ASK_TIMEOUT_MS / 1000} s without an answer.`, ['Allow', 'Deny']).catch(() => 'Deny')
+  const timer = $.clock.after(ms, () => expire('timeout'))
+  const asked = $.ui.ask(`Allow ${e.tool}? ${summary(e.input)}\n${reason ?? ''}\nDenied after ${ms / 1000} s without an answer.`, ['Allow', 'Deny']).catch(() => 'Deny')
   const answer = await Promise.race([asked, timedOut])
   timer.cancel()
   if (answer === 'Allow') return { decision: 'allow', reason: 'allowed in the guard dialog' }
-  if (answer === 'timeout') return { decision: 'deny', reason: `The user isn't there: nobody answered the permission prompt in ${ASK_TIMEOUT_MS / 1000} seconds, so ${e.tool} was not run. Carry on without it, or leave it for the user.` }
+  if (answer === 'timeout') return { decision: 'deny', reason: `The user isn't there: nobody answered the permission prompt in ${ms / 1000} seconds, so ${e.tool} was not run. Carry on without it, or leave it for the user.` }
   return { decision: 'deny', reason: `The user denied this ${e.tool} call.` }
 }
 
@@ -59,7 +70,8 @@ export function register(on) {
     const r = await next(e)
     if (r.decision !== 'ask' || !e.tool_use_id || r.decider || PERSON_TOOLS.has(e.tool)) return r
     if (mode === 'auto' && !r.hook) return r
-    return askWithTimeout($, e, r.reason)
+    const ms = await askTimeoutMs($)
+    return ms ? askWithTimeout($, e, r.reason, ms) : r
   }).catch(($, e, next) => next(e))
 
   // Usage throttle: no new subagents at the throttle level.
