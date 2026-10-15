@@ -61,6 +61,20 @@ test('message_end rewrites the reply once the repo is read; without a UI that ta
   assert.equal(await handlers.message_end({ message: { role: 'assistant', content: [{ type: 'text', text: 'see #3' }] } }, { ...ctx, hasUI: false }), undefined)
 })
 
+test('before_agent_start adds the rule for references of other repositories once, after the repo is read', async () => {
+  const handlers = {}
+  hudExtension({ on: (e, f) => (handlers[e] = f) }, { readRepo: async () => ({ links: repoOf('git@github.com:o/r.git') }), options: {} })
+  const e = { systemPromptOptions: {} }
+  handlers.before_agent_start(e)
+  assert.equal(e.systemPromptOptions.promptGuidelines, undefined) // no repository yet
+  handlers.session_start({}, { hasUI: false, cwd: '/r' })
+  await new Promise((r) => setTimeout(r, 0))
+  handlers.before_agent_start(e)
+  handlers.before_agent_start(e)
+  assert.equal(e.systemPromptOptions.promptGuidelines.length, 1)
+  assert.match(e.systemPromptOptions.promptGuidelines[0], /bare `#N` means an issue or pull request of o\/r.*write `owner\/repo#N`/)
+})
+
 test('piStatus: context, model, PR with checks, sync and changes; missing parts left out', () => {
   const repo = { pr: { number: 7, state: 'open', ci: 'pass', passed: 3, total: 3 }, ahead: 2, behind: 0, changes: { files: 1, added: 4, removed: 1, untracked: 1 } }
   const s = piStatus({ pct: 42.4, model: 'gpt-x', repo })

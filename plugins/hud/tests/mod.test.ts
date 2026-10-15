@@ -316,6 +316,17 @@ test('a markdown table in a coloured reply keeps its colour and links; a drawn t
   }
 })
 
+test('the system prompt says a reference of another repository is written whole', async ($, on) => {
+  mock.clock(on)
+  mock.env(on, {})
+  remote(on)
+  on('prompt.compose', () => ({ sections: [{ id: 'intro', text: 'You are Claude.', scope: 'shared' }] }))
+  await $.session.start({ cwd: '/r' })
+  const { sections } = await $.prompt.compose({ model: 'claude-opus-5-5', promptModel: 'claude-opus-5-5', surfaces: [], tools: [], outputStyle: null, traits: [] })
+  expect(sections.map((s) => s.id)).toEqual(['intro', 'hud:refs'])
+  expect(sections[1]?.text).toMatch(/bare `#N` means an issue or pull request of o\/r, .*`owner\/repo#N`/)
+})
+
 const OFF = Object.fromEntries(['replyRefs', 'replyState', 'replySecrets', 'replyUrls', 'replyPaths', 'replyFileLinks', 'replyCommits', 'replyTimes', 'replyStatus'].map((k) => [k, 'off']))
 test('with every reply feature off the reply is left to the engine', { options: OFF }, async ($, on) => {
   mock.clock(on)

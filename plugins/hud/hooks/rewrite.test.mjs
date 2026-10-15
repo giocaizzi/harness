@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { repoOf } from './links.mjs'
 import { unmark } from './markup.mjs'
-import { ago, commitUrl, createFacts, MISS_TTL_MS, STATE_TTL_MS, DEFAULTS, editorUrl, fetchState, fileGlyph, GLYPH, local, resolvePath, rewrite, settings, shortPath, shortUrl, summary } from './rewrite.mjs'
+import { ago, commitUrl, createFacts, refsRule, MISS_TTL_MS, STATE_TTL_MS, DEFAULTS, editorUrl, fetchState, fileGlyph, GLYPH, local, resolvePath, rewrite, settings, shortPath, shortUrl, summary } from './rewrite.mjs'
 
 process.env.TZ = 'UTC' // times are drawn local
 
@@ -327,4 +327,13 @@ test('createFacts: a state is looked up again once stale, a failed one sooner; t
   await f.settle()
   assert.equal(f.state(GH, ref).state, 'merged')
   assert.equal(calls, 3)
+})
+
+test('refsRule: names the session repository and how to write another one, per forge; none when off or unknown', () => {
+  const o = settings()
+  assert.match(refsRule(GH, o), /bare `#N` means an issue or pull request of o\/r, .* write `owner\/repo#N`, never a bare `#N`\.$/)
+  assert.match(refsRule(GL, o), /of group\/proj, .*`group\/project#N` \(`!N` for a merge request\)/)
+  assert.match(refsRule(AZ, o), /of acme\/web, .*its full URL/)
+  assert.equal(refsRule(null, o), null)
+  assert.equal(refsRule(GH, settings({ replyRefs: 'off' })), null)
 })
