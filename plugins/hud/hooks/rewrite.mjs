@@ -233,6 +233,15 @@ function refs(text, ft, here, facts, st) {
   })
 }
 
+// The instruction that keeps references right: a bare #N links to the session's repository, so an item of any other
+// repository must be written whole. null when references are not rewritten or the repository is unknown.
+export function refsRule(here, o) {
+  if (!here || !o.f.replyRefs) return null
+  const name = here.forge === 'azure' ? `${here.org}/${here.project}` : here.path
+  const other = here.forge === 'gitlab' ? '`group/project#N` (`!N` for a merge request)' : here.forge === 'azure' ? 'its full URL' : '`owner/repo#N`'
+  return `Work-item references: a bare \`#N\` means an issue or pull request of ${name}, this session's repository. For one of any other repository write ${other}, never a bare \`#N\`.`
+}
+
 // --- paths and file:line ----------------------------------------------------------------------------------------
 
 // An absolute path (POSIX, `~/`, or a Windows drive) of two segments or more, or a relative file with an extension
