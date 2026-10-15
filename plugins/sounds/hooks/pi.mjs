@@ -1,12 +1,13 @@
 // pi extension: sounds' turn and context alerts on pi's events. A finished run plays its clip and, after a minute or
-// on an error, raises a notification (ctx.ui.notify); the context crossing 80% and 90% raises one each. The clips and
+// on an error, raises a notification (ctx.ui.notify); a run not aborted rings the terminal bell; the context crossing 80% and 90% raises one each. The clips and
 // thresholds are the Claude plugin's defaults (pi has no per-plugin settings). Clips play with afplay, so on macOS only,
 // as in Claude Code. Loaded from the root package.json.
 import { settle } from './alerts.mjs'
-import { afplay } from './play.mjs'
+import { afplay, bell as ring } from './play.mjs'
 
 export default function soundsExtension(pi, deps = {}) {
   const play = deps.play ?? afplay
+  const bell = deps.bell ?? ring
   let started = Date.now()
   let error = false
   let levels = {}
@@ -22,6 +23,7 @@ export default function soundsExtension(pi, deps = {}) {
     const r = settle({ durationMs: Date.now() - started, aborted: event.aborted, error, pct: ctx.getContextUsage?.()?.percent ?? null, before: levels })
     levels = r.now
     for (const clip of r.clips) play(clip)
+    if (ctx.hasUI && !event.aborted) bell()
     if (ctx.hasUI) for (const text of r.notices) ctx.ui.notify(text, 'info')
   })
 }

@@ -20,13 +20,18 @@ test('settle: the context crossing 80% alerts once until it drops', () => {
   assert.deepEqual(settle({ durationMs: 1000, pct: 86, before: first.now }).clips, ['done'])
 })
 
-test('the extension plays and notifies on agent_settled', () => {
+test('the extension plays, notifies and rings on agent_settled', () => {
   const handlers = {}
   const played = []
   const shown = []
-  soundsExtension({ on: (e, f) => (handlers[e] = f) }, { play: (c) => played.push(c) })
+  let rang = 0
+  soundsExtension({ on: (e, f) => (handlers[e] = f) }, { play: (c) => played.push(c), bell: () => rang++ })
+  const ctx = { hasUI: true, getContextUsage: () => ({ percent: 91 }), ui: { notify: (t) => shown.push(t) } }
   handlers.agent_start()
-  handlers.agent_settled({ aborted: false }, { hasUI: true, getContextUsage: () => ({ percent: 91 }), ui: { notify: (t) => shown.push(t) } })
+  handlers.agent_settled({ aborted: false }, ctx)
   assert.deepEqual(played, ['done', 'alert'])
   assert.match(shown[0], /Context 91%: compact now/)
+  assert.equal(rang, 1)
+  handlers.agent_settled({ aborted: true }, ctx)
+  assert.equal(rang, 1, 'an aborted run does not ring')
 })

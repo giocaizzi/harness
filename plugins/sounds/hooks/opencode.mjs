@@ -1,13 +1,14 @@
 // opencode plugin: sounds' turn and context alerts on opencode's events (https://opencode.ai/docs/plugins/). When a
 // session goes idle it plays the default clip for how the turn ended (macOS only) and shows the notices as TUI toasts
-// (`client.tui.showToast`). The context is the last assistant message's tokens over the model's context limit.
+// (`client.tui.showToast`); a permission prompt, a question and a finished main turn ring the terminal bell. The context is the last assistant message's tokens over the model's context limit.
 // scripts/install.mjs writes a one-line stub into ~/.config/opencode/plugins/ that re-exports this file, so it exports
 // nothing but the plugin (opencode calls every exported function as one).
 import { CLIPS, settle } from './alerts.mjs'
-import { afplay } from './play.mjs'
+import { afplay, bell as ring } from './play.mjs'
 
 export const SoundsPlugin = async ({ client }, deps = {}) => {
   const play = deps.play ?? afplay
+  const bell = deps.bell ?? ring
   const now = deps.now ?? Date.now
   const started = new Map() // sessionID -> when its last prompt was sent
   const errors = new Map() // sessionID -> the error name that ended its turn
@@ -30,7 +31,10 @@ export const SoundsPlugin = async ({ client }, deps = {}) => {
     },
     event: async ({ event }) => {
       const p = event.properties ?? {}
-      if (event.type === 'permission.asked' || event.type === 'question.asked') play(CLIPS.soundNeedsInput)
+      if (event.type === 'permission.asked' || event.type === 'question.asked') {
+        play(CLIPS.soundNeedsInput)
+        bell()
+      }
       else if (event.type === 'session.created' && p.info?.parentID) children.add(p.info.id)
       else if (event.type === 'message.updated' && p.info?.role === 'assistant') last.set(p.info.sessionID, p.info)
       else if (event.type === 'session.error' && p.sessionID) errors.set(p.sessionID, p.error?.name ?? 'UnknownError')
@@ -52,6 +56,7 @@ export const SoundsPlugin = async ({ client }, deps = {}) => {
         levels.set(id, r.now)
         errors.delete(id)
         for (const clip of r.clips) play(clip)
+        if (!children.has(id) && err !== 'MessageAbortedError') bell()
         for (const message of r.notices) void client.tui.showToast({ body: { message, variant: 'info' } }).catch(() => {})
       }
     },
