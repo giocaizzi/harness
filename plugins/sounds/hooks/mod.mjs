@@ -89,10 +89,18 @@ export function register(on, options = {}) {
     return next(e)
   })
 
-  // A question waits for the person: notify as it is asked.
+  // A question waits for the person: notify and play as it is asked.
   on('tool.call', { tool: 'AskUserQuestion' }, async ($, e, next) => {
     if (options.notify !== false) await notify($, `Claude is asking: ${e.input?.questions?.[0]?.question ?? 'a question'}`)
+    await clip($, options.soundNeedsInput, options.soundGain)
     return next(e)
+  })
+
+  // A permission prompt waits for the person: play unless a settings hook beneath decided it. A question plays above.
+  on('classic.PermissionRequest', async ($, e, next) => {
+    const r = await next(e)
+    if (!r?.decision && e.tool_name !== 'AskUserQuestion') await clip($, options.soundNeedsInput, options.soundGain)
+    return r
   })
 
   // The hud plugin's PR state: checks that finish while the person is elsewhere. Nothing without hud.

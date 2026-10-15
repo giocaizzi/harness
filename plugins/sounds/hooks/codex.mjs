@@ -8,7 +8,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { settle } from './alerts.mjs'
+import { CLIPS, settle } from './alerts.mjs'
 import { afplay } from './play.mjs'
 
 // The turn's facts from the rollout's JSONL lines: when it started, whether it hit an error, and the context used.
@@ -53,7 +53,9 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
   process.stdin.on('end', () => {
     let out = {}
     try {
-      out = stop(JSON.parse(input), { dataDir: process.env.PLUGIN_DATA || process.env.CLAUDE_PLUGIN_DATA || join(tmpdir(), 'giocaizzi-sounds') })
+      const payload = JSON.parse(input)
+      if (payload.hook_event_name === 'PermissionRequest') afplay(CLIPS.soundNeedsInput) // no decision: Codex prompts
+      else out = stop(payload,{ dataDir: process.env.PLUGIN_DATA || process.env.CLAUDE_PLUGIN_DATA || join(tmpdir(), 'giocaizzi-sounds') })
     } catch {
       // fail open: a missing rollout or bad payload plays nothing
     }

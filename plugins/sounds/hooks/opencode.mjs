@@ -3,7 +3,7 @@
 // (`client.tui.showToast`). The context is the last assistant message's tokens over the model's context limit.
 // scripts/install.mjs writes a one-line stub into ~/.config/opencode/plugins/ that re-exports this file, so it exports
 // nothing but the plugin (opencode calls every exported function as one).
-import { settle } from './alerts.mjs'
+import { CLIPS, settle } from './alerts.mjs'
 import { afplay } from './play.mjs'
 
 export const SoundsPlugin = async ({ client }, deps = {}) => {
@@ -30,7 +30,8 @@ export const SoundsPlugin = async ({ client }, deps = {}) => {
     },
     event: async ({ event }) => {
       const p = event.properties ?? {}
-      if (event.type === 'session.created' && p.info?.parentID) children.add(p.info.id)
+      if (event.type === 'permission.asked' || event.type === 'question.asked') play(CLIPS.soundNeedsInput)
+      else if (event.type === 'session.created' && p.info?.parentID) children.add(p.info.id)
       else if (event.type === 'message.updated' && p.info?.role === 'assistant') last.set(p.info.sessionID, p.info)
       else if (event.type === 'session.error' && p.sessionID) errors.set(p.sessionID, p.error?.name ?? 'UnknownError')
       else if (event.type === 'session.idle' && p.sessionID) {

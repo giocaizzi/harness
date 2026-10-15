@@ -38,3 +38,11 @@ test('idle plays done and toasts the context alert; an error plays error; a suba
   await hooks.event({ event: { type: 'session.idle', properties: { sessionID: 'c' } } })
   assert.deepEqual(played, ['tick'])
 })
+
+test('a permission prompt or a question plays chime', async () => {
+  const played = []
+  const hooks = await mod.SoundsPlugin({ client: client([]) }, { play: (c) => played.push(c) })
+  await hooks.event({ event: { type: 'permission.asked', properties: { sessionID: 's' } } })
+  await hooks.event({ event: { type: 'question.asked', properties: { sessionID: 's' } } })
+  assert.deepEqual(played, ['chime', 'chime'])
+})
