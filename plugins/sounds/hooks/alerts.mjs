@@ -56,8 +56,8 @@ export function ciNotice(previous, value) {
 }
 
 // The plugin.json defaults, for the harnesses without per-plugin settings (pi, Codex, opencode): the clip per alert
-// or turn ending.
-export const CLIPS = { soundContext: 'alert', soundDone: 'done', soundAborted: null, soundRefused: 'error', soundError: 'error', soundSubagent: 'tick' }
+// or turn ending, and for a prompt waiting on the person.
+export const CLIPS = { soundContext: 'alert', soundDone: 'done', soundAborted: null, soundRefused: 'error', soundError: 'error', soundSubagent: 'tick', soundNeedsInput: 'chime' }
 
 // What a finished run raises there: the clips to play, the notices to show, and the context levels raised so far
 // (`before` for the next run).
