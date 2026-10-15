@@ -21,6 +21,8 @@ export const STYLE = {
   skip: { dimColor: true },
   open: { color: 'success' },
   merged: { color: 'merged' },
+  completed: { color: 'merged' },
+  not_planned: { color: 'inactive' },
   closed: { color: 'error' },
   draft: { color: 'inactive' },
   issue: { color: '#a6e3a1' },
