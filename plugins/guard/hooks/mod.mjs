@@ -22,7 +22,7 @@ async function emitThrottle($, w) {
 }
 
 // Permission asks deny after this long without an answer, so an unattended session never waits forever.
-export const ASK_TIMEOUT_MS = 5 * 60_000
+export const ASK_TIMEOUT_MS = 60_000
 // Tools whose own dialog is the question (askUserQuestionTimeout covers AskUserQuestion); left to the engine.
 const PERSON_TOOLS = new Set(['AskUserQuestion', 'ExitPlanMode'])
 // The session's permission mode, as the last classic hook input carried it. ponytail: a mode switched with
@@ -41,11 +41,11 @@ async function askWithTimeout($, e, reason) {
   let expire
   const timedOut = new Promise((resolve) => (expire = resolve))
   const timer = $.clock.after(ASK_TIMEOUT_MS, () => expire('timeout'))
-  const asked = $.ui.ask(`Allow ${e.tool}? ${summary(e.input)}\n${reason ?? ''}\nDenied after ${ASK_TIMEOUT_MS / 60_000} min without an answer.`, ['Allow', 'Deny']).catch(() => 'Deny')
+  const asked = $.ui.ask(`Allow ${e.tool}? ${summary(e.input)}\n${reason ?? ''}\nDenied after ${ASK_TIMEOUT_MS / 1000} s without an answer.`, ['Allow', 'Deny']).catch(() => 'Deny')
   const answer = await Promise.race([asked, timedOut])
   timer.cancel()
   if (answer === 'Allow') return { decision: 'allow', reason: 'allowed in the guard dialog' }
-  if (answer === 'timeout') return { decision: 'deny', reason: `The user isn't there: nobody answered the permission prompt in ${ASK_TIMEOUT_MS / 60_000} minutes, so ${e.tool} was not run. Carry on without it, or leave it for the user.` }
+  if (answer === 'timeout') return { decision: 'deny', reason: `The user isn't there: nobody answered the permission prompt in ${ASK_TIMEOUT_MS / 1000} seconds, so ${e.tool} was not run. Carry on without it, or leave it for the user.` }
   return { decision: 'deny', reason: `The user denied this ${e.tool} call.` }
 }
 
