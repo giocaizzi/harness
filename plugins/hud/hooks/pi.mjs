@@ -8,7 +8,7 @@ import { stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { linkRepo } from './links.mjs'
-import { createFacts, FEATURES, fetchState, rewrite, settings } from './rewrite.mjs'
+import { createFacts, FEATURES, fetchState, refsRule, rewrite, settings } from './rewrite.mjs'
 import { azurePr, forgeOf, githubPr, gitlabMr, glyph, ICON, repoState } from './weather.mjs'
 
 // The footer text from the facts; a part is left out where its fact is missing.
@@ -124,6 +124,13 @@ export default function hudExtension(pi, deps = {}) {
     void refresh(ctx)
   })
   pi.on('turn_end', (_e, ctx) => draw(ctx))
+  // The rule that a reference of another repository is written whole (rewrite.mjs refsRule), as a guideline.
+  pi.on('before_agent_start', (e) => {
+    const rule = refsRule(repo?.links ?? null, settings(deps.options ?? piOptions(), process.env, false))
+    if (!rule) return
+    const g = (e.systemPromptOptions.promptGuidelines ??= [])
+    if (!g.includes(rule)) g.push(rule)
+  })
   pi.on('agent_settled', (_e, ctx) => void refresh(ctx))
   // The reply rewrites (rewrite.mjs), without colour: pi's markdown takes none, and an escape sequence would be stored.
   // All of them only where a TUI draws the reply and the terminal draws OSC 8 links (deps.hyperlinks, pi-tui's

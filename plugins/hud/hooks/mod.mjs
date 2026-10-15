@@ -7,7 +7,7 @@ import { registerContext } from './context.mjs'
 import { registerFooter } from './footer.mjs'
 import { linkRepo } from './links.mjs'
 import { toTree } from './markup.mjs'
-import { createFacts, fetchState, rewrite, settings } from './rewrite.mjs'
+import { createFacts, fetchState, refsRule, rewrite, settings } from './rewrite.mjs'
 import { registerTools } from './tools.mjs'
 import { ICON, TTL_MS, azurePr, battery, clock, forecast, forgeOf, fullAt, githubPr, gitlabMr, glyph, repoState, sparkCells, sparkRange, tokens, when } from './weather.mjs'
 
@@ -285,6 +285,14 @@ export function register(on, options = {}) {
     }
     if (text === e.props.text) return next(e)
     return toTree(text, $.ui.resolve(e), { first: e.props.isFirstOfReply, columns: e.viewport?.columns }) ?? next({ ...e, props: { ...e.props, text } })
+  })
+
+  // The rule that a reference of another repository is written whole (rewrite.mjs refsRule), after the engine's
+  // sections, so a bare #N is never linked to the wrong repository.
+  on('prompt.compose', async ($, e, next) => {
+    const r = await next(e)
+    const text = refsRule(linkTo, settings(options, {}, true))
+    return text ? { sections: [...r.sections, { id: 'hud:refs', text, scope: 'session' }] } : r
   })
 
   // /weather: the history at full size.
