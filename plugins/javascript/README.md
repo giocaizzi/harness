@@ -9,6 +9,7 @@ JavaScript and TypeScript development — ES6+, Node.js, React and Next.js.
 | `javascript-typescript` | JavaScript and TypeScript development with ES6+ and Node.js. |
 | `react` | ReactJS development standards and best practices. |
 | `nextjs` | Next.js best practices and conventions. |
+| `atomic-design` | Atomic design for the UI kit and lint rules that enforce component architecture. |
 
 ## Install
 
