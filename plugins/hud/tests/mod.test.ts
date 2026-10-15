@@ -327,6 +327,31 @@ test('the system prompt says a reference of another repository is written whole'
   expect(sections[1]?.text).toMatch(/bare `#N` means an issue or pull request of o\/r, .*`owner\/repo#N`/)
 })
 
+test('/refresh-refs forgets the lookups: a reference whose state failed is looked up again', async ($, on) => {
+  mock.clock(on)
+  mock.env(on, {})
+  on('settings.read', () => ({ value: {} }))
+  on('session.start', () => ({ cwd: '/r' }))
+  on('command.register', () => ({ value: undefined }))
+  let gh = 0
+  on('process.run', (_$, e) => {
+    const argv = e.argv.join(' ')
+    const out = argv === 'git remote' ? 'origin\n' : argv === 'git remote get-url origin' ? 'git@github.com:o/r.git\n' : argv.startsWith('gh api') && ++gh > 1 ? JSON.stringify({ state: 'open', pull_request: { merged_at: null } }) : null
+    return { value: { exitCode: out ? 0 : 1, stderr: '', isStdoutTruncated: false, isStderrTruncated: false, stdout: out ?? '' } }
+  })
+  on('ui.render', { component: 'AssistantMessage' }, ($, e) => $.ui.resolve(e).Markdown({ text: e.props.text }))
+  await $.session.start({ cwd: '/r' })
+  const reply = { plugin: 'hud', surface: 'terminal', component: 'AssistantMessage', props: { text: 'See #12.', isFirstOfReply: true } } as const
+  let ui = await $.ui.mount(reply)
+  await ui.unmount()
+  expect(gh).toBe(1) // the lookup failed: no state yet
+  const { text } = await $.command.run({ command: 'refresh-refs', args: '' })
+  expect(text).toMatch(/looked up again/)
+  ui = await $.ui.mount(reply)
+  await ui.unmount()
+  expect(gh).toBe(2) // asked again at once, not after the 30-second retry
+})
+
 const OFF = Object.fromEntries(['replyRefs', 'replyState', 'replySecrets', 'replyUrls', 'replyPaths', 'replyFileLinks', 'replyCommits', 'replyTimes', 'replyStatus'].map((k) => [k, 'off']))
 test('with every reply feature off the reply is left to the engine', { options: OFF }, async ($, on) => {
   mock.clock(on)
