@@ -76,3 +76,18 @@ test('a long turn and a question request system notifications', { options: { not
   await $.turn.complete({ answer: '', reason: 'answer', isAborted: false, turnId: 't', durationMs: 3_000 })
   await $.tool.call({ tool: 'AskUserQuestion', input: { questions: [{ question: 'Which defaults?' }] }, tool_use_id: 'q' } as never)
 })
+
+test('a permission prompt and a question play the needs-input sound; a prompt a settings hook decided is silent', async ($, on) => {
+  const clips = sounds(on)
+  on('ui.notify', () => ({ value: undefined }) as never)
+  on('tool.call', () => ({ result: { answers: {} } }) as never)
+  let decided = false // a settings hook beneath answered
+  on('classic.PermissionRequest', () => (decided ? { decision: { behavior: 'allow' as const } } : {}))
+  const ask = { hook_event_name: 'PermissionRequest', session_id: 's', transcript_path: '', cwd: '/', tool_input: {} }
+  await $.classic.PermissionRequest({ ...ask, tool_name: 'Bash' } as never)
+  await $.classic.PermissionRequest({ ...ask, tool_name: 'AskUserQuestion' } as never)
+  await $.tool.call({ tool: 'AskUserQuestion', input: { questions: [{ question: 'Which?' }] }, tool_use_id: 'q' } as never)
+  decided = true
+  await $.classic.PermissionRequest({ ...ask, tool_name: 'Bash' } as never)
+  expect(clips).toEqual(['sounds/chime.wav', 'sounds/chime.wav'])
+})
