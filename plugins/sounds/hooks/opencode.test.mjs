@@ -19,7 +19,8 @@ test('idle plays done and toasts the context alert; an error plays error; a suba
   const played = []
   const toasts = []
   let t = 0
-  const hooks = await mod.SoundsPlugin({ client: client(toasts) }, { play: (c) => played.push(c), now: () => t })
+  let rang = 0
+  const hooks = await mod.SoundsPlugin({ client: client(toasts) }, { play: (c) => played.push(c), bell: () => rang++, now: () => t })
   await hooks['chat.message']({ sessionID: 's' })
   await hooks.event({ event: assistant('s', 910) })
   t = 5000
@@ -37,12 +38,15 @@ test('idle plays done and toasts the context alert; an error plays error; a suba
   await hooks.event({ event: { type: 'session.created', properties: { info: { id: 'c', parentID: 's' } } } })
   await hooks.event({ event: { type: 'session.idle', properties: { sessionID: 'c' } } })
   assert.deepEqual(played, ['tick'])
+  assert.equal(rang, 2, 'the two main turns ring, the subagent does not')
 })
 
-test('a permission prompt or a question plays chime', async () => {
+test('a permission prompt or a question plays chime and rings the bell', async () => {
   const played = []
-  const hooks = await mod.SoundsPlugin({ client: client([]) }, { play: (c) => played.push(c) })
+  let rang = 0
+  const hooks = await mod.SoundsPlugin({ client: client([]) }, { play: (c) => played.push(c), bell: () => rang++ })
   await hooks.event({ event: { type: 'permission.asked', properties: { sessionID: 's' } } })
   await hooks.event({ event: { type: 'question.asked', properties: { sessionID: 's' } } })
   assert.deepEqual(played, ['chime', 'chime'])
+  assert.equal(rang, 2)
 })
