@@ -1,5 +1,3 @@
-# Project-specific installed agent skills (reproduced via `npx skills add` from skills-lock.json)
-.agents/
 # AI coding agents: personal and machine state (shared config is tracked)
 .claude/settings.local.json
 .claude/worktrees/
