@@ -42,9 +42,9 @@ export const GLYPH = {
 const EXT = { ts: '', tsx: '', js: '', mjs: '', cjs: '', jsx: '', py: '', md: '', json: '', sh: '', bash: '', zsh: '', ps1: '', go: '', rs: '', rb: '', java: '', html: '', css: '', yml: '', yaml: '', toml: '', sql: '', lock: '' }
 export const fileGlyph = (name, kind) => (kind === 'dir' ? GLYPH.dir : (EXT[/\.([^.]+)$/.exec(name)?.[1]?.toLowerCase()] ?? GLYPH.file))
 
-// State glyphs as GitHub draws them: open green, merged purple, closed red, draft grey.
+// State glyphs as GitHub draws them: open green, merged and completed purple, closed red, draft and not planned grey.
 export const STATE = {
-  issue: { open: '', closed: '' }, // nf-oct-issue_opened, issue_closed
+  issue: { open: '', closed: '', completed: '', not_planned: '' }, // nf-oct-issue_opened, issue_closed, skip
   pr: { open: ICON.pr, merged: ICON.merged, closed: '', draft: '' }, // git_pull_request(_closed, _draft), git_merge
   workitem: { open: KIND.workitem.icon, closed: '' },
 }
@@ -227,7 +227,9 @@ function refs(text, ft, here, facts, st) {
     const kind = s?.kind ?? t.kind
     const icon = (s && STATE[kind]?.[s.state]) || KIND[kind].icon
     const colour = s ? st.colour : ft.colour
-    return link(mark(s ? s.state : kind, glyphed(icon, ft, esc(all)), colour), t.url)
+    // A GitHub #N whose state is not known is drawn without a glyph: the issue one would call a pull request an issue.
+    const unsure = !s && st && here.forge === 'github' && ref.sigil === '#'
+    return link(mark(s ? s.state : kind, unsure ? esc(all) : glyphed(icon, ft, esc(all)), colour), t.url)
   })
 }
 
@@ -483,14 +485,21 @@ function status(text, ft) {
 
 // --- facts --------------------------------------------------------------------------------------------------------
 
-// Cached answers to stat, commit and state, each looked up once per session through the injected async readers;
-// a getter answers undefined until its answer is in. settle(ms) waits (at most ms) for those asked so far and
-// resolves true when one came in.
-export function createFacts({ stat = async () => null, commit = async () => false, state = async () => null } = {}) {
+// How long a state is believed: an item merges or closes while the session runs, and a failed lookup (a timeout, a
+// rate limit) is tried again soon rather than drawn wrong for the rest of the session.
+export const STATE_TTL_MS = 5 * 60_000
+export const MISS_TTL_MS = 30_000
+
+// Cached answers to stat, commit and state through the injected async readers; files and commits are looked up once
+// per session, states again after STATE_TTL_MS (MISS_TTL_MS when the lookup failed). A getter answers undefined
+// until its answer is in, and an expired one keeps answering the old value while the new lookup runs. settle(ms)
+// waits (at most ms) for those asked so far and resolves true when one came in.
+export function createFacts({ stat = async () => null, commit = async () => false, state = async () => null, now = Date.now } = {}) {
   const known = new Map()
   const pending = new Map()
-  const ask = (key, fn) => {
-    if (known.has(key)) return known.get(key)
+  const ask = (key, fn, ttl) => {
+    const k = known.get(key)
+    if (k && (!ttl || now() - k.at < (k.v === null ? ttl.miss : ttl.hit))) return k.v
     if (!pending.has(key))
       pending.set(
         key,
@@ -498,16 +507,16 @@ export function createFacts({ stat = async () => null, commit = async () => fals
           .then(fn)
           .catch(() => null)
           .then((v) => {
-            known.set(key, v ?? null)
+            known.set(key, { v: v ?? null, at: now() })
             pending.delete(key)
           }),
       )
-    return undefined
+    return k?.v
   }
   return {
     stat: (p) => ask(`stat:${p}`, () => stat(p)),
     commit: (sha) => ask(`commit:${sha}`, () => commit(sha)),
-    state: (r, ref) => ask(`state:${refKey(r, ref)}`, () => state(r, ref)),
+    state: (r, ref) => ask(`state:${refKey(r, ref)}`, () => state(r, ref), { hit: STATE_TTL_MS, miss: MISS_TTL_MS }),
     get pending() {
       return pending.size
     },
@@ -536,7 +545,8 @@ export async function fetchState(run, r, { repo, sigil, n }) {
   if (r.forge === 'github') {
     const j = await json(['gh', 'api', '--hostname', r.host, `repos/${repo ?? r.path}/issues/${n}`])
     if (!j?.state) return null
-    if (!j.pull_request) return { kind: 'issue', state: j.state === 'closed' ? 'closed' : 'open' }
+    // Closed as completed (purple) or as not planned (grey), as GitHub draws them.
+    if (!j.pull_request) return { kind: 'issue', state: j.state !== 'closed' ? 'open' : j.state_reason === 'not_planned' ? 'not_planned' : 'completed' }
     return { kind: 'pr', state: j.pull_request.merged_at ? 'merged' : j.state === 'closed' ? 'closed' : j.draft ? 'draft' : 'open' }
   }
   if (r.forge === 'gitlab') {
