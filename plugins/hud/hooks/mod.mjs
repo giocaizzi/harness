@@ -146,6 +146,7 @@ export function register(on, options = {}) {
     await $.command.register({ name: 'weather', description: 'Show the context and prompt-cache history in a pane' })
     await $.command.register({ name: 'subagents', description: 'Show the subagents of this session in a pane' })
     await $.command.register({ name: 'ctx', description: 'Show what fills the context window in a pane' })
+    await $.command.register({ name: 'refresh-refs', description: 'Look up the issue and PR states, files and commits in replies again' })
     tick?.cancel()
     repoTick?.cancel()
     repoTick = $.clock.every(REPO_REFRESH_MS, () => refreshRepo($))
@@ -293,6 +294,13 @@ export function register(on, options = {}) {
     const r = await next(e)
     const text = refsRule(linkTo, settings(options, {}, true))
     return text ? { sections: [...r.sections, { id: 'hud:refs', text, scope: 'session' }] } : r
+  })
+
+  // /refresh-refs: forget every lookup and redraw the replies, which ask again (rewrite.mjs createFacts).
+  on('command.run', { command: 'refresh-refs' }, async ($) => {
+    facts = replyFacts($)
+    $.ui.invalidate('ui.render')
+    return { text: 'Reference states, files and commits will be looked up again as the replies redraw.' }
   })
 
   // /weather: the history at full size.

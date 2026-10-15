@@ -124,6 +124,14 @@ export default function hudExtension(pi, deps = {}) {
     void refresh(ctx)
   })
   pi.on('turn_end', (_e, ctx) => draw(ctx))
+  // /refresh-refs: forget every lookup, so the next replies ask again. A stored reply is not drawn again.
+  pi.registerCommand?.('refresh-refs', {
+    description: 'Look up the issue and PR states, files and commits in the next replies again',
+    handler: async (_args, ctx) => {
+      facts = null
+      ctx.ui?.notify?.('hud: lookups cleared; the next replies look them up again.', 'info')
+    },
+  })
   // The rule that a reference of another repository is written whole (rewrite.mjs refsRule), as a guideline.
   pi.on('before_agent_start', (e) => {
     const rule = refsRule(repo?.links ?? null, settings(deps.options ?? piOptions(), process.env, false))

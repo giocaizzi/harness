@@ -75,6 +75,24 @@ test('before_agent_start adds the rule for references of other repositories once
   assert.match(e.systemPromptOptions.promptGuidelines[0], /bare `#N` means an issue or pull request of o\/r.*write `owner\/repo#N`/)
 })
 
+test('/refresh-refs makes the next reply look its references up again', async () => {
+  const handlers = {}
+  const commands = {}
+  let made = 0
+  const facts = () => (made++, createFacts({ state: async () => ({ kind: 'pr', state: 'merged' }) }))
+  hudExtension({ on: (e, f) => (handlers[e] = f), registerCommand: (n, c) => (commands[n] = c) }, { readRepo: async () => ({ links: repoOf('git@github.com:o/r.git') }), hyperlinks: async () => true, options: {}, facts })
+  const ctx = { hasUI: true, cwd: '/r', getContextUsage: () => null, ui: { setStatus: () => {}, notify: () => {} } }
+  handlers.session_start({}, ctx)
+  await new Promise((r) => setTimeout(r, 0))
+  const e = { message: { role: 'assistant', content: [{ type: 'text', text: 'see #3' }] } }
+  await handlers.message_end(e, ctx)
+  await handlers.message_end(e, ctx)
+  assert.equal(made, 1)
+  await commands['refresh-refs'].handler('', ctx)
+  await handlers.message_end(e, ctx)
+  assert.equal(made, 2)
+})
+
 test('piStatus: context, model, PR with checks, sync and changes; missing parts left out', () => {
   const repo = { pr: { number: 7, state: 'open', ci: 'pass', passed: 3, total: 3 }, ahead: 2, behind: 0, changes: { files: 1, added: 4, removed: 1, untracked: 1 } }
   const s = piStatus({ pct: 42.4, model: 'gpt-x', repo })
