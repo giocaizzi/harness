@@ -18,7 +18,7 @@ Agent rules enforced as hooks, from one plugin, for Claude Code, Copilot CLI, VS
 | `hooks/stop.mjs` | `make check-fast` (when defined) or `make check` before the agent stops (was the dotfiles `stop-make-check.sh`/`.ps1`). |
 | `hooks/lint.mjs` | shellcheck / PSScriptAnalyzer after an edit (was the dotfiles `post-edit-lint.sh`/`.ps1`). |
 | `hooks/awake.mjs` | Keep-awake keeper tied to the harness process. |
-| `hooks/mod.mjs` | Claude Code mod (`modules` in `hooks.json`, ignored by Copilot CLI and VS Code): the usage throttle. The UI (band, pane, status line, spinner) is the `hud` plugin ([docs/hud.md](hud.md)); toasts and sounds are the `sounds` plugin ([docs/sounds.md](sounds.md)). |
+| `hooks/mod.mjs` | Claude Code mod (`modules` in `hooks.json`, ignored by Copilot CLI and VS Code): the usage throttle and the ask timeout. The UI (band, pane, status line, spinner) is the `hud` plugin ([docs/hud.md](hud.md)); toasts and sounds are the `sounds` plugin ([docs/sounds.md](sounds.md)). |
 
 Events:
 
@@ -71,6 +71,7 @@ Hooks run before the harness applies its permission mode, so a deny holds under 
 - **Without it**, an interactive session waits at the first risky command until someone answers, and a headless run (`claude -p`, `copilot -p`, `codex exec`, `opencode run`, `pi -p`) cannot ask, so the command does not run. Codex under approval `never` rejects a prompt rule; `opencode run --auto` approves every ask, so the guard denies there.
 - **Not verified live:** whether Claude Code's bypass mode, Copilot CLI's `--allow-all` and VS Code's auto-approve still show a hook `ask`. Treat the risky ask as unreliable there and set `GUARD_UNATTENDED=1`, which does not depend on it. (A live probe of Claude bypass was refused by the session's own auto-mode classifier, so it was not run.)
 - **Other gates that can pause an overnight run:** the host guard (load over 30, CPU over 90 %, under 20 GB free) delays heavy builds and tests; the Claude-only usage throttle pauses near 90 % of the plan window; the stop hook runs `make check` once. Codex hooks do nothing until trusted in `/hooks`.
+- **Ask timeout (Claude Code).** The mod's `tool.check` hook puts every permission ask that would reach the person (the guard's risky ask, an `ask` rule, a tool not yet allowed) in its own Allow/Deny dialog and denies it after 5 minutes without an answer, telling the agent the user isn't there. Left to the engine: auto mode's own asks (its classifier answers them; a hook's ask in auto mode is still taken), a hosted session's asks, `AskUserQuestion` and `ExitPlanMode`. The dialog has no "always allow" and no diff preview. A failing hook falls back to the engine's dialog. The mode comes from the last prompt or tool result, so one ask right after a shift+tab mode switch can go the old way. Claude's own questions time out natively: `askUserQuestionTimeout: "5m"` in user settings (the dotfiles set it) continues them with the answers picked so far. Other harnesses: pi and opencode can do it ([#100](https://github.com/giocaizzi/harness/issues/100)); Codex, Copilot CLI and VS Code cannot ([#101](https://github.com/giocaizzi/harness/issues/101)).
 - **Agent-side rules** (worktree per task, no reliance on denied commands, report what was blocked): the `dev-tools` skill `unattended-runs`.
 
 ## Install

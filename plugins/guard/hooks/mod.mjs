@@ -1,4 +1,4 @@
-// Claude Code mod (hooks.json `modules`; Copilot ignores the key): the usage throttle.
+// Claude Code mod (hooks.json `modules`; Copilot ignores the key): the usage throttle and the ask timeout.
 // The command guards run as command hooks for both harnesses; this holds only what needs the mods API.
 import { evaluateSpawn } from '../core/engine.mjs'
 import { logRequest } from '../core/otel.mjs'
@@ -21,7 +21,47 @@ async function emitThrottle($, w) {
   }
 }
 
+// Permission asks deny after this long without an answer, so an unattended session never waits forever.
+export const ASK_TIMEOUT_MS = 5 * 60_000
+// Tools whose own dialog is the question (askUserQuestionTimeout covers AskUserQuestion); left to the engine.
+const PERSON_TOOLS = new Set(['AskUserQuestion', 'ExitPlanMode'])
+// The session's permission mode, as the last classic hook input carried it. ponytail: a mode switched with
+// shift+tab is seen at the next prompt or tool result, so one ask in between can go the old way.
+let mode
+
+function trackMode($, e, next) {
+  mode = e.permission_mode ?? mode
+  return next(e)
+}
+
+const summary =(input) => String(input?.command ?? input?.file_path ?? input?.url ?? input?.pattern ?? '').slice(0, 500)
+
+// Puts the ask in the plugin's own dialog and denies when nobody answers within ASK_TIMEOUT_MS.
+async function askWithTimeout($, e, reason) {
+  let expire
+  const timedOut = new Promise((resolve) => (expire = resolve))
+  const timer = $.clock.after(ASK_TIMEOUT_MS, () => expire('timeout'))
+  const asked = $.ui.ask(`Allow ${e.tool}? ${summary(e.input)}\n${reason ?? ''}\nDenied after ${ASK_TIMEOUT_MS / 60_000} min without an answer.`, ['Allow', 'Deny']).catch(() => 'Deny')
+  const answer = await Promise.race([asked, timedOut])
+  timer.cancel()
+  if (answer === 'Allow') return { decision: 'allow', reason: 'allowed in the guard dialog' }
+  if (answer === 'timeout') return { decision: 'deny', reason: `The user isn't there: nobody answered the permission prompt in ${ASK_TIMEOUT_MS / 60_000} minutes, so ${e.tool} was not run. Carry on without it, or leave it for the user.` }
+  return { decision: 'deny', reason: `The user denied this ${e.tool} call.` }
+}
+
 export function register(on) {
+  on('classic.UserPromptSubmit', trackMode)
+  on('classic.PostToolUse', trackMode)
+
+  // Ask timeout: a dialog nobody answers would hold the session forever. Only a real call whose ask reaches the
+  // person: auto mode's own asks go to its classifier, a hosted session's to its host. Fails to the engine's dialog.
+  on('tool.check', async ($, e, next) => {
+    const r = await next(e)
+    if (r.decision !== 'ask' || !e.tool_use_id || r.decider || PERSON_TOOLS.has(e.tool)) return r
+    if (mode === 'auto' && !r.hook) return r
+    return askWithTimeout($, e, r.reason)
+  }).catch(($, e, next) => next(e))
+
   // Usage throttle: no new subagents at the throttle level.
   on('agent.spawn', async ($, e, next) => {
     const { rateLimits } = await $.session.usage()
