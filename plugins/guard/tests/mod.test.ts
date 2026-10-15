@@ -80,6 +80,37 @@ test('an ask nobody answers is denied after the timeout', async ($, on) => {
   expect(r.reason).toContain("isn't there")
 })
 
+test('GUARD_ASK_TIMEOUT_MS sets the timeout', async ($, on) => {
+  const clock = mock.clock(on)
+  on('env.get', (_$, e) => ({ value: e.name === 'GUARD_ASK_TIMEOUT_MS' ? '5000' : undefined }))
+  on('tool.check', ask)
+  on('tool.call', { tool: 'AskUserQuestion' }, () => new Promise(() => {}))
+  const pending = $.tool.check(call)
+  await clock.advance(5000)
+  const r = await pending
+  expect(r.decision).toBe('deny')
+  expect(r.reason).toContain('5 seconds')
+})
+
+test('GUARD_ASK_TIMEOUT_MS=0 leaves the ask to the engine', async ($, on) => {
+  on('env.get', (_$, e) => ({ value: e.name === 'GUARD_ASK_TIMEOUT_MS' ? '0' : undefined }))
+  on('tool.check', ask)
+  on('tool.call', { tool: 'AskUserQuestion' }, () => {
+    throw new Error('must not ask')
+  })
+  expect((await $.tool.check(call)).decision).toBe('ask')
+})
+
+test('an invalid GUARD_ASK_TIMEOUT_MS keeps the default', async ($, on) => {
+  const clock = mock.clock(on)
+  on('env.get', (_$, e) => ({ value: e.name === 'GUARD_ASK_TIMEOUT_MS' ? '1m' : undefined }))
+  on('tool.check', ask)
+  on('tool.call', { tool: 'AskUserQuestion' }, () => new Promise(() => {}))
+  const pending = $.tool.check(call)
+  await clock.advance(60_000)
+  expect((await pending).reason).toContain('60 seconds')
+})
+
 test('a query, a non-ask and a question are left to the engine', async ($, on) => {
   on('tool.check', (_$, e) => (e.tool === 'Read' ? { decision: 'allow' as const } : ask()))
   on('tool.call', { tool: 'AskUserQuestion' }, () => {
