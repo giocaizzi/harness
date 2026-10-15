@@ -1,7 +1,7 @@
 {
   "name": "sounds",
-  "version": "0.4.0",
-  "description": "Toasts, configurable sounds and system notifications for Claude Code: usage limits, context, prompt-cache expiry, every way a turn ends, questions waiting and PR checks finishing (Claude mod)",
+  "version": "0.5.0",
+  "description": "Toasts, configurable sounds and system notifications for Claude Code: usage limits, context, prompt-cache expiry, every way a turn ends, questions and permission prompts waiting and PR checks finishing (Claude mod)",
   "author": {
     "name": "giocaizzi",
     "url": "https://github.com/giocaizzi"
@@ -192,6 +192,23 @@
       "description": "Plays when a subagent finishes a turn.",
       "required": false,
       "default": "tick",
+      "options": [
+        "off",
+        "chime",
+        "ping",
+        "alert",
+        "warn",
+        "error",
+        "done",
+        "tick"
+      ]
+    },
+    "soundNeedsInput": {
+      "type": "string",
+      "title": "Sound: needs input",
+      "description": "Plays when Claude waits on you: a permission prompt or a question.",
+      "required": false,
+      "default": "chime",
       "options": [
         "off",
         "chime",
