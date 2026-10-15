@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { repoOf } from './links.mjs'
 import { unmark } from './markup.mjs'
-import { ago, commitUrl, createFacts, DEFAULTS, editorUrl, fetchState, fileGlyph, GLYPH, local, resolvePath, rewrite, settings, shortPath, shortUrl, summary } from './rewrite.mjs'
+import { ago, commitUrl, createFacts, MISS_TTL_MS, STATE_TTL_MS, DEFAULTS, editorUrl, fetchState, fileGlyph, GLYPH, local, resolvePath, rewrite, settings, shortPath, shortUrl, summary } from './rewrite.mjs'
 
 process.env.TZ = 'UTC' // times are drawn local
 
@@ -120,9 +120,12 @@ test('URLs: bare, autolink and self-labelled links shortened, the target kept; c
 test('work-item references: links, with the state glyph and colour once it is known', async () => {
   const states = { '#1': { kind: 'issue', state: 'open' }, '#2': { kind: 'pr', state: 'merged' }, '#3': { kind: 'issue', state: 'closed' }, '#4': { kind: 'pr', state: 'draft' }, '#5': { kind: 'pr', state: 'closed' } }
   const { raw, text } = await go('#1 #2 #3 #4 #5 #6', { opts: only('replyRefs', { replyState: 'on' }), states })
-  assert.equal(text, '[\uf41b #1](https://github.com/o/r/issues/1) [\uf419 #2](https://github.com/o/r/issues/2) [\uf41d #3](https://github.com/o/r/issues/3) [\uf4dd #4](https://github.com/o/r/issues/4) [\uf4dc #5](https://github.com/o/r/issues/5) [\uf41b #6](https://github.com/o/r/issues/6)')
+  assert.equal(text, '[\uf41b #1](https://github.com/o/r/issues/1) [\uf419 #2](https://github.com/o/r/issues/2) [\uf41d #3](https://github.com/o/r/issues/3) [\uf4dd #4](https://github.com/o/r/issues/4) [\uf4dc #5](https://github.com/o/r/issues/5) [#6](https://github.com/o/r/issues/6)')
   for (const s of ['open', 'merged', 'closed', 'draft']) assert.match(raw, new RegExp(`\uFDD0${s}\uFDD1`))
-  assert.match(raw, /\uFDD0issue\uFDD1\uf41b #6/) // unknown state: the kind's glyph and colour
+  const done = await go('#7 #8', { opts: only('replyRefs', { replyState: 'on' }), states: { '#7': { kind: 'issue', state: 'completed' }, '#8': { kind: 'issue', state: 'not_planned' } } })
+  assert.match(done.raw, /\uFDD0completed\uFDD1\uf41d #7/) // purple, as GitHub draws an issue closed as completed
+  assert.match(done.raw, /\uFDD0not_planned\uFDD1\uf52d #8/) // grey
+  assert.match(raw, /\uFDD0issue\uFDD1#6\uFDD2/) // unknown state: no glyph (it may be a pull request), the kind's colour
   // Without state lookups: the kind glyph; plain: the bare link, as links.mjs writes it.
   assert.equal((await go('#2', { opts: only('replyRefs'), states })).text, '[\uf41b #2](https://github.com/o/r/issues/2)')
   assert.equal((await go('#2', { opts: { ...only('replyRefs'), ...plain }, states })).text, '[#2](https://github.com/o/r/issues/2)')
@@ -135,6 +138,9 @@ test('fetchState: GitHub, GitLab and Azure DevOps CLI answers', async () => {
   const run = (out) => async (argv) => (runs.push(argv.join(' ')), JSON.stringify(out))
   assert.deepEqual(await fetchState(run({ state: 'open' }), GH, { sigil: '#', n: '1' }), { kind: 'issue', state: 'open' })
   assert.equal(runs.at(-1), 'gh api --hostname github.com repos/o/r/issues/1')
+  assert.deepEqual(await fetchState(run({ state: 'closed', state_reason: 'completed' }), GH, { sigil: '#', n: '47' }), { kind: 'issue', state: 'completed' })
+  assert.deepEqual(await fetchState(run({ state: 'closed', state_reason: 'not_planned' }), GH, { sigil: '#', n: '48' }), { kind: 'issue', state: 'not_planned' })
+  assert.deepEqual(await fetchState(run({ state: 'closed', state_reason: null }), GH, { sigil: '#', n: '49' }), { kind: 'issue', state: 'completed' })
   assert.deepEqual(await fetchState(run({ state: 'closed', pull_request: { merged_at: '2026-01-01' } }), GH, { repo: 'x/y', sigil: '#', n: '2' }), { kind: 'pr', state: 'merged' })
   assert.equal(runs.at(-1), 'gh api --hostname github.com repos/x/y/issues/2')
   assert.deepEqual(await fetchState(run({ state: 'open', draft: true, pull_request: {} }), GH, { sigil: '#', n: '3' }), { kind: 'pr', state: 'draft' })
@@ -294,4 +300,31 @@ test('createFacts: one lookup per key, undefined until known, a failing reader i
   slow.stat('/x')
   assert.equal(await slow.settle(10), true) // gives up after the timeout
   assert.equal(slow.stat('/x'), undefined)
+})
+
+test('createFacts: a state is looked up again once stale, a failed one sooner; the old answer stands meanwhile', async () => {
+  let t = 0
+  let answer = null
+  let calls = 0
+  const f = createFacts({ state: async () => (calls++, answer), now: () => t })
+  const ref = { sigil: '#', n: '47' }
+  f.state(GH, ref)
+  await f.settle()
+  assert.equal(f.state(GH, ref), null) // failed
+  t += MISS_TTL_MS - 1
+  assert.equal(f.state(GH, ref), null)
+  assert.equal(calls, 1)
+  answer = { kind: 'pr', state: 'open' }
+  t += 1
+  assert.equal(f.state(GH, ref), null) // retried, old answer until it lands
+  await f.settle()
+  assert.deepEqual(f.state(GH, ref), { kind: 'pr', state: 'open' })
+  answer = { kind: 'pr', state: 'merged' }
+  t += STATE_TTL_MS - 1
+  assert.equal(f.state(GH, ref).state, 'open')
+  t += 1
+  assert.equal(f.state(GH, ref).state, 'open')
+  await f.settle()
+  assert.equal(f.state(GH, ref).state, 'merged')
+  assert.equal(calls, 3)
 })

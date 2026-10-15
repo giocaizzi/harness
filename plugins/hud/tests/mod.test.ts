@@ -277,7 +277,7 @@ test("a reply's #N links to the issue as plain markdown under NO_COLOR", async (
   }
 })
 
-test("a reply's #N is a coloured link with its glyph, and a secret is masked", async ($, on) => {
+test("a reply's #N is a coloured link with its kind's colour, and a secret is masked", async ($, on) => {
   mock.clock(on)
   mock.env(on, {})
   remote(on)
@@ -286,7 +286,7 @@ test("a reply's #N is a coloured link with its glyph, and a secret is masked", a
     const ui = await $.ui.mount({ plugin: 'hud', surface, component: 'AssistantMessage', props: { text: 'Fixed in #12, key ghp_abcdefghijklmnopqrstuvwx1234.', isFirstOfReply: true } })
     const link = await ui.find({ type: 'Link' })
     expect(link?.props.href).toBe('https://github.com/o/r/issues/12')
-    expect(await ui.find({ type: 'Text', text: '\uf41b #12' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: '#12' })).toBeDefined() // no state known: no glyph, it may be a PR
     expect(await ui.find({ type: 'Text', text: '••••••••' })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /ghp_abcdef/ })).toBeUndefined()
     await ui.unmount()
@@ -305,7 +305,7 @@ test('a markdown table in a coloured reply keeps its colour and links; a drawn t
     let ui = await $.ui.mount({ plugin: 'hud', surface, component: 'AssistantMessage', props: { text: md, isFirstOfReply: true } })
     expect(await ui.find({ type: 'Markdown', text: /\| issue \|/ })).toBeUndefined()
     expect(await ui.find({ type: 'Text', text: /^┌─+┬─+┐$/ })).toBeDefined()
-    expect(await ui.find({ type: 'Text', text: '\uf41b #13' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: '#13' })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: '✓ passed' })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: '✗ failed' })).toBeDefined()
     await ui.unmount()
