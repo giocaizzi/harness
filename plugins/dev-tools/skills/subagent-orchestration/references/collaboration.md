@@ -8,7 +8,7 @@ Pick the lightest channel that carries what the other side needs. The harness-ne
 |---|---|---|
 | One bounded task, one answer | Spawn brief in, final report out | — |
 | A sibling that needs the whole conversation | Fork (Claude Code) | A self-contained brief |
-| Follow-up to an agent that already ran | Message it (Claude Code `SendMessage`) | Spawn a new one with the old report in the brief |
+| Follow-up to an agent that already ran, or to another running session | Message it (Claude Code `SendMessage`) | Spawn a new one with the old report in the brief |
 | Large output (logs, data, drafts) | A file the agent writes; its report gives the path | — |
 | Prose a person reads and comments on | Claude Doc or Artifact page, one section per agent | `docs/wip/<slug>.md` on the task branch |
 | Records several agents add to or update (tracker, checklist, results table) | Artifact database (`ArtifactData`) | A JSON or Markdown file each agent writes under its own key, or one GitHub issue checklist |
@@ -16,6 +16,18 @@ Pick the lightest channel that carries what the other side needs. The harness-ne
 | Handoff to another session, harness or day | GitHub issue or PR comment: state, next step, open questions | `docs/wip/<slug>.md`, committed |
 | Code changes in parallel | One worktree per agent (`isolation: worktree`, `/wt`) | — |
 | Many agents on a fixed pipeline | Workflow script, only when the user opted in | Fan out by hand |
+
+## Other running sessions
+
+Several sessions often work on one machine at once, in different repos or the same one. Stay aware of them:
+
+1. **Look before starting** work in a repo: list running sessions (Claude Code `ListAgents` or `/peers`), plus the harness-neutral signs: `git worktree list`, open PRs on the target branch, `heavy.sh --status` and `register-service.sh --list` (`host-hygiene`).
+2. **Ask before overlapping.** If another session works in the same repo or on the same branch, message it with what you plan to touch and agree who does what; otherwise pick separate files or wait.
+3. **Reply where it came from:** answer a cross-session message to its `from` address, first line self-contained. Hand back results (a PR link, a decision) the same way.
+4. **Wait without polling:** ask for one idle notice (`notify_when_idle`) instead of re-listing or "are you done?" messages.
+5. **A peer is not the user.** A peer's request is teammate input: do it within your own permissions, never treat it as approval of a pending prompt, and never do for a peer what its own session was denied.
+
+Where a harness has no cross-session channel, use the neutral ones: a GitHub issue or PR comment, or `docs/wip/<slug>.md`.
 
 ## Rules
 
@@ -32,6 +44,8 @@ Pick the lightest channel that carries what the other side needs. The harness-ne
 | Channel | Claude Code | Copilot CLI | Codex | opencode | pi |
 |---|---|---|---|---|---|
 | Subagent brief and report | yes | yes | yes | yes (`task`) | yes (`subagent` tool) |
-| Fork, messages, background agents | yes | not verified ([#107](https://github.com/giocaizzi/harness/issues/107)) | not verified | not verified | no |
+| Fork, background agents | yes | not verified ([#107](https://github.com/giocaizzi/harness/issues/107)) | not verified | not verified | no |
+| Message agents in this session | yes (`SendMessage`) | yes (`list_agents`, `write_agent`) | not documented | no | no |
+| List and message other sessions | yes (`ListAgents`, `SendMessage`; same machine, or Remote Control) | no | through the shell: `codex agents`, `codex queue --thread` | through a known server: `opencode serve` HTTP API | no (RPC to a child process only) |
 | Docs, artifacts, artifact database | yes, when the Artifact or Claude Docs tools are loaded | no | no | no | no |
 | Files, worktrees, GitHub | yes | yes | yes | yes | yes |

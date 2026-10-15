@@ -1,6 +1,6 @@
 ---
 name: subagent-orchestration
-description: Routing work to subagents and models in Claude Code, Copilot CLI, Codex, opencode and pi - hub-and-spoke delegation, four model tiers, effort levels, escalation and verifying delegated results. Use when spawning subagents, splitting work in parallel, or choosing a model or effort for a task.
+description: Routing work to subagents and models in Claude Code, Copilot CLI, Codex, opencode and pi - hub-and-spoke delegation, four model tiers, effort levels, escalation and verifying delegated results. Use when spawning subagents, splitting work in parallel, coordinating with other running sessions, or choosing a model or effort for a task.
 ---
 
 # Subagent orchestration
@@ -36,7 +36,7 @@ Implement at `low`, verify at `high`. More effort catches missed edge cases; it 
 - Keep teams small: agent teams cost several times a normal session.
 - Don't parallelize tightly coupled edits, and don't delegate work smaller than its brief.
 - If a subagent fails or returns something unexpected, surface its error and wait; don't silently retry or substitute.
-- Coordinate through the lightest channel that fits (brief and report, fork, message, shared file, doc or artifact, GitHub): [references/collaboration.md](references/collaboration.md).
+- Before starting in a repo, check which other sessions are running and coordinate with any that overlap. Coordinate through the lightest channel that fits (brief and report, fork, message, shared file, doc or artifact, GitHub): [references/collaboration.md](references/collaboration.md).
 
 ## Mechanisms
 
