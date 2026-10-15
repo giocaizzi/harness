@@ -36,6 +36,7 @@ Implement at `low`, verify at `high`. More effort catches missed edge cases; it 
 - Keep teams small: agent teams cost several times a normal session.
 - Don't parallelize tightly coupled edits, and don't delegate work smaller than its brief.
 - If a subagent fails or returns something unexpected, surface its error and wait; don't silently retry or substitute.
+- Coordinate through the lightest channel that fits (brief and report, fork, message, shared file, doc or artifact, GitHub): [references/collaboration.md](references/collaboration.md).
 
 ## Mechanisms
 
