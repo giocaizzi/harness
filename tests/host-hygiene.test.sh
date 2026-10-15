@@ -93,7 +93,7 @@ check "--device without device commands is refused" "$?" 2
 
 # register-service.sh
 "$reg" db -- sleep 30 2>/dev/null & w=$!
-sleep 0.5
+for _ in $(seq 50); do grep -q 'name=db' "$L/host-services/$w" 2>/dev/null && break; sleep 0.1; done # a fixed wait raced registration on a loaded host
 check "service registered while running" "$(grep -c 'name=db' "$L/host-services/$w")" 1
 check "--list shows it" "$("$reg" --list | grep -c 'name=db')" 1
 svc=$(sed -n 's/^pid=//p' "$L/host-services/$w")
