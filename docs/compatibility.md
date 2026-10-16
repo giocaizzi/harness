@@ -47,17 +47,19 @@ Hosts: everything runs on macOS, Linux and Windows; the hooks need `node` 22+ on
 
 Where each harness reads MCP servers, for the `repo-standard` rule (repo servers committed per harness, user scope minimal). Checked on the versions above, Copilot CLI 1.0.96.
 
-| Harness | Project file (committed), key | User file | Private per-repo | Remote OAuth login | Secrets in config |
-|---|---|---|---|---|---|
-| Claude Code | `.mcp.json`, `mcpServers` (approved once) | `~/.claude.json` `mcpServers` | yes: `claude mcp add -s local` | `/mcp` or `claude mcp login <name>`; not in `claude -p` | `${VAR}`, `${VAR:-default}` |
-| Copilot CLI | `.mcp.json` or `.github/mcp.json` (`.mcp.json` wins), `mcpServers`; trusted folders | `~/.copilot/mcp-config.json` | no: a gitignored `.mcp.json` | not documented: static headers only | not documented: literal `env` only |
-| VS Code Copilot | `.vscode/mcp.json`, `servers` (also reads `.mcp.json`, experimental) | profile `mcp.json` | no | `oauth` object on the server; browser on first connect | `${input:id}` (`inputs`), `envFile` |
-| Codex CLI | `.codex/config.toml`, `[mcp_servers.<name>]`; trusted projects | `~/.codex/config.toml` | no: `-c mcp_servers.…` overrides | `codex mcp login <name>` (default for streamable HTTP) | named references: `env_vars`, `bearer_token_env_var`, `env_http_headers` |
-| opencode | `opencode.json(c)`, `mcp` (`type: local/remote`, `command` array) | `~/.config/opencode/opencode.json` | no: `OPENCODE_CONFIG_CONTENT` | automatic on 401, `opencode mcp auth <name>` | `{env:VAR}`, `{file:path}` |
-| pi | `.pi/mcp.json`, `mcpServers`; trusted projects | `~/.pi/agent/mcp.json` | no | `pi mcp login <name>`; no legacy SSE | `${VAR}` in `env`/`headers`, `!command` |
+| Harness | Project file (committed), key | User file | Private per-repo | Remote OAuth login | Secrets in config | Variable in a URL |
+|---|---|---|---|---|---|---|
+| Claude Code | `.mcp.json`, `mcpServers` (approved once) | `~/.claude.json` `mcpServers` | yes: `claude mcp add -s local` | `/mcp` or `claude mcp login <name>`; not in `claude -p` | `${VAR}`, `${VAR:-default}` | yes, `${VAR}` |
+| Copilot CLI | `.mcp.json` or `.github/mcp.json` (`.mcp.json` wins), `mcpServers`; trusted folders | `~/.copilot/mcp-config.json` | no: a gitignored `.mcp.json` | not documented: static headers only | not documented: literal `env` only | yes, `${VAR}` (undocumented, checked) |
+| VS Code Copilot | `.vscode/mcp.json`, `servers` (also reads `.mcp.json`, experimental) | profile `mcp.json` | no | `oauth` object on the server; browser on first connect | `${input:id}` (`inputs`), `envFile` | unverified |
+| Codex CLI | `.codex/config.toml`, `[mcp_servers.<name>]`; trusted projects | `~/.codex/config.toml` | no: `-c mcp_servers.…` overrides | `codex mcp login <name>` (default for streamable HTTP) | named references: `env_vars`, `bearer_token_env_var`, `env_http_headers` | no (checked) |
+| opencode | `opencode.json(c)`, `mcp` (`type: local/remote`, `command` array) | `~/.config/opencode/opencode.json` | no: `OPENCODE_CONFIG_CONTENT` | automatic on 401, `opencode mcp auth <name>` | `{env:VAR}`, `{file:path}` | yes, `{env:VAR}` (checked) |
+| pi | `.pi/mcp.json`, `mcpServers`; trusted projects | `~/.pi/agent/mcp.json` | no | `pi mcp login <name>`; no legacy SSE | `${VAR}` in `env`/`headers`, `!command` | no: `env` and `headers` only (checked) |
 
 - **One name, six shapes.** Claude Code, Copilot CLI and pi share the `.mcp.json` shape; VS Code (`servers`), Codex (TOML) and opencode (`mcp`, `type`) differ, and the secret syntax differs everywhere, so each project file is written for its harness with the same server names.
 - **Parent folders.** Claude Code merges the `.mcp.json` of every parent folder into the session, inside a git repo too (each still needs its one-time approval), while `.claude/settings*.json` applies only in its own folder (checked on 2.1.296). Copilot CLI searches `.mcp.json` only up to the repo root. So a workspace file never sits in the home directory or above repos.
+- **Private URL parts in a public repo.** A repo file can hide an account or host only where the harness expands a variable in the URL: Claude Code, Copilot CLI and opencode (checked with a local listener: the request arrived on the expanded path). Codex and pi send the reference as is, so they get no repo file there; a file rendered outside the repo (user scope, a workspace folder) can carry the value instead.
+- **Trust before loading.** Copilot CLI and pi ignore project files in a folder they do not trust yet (`copilot mcp list` and `pi mcp list` show only user servers); Codex the same, unless the folder is trusted in `~/.codex/config.toml` (`[projects."<path>"] trust_level = "trusted"`).
 - **Private trial is Claude-only.** The other harnesses have no uncommitted per-repo scope; the nearest is a gitignored project file or a per-run override, as in the table.
 
 ## Decisions
