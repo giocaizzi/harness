@@ -78,7 +78,6 @@ The other three harnesses read the same sources differently (details in [docs/co
 │
 ├── Makefile                      canonical command surface
 ├── AGENTS.md                     this file
-├── CLAUDE.md → AGENTS.md         symlink (Claude Code convention)
 └── README.md                     user-facing install + plugin/skill/agent index
 ```
 
