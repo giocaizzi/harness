@@ -13,21 +13,20 @@ The main session (hub) plans, delegates and verifies. Subagents (spokes) do boun
 |---|---|---|---|
 | 1 Scout | search, read logs, summarize test output | Haiku 5.5, `low` | GPT-5.4 mini or GPT-6 Luna |
 | 2 Routine | mechanical edits, config rollouts across repos, PR/Dependabot triage, audits | Sonnet 5.5, `low`–`medium` | GPT-6 Luna |
-| 3 Driver (default) | features, debugging, review: code that needs judgement | Opus 5.5, `medium`; `high` to verify | GPT-6.1 Sol |
+| 3 Driver (default) | features, debugging, review: code that needs judgement | Opus 5.5, `medium` | GPT-6.1 Sol |
 | 4 Escalation | a problem that stalled at tier 3 | Fable 5.1 | GPT-6 Astra |
 
 - **Scout for reading, not editing.** A weak model's mistake in a summary shows up as a missing detail; in an edit it ships a bug. Routine, well-specified edits go to Sonnet; anything needing judgement goes to the driver.
-- **Escalate only after the driver failed twice at `xhigh` on the same problem.** Compact first, since the new model re-pays the cache write for the whole conversation, and return to the driver once solved.
+- **Escalate only after the driver failed twice on the same problem.** Compact first, since the new model re-pays the cache write for the whole conversation, and return to the driver once solved.
 - **Reviewer is not the author.** Review important changes at the author's tier or higher.
 
 ## Effort
 
 - `low`: quick, in-the-loop work.
-- `medium`: normal engineering.
-- `high`: verification, edge cases, brownfield bugs.
-- `xhigh`/`max`: autonomous work on hard problems.
+- `medium`: normal engineering, verification, edge cases.
+- `high`, `xhigh`, `max`: only when the user asks for them.
 
-Implement at `low`, verify at `high`. More effort catches missed edge cases; it does not fix a wrong approach, so re-plan instead of raising it. Give every agent a way to check its work (a test, a build), or effort buys little.
+Anything preset or automatic (agent definitions, settings, spawns you choose) stays at `medium` or below. Implement at `low`, verify at `medium`. More effort catches missed edge cases; it does not fix a wrong approach, so re-plan instead of raising it. Give every agent a way to check its work (a test, a build), or effort buys little.
 
 ## Delegation
 
