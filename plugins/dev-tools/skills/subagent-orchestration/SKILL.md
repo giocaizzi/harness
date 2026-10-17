@@ -17,7 +17,7 @@ The main session (hub) plans, delegates and verifies. Subagents (spokes) do boun
 | 4 Escalation | a problem that stalled at tier 3 | Fable 5.1 | GPT-6 Astra |
 
 - **Scout for reading, not editing.** A weak model's mistake in a summary shows up as a missing detail; in an edit it ships a bug. Routine, well-specified edits go to Sonnet; anything needing judgement goes to the driver.
-- **Spawns default to tier 2.** With `CLAUDE_CODE_SUBAGENT_MODEL=sonnet` (or the harness equivalent), a spawn without a model runs on Sonnet; pass the model explicitly for tier 1, 3 and 4 work.
+- **Spawns default to tier 2.** With `CLAUDE_CODE_SUBAGENT_MODEL=sonnet` (Claude Code), a spawn without a model runs on Sonnet; pass the model explicitly for tier 1, 3 and 4 work. Other harnesses have no such default: a spawn runs on the session's model unless the agent's own settings pin one.
 - **Escalate only after the driver failed twice on the same problem.** Compact first, since the new model re-pays the cache write for the whole conversation, and return to the driver once solved.
 - **Reviewer is not the author.** Review important changes at the author's tier or higher.
 
@@ -42,7 +42,7 @@ Anything preset or automatic (agent definitions, settings, spawns you choose) st
 
 Claude Code:
 - `model` on each spawn (`haiku`, `sonnet`, `opus`, `fable`); `model` and `effort` in an agent definition.
-- `CLAUDE_CODE_SUBAGENT_MODEL` is the default for subagents: the spawn's `model` wins, then the definition's `model`, then this variable, then the session's model (v2.1.251+; earlier versions let the variable override both). Built-in Explore and Plan keep their own model.
+- `CLAUDE_CODE_SUBAGENT_MODEL` is the default for subagents: the spawn's `model` wins, then the definition's `model`, then this variable, then the session's model (v2.1.251+; earlier versions let the variable override both). A definition's `model: inherit` beats the variable and keeps the session's model. The built-in `general-purpose` and `claude` agents follow this order; built-in Explore and Plan run on the session's model and ignore the variable. A family alias passed on a spawn or in a definition (`opus`) resolves to the session's exact model when it is of that family; the variable's alias always resolves to the alias's current version. `CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1` (v2.1.257+) forces the variable onto every subagent and drops spawn and definition models, which breaks tier routing: leave it unset. Source: [sub-agents](https://code.claude.com/docs/en/sub-agents#choose-a-model).
 - `/model` and `/effort` change the session.
 - This plugin ships `scout` (tier 1) and `escalate` (tier 4).
 
