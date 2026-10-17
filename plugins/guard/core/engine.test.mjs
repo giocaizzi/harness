@@ -110,6 +110,15 @@ test('a recursive delete of a temp dir held in a variable or a quoted $TMPDIR pa
     assert.equal(act(c), 'ask', c);
 });
 
+test('a glob in the last segment of a temp path does not ask; one at the temp root or a dot glob does', () => {
+  const env = { TMPDIR: '/var/folders/ab/T/' };
+  const act = (command) => evaluateCommand({ command, state: fresh(), host: calm, env, rules }).action;
+  for (const c of ['rm -rf /private/tmp/claude-1/p/s/scratchpad/*', 'rm -rf /tmp/x/run-?.log', 'S=$(mktemp -d); rm -rf $S/*', 'rm -rf "$TMPDIR/x"/*'])
+    assert.equal(act(c), 'allow', c);
+  for (const c of ['rm -rf /tmp/*', 'rm -rf $TMPDIR/*', 'rm -rf /tmp/x/.*', 'rm -rf /tmp/*/x', 'rm -rf /tmp/x/[ab]', 'rm -rf ~/x/*'])
+    assert.equal(act(c), 'ask', c);
+});
+
 test('a plain push and rm of a file are not risky', () => {
   assert.equal(evaluateCommand({ command: 'git push origin x', state: fresh(), host: calm, rules }).action, 'allow');
   assert.equal(evaluateCommand({ command: 'rm notes.txt', state: fresh(), host: calm, rules }).action, 'allow');
