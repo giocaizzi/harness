@@ -1,6 +1,6 @@
 {
   "name": "dev-tools",
-  "version": "1.23.1",
+  "version": "1.23.2",
   "description": "General development tooling — git, GitHub, conventional commits, semantic versioning",
   "author": {
     "name": "giocaizzi",
@@ -8,5 +8,13 @@
   },
   "repository": "https://github.com/giocaizzi/harness",
   "license": "MIT",
-  "keywords": ["git", "github", "conventional-commits", "semver", "versioning", "tooling", "workflow"]
+  "keywords": [
+    "git",
+    "github",
+    "conventional-commits",
+    "semver",
+    "versioning",
+    "tooling",
+    "workflow"
+  ]
 }

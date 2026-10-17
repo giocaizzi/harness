@@ -1,6 +1,6 @@
 {
   "name": "api",
-  "version": "1.3.1",
+  "version": "1.3.2",
   "description": "API development with FastAPI, SQLAlchemy and DDD patterns",
   "author": {
     "name": "giocaizzi",
@@ -8,5 +8,11 @@
   },
   "repository": "https://github.com/giocaizzi/harness",
   "license": "MIT",
-  "keywords": ["fastapi", "sqlalchemy", "ddd", "api", "python"]
+  "keywords": [
+    "fastapi",
+    "sqlalchemy",
+    "ddd",
+    "api",
+    "python"
+  ]
 }

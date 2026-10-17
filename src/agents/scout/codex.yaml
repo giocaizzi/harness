@@ -1,3 +1,0 @@
-# Codex-only keys, merged into codex/scout.toml.
-sandbox_mode: read-only
-model_reasoning_effort: low

@@ -1,6 +1,6 @@
 # `guard` plugin
 
-Agent guardrails as hooks: one rule engine that runs under Claude Code, GitHub Copilot CLI, VS Code Copilot and Codex as command hooks (`hooks/hooks.json`, `hooks/codex.json`) and under opencode and pi as in-process plugins (`hooks/opencode.mjs`, `hooks/pi.mjs`), on macOS, Linux and Windows. Per-harness differences: [docs/compatibility.md](../../docs/compatibility.md). No skills or agents. Architecture and the install/verify runbook: [docs/guard.md](../../docs/guard.md). The UI moved to [`hud`](../hud/README.md) and toasts and sounds to [`sounds`](../sounds/README.md).
+Agent guardrails as hooks: one rule engine that runs under Claude Code, GitHub Copilot CLI, VS Code Copilot and Codex as command hooks (`hooks/hooks.json`, `.generated/codex/hooks.json`) and under opencode and pi as in-process plugins (`hooks/opencode.mjs`, `hooks/pi.mjs`), on macOS, Linux and Windows. Per-harness differences: [docs/compatibility.md](../../docs/compatibility.md). No skills or agents. Architecture and the install/verify runbook: [docs/guard.md](../../docs/guard.md). The UI moved to [`hud`](../hud/README.md) and toasts and sounds to [`sounds`](../sounds/README.md).
 
 ## Hooks
 

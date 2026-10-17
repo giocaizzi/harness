@@ -2,7 +2,7 @@
 // Codex Stop hook: sounds' turn and context alerts. Codex's Stop payload names the turn and its rollout
 // (`transcript_path`); the rollout holds the turn's start (`task_started`), errors and token counts against the
 // model's context window. The finished turn plays its default clip (macOS only) and the notices go back as
-// `systemMessage`, which Codex shows as a warning. Named only by the generated hooks/codex.json (from
+// `systemMessage`, which Codex shows as a warning. Named only by .generated/codex/hooks.json (from
 // hooks/codex-only.json); never fails the hook.
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'

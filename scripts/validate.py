@@ -10,12 +10,12 @@ generated-agent sync, and a couple of repo-specific rules.
 Checks:
   1. Native `claude plugin validate` passes for every plugin and the marketplace.
   2. The Copilot manifest (.github/plugin/plugin.json) matches the Claude
-     manifest's version and sets `agents: ["./copilot/"]`.
+     manifest's version and sets `agents: ["./.generated/copilot/"]`.
   3. The Claude plugin.json does not declare `skills` or `agents` fields
      (repo policy: both must be auto-discovered).
   4. marketplace.json lists every plugins/<dir> with matching versions and source paths.
   5. The root README links to every plugin, and each plugin's README lists all its skills and agents.
-  6. Generated agents are in sync with src/agents/ sources (delegates to build_agents.py --check).
+  6. Generated files are in sync with agents/*.md, their .yaml overrides and the manifests (delegates to build_agents.py --check).
   7. Every file a plugin's hooks/hooks.json names (command scripts, mod modules) exists.
   8. VS Code reads each plugin as Claude format: no `.plugin/plugin.json` or root
      `plugin.json` (they win VS Code's format detection), skill `name` is kebab-case
@@ -44,7 +44,6 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 PLUGINS_ROOT = REPO_ROOT / "plugins"
 MARKETPLACE = REPO_ROOT / ".claude-plugin" / "marketplace.json"
 README = REPO_ROOT / "README.md"
-SRC_AGENTS = REPO_ROOT / "src" / "agents"
 PYPROJECT = REPO_ROOT / "pyproject.toml"
 
 
@@ -135,8 +134,8 @@ def check_repo_specific_manifests(r: Reporter) -> None:
             continue
         if cdata.get("version") != data.get("version"):
             r.fail(f"{crel}: version drift vs .claude-plugin/plugin.json ({cdata.get('version')!r} vs {data.get('version')!r}) - run `make build`")
-        if cdata.get("agents") != ["./copilot/"]:
-            r.fail(f"{crel}: must contain `\"agents\": [\"./copilot/\"]` so Copilot CLI scans the copilot/ dir (got {cdata.get('agents')!r})")
+        if cdata.get("agents") != ["./.generated/copilot/"]:
+            r.fail(f"{crel}: must contain `\"agents\": [\"./.generated/copilot/\"]` so Copilot CLI scans .generated/copilot/ (got {cdata.get('agents')!r})")
         r.ok(f"{plugin_dir.name} (Claude + Copilot manifests)")
 
 
@@ -313,7 +312,7 @@ def check_vscode(r: Reporter) -> None:
 
 
 def check_build_sync(r: Reporter) -> None:
-    r.section("Generated agents <-> src/agents/ sources")
+    r.section("Generated files <-> agents/*.md and manifests")
     result = subprocess.run(
         [sys.executable, str(REPO_ROOT / "scripts" / "build_agents.py"), "--check"],
         capture_output=True,
