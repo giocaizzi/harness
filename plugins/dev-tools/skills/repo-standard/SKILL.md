@@ -32,7 +32,7 @@ description: The baseline every repository should meet (CI with one aggregate `c
   - The repo's own convention wins (e.g. an org that keeps MCP config out of the repo).
 - **`README.md` for humans**: name, tagline, badges, short description, quickstart, link to `docs/`, license; it never duplicates `docs/`. Badges grow with maturity: every repo gets CI and license; public adds language/tooling (e.g. Ruff); released adds the release badge (PyPI version and Python versions for packages); a live docs site or coverage adds Docs and Coverage badges.
 - **Squash-only merge**, commit built from the PR title and body; **delete the branch on merge**.
-- **Protected default branch**: changes only via PR, requires `check` + the title check, no bypass for anyone.
+- **Protected default branch**: changes only via PR, requires `check` + the title check, no bypass for anyone. These are a minimum: a repo may require more (e.g. a leak check), and an audit or re-apply must keep them, not flag or overwrite them.
 - **`SECURITY.md`**, issue templates, and a `LICENSE` on public repos.
 - **Python uses uv**, never poetry (unless the repo already does; see the rule above).
 - **Publish and deploy jobs run in a named environment** (`pypi`, `production`, ...) and read environment-scoped secrets, never repository-wide ones. Where the plan offers no environments (e.g. private GitHub repos on the free plan), say so as a gap.
