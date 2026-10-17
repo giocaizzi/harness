@@ -5,7 +5,7 @@ description: Start a task in its own git worktree and branch, from an issue numb
 
 # Worktree
 
-Argument (`$ARGUMENTS`): a GitHub issue number or a short slug.
+Argument (`$ARGUMENTS`, or the text after the skill name where that placeholder is left as is): a GitHub issue number or a short slug.
 
 There is no fixed cap on worktrees or agents; throttle on availability instead. Heavy repos make each worktree costly, so reuse before creating.
 

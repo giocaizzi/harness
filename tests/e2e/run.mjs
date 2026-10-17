@@ -2,8 +2,9 @@
 // End-to-end check of each installed harness against a scripted model (mock-llm.mjs), with no login and
 // nothing touching the real config: every harness gets a throwaway home. For each one it installs this
 // checkout the documented way, asks the model to run `pip install requests` in a uv project, and checks
-// that the guard's deny reached the model, that every skill and agent is in its prompt, and that a
-// risky command is not run. A harness whose CLI is missing is skipped (failed with E2E_REQUIRE=1). Usage: node tests/e2e/run.mjs [harness...]
+// that the guard's deny reached the model, that every skill and agent is in its prompt, that a risky
+// command is not run, and that a skill invoked with an argument gets it. A harness whose CLI is missing
+// is skipped (failed with E2E_REQUIRE=1). Usage: node tests/e2e/run.mjs [harness...]
 import { spawn, spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -62,9 +63,9 @@ const HARNESSES = {
       sh(process.execPath, [join(REPO, 'scripts', 'install.mjs'), 'codex'], { env })
       return env
     },
-    run(env, cwd, port) {
+    run(env, cwd, port, prompt = ['run the command']) {
       const provider = `model_providers.mock={name="mock",base_url="http://127.0.0.1:${port}/v1",wire_api="responses"}`
-      return sh('codex', ['exec', '--skip-git-repo-check', '--dangerously-bypass-hook-trust', '-s', 'read-only', '-c', 'model_provider=mock', '-c', 'model=mock', '-c', provider, 'run the command'], { env, cwd, input: '', allowFail: true })
+      return sh('codex', ['exec', '--skip-git-repo-check', '--dangerously-bypass-hook-trust', '-s', 'read-only', '-c', 'model_provider=mock', '-c', 'model=mock', '-c', provider, ...prompt], { env, cwd, input: '', allowFail: true })
     },
   },
   opencode: {
@@ -73,7 +74,7 @@ const HARNESSES = {
       sh(process.execPath, [join(REPO, 'scripts', 'install.mjs'), 'opencode'], { env })
       return env
     },
-    run(env, cwd, port) {
+    run(env, cwd, port, prompt = ['run the command']) {
       const config = {
         $schema: 'https://opencode.ai/config.json',
         model: 'mock/mock',
@@ -81,7 +82,7 @@ const HARNESSES = {
         provider: { mock: { npm: '@ai-sdk/openai-compatible', name: 'mock', options: { baseURL: `http://127.0.0.1:${port}/v1`, apiKey: 'mock' }, models: { mock: { name: 'mock' } } } },
       }
       writeFileSync(join(env.XDG_CONFIG_HOME, 'opencode', 'opencode.json'), JSON.stringify(config))
-      return sh('opencode', ['run', 'run the command'], { env: { ...env, PWD: cwd }, cwd, input: '', allowFail: true })
+      return sh('opencode', ['run', ...prompt], { env: { ...env, PWD: cwd }, cwd, input: '', allowFail: true })
     },
   },
   pi: {
@@ -90,10 +91,10 @@ const HARNESSES = {
       sh('pi', ['install', REPO], { env })
       return env
     },
-    run(env, cwd, port) {
+    run(env, cwd, port, prompt = ['run the command']) {
       const models = { providers: { mock: { baseUrl: `http://127.0.0.1:${port}/v1`, api: 'openai-completions', apiKey: 'mock', models: [{ id: 'mock' }] } } }
       writeFileSync(join(env.PI_CODING_AGENT_DIR, 'models.json'), JSON.stringify(models))
-      return sh('pi', ['-p', '--no-session', '--model', 'mock/mock', 'run the command'], { env: { ...env, PWD: cwd }, cwd, input: '', allowFail: true })
+      return sh('pi', ['-p', '--no-session', '--model', 'mock/mock', ...prompt], { env: { ...env, PWD: cwd }, cwd, input: '', allowFail: true })
     },
   },
 }
@@ -101,13 +102,18 @@ const HARNESSES = {
 // What each harness must show. `skill`/`agent`: how its prompt lists one (Codex `- plugin:skill: …` and
 // `name: {`, opencode and pi `<name>skill</name>` and `- name: …`; pi lists the agents in the dev-tools
 // `subagent` tool). `asked`: the harness's own prompt for a plain risky command, which a non-interactive run
-// rejects (Codex's prompt rules, opencode's bash ask entries, pi's confirm dialog without a UI).
+// rejects (Codex's prompt rules, opencode's bash ask entries, pi's confirm dialog without a UI). `invoke`: the
+// prompt argv that runs a skill with an argument (Codex needs the plugin prefix: a bare `$wt` loads nothing);
+// `substitutes`: whether the harness replaces `$ARGUMENTS` in the skill body (pi and Codex append the text instead).
 const EXPECT = {
-  codex: { skill: (s) => `- ${s.plugin}:${s.name}: `, agent: (a) => `${a.name}: {`, asked: /approval required by policy/ },
-  opencode: { skill: (s) => `<name>${s.name}</name>`, agent: (a) => `- ${a.name}: `, asked: /permission requested: bash \(git reset --hard/ },
-  pi: { skill: (s) => `<name>${s.name}</name>`, agent: (a) => `- ${a.name}: `, asked: /Risky command/ },
+  codex: { invoke: (skill, arg) => [`$dev-tools:${skill} ${arg}`], substitutes: false, skill: (s) => `- ${s.plugin}:${s.name}: `, agent: (a) => `${a.name}: {`, asked: /approval required by policy/ },
+  opencode: { invoke: (skill, arg) => ['--command', skill, arg], substitutes: true, skill: (s) => `<name>${s.name}</name>`, agent: (a) => `- ${a.name}: `, asked: /permission requested: bash \(git reset --hard/ },
+  pi: { invoke: (skill, arg) => [`/skill:${skill} ${arg}`], substitutes: false, skill: (s) => `<name>${s.name}</name>`, agent: (a) => `- ${a.name}: `, asked: /Risky command/ },
 }
 const { skills: SKILLS, agents: AGENTS } = inventory()
+const ARG = 'e2e-arg-4242'
+// A line of the wt skill's body, so the probe knows the skill itself (not just its listing) reached the model.
+const WT_BODY = 'There is no fixed cap on worktrees or agents'
 
 async function check(name) {
   const h = HARNESSES[name]
@@ -138,6 +144,17 @@ async function check(name) {
         const missing = [...SKILLS.filter((s) => !prompt.includes(EXPECT[name].skill(s))).map((s) => `skill ${s.name}`), ...AGENTS.filter((a) => !prompt.includes(EXPECT[name].agent(a))).map((a) => `agent ${a.name}`)]
         if (missing.length) failures.push(`not in the model prompt: ${missing.join(', ')}`)
       }
+      rmSync(join(root, 'mock.jsonl'), { force: true })
+    }
+    // A skill invoked with an argument: its body and the argument both reach the model, and `$ARGUMENTS` is
+    // substituted only where `substitutes` says so (the skills name the argument in words for the others).
+    {
+      const m = await mock('echo hello', root)
+      const out = h.run(env, cwd, m.port, EXPECT[name].invoke('wt', ARG))
+      m.stop()
+      const prompt = m.entries().map((e) => e.prompt).join('\n')
+      const seen = { body: prompt.includes(WT_BODY), arg: prompt.includes(ARG), literal: prompt.includes('$ARGUMENTS') }
+      if (!seen.body || !seen.arg || seen.literal === EXPECT[name].substitutes) failures.push(`skill argument: ${JSON.stringify(seen)}\n${out.stdout?.slice(-600)}\n${out.stderr?.slice(-600)}`)
       rmSync(join(root, 'mock.jsonl'), { force: true })
     }
     // sounds' Stop hook ran from the installed plugin: it keeps the session's alert levels in the plugin data dir.
