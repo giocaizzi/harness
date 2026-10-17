@@ -23,7 +23,8 @@ export const rules = {
     },
     {
       "id": "ruleset",
-      "match": "\\bgh\\s+api\\b.*\\b(rulesets|protection)\\b",
+      // Writes only: an explicit write method, or body fields (gh api then defaults to POST).
+      "match": "\\bgh\\s+api\\b(?=.*\\b(rulesets|protection)\\b)(?=.*(\\s(-X|--method)[\\s=]*(POST|PUT|PATCH|DELETE)\\b|\\s(-f|-F|--field|--raw-field|--input)\\b))",
       "skills": [
         "github-workflow"
       ],
@@ -40,7 +41,9 @@ export const rules = {
     },
     {
       "id": "release",
-      "match": "\\b(release-please|npm\\s+version|git\\s+tag)\\b",
+      // What cuts a release, not what reads one: release-please-config.json, a release-please workflow or
+      // `git tag -l` pass. Bare `git tag` lists, so a tag name or a creating flag must follow.
+      "match": "\\brelease-please\\s+(release-pr|github-release|bootstrap)\\b|\\bnpm\\s+version\\b|\\bgit\\s+tag\\s+(?!(-l|--list|-n\\d*|--contains|--no-contains|--points-at|--merged|--no-merged|-v|--verify|--sort|--format|--column|-i|--ignore-case)\\b)[^\\s;&|]",
       "skills": [
         "release-please",
         "semver"
@@ -95,9 +98,11 @@ export const rules = {
     },
     {
       "id": "force",
-      "match": "\\bgit\\s+push\\b.*(--force|\\s-f\\b)",
+      // `--force-with-lease` to a feature branch passes: it cannot clobber work it has not seen, and a branch
+      // ruleset rejects it on a protected default branch. ponytail: a bare lease push from main is not caught.
+      "match": "\\bgit\\s+push\\b[^;&|\\n]*(--force(?!-with-lease)\\b|\\s-[a-z]*f[a-z]*\\b|\\s\\+[^\\s;&|]|--force-with-lease\\b[^;&|\\n]*\\b(main|master)\\b)",
       "why": "rewrites remote history",
-      "prefixes": [["git", "push", "--force"], ["git", "push", "-f"], ["git", "push", "--force-with-lease"]]
+      "prefixes": [["git", "push", "--force"], ["git", "push", "-f"]]
     },
     {
       "id": "terraform",

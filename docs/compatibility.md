@@ -115,7 +115,7 @@ Where each harness reads MCP servers, for the `repo-standard` rule (repo servers
 
 ```bash
 make check   # validate (incl. `claude plugin validate` and the parity check) + node tests + `claude plugin test`
-make e2e     # Codex, opencode and pi against a scripted model (tests/e2e), each in a throwaway home
+make e2e     # Codex, opencode and pi against a scripted model (tests/e2e), each in a throwaway home with OTEL_* and GUARD_OTEL_* unset
 ```
 
 `make e2e` needs the three CLIs on `PATH` ([install runbook](install.md#verify), no global install needed) but no login: `tests/e2e/mock-llm.mjs` speaks the Responses and Chat Completions APIs and scripts one shell call. For each harness it installs this checkout the documented way, then checks that a `pip install` in a uv project is denied with the guard's reason, that a plain risky command (`git reset --hard`) reaches the harness's own prompt, rejected in a non-interactive run (pi: blocked without a UI), that a compound one (`cd . && rm -rf ~/…`) is denied, and that every skill and agent in the repo is in the model's prompt (Codex installs every marketplace plugin for this); on Codex it also checks that sounds' `Stop` hook ran; on pi it also delegates to `scout` through the `subagent` tool and checks the child session ran. CI runs it on Linux, macOS and Windows (`e2e` job).
