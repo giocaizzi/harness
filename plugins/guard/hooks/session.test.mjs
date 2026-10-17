@@ -40,11 +40,17 @@ test('stop: prefers make check-fast when the Makefile defines it', () => {
 })
 
 test('stop: passes when stop_hook_active, no check target, no make, or green', () => {
-  const never = () => assert.fail('must not run')
-  assert.equal(stopCheck({ stop_hook_active: true }, never), null)
-  assert.equal(stopCheck({}, () => ({ status: 2 })), null)
-  assert.equal(stopCheck({}, () => ({ status: null, error: new Error('ENOENT') })), null)
-  assert.equal(stopCheck({}, () => ({ status: 0 })), null)
+  // Own data dir: under the guard's own stop hook, the real one holds this repo's lock and the check would defer.
+  process.env.CLAUDE_PLUGIN_DATA = tmp()
+  try {
+    const never = () => assert.fail('must not run')
+    assert.equal(stopCheck({ stop_hook_active: true }, never), null)
+    assert.equal(stopCheck({}, () => ({ status: 2 })), null)
+    assert.equal(stopCheck({}, () => ({ status: null, error: new Error('ENOENT') })), null)
+    assert.equal(stopCheck({}, () => ({ status: 0 })), null)
+  } finally {
+    delete process.env.CLAUDE_PLUGIN_DATA
+  }
 })
 
 test('stop: skips make check when the repo is unchanged since the last green run', () => {
