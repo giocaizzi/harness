@@ -1,8 +1,9 @@
 ---
 name: api-reviewer
 description: Scans the API for vulnerabilities, RBAC leaks and compliance issues. Use when asked to review API security, audit endpoints, or check RBAC.
-model: sonnet
 tools: Read, Edit, Bash, Grep, Glob, WebSearch
+effort: medium
+model: opus
 ---
 
 # Role

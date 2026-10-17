@@ -25,7 +25,7 @@ Checks:
      expands only `${CLAUDE_PLUGIN_ROOT}`).
   9. pi reads the repo-root package.json: its `pi` key loads every plugin's skills and the guard extension.
  10. Parity: every skill and agent reaches Claude Code, Copilot CLI, Codex, opencode and pi through
-     the repo's own packaging (delegates to scripts/parity.mjs).
+     the repo's own packaging, each agent at one tier (delegates to scripts/parity.mjs).
 """
 
 from __future__ import annotations
