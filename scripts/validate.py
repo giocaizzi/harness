@@ -24,6 +24,8 @@ Checks:
      VS Code maps, and hook commands use no `${CLAUDE_PLUGIN_DATA}` token (VS Code
      expands only `${CLAUDE_PLUGIN_ROOT}`).
   9. pi reads the repo-root package.json: its `pi` key loads every plugin's skills and the guard extension.
+ 10. Parity: every skill and agent reaches Claude Code, Copilot CLI, Codex, opencode and pi through
+     the repo's own packaging, each agent at one tier (delegates to scripts/parity.mjs).
 """
 
 from __future__ import annotations
@@ -344,6 +346,22 @@ def check_pi_package(r: Reporter) -> None:
         r.ok("pi package loads all skills and the guard extension")
 
 
+def check_parity(r: Reporter) -> None:
+    r.section("Parity: every skill and agent reaches every harness")
+    result = subprocess.run(
+        ["node", str(REPO_ROOT / "scripts" / "parity.mjs")],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    if result.returncode != 0:
+        for line in (result.stdout + result.stderr).splitlines():
+            r.fail(line)
+    else:
+        r.ok(result.stdout.strip())
+
+
 def main() -> None:
     r = Reporter()
     check_native_validator(r)
@@ -354,6 +372,7 @@ def main() -> None:
     check_hooks(r)
     check_vscode(r)
     check_pi_package(r)
+    check_parity(r)
     check_readme(r)
 
     print()

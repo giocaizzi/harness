@@ -72,6 +72,7 @@ The other three harnesses read the same sources differently (details in [docs/co
 ├── scripts/
 │   ├── build_agents.py           src/agents/ + manifests → agents/, copilot/, codex/, opencode/, .github/plugin/, .codex-plugin/, hooks/codex.json
 │   ├── install.mjs               copies Codex agents / opencode skills, agents and guard/sounds stubs from a checkout
+│   ├── parity.mjs                every skill and agent reaches every harness (run by validate.py)
 │   └── validate.py               full repo invariant checks
 ├── tests/e2e/                    drives Codex, opencode and pi against a scripted model (`make e2e`)
 ├── package.json                  pi package manifest (`pi` key)
@@ -106,7 +107,7 @@ The other three harnesses read the same sources differently (details in [docs/co
 |---|---|
 | `make help` | List all targets. |
 | `make build` | Generate agent files **and** the per-plugin Copilot `plugin.json`. |
-| `make validate` | Build sync + plugin manifest hygiene + SKILL.md spec + marketplace ↔ disk + README ↔ disk. |
+| `make validate` | Build sync + plugin manifest hygiene + SKILL.md spec + marketplace ↔ disk + README ↔ disk + harness parity (`scripts/parity.mjs`: every skill and agent reaches every harness). |
 | `make check` | `make lint` + `make test` (standard entrypoint, run by CI; `make lint` is an alias for `make validate`). |
 | `make e2e` | Codex, opencode and pi against a scripted model in throwaway homes (skips a CLI that is missing; CI runs it on Linux, macOS and Windows). |
 | `make install HARNESS="codex opencode"` | Copy what Codex and opencode cannot take from the marketplace into their config dirs. |

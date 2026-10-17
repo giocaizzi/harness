@@ -1,6 +1,7 @@
 # Copilot CLI-specific frontmatter. Merged on top of agent.yaml.
 # See https://docs.github.com/en/copilot/reference/custom-agents-configuration for all keys.
 # Use `name` here to override the shared kebab-case identifier with a pretty display label.
+# model left unset: Copilot inherits the session model (the driver tier); choose the tier with /model.
 name: "API Reviewer"
 argument-hint: "API Security Review"
 tools:

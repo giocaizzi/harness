@@ -27,10 +27,31 @@ Versions checked: Claude Code 2.1.296, Copilot CLI 1.0.95, VS Code 1.139, Codex 
 | `hud` rule for references of other repositories (`owner/repo#N`) | yes (`prompt.compose`, a `session` section `hud:refs`) | no: nothing rewrites its references, so nothing to keep right | no: same | no: same | no: same | yes (`before_agent_start`, a prompt guideline) |
 | `hud` status line | yes (`statusLine.command`) | yes (`statusLine.command`) | no: no status-line hook | no: `tui.status_line` takes built-in items only | no: no status-line command; TUI slots undocumented ([#68](https://github.com/giocaizzi/harness/issues/68)) | yes, the footer status (`ctx.ui.setStatus`) |
 | `sounds` toasts and sounds | yes (mod), sounds on macOS only | no: no mods API | no: no mods API | turn and context alerts with the default clips (`Stop` hook, `sounds/hooks/codex.mjs`), a chime on a permission prompt (`PermissionRequest` hook), notices as a `systemMessage` warning, sounds on macOS only; no limit or cache alerts | turn, subagent and context alerts with the default clips (`sounds/hooks/opencode.mjs`), a chime on a permission prompt or question, the terminal bell on those and a finished turn, notices as toasts, sounds on macOS only; no limit or cache alerts | yes (`sounds/hooks/pi.mjs`): turn and context alerts with the default clips, the terminal bell on a finished run, sounds on macOS only; no limit or cache alerts, no needs-input chime (no permission prompts, [#98](https://github.com/giocaizzi/harness/issues/98)) |
-| Agent model and effort per agent (`scout` low, `escalate` medium) | yes, agent frontmatter (`model`, `effort`) | yes, user settings `subagents.agents.<plugin>:<agent>` (`model`, `effortLevel`), set by the dotfiles; agent files carry neither | no: agent files carry no effort, `model` is left unset | effort only (`model_reasoning_effort`); the model is the session's | no: the session's model | no: the `subagent` tool runs the session's model |
+| Agent model and effort per agent (`scout` low, `api-reviewer` driver tier, medium, `escalate` medium) | yes, agent frontmatter (`model`, `effort`) | yes, user settings `subagents.agents.<plugin>:<agent>` (`model`, `effortLevel`), set by the dotfiles; agent files carry neither | no: agent files carry no effort, `model` is left unset | effort only (`model_reasoning_effort`); the model is the session's | no: the session's model | no: the `subagent` tool runs the session's model |
 | Suggested follow-up prompts | yes, from `next-steps@claude-community` (not this repo) | no: hooks and extensions cannot fill or suggest input | no: only VS Code extension chat participants | no: hooks cannot touch the composer | not built: `client.tui.appendPrompt` exists ([#28](https://github.com/giocaizzi/harness/issues/28)) | not built: `setWidget`, `setEditorText` exist ([#28](https://github.com/giocaizzi/harness/issues/28)) |
 
 Hosts: everything runs on macOS, Linux and Windows; the hooks need `node` 22+ on PATH. CI drives Codex, opencode and pi on all three ([Verify](#verify)); Claude Code, Copilot CLI and VS Code are checked live on macOS only, Windows is pending ([#25](https://github.com/giocaizzi/harness/issues/25)).
+
+**Parity rule:** every skill and agent reaches every harness above. `make validate` enforces it through `scripts/parity.mjs`, which reads each harness's delivery from what that harness consumes: the marketplace and the Claude, Copilot and Codex plugin manifests, the plan of `scripts/install.mjs` (Codex agents, opencode) and `package.json`'s `pi` key plus the agents the `subagent` tool loads. VS Code reads the Claude format, so the Claude delivery covers it. It also fails on a skill name used by two plugins, since opencode and pi install skills by name, and on an agent whose tier differs between harnesses: only Claude names the model, the Codex, Copilot and opencode files pin none (they take the session's), and the Claude `effort` equals Codex's `model_reasoning_effort`. A row above that says "no" is a hook or UI feature, never a skill or agent.
+
+## User-level setup
+
+What a harness reads from the user's home rather than from a plugin. This repo ships none of it; a dotfiles repo renders it per machine. Paths are the defaults (`$CODEX_HOME`, `$XDG_CONFIG_HOME`, `$PI_CODING_AGENT_DIR` move them).
+
+| | Claude Code | Copilot CLI | VS Code Copilot | Codex CLI | opencode | pi |
+|---|---|---|---|---|---|---|
+| Global instructions | `~/.claude/CLAUDE.md` | `~/.copilot/copilot-instructions.md` (`copilot instruction list` shows it) | user `*.instructions.md` files in the profile (unverified) | `~/.codex/AGENTS.md` | `~/.config/opencode/AGENTS.md` | `~/.pi/agent/AGENTS.md` |
+| Private instructions (a second file kept out of the shared one) | imported from the global file with `@<path>` | no import: inlined into the global file | a second `*.instructions.md` | no import: inlined | inlined, or listed in `instructions` of `opencode.json` | no import: inlined |
+| User MCP servers ([details](#mcp-servers)) | `~/.claude.json` | `~/.copilot/mcp-config.json` | profile `mcp.json` | `~/.codex/config.toml` | `~/.config/opencode/opencode.json` | `~/.pi/agent/mcp.json` |
+| Invoke a skill | `/<plugin>:<skill>`, `Skill` tool | `/<skill>`, `skill` tool | `skill` tool | `$<skill>` | `/<skill>`, `skill` tool | `/skill:<name>` |
+
+The global instructions are one `AGENTS.md`, rendered per machine role and placed (or linked) at each harness's path above; the private part lives outside the public dotfiles and is imported where the harness can, inlined where it cannot.
+
+Machine roles:
+
+- **Full, personal (macOS):** every harness above, every plugin.
+- **Full, work (Windows):** the harnesses that machine selects, the same plugins; the hooks need `node` 22+ there too.
+- **Light (Linux, Raspberry Pi):** harness-free on purpose: no harness config, instructions or plugins, and agents never run there, so nothing in this repo targets it. Linux stays supported for other machines and CI.
 
 ## How each harness reads the repo
 
@@ -91,11 +112,11 @@ Where each harness reads MCP servers, for the `repo-standard` rule (repo servers
 ## Verify
 
 ```bash
-make check   # validate (incl. `claude plugin validate`) + node tests + `claude plugin test`
+make check   # validate (incl. `claude plugin validate` and the parity check) + node tests + `claude plugin test`
 make e2e     # Codex, opencode and pi against a scripted model (tests/e2e), each in a throwaway home
 ```
 
-`make e2e` needs the three CLIs on `PATH` ([install runbook](install.md#verify), no global install needed) but no login: `tests/e2e/mock-llm.mjs` speaks the Responses and Chat Completions APIs and scripts one shell call. For each harness it installs this checkout the documented way, then checks that a `pip install` in a uv project is denied with the guard's reason, that a plain risky command (`git reset --hard`) reaches the harness's own prompt, rejected in a non-interactive run (pi: blocked without a UI), that a compound one (`cd . && rm -rf ~/…`) is denied, and that the skills and the `scout` agent are in the model's prompt; on Codex it also checks that sounds' `Stop` hook ran; on pi it also delegates to `scout` through the `subagent` tool and checks the child session ran. CI runs it on Linux, macOS and Windows (`e2e` job).
+`make e2e` needs the three CLIs on `PATH` ([install runbook](install.md#verify), no global install needed) but no login: `tests/e2e/mock-llm.mjs` speaks the Responses and Chat Completions APIs and scripts one shell call. For each harness it installs this checkout the documented way, then checks that a `pip install` in a uv project is denied with the guard's reason, that a plain risky command (`git reset --hard`) reaches the harness's own prompt, rejected in a non-interactive run (pi: blocked without a UI), that a compound one (`cd . && rm -rf ~/…`) is denied, and that every skill and agent in the repo is in the model's prompt (Codex installs every marketplace plugin for this); on Codex it also checks that sounds' `Stop` hook ran; on pi it also delegates to `scout` through the `subagent` tool and checks the child session ran. CI runs it on Linux, macOS and Windows (`e2e` job).
 
 ### With a real model
 
