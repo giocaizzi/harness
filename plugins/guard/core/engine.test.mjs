@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { codexRules, evaluateCommand, evaluateEdit, evaluateSpawn, nativeAsk, opencodeAsks, removalTargets, usageLevel, worktreeFacts } from './engine.mjs';
+import { branchFacts, branchTargets, codexRules, evaluateCommand, evaluateEdit, evaluateSpawn, nativeAsk, opencodeAsks, regenerableName, regenFacts, removalTargets, usageLevel, worktreeFacts } from './engine.mjs';
 import { rules } from './rules.mjs';
 
 const fresh = () => ({ reminded: new Set() });
@@ -48,6 +48,8 @@ test('nativeAsk: only a plain command starting with a risky prefix is left to th
   assert.equal(nativeAsk('rm -rf build/x', 'rm', rules), true);
   assert.equal(nativeAsk('  git reset --hard', 'reset', rules), true);
   assert.equal(nativeAsk('git push -f origin x', 'force', rules), true);
+  for (const [c, rule] of [['git clean -fdx', 'clean'], ['git checkout -- .', 'discard'], ['git stash drop', 'stash'], ['git branch -D x', 'branch-delete'], ['git push --mirror', 'push-delete'], ['git rm -rf x', 'git-rm']])
+    assert.equal(nativeAsk(c, rule, rules), true, c);
   for (const [command, rule] of [
     // Codex runs these without its prompt rules (it does not parse expansions): all ran unasked in review.
     ['rm -r $PWD/victim', 'rm'],
@@ -71,6 +73,9 @@ test('nativeAsk: only a plain command starting with a risky prefix is left to th
     ['FOO=1 rm -rf y', 'rm'],
     ['rm -rfv y', 'rm'],
     ['git push origin x --force', 'force'], // flag not in prefix position
+    ['git -C x reset --hard', 'reset'], // a prompt rule cannot skip git's global options
+    ['find . -delete', 'find'], // no prefixes
+    ['git push origin --delete main', 'push-delete'], // only --mirror and --prune are prefixes
     ['gh pr merge 1 --admin', 'merge'], // no prefixes
   ])
     assert.equal(nativeAsk(command, rule, rules), false, command);
@@ -472,4 +477,149 @@ test('an edit under docs/ or to README/AGENTS hints at docs-sync once', () => {
   assert.equal(evaluateEdit({ path: 'C:\\r\\AGENTS.md', state: fresh(), rules }).rule, 'docs');
   assert.equal(evaluateEdit({ path: '/r/src/docs.ts', state: fresh(), rules }).rule, undefined);
   assert.equal(evaluateEdit({ path: '/r/docs/x.md', loadedSkills: new Set(['dev-tools:docs-sync']), state: fresh(), rules }).rule, undefined);
+});
+
+const outcome = (command, facts = {}) => {
+  const d = evaluateCommand({ command, state: fresh(), host: calm, readTool: true, rules, ...facts });
+  return d.remind ? `remind:${d.rule}` : d.rule ? `${d.action}:${d.rule}` : d.action;
+};
+
+test("git's global options before the subcommand hide no rule", () => {
+  for (const [c, want] of [
+    ['git -C x reset --hard', 'ask:reset'], ['git -C x push --force', 'ask:force'], ['git -C x worktree remove --force y', 'ask:worktree-rm'],
+    ['git -c core.editor=true reset --hard', 'ask:reset'], ['git --git-dir=.git --work-tree=. reset --hard', 'ask:reset'],
+    ['git --git-dir .git --work-tree . reset --hard', 'ask:reset'], ['git --no-pager push -f origin x', 'ask:force'],
+    ['git -C a -c k=v --no-pager reset --hard', 'ask:reset'], ['git -c "user.name=a b" -C x clean -fd', 'ask:clean'],
+    ['git push https://h/r.git --force main', 'ask:force'], // a `.git` URL is not a git command whose options to drop
+    ['git -C x commit -m "fix: ok"', 'deny:commit'], ['git -C x worktree add ../y', 'deny:worktree'], ['git -C x tag v1.2.0', 'deny:release'],
+  ])
+    assert.equal(outcome(c), want, c);
+  const run = (c) => evaluateCommand({ command: c, loadedSkills: new Set(['ship']), state: fresh(), host: calm, rules });
+  assert.equal(run('git -C x commit -m "bad title"').rule, 'title');
+  assert.equal(run("git -c core.editor=true commit -m 'Update readme'").rule, 'title');
+  assert.equal(run('git -C x commit -m "fix: ok"').action, 'allow');
+  for (const c of ['git --version', 'git -C x status', 'git -C x push origin feat/x', 'git --no-pager log -n 3'])
+    assert.equal(outcome(c), 'allow', c);
+});
+
+test('a relative worktree target is resolved against git -C', async () => {
+  const run = fakeGit({ '/r/.claude/worktrees/a': {}, '/r/.claude/worktrees/b': { status: ' M f\n' } });
+  const decideWith = async (c) => decide(c, { worktrees: await worktreeFacts(c, {}, rules, run) });
+  assert.deepEqual(removalTargets('git -C /r worktree remove --force .claude/worktrees/a', rules), ['/r/.claude/worktrees/a']);
+  assert.deepEqual(removalTargets('cd /r && git -C sub -C x worktree remove -f y', rules), ['/r/sub/x/y']);
+  assert.equal((await decideWith('git -C /r worktree remove --force .claude/worktrees/a')).action, 'allow');
+  assert.match((await decideWith('git -C /r worktree remove --force .claude/worktrees/b')).reason, /dirty tree/);
+  assert.equal((await decideWith('git -C "$R" worktree remove --force a')).action, 'ask');
+});
+
+test('every spelling of a recursive delete asks', () => {
+  for (const c of ['\\rm -rf build', 'command rm -rf build', '/bin/rm -rf build', 'sudo rm -rf build', 'echo build | xargs rm -rf',
+    'Remove-Item -Recurse -Force build', 'Remove-Item -r -fo build', 'Remove-Item build -Recurse:$true', 'Get-ChildItem x | Remove-Item -Rec',
+    'ri -Recurse build', 'rmdir /s /q build', 'rd /S build', 'del /s /q build'])
+    assert.equal(outcome(c), 'ask:rm', c);
+  for (const c of ['find . -name "*.log" -delete', 'find . -type f -exec rm {} \\;', 'find build -execdir /bin/rm -f {} +'])
+    assert.equal(outcome(c), 'ask:find', c);
+  assert.equal(outcome('find build -exec rm -r {} +'), 'ask:rm');
+  for (const c of ['Remove-Item build', 'Remove-Item -ReadCount 1 x', 'rmdir empty', 'grep rd -r src', 'find . -name x', 'find . -exec grep rm {} +', 'del x.txt'])
+    assert.equal(outcome(c), 'allow', c);
+});
+
+test('a find delete under a temp dir passes; a delete with no target never rides on a safe one', () => {
+  for (const c of ['find /tmp/x -name "*.log" -delete', 'find /tmp/x -exec rm -rf {} +'])
+    assert.equal(outcome(c), 'allow', c);
+  for (const c of ['find -delete', 'find -L /tmp/x -delete', 'echo / | xargs rm -rf && rm -rf /tmp/x', 'find . -delete; rm -rf /tmp/x'])
+    assert.equal(outcome(c).startsWith('ask'), true, c);
+});
+
+test('git commands that destroy uncommitted or unpushed work ask', () => {
+  for (const [c, rule] of [
+    ['git clean -fdx', 'clean'], ['git clean -f', 'clean'], ['git clean --force -d', 'clean'], ['git clean -xdf', 'clean'],
+    ['git checkout -- .', 'discard'], ['git checkout .', 'discard'], ['git checkout HEAD -- src/', 'discard'], ['git checkout -- "*.ts" :/', 'discard'],
+    ['git checkout -f main', 'discard'], ['git switch --discard-changes main', 'discard'], ['git switch -f main', 'discard'],
+    ['git restore .', 'discard'], ['git restore --staged --worktree .', 'discard'], ['git restore -W -S :/', 'discard'], ['git restore --source=HEAD~1 src/', 'discard'],
+    ['git stash drop', 'stash'], ['git stash drop stash@{1}', 'stash'], ['git stash clear', 'stash'],
+    ['git push --mirror', 'push-delete'], ['git push --prune origin', 'push-delete'], ['git push origin --delete main', 'push-delete'],
+    ['git push -d origin master', 'push-delete'], ['git push origin :main', 'push-delete'], ['git push origin :refs/heads/master', 'push-delete'],
+    ['git rm -rf src', 'git-rm'], ['git rm --force a.txt', 'git-rm'],
+  ])
+    assert.equal(outcome(c), `ask:${rule}`, c);
+  for (const c of ['git clean -n', 'git clean -fdn', 'git clean --dry-run -f', 'git checkout main', 'git checkout -b feat/x origin/main', 'git checkout -',
+    'git checkout -- src/a.ts', 'git restore src/a.ts', 'git restore --staged .', 'git restore -S .', 'git switch main', 'git stash', 'git stash pop', 'git stash list',
+    'git push origin --delete fix/main', 'git push origin --delete feat/x', 'git push origin main', 'git push -u origin feat/x',
+    'git rm -r --cached x', 'git rm -r dir', 'git rm -rf --cached dir', 'git push origin x && git checkout main'])
+    assert.equal(outcome(c), 'allow', c);
+});
+
+// Fake git + gh for branch deletes: `ahead` commits on no remote ref, `pr` the merged PR head, `inPr` the tip in it.
+const fakeBranches = (branches) => async (argv) => {
+  const b = branches[argv[0] === 'gh' ? argv[4] : argv[5]];
+  if (argv[0] === 'gh') return b?.pr == null ? null : `${b.pr}\n`;
+  if (argv[3] === 'rev-parse') return '/r\n';
+  if (!b) return null;
+  if (argv[3] === 'rev-list') return `${b.ahead ?? 0}\n`;
+  if (argv[3] === 'merge-base') return b.inPr === false ? null : '';
+};
+
+test('git branch -D asks unless the branch is pushed or in a merged PR', async () => {
+  const run = fakeBranches({ pushed: {}, squashed: { ahead: 2, pr: 'abc' }, local: { ahead: 1, pr: '' }, after: { ahead: 3, pr: 'abc', inPr: false } });
+  const decideWith = async (c) => decide(c, { branches: await branchFacts(c, rules, run) });
+  for (const c of ['git branch -D pushed', 'git branch -D squashed pushed', 'git -C /r branch --delete --force squashed', 'git branch -df pushed'])
+    assert.equal((await decideWith(c)).action, 'allow', c);
+  assert.match((await decideWith('git branch -D local')).reason, /Branch local: 1 unpushed commit \(no merged PR\)/);
+  assert.match((await decideWith('git branch -D pushed after')).reason, /Branch after: 3 unpushed commits \(tip not in the merged PR\)/);
+  for (const c of ['git branch -D gone', 'git branch -D', 'git branch -D $B', 'git branch -d -f local'])
+    assert.equal((await decideWith(c)).action, 'ask', c);
+  for (const c of ['git branch -d x', 'git branch -m a b', 'git branch --list'])
+    assert.equal(outcome(c), 'allow', c);
+  assert.deepEqual(branchTargets('cd /r && git -C sub branch -D a b', rules), [{ dir: '/r/sub', name: 'a' }, { dir: '/r/sub', name: 'b' }]);
+});
+
+test('ignored regenerable output is deleted without asking; anything else asks', async () => {
+  const ignored = new Set(['.|node_modules', '.|.venv', '.|dist', 'evals|results', 'web|.next', '/r/app|build', '.|.env', '.|secrets']);
+  const run = async (argv) => (argv.includes('check-ignore') && ignored.has(`${argv[2]}|${argv.at(-1)}`) ? '' : null);
+  const decideWith = async (c) => decide(c, { regenerable: await regenFacts(c, {}, rules, run) });
+  for (const c of ['rm -rf node_modules', 'rm -rf .venv dist/', 'rm -rf evals/results', 'cd web && rm -rf .next', 'rm -rf /r/app/build /tmp/x', 'Remove-Item -Recurse -Force node_modules', 'find dist -delete'])
+    assert.equal((await decideWith(c)).action, 'allow', c);
+  for (const c of ['rm -rf build', 'rm -rf node_modules src', 'rm -rf results', 'rm -rf .env', 'rm -rf secrets', 'rm -rf node_modules/*', 'rm -rf ~/node_modules', 'cd "$X" && rm -rf dist'])
+    assert.equal((await decideWith(c)).action, 'ask', c);
+  assert.equal(regenerableName('a/secret-build/dist'), false);
+  assert.equal(regenerableName('pkg/.env.cache'), false);
+  assert.equal(regenerableName('x/key.key'), false);
+  assert.equal(regenerableName('plugins/p/evals/results/'), true);
+});
+
+test('shell file edits remind once toward the edit tool; reads, temp and stream writes do not', () => {
+  const env = { TMPDIR: '/var/folders/ab/T/', TEMP: 'C:\\Users\\u\\AppData\\Local\\Temp' };
+  for (const c of [
+    "sed -i 's/a/b/' f.txt", "sed -i '' -e 's/a/b/' f.txt", "sed -E -i.bak 's/a/b/' f", "perl -pi -e 's/a/b/' f.txt", "perl -i -pe 's/a/b/' f",
+    'python3 - <<EOF\nopen("a.txt", "w").write("x")\nEOF', "python3 -c \"open('a.txt','w').write('x')\"", "uv run python -c \"from pathlib import Path; Path('a').write_text('x')\"",
+    'python3 <<EOF\nwith open(os.path.join(d, "f"), mode="a") as f: f.write("x")\nEOF', "node -e \"require('fs').writeFileSync('a.json', '{}')\"",
+    'cat > f.txt <<EOF\nx\nEOF', 'cat <<EOF > f.txt\nx\nEOF', 'echo x | tee f.txt', 'echo x | tee -a /tmp/x f.txt', 'echo x > f.txt', 'printf x >> f.txt',
+    'echo x 1> f.txt', 'echo x &> f.txt', 'sudo echo x > /etc/hosts', 'Set-Content -Path f.txt -Value x', "'x' | Out-File notes.md",
+  ])
+    assert.equal(outcome(c, { env }), 'remind:edit', c);
+  for (const c of [
+    'echo x > /dev/null', 'echo x > /tmp/f', 'echo x >&2', 'echo x 2>&1', 'echo x > "$TMPDIR/f"', 'S=$(mktemp); echo x > $S', 'echo x | tee /dev/stderr',
+    'echo "a > b"', "sed -n 's/x/y/p' f", 'sed -e s/a/b/ f', "perl -Ilib -Mstrict t.pl", 'python3 -c "print(1)"', "python3 -c \"open('a.txt').read()\"",
+    "python3 -c \"open('/tmp/x', 'w').write('1')\"", "python3 -c \"import sys; sys.stdout.write('x')\"", 'make test 2> err.log', 'Set-Content $env:TEMP\\x -Value 1',
+    'Out-File $null', 'grep -c "a > b" f',
+  ])
+    assert.notEqual(outcome(c, { env }), 'remind:edit', c);
+  const state = fresh();
+  assert.equal(evaluateCommand({ command: 'echo x > a', state, host: calm, rules }).rule, 'edit');
+  assert.equal(evaluateCommand({ command: 'echo x > b', state, host: calm, rules }).rule, undefined);
+});
+
+test('generic false positives stay fixed', () => {
+  for (const c of ['git push --force-with-lease origin fix/main-menu', 'git push --force-with-lease origin main-ui', 'git worktree remove x && rm -f y',
+    'Remove-Item x; Get-ChildItem -Recurse', 'gh pr merge 1 --squash && echo --admin'])
+    assert.doesNotMatch(outcome(c), /^ask/, c);
+  assert.equal(outcome('git push --force-with-lease origin refs/heads/main'), 'ask:force');
+  assert.equal(evaluateCommand({ command: 'git commit-graph write', state: fresh(), host: calm, rules }).rule, undefined);
+});
+
+test('git -C previews the right repo; a dir with shell syntax gets none', async () => {
+  const { previewCommand } = await import('./engine.mjs');
+  assert.deepEqual(previewCommand('reset', 'git -C ../x reset --hard'), ['git', '-C', '../x', 'status', '--short']);
+  assert.equal(previewCommand('force', 'git -C $X push -f'), null);
 });

@@ -8,7 +8,7 @@ import { statfs } from 'node:fs/promises'
 import { cpus, homedir, loadavg, platform, tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { codexRules, deniedBy, evaluateCommand, evaluateEdit, isHeavy, isRisky, nativeAsk, previewCommand, withPreview, worktreeFacts } from '../core/engine.mjs'
+import { branchFacts, codexRules, deniedBy, evaluateCommand, evaluateEdit, isHeavy, isRisky, nativeAsk, previewCommand, regenFacts, withPreview, worktreeFacts } from '../core/engine.mjs'
 import { cpuPercentFrom } from '../core/host.mjs'
 import { emit } from '../core/otel.mjs'
 import { rules } from '../core/rules.mjs'
@@ -124,10 +124,14 @@ async function onShell(input, state, deps) {
   if (!command) return {}
   try {
     const host = isHeavy(command, rules) ? await deps.hostFacts(input.cwd) : {}
-    const facts = {}
+    const facts = { env: { TMPDIR: deps.env.TMPDIR, TEMP: deps.env.TEMP, TMP: deps.env.TMP } }
     if (isRisky(command, rules)) {
-      facts.env = { TMPDIR: deps.env.TMPDIR, TEMP: deps.env.TEMP, TMP: deps.env.TMP }
-      facts.worktrees = await worktreeFacts(command, facts.env, rules, (argv, cwd) => deps.run(argv, cwd ?? input.cwd))
+      const inCwd = (argv, cwd) => deps.run(argv, cwd ?? input.cwd)
+      ;[facts.worktrees, facts.branches, facts.regenerable] = await Promise.all([
+        worktreeFacts(command, facts.env, rules, inCwd),
+        branchFacts(command, rules, inCwd),
+        regenFacts(command, facts.env, rules, inCwd),
+      ])
     }
     if (deniedBy(command, rules)?.when) facts.python = deps.pythonManager(input.cwd)
     const reminded = new Set(state.reminded)
