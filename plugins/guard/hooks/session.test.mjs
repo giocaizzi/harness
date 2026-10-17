@@ -65,6 +65,28 @@ test('stop: skips make check when the repo is unchanged since the last green run
   }
 })
 
+test('stop: a strained host or a check already running in the repo defers it, and the next stop runs it', () => {
+  const dir = tmp()
+  process.env.CLAUDE_PLUGIN_DATA = dir
+  try {
+    const calls = []
+    const events = []
+    const report = (e) => events.push(e)
+    const out = stopCheck({ cwd: '/r' }, stopRun(calls, { status: 0 }), { strain: () => 'load 45', report })
+    assert.match(out.systemMessage, /make check deferred \(host strained: load 45\)/)
+    assert.equal(calls.filter((c) => c === 'make check').length, 0)
+    const busy = (cmd, args) => {
+      if (cmd === 'make' && args[0] !== '-n') assert.match(stopCheck({ cwd: '/r' }, stopRun(calls, { status: 0 }), { strain: () => null, report }).systemMessage, /another stop check/)
+      return stopRun(calls, { status: 0 })(cmd, args)
+    }
+    assert.equal(stopCheck({ cwd: '/r' }, busy, { strain: () => null, report }), null)
+    assert.deepEqual(events.map((e) => e.result), ['deferred', 'deferred', 'pass'])
+    assert.equal(typeof events[2].duration_ms, 'number')
+  } finally {
+    delete process.env.CLAUDE_PLUGIN_DATA
+  }
+})
+
 test('stop: a timeout is reported, not blocked, and never marks green', () => {
   const dir = tmp()
   process.env.CLAUDE_PLUGIN_DATA = dir

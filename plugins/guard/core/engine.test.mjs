@@ -83,6 +83,33 @@ test('every prefix is risky under its own rule, and renders for Codex and openco
   assert.equal(opencodeAsks(rules)['git reset --hard *'], 'ask');
 });
 
+test('telemetry false positives stay fixed: read-only release, ruleset and tag commands pass', () => {
+  const skill = (command) => evaluateCommand({ command, state: fresh(), host: calm, rules }).rule;
+  for (const c of ['cat release-please-config.json', 'git show origin/main:release-please-config.json', 'gh run list --workflow release-please.yml',
+    'git tag', 'git tag -l', 'git tag --list "v*"', 'git tag --contains HEAD', 'git tag --sort=-v:refname', 'gh api repos/o/r/rulesets', 'gh api repos/o/r/branches/main/protection --jq .x'])
+    assert.equal(skill(c), undefined, c);
+  for (const [c, rule] of [['git tag v1.2.0', 'release'], ['git tag -a v1 -m x', 'release'], ['npx release-please release-pr --repo-url o/r', 'release'], ['npm version patch', 'release'],
+    ['gh api -X PUT repos/o/r/branches/main/protection --input p.json', 'ruleset'], ['gh api repos/o/r/rulesets -f name=x', 'ruleset'], ['gh api --method DELETE repos/o/r/rulesets/1', 'ruleset']])
+    assert.equal(skill(c), rule, c);
+});
+
+test('--force-with-lease to a feature branch passes; plain force, + refspecs and main still ask', () => {
+  const act = (command) => evaluateCommand({ command, state: fresh(), host: calm, rules }).action;
+  for (const c of ['git push --force-with-lease', 'git push -q --force-with-lease origin feat/x', 'git push --force-with-lease=feat/x:abc123 origin feat/x', 'git push origin --follow-tags'])
+    assert.equal(act(c), 'allow', c);
+  for (const c of ['git push --force', 'git push -f origin x', 'git push -qf origin x', 'git push origin +feat/x', 'git push --force-with-lease origin main', 'git push --force-with-lease origin HEAD:master'])
+    assert.equal(act(c), 'ask', c);
+});
+
+test('a recursive delete of a temp dir held in a variable or a quoted $TMPDIR path does not ask', () => {
+  const env = { TMPDIR: '/var/folders/ab/T/' };
+  const act = (command) => evaluateCommand({ command, state: fresh(), host: calm, env, rules }).action;
+  for (const c of ['S=$(mktemp -d); do_x; rm -rf $S', 'T=$(mktemp -d -t probe) && rm -rf "$T"', 'rm -rf "$TMPDIR/x"', 'R=/private/tmp/claude-1/s/x; rm -rf $R/home', 'export E="$TMPDIR/e"; rm -rf ${E}'])
+    assert.equal(act(c), 'allow', c);
+  for (const c of ['S=$(mktemp -d foo.XXXX); rm -rf $S', 'S=build; rm -rf $S', 'rm -rf $S', 'S=$(mktemp -d); rm -rf $S/..', 'S=$(mktemp -d); rm -rf $S /', 'rm -rf "$HOME/x"'])
+    assert.equal(act(c), 'ask', c);
+});
+
 test('a plain push and rm of a file are not risky', () => {
   assert.equal(evaluateCommand({ command: 'git push origin x', state: fresh(), host: calm, rules }).action, 'allow');
   assert.equal(evaluateCommand({ command: 'rm notes.txt', state: fresh(), host: calm, rules }).action, 'allow');
