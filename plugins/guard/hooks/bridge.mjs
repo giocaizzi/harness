@@ -31,6 +31,8 @@ export function createGuard({ harness, noAsk = false, dataDir = DATA_DIR, deps =
     pythonManager,
     noAsk,
     emit: (event, attrs) => emit(process.env, event, { ...attrs, harness }),
+    // The harness's own usage, as the harness (service.name opencode or pi): neither exports telemetry itself.
+    report: (event, attrs) => emit(process.env, event, attrs, fetch, harness),
     ...deps,
   }
   const call = async (input) => {
@@ -67,6 +69,24 @@ export function createGuard({ harness, noAsk = false, dataDir = DATA_DIR, deps =
       } catch {
         return null
       }
+    },
+    // One model response: { sessionId, model, provider, tokens: { input, output, cacheRead, cacheWrite, reasoning }, costUsd }.
+    // Named like Claude Code's api_request, so one query covers every harness. Never throws.
+    usage({ sessionId, model, provider, tokens = {}, costUsd }) {
+      const n = (v) => (Number.isFinite(Number(v)) ? Number(v) : undefined)
+      return Promise.resolve(
+        d.report?.('api_request', {
+          'session.id': sessionId,
+          model,
+          provider,
+          input_tokens: n(tokens.input),
+          output_tokens: n(tokens.output),
+          cache_read_tokens: n(tokens.cacheRead),
+          cache_creation_tokens: n(tokens.cacheWrite),
+          reasoning_tokens: n(tokens.reasoning),
+          cost_usd: n(costUsd),
+        }),
+      ).catch(() => {})
     },
     // In-process: the harness is this process.
     awake() {

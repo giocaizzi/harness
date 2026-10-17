@@ -22,10 +22,11 @@ export function parsePairs(str) {
 
 const attr = (key, value) => ({ key, value: { stringValue: String(value) } })
 
-// `config` is the raw env values: { endpoint, headers, resource }.
-export function logRequest({ endpoint, headers, resource }, event, attrs, now = Date.now()) {
+// `config` is the raw env values: { endpoint, headers, resource }. `service` other than guard is a harness the
+// guard reports for (opencode, pi: no native telemetry), so it owns service.name and service.namespace.
+export function logRequest({ endpoint, headers, resource }, event, attrs, now = Date.now(), service = 'guard') {
   if (!endpoint) return null
-  const res = { 'service.name': 'guard', ...parsePairs(resource) }
+  const res = service === 'guard' ? { 'service.name': 'guard', ...parsePairs(resource) } : { ...parsePairs(resource), 'service.name': service, 'service.namespace': service }
   return {
     url: `${endpoint.replace(/\/+$/, '')}/v1/logs`,
     headers: { 'content-type': 'application/json', ...parsePairs(headers) },
@@ -52,10 +53,10 @@ export function logRequest({ endpoint, headers, resource }, event, attrs, now = 
   }
 }
 
-export async function emit(env, event, attrs, fetchFn = fetch) {
+export async function emit(env, event, attrs, fetchFn = fetch, service = 'guard') {
   try {
     const v = (k) => env[k] || env[`GUARD_${k}`]
-    const req = logRequest({ endpoint: v('OTEL_EXPORTER_OTLP_ENDPOINT'), headers: v('OTEL_EXPORTER_OTLP_HEADERS'), resource: v('OTEL_RESOURCE_ATTRIBUTES') }, event, attrs)
+    const req = logRequest({ endpoint: v('OTEL_EXPORTER_OTLP_ENDPOINT'), headers: v('OTEL_EXPORTER_OTLP_HEADERS'), resource: v('OTEL_RESOURCE_ATTRIBUTES') }, event, attrs, Date.now(), service)
     if (req) await fetchFn(req.url, { method: 'POST', headers: req.headers, body: req.body, signal: AbortSignal.timeout(TIMEOUT_MS) })
   } catch {
     // collector unreachable or slow: the decision stands

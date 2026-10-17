@@ -43,6 +43,7 @@ export const GuardPlugin = async ({ client, directory }, deps) => {
   })
   const notes = new Map() // callID -> note for the tool output (the pip note outside uv repos)
   const blocked = new Set() // sessions whose last stop make check already blocked
+  const reported = new Set() // assistant messages whose usage was sent (message.updated repeats)
   const text = (t) => (typeof t === 'string' ? t : '')
 
   return {
@@ -70,6 +71,13 @@ export const GuardPlugin = async ({ client, directory }, deps) => {
     },
     event: async ({ event }) => {
       const sessionId = event.properties?.sessionID ?? event.properties?.info?.id
+      const info = event.properties?.info
+      // Usage once per finished assistant message; opencode prices it (`cost`, USD).
+      if (event.type === 'message.updated' && info?.role === 'assistant' && info.time?.completed && info.tokens && !reported.has(info.id)) {
+        reported.add(info.id)
+        const t = info.tokens
+        await guard.usage({ sessionId: info.sessionID, model: info.modelID ?? info.model?.id, provider: info.providerID ?? info.model?.providerID, tokens: { input: t.input, output: t.output, cacheRead: t.cache?.read, cacheWrite: t.cache?.write, reasoning: t.reasoning }, costUsd: info.cost })
+      }
       if (event.type === 'session.created') guard.awake()
       else if (event.type === 'session.deleted') await guard.sessionEnd({ sessionId })
       else if (event.type === 'session.idle' && sessionId) {
