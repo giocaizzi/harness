@@ -78,9 +78,9 @@ Merge queue is a repository-level ruleset rule and is not offered on every repos
 
 ## Standardizing many repos
 
-Keep one canonical standard in a single repo (`<owner>/.github`): a prose standard in `docs/`, machine-readable parts (ruleset JSON, labels, repo settings) in `standard/`, and a read-only audit script that reports drift per repo. Change the standard there first, then the repos.
+Keep one canonical standard in a single repo (`<owner>/.github`): a prose standard in `docs/`, machine-readable parts (ruleset JSON, labels, repo settings) in `standard/`, and a read-only audit script that reports drift per repo. Change the standard there first, then the repos. A repo's extra labels live in the repo itself (`.github/labels.yaml`), not in the standard repo, so a public standard never names a private repo; the label guard, the sync and the audit all read the standard plus that file.
 
-New repos start from a template repository that already carries the standard files (CI with the aggregate `check`, PR-title and label-guard workflows, Dependabot, Makefile, `AGENTS.md`), then one onboarding command applies settings, labels and workflows and adds the ruleset once `check` is green. On a personal account nothing applies the standard automatically, so the audit must run on a schedule with a read-only token and fail on an empty scope.
+New repos start from a template repository that already carries the standard files (CI with the aggregate `check`, PR-title, label-guard and TODO-issue workflows, Dependabot, Makefile, `AGENTS.md`), then one onboarding command applies settings, labels and workflows and adds the ruleset once `check` is green. On a personal account nothing applies the standard automatically, so the audit must run on a schedule with a read-only token and fail on an empty scope.
 
 Roll out in the order `repo-standard` gives, labels with the settings, and re-run the audit after each repo; it must report no drift.
 
