@@ -1,0 +1,188 @@
+# Usage guide
+
+Every feature this marketplace ships, how to call it and how to tune it. New here: [quickstart.md](quickstart.md). Install and update: [install.md](install.md). What each harness supports and why: [compatibility.md](compatibility.md). Internals of each plugin: [guard.md](guard.md), [hud.md](hud.md), [sounds.md](sounds.md).
+
+## How you call things
+
+There are four kinds of feature, and you call each one differently:
+
+| Kind | Plugins | How it starts |
+|---|---|---|
+| Skills | `dev-tools`, `python`, `javascript`, `api` | **By itself** when the request matches its description ("open a PR" loads `ship`), or **by you** with its slash command. |
+| Agents | `dev-tools` (`scout`, `escalate`), `api` (`api-reviewer`) | **Ask for one by name** ("use scout to ..."); the main agent delegates to it. |
+| Hooks | `guard`, `sounds` | **Never called.** They run on their own around tool calls, prompts and turns. |
+| Display | `hud` | **Always on**, plus a few slash commands for panes. |
+
+Calling a skill yourself, per harness (full table with agents and the rest: [compatibility.md](compatibility.md#user-level-setup)):
+
+| Claude Code | Copilot CLI | VS Code | Codex | opencode | pi |
+|---|---|---|---|---|---|
+| `/dev-tools:ship` | `/ship` | ask in words | `$ship` | `/ship` | `/skill:ship` |
+
+Anything after the name is its argument: `/dev-tools:wt 42`, `$land 128`, `/skill:ship draft`. Asking in words ("land PR 128") works everywhere.
+
+## Skills
+
+### Task workflow (`dev-tools`)
+
+The skills that carry one change from start to merge, in order:
+
+| Step | Skill | Argument | What it does |
+|---|---|---|---|
+| 1. Start | `wt` | issue number or slug | Creates `.claude/worktrees/<slug>` on a `<type>/<slug>` branch from the fresh default branch; checks quota and stale worktrees first. |
+| 2. Ship | `ship` | `draft` (optional) | Splits the diff into small Conventional Commits, pushes, opens a PR if none exists. |
+| 3. Fix | `pr-fix` | PR number (optional) | Reads unresolved review threads and failing CI, fixes them, commits and pushes. |
+| 4. Land | `land` | PR number (optional) | Waits for CI, fixes trivial failures, merges through auto-merge or the queue, syncs main, removes the branch and worktree. |
+| Any time | `docs-sync` | path (optional) | Updates the docs, runbooks, README and `AGENTS.md` that the current diff made stale. |
+
+Example session:
+
+```text
+/dev-tools:wt 42
+add retry with backoff to the uploader
+/dev-tools:docs-sync
+/dev-tools:ship
+/dev-tools:land
+```
+
+### Reference skills (`dev-tools`)
+
+These load by themselves when the work touches their subject; call them by name to apply one on purpose.
+
+| Skill | Loads when you ... |
+|---|---|
+| `conventional-commits` | write a commit message or PR title, rewrite history |
+| `semver` | decide whether a change is breaking, plan a release, review a version bump |
+| `release-please` | release, bump versions, edit release-please config |
+| `github-workflow` | open, split, stack or merge PRs; set up rulesets or merge-gating CI |
+| `repo-standard` | set up or audit a repo (CI, settings, publishing) on GitHub, GitLab or Azure DevOps |
+| `secrets-handling` | touch credentials, tokens, `.env`, a keyring or a vault (Bitwarden details in its `references/bitwarden.md`) |
+| `host-hygiene` | run heavy builds, emulators, full test suites or parallel agents; the host is slow |
+| `subagent-orchestration` | spawn subagents, pick a model or effort, coordinate with other running sessions |
+| `unattended-runs` | start an overnight, headless or auto-approve run |
+
+`host-hygiene` also ships scripts the agent runs for you: `heavy.sh` (one heavy command at a time), `lease.sh` (exclusive use of a device or port), `register-service.sh`, `sweep-stale.sh` (stale worktrees), with `.ps1` twins for Windows.
+
+### Language skills
+
+| Plugin | Skill | Loads when you ... |
+|---|---|---|
+| `python` | `python-development` | write, review or scaffold Python (uv, ruff, mypy, typing, layout) |
+| `python` | `python-testing` | write or review pytest tests |
+| `javascript` | `javascript-typescript` | write or review JS/TS or Node |
+| `javascript` | `react` | write or review React 19+ |
+| `javascript` | `nextjs` | work in a Next.js (App Router) project |
+| `javascript` | `atomic-design` | structure a UI kit or component folders, or set up architecture lint |
+| `api` | `fastapi` | write FastAPI routes, schemas, dependencies, tests |
+| `api` | `sqlalchemy` | define models, write queries, manage sessions and migrations |
+| `api` | `ddd` | design bounded contexts, aggregates, ports and adapters |
+
+## Agents
+
+| Agent | Plugin | Ask for it when | Model |
+|---|---|---|---|
+| `scout` | `dev-tools` | you need something found or read: code, logs, test output. Read-only; answers with `file:line` evidence. | cheapest (Claude: Haiku, `low`) |
+| `escalate` | `dev-tools` | the normal model failed twice on the same bug or design question | strongest (Claude: Fable) |
+| `api-reviewer` | `api` | you want an API security review: vulnerabilities, RBAC leaks, compliance | driver (Claude: Opus, `medium`) |
+
+How to call one: say it ("use scout to list every place we read `GUARD_` env vars"). Per harness: Claude Code `/agents` lists them; Copilot CLI `/agent` picks one; opencode `@scout`; Codex and pi by asking (pi runs them through its `subagent` tool). Models per harness: [compatibility.md](compatibility.md).
+
+## guard: what it does to the agent
+
+You never call guard. You see it when it denies or asks:
+
+| You see | Why | What to do |
+|---|---|---|
+| A commit or PR command denied once with "load skill X" | The first `git commit`, `gh pr create/merge`, `git worktree add`, release or `bw`/`bws` command of a session needs the matching skill loaded first. | Nothing: the agent loads it and retries. |
+| `git commit -m "..."` denied: not a Conventional Commit | Subject must be `type(scope): summary`, types `feat fix perf refactor revert docs style test build ci chore`. Also PR titles. | Nothing: the agent rewrites it. |
+| A permission prompt with `Would affect:` | Risky command: `rm -r`, `git push --force`, `git reset --hard`, `git worktree remove --force`, `terraform apply/destroy`, `gh pr merge --admin`. Deletes under a temp dir or of a clean, pushed or merged worktree skip it. | Read the preview, then allow or deny. |
+| `pip`/`poetry` denied: "This repo uses uv" | The repo has `uv.lock` (or a plain `pyproject.toml`). In a poetry or pip repo it runs, with a one-time note. | Nothing: the agent switches to `uv`. |
+| A heavy build or test run denied once | Load over 30, CPU over 90 % or under 20 GB free disk. | Wait, or let the agent wrap it in `heavy.sh`. |
+| Subagent spawn refused (Claude Code) | A plan window is at 90 %. | Wait for the reset. |
+| The agent keeps working after it said "done" | `make check` failed on stop (only when the repo changed since the last green run). | Nothing: it fixes the failure once, then may stop. |
+| Shellcheck/PSScriptAnalyzer findings after an edit | An edited `.sh`/`.bash`/`.ps1` has lint findings. | Nothing: advice for the agent. |
+
+It also keeps the machine awake while the harness runs.
+
+Settings are env vars, set in the shell that starts the harness (or the `env` block of Claude Code's settings):
+
+| Variable | Default | Effect |
+|---|---|---|
+| `GUARD_UNATTENDED=1` | off | Every risky ask becomes a deny. Use for overnight and headless runs (`unattended-runs` skill). |
+| `GUARD_STOP_CHECK=off` | on | Turns off `make check` on stop. |
+| `GUARD_STOP_TIMEOUT_MS` | `1750000` | Time limit for that check; a timeout is reported, not blocked. |
+| `GUARD_ASK_TIMEOUT_MS` | `60000` | Claude Code: an unanswered permission prompt is denied after this; `0` turns it off. |
+| `GUARD_OTEL_EXPORTER_OTLP_ENDPOINT`, `GUARD_OTEL_EXPORTER_OTLP_HEADERS` | unset | Send each deny and ask to Grafana as logs ([guard.md](guard.md#grafana)). |
+
+A repo with a slow suite defines a `check-fast` make target; the stop hook runs that instead of `check`.
+
+## hud: what's on screen
+
+Claude Code shows everything; Copilot CLI and pi a subset ([compatibility.md](compatibility.md)). Sample output for each part: [hud plugin README](../plugins/hud/README.md).
+
+| Part | Where | Shows |
+|---|---|---|
+| Status line | bottom two lines | user@host, branch and dirty mark, GCP project, session; path, model, context %, 5h and 7d limits with reset time, cost |
+| Band | above the prompt | cache hit %, prompt-cache countdown, context sparkline; the branch's PR with CI (click to open); unpushed and uncommitted work; a forecast when a limit will fill before it resets; running subagents |
+| Spinner | while a tool runs | the tool's verb |
+| Turn footer | under a turn | duration, tokens in and out, cache hit %, cost |
+| Tool rows | each tool call | icon coloured by outcome, `+N -N` on edits, time |
+| Reply rewrites | in replies | `#12` and commits as links with their state, paths shortened and opening your editor, long URLs shortened, ISO times in local time, pass/fail as ✓ ✗ ⊘ with counts, secrets masked |
+
+Commands:
+
+| Command | Harness | Opens |
+|---|---|---|
+| `/weather` | Claude Code | context chart, per-turn table, last turn's tokens, 5h and 7d history, cache TTL |
+| `/ctx` | Claude Code | the context breakdown as a coloured grid |
+| `/subagents` | Claude Code | every subagent: type, task, model, time, tokens, outcome |
+| `/refresh-refs` | Claude Code, pi | forgets cached PR/issue states, files and commits so replies look them up again |
+
+The status line needs one line in settings; see [hud.md](hud.md#install).
+
+Settings: Claude Code `/config`, rows `hud.*`; pi `~/.pi/agent/hud.json`. Each `reply*` setting takes `on`, `off`, `no-glyph`, `no-colour` or `plain`.
+
+| Setting | Default | Controls |
+|---|---|---|
+| `replyRefs`, `replyState` | on | `#12` links and their open/merged/closed colour |
+| `replyPaths`, `replyFileLinks` | on | short paths; `file:line` opens the editor |
+| `replyCommits`, `replyUrls`, `replyTimes`, `replyStatus`, `replySecrets` | on | commit links, short URLs, local times, ✓ ✗ ⊘, masked secrets |
+| `editor` | `vscode` | `cursor`, `zed`, `idea`, `sublime`, `file`, or `custom` with `editorUrl` (`{path}` `{line}` `{col}`) |
+| `timeFormat` | `both` | `absolute`, `relative` |
+| `glyphs`, `colour` | true | every icon or colour at once (`NO_COLOR` also turns colour off) |
+
+Details and examples: [hud.md](hud.md#reply-rewrites).
+
+## sounds: alerts
+
+Toasts appear when context passes 80 % and 90 %, a limit window passes 80 %, 90 % and 100 %, and the prompt cache is a minute from expiring or has expired. Sounds play on macOS only. Claude Code has every setting below in `/config` (rows `sounds.*`); pi, Codex and opencode play the defaults for turns, context and prompts waiting on you.
+
+| Setting | Plays on | Default |
+|---|---|---|
+| `soundDone` | a turn answered (at least `doneAfterSeconds`, default 0) | `done` |
+| `soundNeedsInput` | a permission prompt or a question waiting on you | `chime` |
+| `soundContext` | context past 80 %, 90 % | `alert` |
+| `soundLimit5h`, `soundLimit7d`, `soundLimitSpend` | a limit window past 80 %, 90 %, 100 % | `warn` |
+| `soundCacheExpiring`, `soundCacheExpired` | the prompt cache about to expire, expired | `ping`, `warn` |
+| `soundError`, `soundRefused`, `soundAborted` | a turn ended by an API error, a refusal, an interrupt | `error`, `error`, `off` |
+| `soundSubagent` | a subagent finished | `tick` |
+| `soundGain` | volume, 0 to 4 | |
+| `notify`, `notifyAfterSeconds` | system notification for long turns (60 s), errors, questions, PR checks finishing | on |
+
+Each sound picks from `off`, `chime`, `ping`, `alert`, `warn`, `error`, `done`, `tick`. Details: [sounds.md](sounds.md).
+
+## Limits to know
+
+- **One working directory per session.** With `claude --add-dir`, skills and edits reach the added directories, but hud's PR strip, links and status line and guard's `make check` on stop follow the directory the session started in. Run one session per repo or worktree instead.
+- **Other harnesses get less.** No band, panes or reply colours outside Claude Code; no sounds off macOS. Exact matrix: [compatibility.md](compatibility.md).
+- **Updates need a version bump.** An installed plugin updates only when its version changes: `claude plugin marketplace update giocaizzi-harness`, then `claude plugin update <plugin>@giocaizzi-harness`, then restart. Other harnesses: [install.md](install.md).
+
+## Troubleshooting
+
+| Symptom | Where to look |
+|---|---|
+| Nothing from guard, a hook denies every call, Codex hooks silent | [guard.md](guard.md#troubleshooting) |
+| Icons are boxes | Install a Nerd Font in the terminal, or set `glyphs` to false. |
+| Status line missing | The `statusLine` entry in settings ([hud.md](hud.md#install)); `node` 22+ on PATH. |
+| No sounds | macOS only; check the `sounds.*` rows in `/config`. |
+| A merged change does not show | Update both the marketplace and the plugin, then restart (above). |
