@@ -26,6 +26,8 @@ function toolResult(body) {
   return null
 }
 
+const strings = (v) => (typeof v === 'string' ? [v] : v && typeof v === 'object' ? Object.values(v).flatMap(strings) : [])
+
 const sse = (res, data, event) => res.write(`${event ? `event: ${event}\n` : ''}data: ${typeof data === 'string' ? data : JSON.stringify(data)}\n\n`)
 
 function responses(res, call, text) {
@@ -64,8 +66,8 @@ createServer((req, res) => {
     }
     const result = toolResult(body)
     const call = result === null ? shellCall(body.tools) : null
-    // skills/agent: whether the harness put a known skill and the scout subagent in front of the model.
-    log({ url: req.url, call: call?.name ?? null, result, skills: raw.includes('conventional-commits'), agent: raw.includes('Read-only search and summarization') })
+    // prompt: every string the harness sent, so run.mjs can look for each skill and agent it must offer.
+    log({ url: req.url, call: call?.name ?? null, result, prompt: strings(body).join('\n') })
     res.writeHead(200, { 'content-type': 'text/event-stream' })
     ;(req.url.includes('/responses') ? responses : chat)(res, call, 'done')
     res.end()

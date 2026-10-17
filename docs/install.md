@@ -81,7 +81,7 @@ To try one without touching your own config, give the harness a throwaway home: 
 ## Verify
 
 ```bash
-make check   # manifests, generated files, skills, README sync, node tests, `claude plugin test`
+make check   # manifests, generated files, skills, README sync, harness parity, node tests, `claude plugin test`
 make e2e     # Codex, opencode, pi against a scripted model; no login needed
 ```
 
