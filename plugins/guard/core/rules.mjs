@@ -49,6 +49,37 @@ export const rules = {
         "semver"
       ],
       "why": "versions and tags are owned by release automation"
+    },
+    // `remind`: a once-per-session hint instead of a deny, for skills the agent rarely loads on its own.
+    {
+      "id": "pr-fix",
+      "remind": true,
+      "match": "\\bgh\\s+pr\\s+view\\b.*--comments\\b|\\bgh\\s+api\\b.*\\bpulls/\\d+/(comments|reviews)\\b|\\bgh\\s+run\\s+view\\b.*--log-failed\\b|\\bglab\\s+mr\\s+(view|note)\\b.*--comments\\b",
+      "skills": [
+        "pr-fix",
+        "land"
+      ],
+      "why": "review comments and failing CI are fixed in one pass, then pushed"
+    },
+    {
+      "id": "pytest",
+      "remind": true,
+      "match": "\\bpytest\\b",
+      "skills": [
+        "python-testing"
+      ],
+      "why": "tests follow the house pytest conventions"
+    }
+  ],
+  // Edits whose path matches: a once-per-session hint toward the skill.
+  "files": [
+    {
+      "id": "docs",
+      "match": "(^|/)(docs/.+\\.md|README\\.md|AGENTS\\.md)$",
+      "skills": [
+        "docs-sync"
+      ],
+      "why": "docs, runbooks, README and AGENTS.md follow the change in the same PR"
     }
   ],
   "deny": [
