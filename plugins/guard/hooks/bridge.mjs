@@ -62,7 +62,7 @@ export function createGuard({ harness, noAsk = false, dataDir = DATA_DIR, deps =
     // ponytail: synchronous, so the harness's UI waits for make check like a command hook would; async spawn if it hurts.
     stop({ cwd, active }) {
       try {
-        const out = stopCheck({ cwd, stop_hook_active: active }, d.spawnSync)
+        const out = stopCheck({ cwd, stop_hook_active: active }, d.spawnSync, { report: (attrs) => void d.emit('guard.stop', attrs) })
         return out?.decision === 'block' ? out.reason : null
       } catch {
         return null
