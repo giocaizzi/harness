@@ -67,6 +67,23 @@ test('opencode: a user deny on bash skips the asks, so the guard keeps denying',
   }
 })
 
+test('opencode and pi: a shell file edit gets the edit-tool reminder in the tool output, once', async () => {
+  const hooks = await GuardPlugin({ client: {}, directory: dir() }, deps())
+  const output = { args: { command: "sed -i 's/a/b/' f.txt" }, output: 'done' }
+  await hooks['tool.execute.before']({ tool: 'bash', sessionID: 'e', callID: 'c1' }, output)
+  await hooks['tool.execute.after']({ tool: 'bash', callID: 'c1', args: output.args }, output)
+  assert.match(output.output, /^done\n\nEdit files with the harness's edit tool/)
+  const { handlers, api } = fakePi()
+  guardExtension(api, deps())
+  const ctx = { cwd: dir(), sessionManager: { getSessionId: () => 'e' } }
+  const call = (id) => handlers.tool_call({ toolName: 'bash', toolCallId: id, input: { command: 'echo x > notes.md' } }, ctx)
+  const result = (id) => handlers.tool_result({ toolName: 'bash', toolCallId: id, input: {}, content: [] }, ctx)
+  await call('t1')
+  assert.match((await result('t1')).content[0].text, /edit tool/)
+  await call('t2')
+  assert.equal(await result('t2'), undefined)
+})
+
 test('opencode: a failing make check on idle is sent back once', async () => {
   const sent = []
   const client = { session: { prompt: async (p) => sent.push(p) } }
