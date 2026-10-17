@@ -46,7 +46,7 @@ Type these in the prompt:
 
 ## 4. Run one task end to end
 
-The `dev-tools` skills carry a task from issue to merged PR. Type each one, or just ask in words ("start a worktree for issue 42"). Claude Code names plugin skills `/<plugin>:<skill>`; other harnesses: [usage.md](usage.md#how-you-call-things).
+The `dev-tools` skills carry a task from issue to merged PR. Type each one, or just ask in words ("start a worktree for issue 42"). Claude Code names plugin skills `/<plugin>:<skill>`, Codex `$<plugin>:<skill>` (`$dev-tools:wt 42`); other harnesses: [usage.md](usage.md#how-you-call-things).
 
 ```text
 /dev-tools:wt 42      start: a worktree and branch for issue 42 (or a slug: /dev-tools:wt fix-login)
