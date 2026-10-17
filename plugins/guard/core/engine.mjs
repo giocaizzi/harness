@@ -62,7 +62,7 @@ export function removalTargets(command, rules) {
 }
 
 // A temp path: strictly under /tmp, /private/tmp, /var/folders (macOS $TMPDIR) or a Windows user's AppData\Local\Temp.
-// $TMPDIR, ${TMPDIR}, $env:TEMP, %TEMP% (and TMP) resolve through `env`; an unset variable, glob, `~`, `.`/`..`
+// $TMPDIR, ${TMPDIR}, $env:TEMP, %TEMP% (and TMP) resolve through `env`; an unset variable, other glob, `~`, `.`/`..`
 // or shell syntax is not resolvable statically, so it is not a temp path. The temp dir itself is not either.
 // ponytail: `/tmp/link/` with a trailing slash follows a planted symlink; resolve with realpath if that matters.
 const TEMP_VAR = /^(?:\$\{?(TMPDIR|TEMP|TMP)\}?|\$env:(TEMP|TMP)|%(TEMP|TMP)%)(?=[\\/]|$)/i;
@@ -71,6 +71,10 @@ const WINDOWS_TEMP = /^[a-z]:\/users\/[^/]+\/appdata\/local\/temp\/[^/]/i;
 const norm = (p) => p.replace(/\\/g, '/').replace(/\/+/g, '/').replace(/(.)\/$/, '$1');
 export function isTempPath(target, env = {}) {
   const path = target.replace(TEMP_VAR, (m, a, b, c) => env[(a || b || c).toUpperCase()] || m);
+  // A `*`/`?` glob in the last segment stays inside its parent, so it is temp when the parent is. A leading dot is
+  // refused: an old bash expands `.*` to `..`.
+  const glob = /^(.+)[\\/]([\w*?-][\w.*?-]*)$/.exec(path);
+  if (glob && /[*?]/.test(glob[2])) return isTempPath(glob[1], env);
   if (/^~|[*?[\]{}$%`"'(),;<>|&!]/.test(path)) return false;
   const p = norm(path);
   if (p.split('/').some((s) => s === '.' || s === '..')) return false;
