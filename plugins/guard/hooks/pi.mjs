@@ -27,6 +27,14 @@ export default function guardExtension(pi, deps) {
     return { action: 'continue' }
   })
 
+  // Usage per assistant message: pi prices it at its catalog rate (usage.cost.total).
+  pi.on('message_end', async (event, ctx) => {
+    const m = event.message
+    if (m?.role !== 'assistant' || !m.usage) return
+    const u = m.usage
+    await guard.usage({ sessionId: sessionOf(ctx), model: m.responseModel ?? m.model, provider: m.provider, tokens: { input: u.input, output: u.output, cacheRead: u.cacheRead, cacheWrite: u.cacheWrite, reasoning: u.reasoning }, costUsd: u.cost?.total })
+  })
+
   pi.on('session_start', () => void guard.awake())
   pi.on('session_shutdown', async (_event, ctx) => void (await guard.sessionEnd({ sessionId: sessionOf(ctx) })))
 
