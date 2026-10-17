@@ -33,13 +33,15 @@ function sh(cmd, args, opts = {}) {
   if (r.status !== 0 && !opts.allowFail) throw new Error(`${cmd} ${args.join(' ')} failed (${r.status}):\n${r.stdout}\n${r.stderr}`)
   return r
 }
+// The runs must not reach the real collector: guard decisions from scripted sessions polluted the agent-ops data.
+const BASE_ENV = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(GUARD_)?OTEL_/.test(k)))
 const has = (cmd) => sh(cmd, ['--version'], { allowFail: true }).status === 0
 
 // Start the mock on a free port with a scripted command; resolves to { port, log, stop }.
 async function mock(command, root, extraEnv = {}) {
   const log = join(root, 'mock.jsonl')
   const port = 40_000 + Math.floor(Math.random() * 20_000)
-  const child = spawn(process.execPath, [MOCK, String(port)], { env: { ...process.env, MOCK_COMMAND: command, MOCK_LOG: log, ...extraEnv }, stdio: 'ignore' })
+  const child = spawn(process.execPath, [MOCK, String(port)], { env: { ...BASE_ENV, MOCK_COMMAND: command, MOCK_LOG: log, ...extraEnv }, stdio: 'ignore' })
   await new Promise((r) => setTimeout(r, 300))
   const entries = () => (existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l)) : [])
   return { port, entries, stop: () => child.kill() }
@@ -56,7 +58,7 @@ const project = (root) => {
 const HARNESSES = {
   codex: {
     install(home) {
-      const env = { ...process.env, CODEX_HOME: home }
+      const env = { ...BASE_ENV, CODEX_HOME: home }
       sh('codex', ['plugin', 'marketplace', 'add', REPO], { env })
       const market = JSON.parse(readFileSync(join(REPO, '.claude-plugin', 'marketplace.json'), 'utf8'))
       for (const { name } of market.plugins) sh('codex', ['plugin', 'add', `${name}@giocaizzi-harness`], { env })
@@ -70,7 +72,7 @@ const HARNESSES = {
   },
   opencode: {
     install(home) {
-      const env = { ...process.env, XDG_CONFIG_HOME: join(home, 'config'), XDG_DATA_HOME: join(home, 'data'), XDG_STATE_HOME: join(home, 'state'), OPENCODE_DISABLE_CLAUDE_CODE: '1' }
+      const env = { ...BASE_ENV, XDG_CONFIG_HOME: join(home, 'config'), XDG_DATA_HOME: join(home, 'data'), XDG_STATE_HOME: join(home, 'state'), OPENCODE_DISABLE_CLAUDE_CODE: '1' }
       sh(process.execPath, [join(REPO, 'scripts', 'install.mjs'), 'opencode'], { env })
       return env
     },
@@ -87,7 +89,7 @@ const HARNESSES = {
   },
   pi: {
     install(home) {
-      const env = { ...process.env, PI_CODING_AGENT_DIR: home, PI_OFFLINE: '1' }
+      const env = { ...BASE_ENV, PI_CODING_AGENT_DIR: home, PI_OFFLINE: '1' }
       sh('pi', ['install', REPO], { env })
       return env
     },
