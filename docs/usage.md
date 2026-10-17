@@ -32,7 +32,7 @@ The skills that carry one change from start to merge, in order:
 | 1. Start | `wt` | issue number or slug | Creates `.claude/worktrees/<slug>` on a `<type>/<slug>` branch from the fresh default branch; checks quota and stale worktrees first. |
 | 2. Ship | `ship` | `draft` (optional) | Splits the diff into small Conventional Commits, pushes, opens a PR if none exists. |
 | 3. Fix | `pr-fix` | PR number (optional) | Reads unresolved review threads and failing CI, fixes them, commits and pushes. |
-| 4. Land | `land` | PR number (optional) | Waits for CI, fixes trivial failures, merges through auto-merge or the queue, syncs main, removes the branch and worktree. |
+| 4. Land | `land` | PR number (optional) | Waits for CI, fixes trivial failures, merges through auto-merge or the queue, syncs main, removes the branch and worktree, then verifies the change where it lands (deploy and health, rendered dotfiles, installed plugin version, release tag). Also answers `/verify`. |
 | Any time | `docs-sync` | path (optional) | Updates the docs, runbooks, README and `AGENTS.md` that the current diff made stale. |
 
 Example session:
