@@ -1,0 +1,10 @@
+schema_version: "1.0"
+name: docs-sync-trigger
+description: The model loads docs-sync while renaming a make target that the README and the runbook reference.
+tags: [trigger]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  prompt: Rename the make deploy target to release and make it also tag the image with the short git sha.
+  max_turns: 15
+  allowed_tools: [Read, Glob, Grep, Edit, Write, Skill]
