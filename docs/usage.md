@@ -17,9 +17,9 @@ Calling a skill yourself, per harness (full table with agents and the rest: [com
 
 | Claude Code | Copilot CLI | VS Code | Codex | opencode | pi |
 |---|---|---|---|---|---|
-| `/dev-tools:ship` | `/ship` | ask in words | `$ship` | `/ship` | `/skill:ship` |
+| `/dev-tools:ship` | `/ship` | ask in words | `$dev-tools:ship` | `/ship` | `/skill:ship` |
 
-Anything after the name is its argument: `/dev-tools:wt 42`, `$land 128`, `/skill:ship draft`. Asking in words ("land PR 128") works everywhere.
+Anything after the name is its argument: `/dev-tools:wt 42`, `$dev-tools:land 128`, `/skill:ship draft`. Asking in words ("land PR 128") works everywhere.
 
 ## Skills
 

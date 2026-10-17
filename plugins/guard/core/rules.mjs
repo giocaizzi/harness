@@ -111,7 +111,7 @@ export const rules = {
       "why": "bypasses merge rules"
     },
     // Matched on what runs, so a token injected through a quoted `VAR="$(keyring read)" ./script` passes:
-    // the value goes to one process's environment, never to output. ponytail: `echo "$(bws secret get x)"` passes too.
+    // the value goes to one process's environment, never to output. Known gap: `echo "$(bws secret get x)"` passes too.
     {
       "id": "secrets",
       "match": "\\bbws?\\s+(secret|get|list|run|unlock|login|export|serve)\\b|\\bsecurity\\s+find-(generic|internet)-password\\b[^|;&\\n]*\\s-[a-z]*[wg][a-z]*\\b|\\bchezmoi\\s+secret\\s+keyring\\s+get\\b|\\bop\\s+read\\b|\\bop\\s+item\\s+get\\b[^|;&\\n]*\\s--reveal\\b|\\bpass\\s+show\\b|\\bgcloud\\s+secrets\\s+versions\\s+access\\b|\\baz\\s+keyvault\\s+secret\\s+show\\b|(^|[;&|(\\n]\\s*)printenv\\s+\\w*(token|secret|key|pass|credential)|\\b(cat|less|more|head|tail|bat)\\s+([^\\s;&|]+\\s+)*([^\\s;&|]*/)?\\.env(\\.(?!example\\b|sample\\b|template\\b|dist\\b)[\\w.-]+)?(?=[\\s;&|)]|$)",
