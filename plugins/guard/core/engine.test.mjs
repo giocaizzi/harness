@@ -301,6 +301,43 @@ test('worktrees: squash-merged but dirty, gh failing, no merged PR or commits af
   assert.match((await ask('rm -rf l')).reason, /Worktree l: 2 unpushed commits \(HEAD not in the merged PR\)/);
 });
 
+test('a for loop over plain words is expanded per word: clean worktrees and temp paths pass', async () => {
+  const run = fakeGit({ '.claude/worktrees/a': {}, '.claude/worktrees/b': {}, '/r/.claude/worktrees/a': {}, '../../../.claude/worktrees/a': {} });
+  for (const c of [
+    'for w in a b; do git worktree remove --force .claude/worktrees/$w; done',
+    'for w in a b; do\n  git worktree remove --force ".claude/worktrees/${w}"\ndone && git worktree prune',
+    'for w in a b; do git worktree remove --force .claude/worktrees/$w && git branch -d fix/$w; done',
+    'cd /r && for w in a; do git worktree remove -f .claude/worktrees/$w; done',
+    'cd ../../.. && git worktree remove --force .claude/worktrees/a',
+    'for d in /tmp/x /tmp/y; do rm -rf $d; done',
+    'for d in x y; do rm -rf "$TMPDIR/$d"; done',
+  ])
+    assert.equal(decide(c, { env: { TMPDIR: '/var/folders/ab/T/' }, worktrees: await worktreeFacts(c, {}, rules, run) }).action, 'allow', c);
+});
+
+test('loops and cd that cannot be resolved statically, or a dirty worktree in the list, still ask', async () => {
+  const run = fakeGit({ '.claude/worktrees/a': {}, '.claude/worktrees/b': { status: ' M f\n' }, a: {} });
+  const ask = async (c) => decide(c, { worktrees: await worktreeFacts(c, {}, rules, run) });
+  assert.match((await ask('for w in a b; do git worktree remove --force .claude/worktrees/$w; done')).reason, /Worktree \.claude\/worktrees\/b: dirty tree/);
+  for (const c of [
+    'for w in .claude/worktrees/*; do git worktree remove --force $w; done',
+    'for w in $(ls .claude/worktrees); do git worktree remove --force .claude/worktrees/$w; done',
+    'for w in "a" b; do git worktree remove --force .claude/worktrees/$w; done',
+    'for w in a; do git worktree remove --force .claude/worktrees/$u; done',
+    'for w in a; do w=/; rm -rf $w; done',
+    'for w in a; do for v in b; do rm -rf .claude/worktrees/$w; done; done',
+    'for w in a; do read w; rm -rf .claude/worktrees/$w; done',
+    'echo "for w in a; do x"; rm -rf /tmp/$w; echo "; done"',
+    'git worktree remove --force .claude/worktrees/$w',
+    'cd /elsewhere && git worktree remove --force a',
+    'cd "$HOME" && git worktree remove --force a',
+    'cd ~ && rm -rf a',
+    '(cd /r; rm -rf x) && git worktree remove -f a',
+    'false || cd /r; git worktree remove -f a',
+  ])
+    assert.equal((await ask(c)).action, 'ask', c);
+});
+
 test('git worktree remove without --force is not risky', () => {
   assert.equal(decide('git worktree remove /r/x').action, 'allow');
 });

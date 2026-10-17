@@ -8,9 +8,10 @@ const bare = (skill) => skill.split(':').pop();
 // Rules match what a command would run, not text it carries: heredoc bodies and quoted strings
 // (commit messages, echo, grep patterns, file contents) are blanked, except the string after `-c`.
 // ponytail: a $(...) inside double quotes is blanked too; a real shell parser if that ever matters.
+const HEREDOC = /(<<-?\s*(['"]?)(\w+)\2[^\n]*)\n[\s\S]*?\n[ \t]*\3[ \t]*(?=\n|$)/g;
 export function executable(command) {
   return command
-    .replace(/(<<-?\s*(['"]?)(\w+)\2[^\n]*)\n[\s\S]*?\n[ \t]*\3[ \t]*(?=\n|$)/g, '$1')
+    .replace(HEREDOC, '$1')
     .replace(/(-c\s+)?("(?:[^"\\]|\\.)*"|'[^']*')/g, (m, c) => (c ? m : '""'));
 }
 
@@ -45,20 +46,63 @@ const riskyMatch = (r, command) => new RegExp(r.match, 'i').test(executable(comm
 // The deny rule a command hits, so adapters gather repo facts (the Python manager) only when one applies.
 export const deniedBy = (command, rules) => hit(rules.deny ?? [], command);
 
+// `for VAR in w1 w2; do BODY; done` with only plain words in the list becomes BODY once per word, $VAR and ${VAR}
+// replaced, so each removal target can be judged. The loop is found with quotes and heredoc bodies masked (same
+// length), so a `for` or `done` inside a string never counts. Not expanded, so `$VAR` stays and asks: a list with
+// globs, quotes or expansions, a body that names VAR otherwise (assigns, reads, unsets it) or holds another loop.
+const LOOP = /(?<=^|[\s;&|(])for\s+([A-Za-z_]\w*)\s+in\s+([^;\n]*?)\s*[;\n]\s*do\s([\s\S]*?)[;\n]\s*done(?=[\s;&|)<>]|$)/dg;
+const PLAIN_LIST = /^[\w./@%+=:,-]+(?:\s+[\w./@%+=:,-]+)*$/;
+const LOOP_WORD = /(?:^|[\s;&|(])(?:for|while|until|select|do|done)(?=[\s;]|$)/;
+export function expandLoops(command) {
+  const masked = command
+    .replace(HEREDOC, (m, head) => head + m.slice(head.length).replace(/\S/g, '_'))
+    .replace(/"(?:[^"\\]|\\.)*"|'[^']*'/g, (m) => m[0] + '_'.repeat(m.length - 2) + m[0]);
+  let out = '';
+  let at = 0;
+  for (const m of masked.matchAll(LOOP)) {
+    const [, name, list] = m;
+    const [start, end] = m.indices[3];
+    const body = command.slice(start, end);
+    const ref = new RegExp(`(?<!\\\\)\\$(?:${name}(?!\\w)|\\{${name}\\})`, 'g');
+    if (!PLAIN_LIST.test(list) || LOOP_WORD.test(masked.slice(start, end)) || new RegExp(`\\b${name}\\b`).test(body.replace(ref, ''))) continue;
+    out += command.slice(at, m.index) + list.split(/\s+/).map((w) => body.replace(ref, () => w)).join('\n');
+    at = m.index + m[0].length;
+  }
+  return out + command.slice(at);
+}
+
 // Targets of every recursive delete (`rm -r`, `Remove-Item -Recurse`, `git worktree remove --force`) in a command,
-// as written. Redirections are dropped; quoted, $(...) or glob targets come through as-is and are judged unsafe later.
+// as written, after loop expansion. Redirections are dropped; quoted, $(...) or glob targets come through as-is and
+// are judged unsafe later. A relative target after `cd DIR` is DIR/target. `cd` is followed only through plain `;`/`&&`
+// chains with a plain DIR: after any other `cd`, or with a subshell, group, `||`, pushd or conditional in the command,
+// a relative target gets the UNKNOWN_DIR prefix, which no check accepts.
 const REMOVAL = new Set(['rm', 'worktree-rm']);
 // A double-quoted word with no spaces or other expansions ("$TMPDIR/x", "$S") is that word: unquote it so the
 // temp check can resolve it instead of seeing the blanked string.
 const SIMPLE_QUOTED = /"((?:\$\{?\w+\}?)?[^"\s$`\\]*)"/g;
+const UNKNOWN_DIR = '<cd?>';
+const CD = /(?:^|[\s({])(?:cd|chdir|set-location|sl)(?=\s|$)/i;
+const PLAIN_CD = /^\s*(?:cd|chdir|set-location|sl)\s+([\w.@%+=:,\\/][\w.@%+=:,\\/-]*)\s*$/i;
+const BRANCHY = /[(){}]|\|\||(?:^|[\s;&|])(?:pushd|popd|push-location|pop-location|if|then|else|elif|fi|case|esac|for|while|until|do|done)(?=[\s;]|$)/i;
+const ABSOLUTE = /^(?:[\\/]|[a-z]:|~|\$|%)/i;
+const inDir = (dir, p) => (!dir || ABSOLUTE.test(p) ? p : `${dir}/${p}`);
 export function removalTargets(command, rules) {
   const removes = rules.risky.filter((r) => REMOVAL.has(r.id)).map((r) => new RegExp(r.match, 'i'));
-  return executable(command.replace(SIMPLE_QUOTED, '$1'))
-    .replace(/\d*[<>]+(&\d+|\s*[^\s;&|]+)/g, ' ')
-    .split(/&&|\|\||[;|&\n]/)
-    .filter((seg) => removes.some((re) => re.test(seg)))
-    .flatMap((seg) => (/\b(?:rm|remove-item|worktree\s+remove)\b(.*)$/i.exec(seg)?.[1] ?? '').split(/\s+/))
-    .filter((t) => t && !t.startsWith('-'));
+  const code = executable(expandLoops(command).replace(SIMPLE_QUOTED, '$1')).replace(/\d*[<>]+(&\d+|\s*[^\s;&|]+)/g, ' ');
+  const followCd = !BRANCHY.test(code);
+  let dir = '';
+  const targets = [];
+  for (const seg of code.split(/&&|\|\||[;|&\n]/)) {
+    if (CD.test(seg)) {
+      const to = followCd && PLAIN_CD.exec(seg)?.[1];
+      dir = to ? inDir(dir, to) : UNKNOWN_DIR;
+      continue;
+    }
+    if (!removes.some((re) => re.test(seg))) continue;
+    const args = (/\b(?:rm|remove-item|worktree\s+remove)\b(.*)$/i.exec(seg)?.[1] ?? '').split(/\s+/);
+    targets.push(...args.filter((t) => t && !t.startsWith('-')).map((t) => inDir(dir, t)));
+  }
+  return targets;
 }
 
 // A temp path: strictly under /tmp, /private/tmp, /var/folders (macOS $TMPDIR) or a Windows user's AppData\Local\Temp.
@@ -116,15 +160,11 @@ async function mergedPrHead(git, sh, cwd) {
   return (await git('merge-base', '--is-ancestor', 'HEAD', oid.trim())) != null || 'HEAD not in the merged PR';
 }
 
-// Worktree facts for every non-temp removal target of a command: { [target]: { safe, why } }.
+// Worktree facts for every non-temp removal target of a command, checked in parallel: { [target]: { safe, why } }.
 export async function worktreeFacts(command, env, rules, run) {
-  const facts = {};
-  for (const t of removalTargets(command, rules)) {
-    if (isTempPath(t, env) || !/^[\w./\\@+=:,-]+$/.test(t)) continue;
-    const f = await worktreeFact(t, run);
-    if (f) facts[t] = f;
-  }
-  return facts;
+  const targets = [...new Set(removalTargets(command, rules))].filter((t) => !isTempPath(t, env) && /^[\w./\\@+=:,-]+$/.test(t));
+  const facts = await Promise.all(targets.map((t) => worktreeFact(t, run)));
+  return Object.fromEntries(targets.map((t, i) => [t, facts[i]]).filter(([, f]) => f));
 }
 
 // Variables the command itself points at a temp dir: `S=$(mktemp -d)` (no template, so it lands in $TMPDIR; `-t`
