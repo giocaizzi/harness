@@ -12,7 +12,7 @@ General development tooling — git, GitHub/GitLab/Azure DevOps, conventional co
 | `github-workflow` | Stacked PRs, auto-merge, merge queues, and rulesets with required CI checks. |
 | `repo-standard` | Repo baseline checklist and its mapping onto GitHub, GitLab and Azure DevOps. |
 | `ship` | Commit as Conventional Commits, push and open a PR (`/ship`). |
-| `land` | Watch CI, merge via auto-merge or queue, sync and clean up (`/land`). |
+| `land` | Watch CI, merge via auto-merge or queue, sync, clean up and verify where it lands (`/land`, also for "verify"). |
 | `pr-fix` | Fix unresolved review comments and failing CI on a PR (`/pr-fix`). |
 | `wt` | Start a task in its own worktree from an issue or slug (`/wt`). |
 | `host-hygiene` | Shared-host rules and scripts: disk floor, load cap, heavy-command semaphore, device leases, service registry, stale-worktree sweep, quota-aware agent fan-out. |
