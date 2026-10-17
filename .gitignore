@@ -8,3 +8,6 @@ CLAUDE.local.md
 .opencode/plans/
 .pi/npm/
 .pi/git/
+
+# `claude plugin eval` output: regenerated on every run
+plugins/*/evals/results/

@@ -8,11 +8,21 @@ const bare = (skill) => skill.split(':').pop();
 // Rules match what a command would run, not text it carries: heredoc bodies and quoted strings
 // (commit messages, echo, grep patterns, file contents) are blanked, except the string after `-c`.
 // ponytail: a $(...) inside double quotes is blanked too; a real shell parser if that ever matters.
+const HEREDOC = /(<<-?\s*(['"]?)(\w+)\2[^\n]*)\n[\s\S]*?\n[ \t]*\3[ \t]*(?=\n|$)/g;
 export function executable(command) {
   return command
-    .replace(/(<<-?\s*(['"]?)(\w+)\2[^\n]*)\n[\s\S]*?\n[ \t]*\3[ \t]*(?=\n|$)/g, '$1')
+    .replace(HEREDOC, '$1')
     .replace(/(-c\s+)?("(?:[^"\\]|\\.)*"|'[^']*')/g, (m, c) => (c ? m : '""'));
 }
+
+// Git's global options sit between `git` and the subcommand (`git -C dir`, `-c k=v`, `--git-dir=…`, `--no-pager`) and
+// would hide it from every `git <subcommand>` rule, so rules match with them removed; `gitDirs` keeps the `-C` dirs.
+const GIT_VAL = String.raw`(?:"(?:[^"\\]|\\.)*"|'[^']*'|[^\s;&|"'])+`;
+const GIT_GLOBALS = String.raw`(?<![\w./:@-])git((?:\s+(?:(?:-C|-c|--git-dir|--work-tree|--namespace|--config-env|--attr-source)(?:=|\s+)${GIT_VAL}|-[\w-]+(?:=${GIT_VAL})?))+)(?=\s+[^\s-])`;
+export const gitPlain = (code) => code.replace(new RegExp(GIT_GLOBALS, 'g'), 'git');
+const gitDirs = (seg) => [...(new RegExp(GIT_GLOBALS).exec(seg)?.[1] ?? '').matchAll(/(?:^|\s)-C\s+(\S+)/g)].map((m) => m[1]);
+// What rules match: the executable text with git's global options removed.
+const matchable = (command) => gitPlain(executable(command));
 
 // The literal subject of `git commit -m` or of a PR/MR title flag, or null when it cannot be read statically
 // (heredoc, $(...), no flag). ponytail: first flag only, no shell parser; unreadable forms are allowed.
@@ -24,9 +34,8 @@ const TITLED = [
   [String.raw`\baz\s+repos\s+pr\s+(?:create|update)\b`, '--title'], // az's -t is --target-branch
 ];
 export function titleOf(command) {
-  const code = executable(command);
-  const t = TITLED.find(([cmd]) => new RegExp(cmd).test(code));
-  const m = t && command.match(new RegExp(`${t[0]}[^\\n|;&]*?\\s(?:${t[1]})[\\s=]*${QUOTED}`));
+  const t = TITLED.find(([cmd]) => new RegExp(cmd).test(matchable(command)));
+  const m = t && gitPlain(command).match(new RegExp(`${t[0]}[^\\n|;&]*?\\s(?:${t[1]})[\\s=]*${QUOTED}`));
   return m ? m[1].slice(1, -1).split('\n')[0].trim() : null;
 }
 
@@ -37,28 +46,107 @@ export function badTitle(command, rules) {
   return re.test(title) ? null : title;
 }
 
-const hit = (rules, command) => rules.find((r) => new RegExp(r.match, 'i').test(executable(command)));
+const hit = (rules, command) => rules.find((r) => new RegExp(r.match, 'i').test(matchable(command)));
 
-// A risky rule's `raw` must also match the command as written (quoted text included).
-const riskyMatch = (r, command) => new RegExp(r.match, 'i').test(executable(command)) && (!r.raw || new RegExp(r.raw, 'i').test(command));
+// A risky rule's `raw` must also match the command as written (quoted text included). `case` rules match case-sensitively.
+const riskyRe = (r) => new RegExp(r.match, r.case ? '' : 'i');
+const riskyMatch = (r, command) => riskyRe(r).test(matchable(command)) && (!r.raw || new RegExp(r.raw, 'i').test(command));
 
 // The deny rule a command hits, so adapters gather repo facts (the Python manager) only when one applies.
 export const deniedBy = (command, rules) => hit(rules.deny ?? [], command);
 
-// Targets of every recursive delete (`rm -r`, `Remove-Item -Recurse`, `git worktree remove --force`) in a command,
-// as written. Redirections are dropped; quoted, $(...) or glob targets come through as-is and are judged unsafe later.
-const REMOVAL = new Set(['rm', 'worktree-rm']);
+// `for VAR in w1 w2; do BODY; done` with only plain words in the list becomes BODY once per word, $VAR and ${VAR}
+// replaced, so each removal target can be judged. The loop is found with quotes and heredoc bodies masked (same
+// length), so a `for` or `done` inside a string never counts. Not expanded, so `$VAR` stays and asks: a list with
+// globs, quotes or expansions, a body that names VAR otherwise (assigns, reads, unsets it) or holds another loop.
+const LOOP = /(?<=^|[\s;&|(])for\s+([A-Za-z_]\w*)\s+in\s+([^;\n]*?)\s*[;\n]\s*do\s([\s\S]*?)[;\n]\s*done(?=[\s;&|)<>]|$)/dg;
+const PLAIN_LIST = /^[\w./@%+=:,-]+(?:\s+[\w./@%+=:,-]+)*$/;
+const LOOP_WORD = /(?:^|[\s;&|(])(?:for|while|until|select|do|done)(?=[\s;]|$)/;
+export function expandLoops(command) {
+  const masked = command
+    .replace(HEREDOC, (m, head) => head + m.slice(head.length).replace(/\S/g, '_'))
+    .replace(/"(?:[^"\\]|\\.)*"|'[^']*'/g, (m) => m[0] + '_'.repeat(m.length - 2) + m[0]);
+  let out = '';
+  let at = 0;
+  for (const m of masked.matchAll(LOOP)) {
+    const [, name, list] = m;
+    const [start, end] = m.indices[3];
+    const body = command.slice(start, end);
+    const ref = new RegExp(`(?<!\\\\)\\$(?:${name}(?!\\w)|\\{${name}\\})`, 'g');
+    if (!PLAIN_LIST.test(list) || LOOP_WORD.test(masked.slice(start, end)) || new RegExp(`\\b${name}\\b`).test(body.replace(ref, ''))) continue;
+    out += command.slice(at, m.index) + list.split(/\s+/).map((w) => body.replace(ref, () => w)).join('\n');
+    at = m.index + m[0].length;
+  }
+  return out + command.slice(at);
+}
+
+// The simple commands of a command (after loop expansion, redirections dropped, git's global options removed), each
+// with the directory it runs in. A relative path after `cd DIR` is in DIR, and after `git -C DIR` in DIR too. `cd` is
+// followed only through plain `;`/`&&` chains with a plain DIR: after any other `cd`, or with a subshell, group, `||`,
+// pushd or conditional in the command, the directory is UNKNOWN_DIR, which no check accepts.
 // A double-quoted word with no spaces or other expansions ("$TMPDIR/x", "$S") is that word: unquote it so the
 // temp check can resolve it instead of seeing the blanked string.
 const SIMPLE_QUOTED = /"((?:\$\{?\w+\}?)?[^"\s$`\\]*)"/g;
+const UNKNOWN_DIR = '<cd?>';
+const NO_TARGET = '<none>';
+const CD = /(?:^|[\s({])(?:cd|chdir|set-location|sl)(?=\s|$)/i;
+const PLAIN_CD = /^\s*(?:cd|chdir|set-location|sl)\s+([\w.@%+=:,\\/][\w.@%+=:,\\/-]*)\s*$/i;
+const BRANCHY = /[(){}]|\|\||(?:^|[\s;&|])(?:pushd|popd|push-location|pop-location|if|then|else|elif|fi|case|esac|for|while|until|do|done)(?=[\s;]|$)/i;
+const ABSOLUTE = /^(?:[\\/]|[a-z]:|~|\$|%)/i;
+const inDir = (dir, p) => (!dir || ABSOLUTE.test(p) ? p : `${dir}/${p}`);
+function segments(command) {
+  const code = executable(expandLoops(command).replace(SIMPLE_QUOTED, '$1')).replace(/\d*[<>]+(&\d+|\s*[^\s;&|]+)/g, ' ');
+  const followCd = !BRANCHY.test(code);
+  let dir = '';
+  const out = [];
+  for (const seg of code.split(/&&|\|\||[;|&\n]/)) {
+    if (CD.test(seg)) {
+      const to = followCd && PLAIN_CD.exec(seg)?.[1];
+      dir = to ? inDir(dir, to) : UNKNOWN_DIR;
+      continue;
+    }
+    out.push({ seg: gitPlain(seg), dir: gitDirs(seg).reduce(inDir, dir) });
+  }
+  return out;
+}
+const plainArgs = (rest) => rest.split(/\s+/).filter((t) => t && !t.startsWith('-'));
+function findRoots(rest) {
+  const roots = [];
+  for (const t of rest.split(/\s+/).filter(Boolean)) {
+    if (/^[-(!\\]/.test(t)) break;
+    roots.push(t);
+  }
+  return roots;
+}
+
+// Targets of every recursive delete (`rm -r`, `Remove-Item -Recurse`, `find -delete`, `git worktree remove --force`)
+// in a command, as written, each in its directory. Quoted, $(...) or glob targets come through as-is and are judged
+// unsafe later; a delete with no target (`xargs rm -rf`) yields NO_TARGET, so it never rides on a safe one. A find's
+// targets are its start paths, before the first option or expression.
+const REMOVAL = new Set(['rm', 'find', 'worktree-rm']);
 export function removalTargets(command, rules) {
-  const removes = rules.risky.filter((r) => REMOVAL.has(r.id)).map((r) => new RegExp(r.match, 'i'));
-  return executable(command.replace(SIMPLE_QUOTED, '$1'))
-    .replace(/\d*[<>]+(&\d+|\s*[^\s;&|]+)/g, ' ')
-    .split(/&&|\|\||[;|&\n]/)
-    .filter((seg) => removes.some((re) => re.test(seg)))
-    .flatMap((seg) => (/\b(?:rm|remove-item|worktree\s+remove)\b(.*)$/i.exec(seg)?.[1] ?? '').split(/\s+/))
-    .filter((t) => t && !t.startsWith('-'));
+  const risky = (id) => riskyRe(rules.risky.find((r) => r.id === id));
+  const removes = [...REMOVAL].map(risky);
+  const targets = [];
+  for (const { seg, dir } of segments(command)) {
+    if (!removes.some((re) => re.test(seg))) continue;
+    const found = risky('find').test(seg)
+      ? findRoots(/\bfind\b(.*)$/i.exec(seg)?.[1] ?? '')
+      : plainArgs(/\b(?:rm|remove-item|ri|del|erase|rd|rmdir|worktree\s+remove)\b(.*)$/i.exec(seg)?.[1] ?? '');
+    targets.push(...(found.length ? found : [NO_TARGET]).map((t) => inDir(dir, t)));
+  }
+  return targets;
+}
+
+// Branches every `git branch -D` in a command deletes: { dir, name }, `dir` from `cd`/`git -C` ('' for the cwd).
+export function branchTargets(command, rules) {
+  const re = riskyRe(rules.risky.find((r) => r.id === 'branch-delete'));
+  return segments(command)
+    .filter(({ seg }) => re.test(seg))
+    .flatMap(({ seg, dir }) => {
+      const names = plainArgs(/\bbranch\b(.*)$/.exec(seg)?.[1] ?? '');
+      return (names.length ? names : [NO_TARGET]).map((name) => ({ dir, name }));
+    });
 }
 
 // A temp path: strictly under /tmp, /private/tmp, /var/folders (macOS $TMPDIR) or a Windows user's AppData\Local\Temp.
@@ -97,34 +185,80 @@ export async function worktreeFact(path, run) {
   if (status == null || ahead == null || !/^\d+\s*$/.test(ahead)) return { safe: false, why: 'git check failed' };
   const n = Number(ahead);
   if (n && !status.trim()) {
-    const merged = await mergedPrHead(git, sh, top || path);
+    const merged = await mergedPrHead(git, sh, top || path, (await git('branch', '--show-current'))?.trim());
     if (merged === true) return { safe: true, why: '' };
-    return { safe: false, why: `${n} unpushed commit${n > 1 ? 's' : ''} (${merged})` };
+    return { safe: false, why: `${unpushed(n)} (${merged})` };
   }
-  const why = [n && `${n} unpushed commit${n > 1 ? 's' : ''}`, status.trim() && 'dirty tree'].filter(Boolean);
+  const why = [n && unpushed(n), status.trim() && 'dirty tree'].filter(Boolean);
   return { safe: !why.length, why: why.join(', ') };
 }
+const unpushed = (n) => `${n} unpushed commit${n > 1 ? 's' : ''}`;
 
-// True when HEAD is contained in the head of a merged PR of the current branch (gh, run in the worktree),
-// else why not. Any gh failure (missing, unauthenticated, offline, timeout) is a reason, so the delete asks.
-async function mergedPrHead(git, sh, cwd) {
-  const branch = (await git('branch', '--show-current'))?.trim();
+// True when `rev` is contained in the head of a merged PR of `branch` (gh, run in the repo at `cwd`), else why not.
+// Any gh failure (missing, unauthenticated, offline, timeout) is a reason, so the delete asks.
+async function mergedPrHead(git, sh, cwd, branch, rev = 'HEAD') {
   if (!branch) return 'no branch';
   const oid = await sh(['gh', 'pr', 'list', '--head', branch, '--state', 'merged', '--json', 'headRefOid', '--limit', '1', '--jq', '.[0].headRefOid // empty'], cwd);
   if (oid == null) return 'gh check failed';
   if (!oid.trim()) return 'no merged PR';
-  return (await git('merge-base', '--is-ancestor', 'HEAD', oid.trim())) != null || 'HEAD not in the merged PR';
+  return (await git('merge-base', '--is-ancestor', rev, oid.trim())) != null || `${rev === 'HEAD' ? 'HEAD' : 'tip'} not in the merged PR`;
 }
 
-// Worktree facts for every non-temp removal target of a command: { [target]: { safe, why } }.
+const PLAIN_PATH = /^[\w./\\@+=:,-]+$/;
+// Worktree facts for every non-temp removal target of a command, checked in parallel: { [target]: { safe, why } }.
 export async function worktreeFacts(command, env, rules, run) {
-  const facts = {};
-  for (const t of removalTargets(command, rules)) {
-    if (isTempPath(t, env) || !/^[\w./\\@+=:,-]+$/.test(t)) continue;
-    const f = await worktreeFact(t, run);
-    if (f) facts[t] = f;
-  }
-  return facts;
+  const targets = [...new Set(removalTargets(command, rules))].filter((t) => !isTempPath(t, env) && PLAIN_PATH.test(t));
+  const facts = await Promise.all(targets.map((t) => worktreeFact(t, run)));
+  return Object.fromEntries(targets.map((t, i) => [t, facts[i]]).filter(([, f]) => f));
+}
+
+// Facts for one branch a `git branch -D` deletes, in the repo at `dir`: safe when every commit on it is on a remote
+// ref, or its tip is in the head of a merged PR of that name (squash merge, remote branch deleted).
+export async function branchFact(dir, name, run) {
+  if (!/^[\w./@+-]+$/.test(name) || name.startsWith('-')) return { safe: false, why: 'branch name not plain' };
+  const sh = (argv, cwd) => Promise.resolve().then(() => run(argv, cwd)).catch(() => null);
+  const git = (...args) => sh(['git', '-C', dir || '.', ...args]);
+  const ahead = await git('rev-list', '--count', name, '--not', '--remotes');
+  if (ahead == null || !/^\d+\s*$/.test(ahead)) return { safe: false, why: 'git check failed' };
+  const n = Number(ahead);
+  if (!n) return { safe: true, why: '' };
+  const top = (await git('rev-parse', '--show-toplevel'))?.trim();
+  const merged = top ? await mergedPrHead(git, sh, top, name, name) : 'git check failed';
+  return merged === true ? { safe: true, why: '' } : { safe: false, why: `${unpushed(n)} (${merged})` };
+}
+const branchKey = ({ dir, name }) => `${dir}|${name}`;
+
+// Branch facts for every `git branch -D` of a command, in parallel: { [dir|name]: { safe, why } }.
+export async function branchFacts(command, rules, run) {
+  const targets = [...new Map(branchTargets(command, rules).map((b) => [branchKey(b), b])).values()].filter((b) => b.name !== NO_TARGET && PLAIN_PATH.test(b.dir || '.'));
+  const facts = await Promise.all(targets.map((b) => branchFact(b.dir, b.name, run)));
+  return Object.fromEntries(targets.map((b, i) => [branchKey(b), facts[i]]));
+}
+
+// Build output and caches a tool regenerates. A delete of one passes when git ignores it (`git check-ignore`, so it
+// is inside a repo and untracked): nothing there is lost that a build or install cannot make again. `results` only
+// under `evals/` (`claude plugin eval` output). No glob, no secret-looking segment, ever.
+const REGENERABLE = new Set(['node_modules', '.venv', 'venv', '__pycache__', '.pytest_cache', '.mypy_cache', '.ruff_cache', '.terraform', 'dist', 'build', '.next', 'target', 'coverage', '.turbo', '.cache']);
+const NEVER_REGEN = /^\.env|secret|\.key$/i;
+export function regenerableName(target) {
+  const segs = target.replace(/\\/g, '/').replace(/\/+$/, '').split('/');
+  const last = segs.at(-1);
+  if (!PLAIN_PATH.test(target) || segs.some((s) => NEVER_REGEN.test(s))) return false;
+  return REGENERABLE.has(last) || (last === 'results' && segs.at(-2) === 'evals');
+}
+
+// { [target]: true } for every removal target that is a regenerable name git ignores.
+export async function regenFacts(command, env, rules, run) {
+  const targets = [...new Set(removalTargets(command, rules))].filter((t) => !isTempPath(t, env) && regenerableName(t));
+  const ignored = await Promise.all(
+    targets.map((t) => {
+      const p = t.replace(/\\/g, '/').replace(/\/+$/, '');
+      const i = p.lastIndexOf('/');
+      const argv = ['git', '-C', i < 0 ? '.' : p.slice(0, i) || '/', 'check-ignore', '-q', '--', p.slice(i + 1)];
+      return Promise.resolve().then(() => run(argv)).then((out) => out != null, () => false);
+    }),
+  );
+  return Object.fromEntries(targets.filter((t, i) => ignored[i]).map((t) => [t, true]));
 }
 
 // Variables the command itself points at a temp dir: `S=$(mktemp -d)` (no template, so it lands in $TMPDIR; `-t`
@@ -140,12 +274,65 @@ export function tempVars(command, env = {}) {
   return vars;
 }
 
-// A removal is exempt when it has targets and every one is a temp path or a safe worktree.
-function safeRemoval(command, rules, env, worktrees) {
-  const targets = removalTargets(command, rules);
+// `$VAR` at the head of a path, replaced when the command itself points VAR at a temp dir.
+const tempResolver = (command, env) => {
   const vars = tempVars(command, env);
-  const resolve = (t) => t.replace(/^\$\{?([A-Za-z_]\w*)\}?(?=\/|$)/, (m, name) => vars[name] ?? m);
-  return targets.length > 0 && targets.every((t) => isTempPath(resolve(t), env) || worktrees[t]?.safe === true);
+  return (t) => t.replace(/^\$\{?([A-Za-z_]\w*)\}?(?=\/|$)/, (m, name) => vars[name] ?? m);
+};
+
+// A removal is exempt when it has targets and every one is a temp path, a safe worktree or regenerable output.
+function safeRemoval(command, rules, env, worktrees, regenerable) {
+  const targets = removalTargets(command, rules);
+  const resolve = tempResolver(command, env);
+  return targets.length > 0 && targets.every((t) => isTempPath(resolve(t), env) || worktrees[t]?.safe === true || regenerable[t] === true);
+}
+
+// A branch delete is exempt when every branch it names is safe (merged or pushed).
+function safeBranchDelete(command, rules, branches) {
+  const targets = branchTargets(command, rules);
+  return targets.length > 0 && targets.every((b) => branches[branchKey(b)]?.safe === true);
+}
+
+// Shell writes to a file the agent could make with its edit tool, which the post-edit lint and the docs and skill hints
+// never see: `sed -i`, `perl -pi`, inline Python or Node that writes a file, and `echo`, `printf`, `cat` (a heredoc
+// too), `tee` or PowerShell's Set-Content, Add-Content, Out-File into a file. A write to /dev/*, an fd, `$null` or a
+// temp path is not an edit.
+const IN_PLACE = /(?:^|[\s;&|(])(?:sed\s(?:[^;&|\n]*\s)?(?:-[Enrsuz]*[iI]|--in-place)|perl\s(?:[^;&|\n]*\s)?-[0-9aelnpsw]*i)/;
+const PY_INLINE = /(?:^|[\s;&|(/])python[\d.]*(?:\s+-\w+)*\s+(?:-c\b|-?\s*<<)/;
+const PY_WRITE = /\bopen\(((?:[^()]|\([^()]*\))*?),\s*(?:mode\s*=\s*)?['"][rbtU]*[wax+]|\bPath\(((?:[^()]|\([^()]*\))*?)\)\s*\.\s*(?:write_text|write_bytes|open\(\s*['"][rbtU]*[wax+])/g;
+const NODE_INLINE = /(?:^|[\s;&|(/])(?:(?:node|bun)(?:\s+-[\w-]+)*\s+(?:-e\b|--eval\b|-p\b|--print\b|-?\s*<<)|deno\s+eval\b)/;
+const NODE_WRITE = /\b(?:writeFileSync|appendFileSync|writeFile|appendFile|createWriteStream)\(\s*((?:[^(),]|\([^()]*\))+?)\s*[,)]/g;
+const WRITERS = /^(?:echo|printf|cat|write-output)$/i;
+const PS_WRITERS = /^(?:set-content|add-content|out-file)$/i;
+const NOT_A_FILE = /^(?:\/dev\/\w+|\$null|nul)$/i;
+export function shellEdit(command, env = {}) {
+  const code = executable(command);
+  if (IN_PLACE.test(code)) return true;
+  const resolve = tempResolver(command, env);
+  const fileTarget = (t) => !NOT_A_FILE.test(t) && !isTempPath(resolve(t), env);
+  for (const [inline, write] of [[PY_INLINE, PY_WRITE], [NODE_INLINE, NODE_WRITE]]) {
+    if (!inline.test(code)) continue;
+    for (const m of command.matchAll(write)) {
+      const lit = /^\s*(['"`])([^'"`$]*)\1\s*$/.exec(m[1] ?? m[2]);
+      if (!lit || fileTarget(lit[2])) return true;
+    }
+  }
+  const plain = executable(command.replace(SIMPLE_QUOTED, '$1')).replace(/\d*[<>]&\d+/g, ' ').replace(/&>/g, '>');
+  for (const seg of plain.split(/&&|\|\||[;|&\n]/)) {
+    const words = seg.trim().split(/\s+/).filter((w) => !/^\w+=/.test(w));
+    const cmd = words[0] === 'sudo' ? words[1] : words[0];
+    if (!cmd) continue;
+    let targets = [];
+    if (WRITERS.test(cmd)) targets = [...seg.matchAll(/(?:^|\s)1?>>?\|?\s*([^\s;&|<>]+)/g)].map((m) => m[1]);
+    else if (/^tee$/i.test(cmd)) targets = plainArgs(seg.replace(/^.*?\btee\b/i, ''));
+    else if (PS_WRITERS.test(cmd)) {
+      const rest = seg.replace(new RegExp(`^.*?\\b${cmd}\\b`, 'i'), '');
+      const named = /\s-(?:file)?path\s+(\S+)|\s-literalpath\s+(\S+)/i.exec(rest);
+      targets = named ? [named[1] ?? named[2]] : plainArgs(rest).slice(0, 1);
+    }
+    if (targets.some(fileTarget)) return true;
+  }
+  return false;
 }
 
 // `python`: the Python manager of the repo in cwd ('uv', 'poetry', 'pipenv', 'pip'; null for none), for deny rules with `when`.
@@ -154,17 +341,21 @@ const SHELL_READ = /^\s*(?:(?:cat|head|tail|less|more)(?:\s+-[\w-]+(?:\s+\d+)?)*
 const hint = (rule) => `Skill hint (${rule.why}): load ${rule.skills.map((s) => `\`${s}\``).join(' or ')} if this task is that work.`;
 
 // `readTool`: the harness has a file-read tool (all but Codex), so a shell read gets a once-per-session hint.
-export function evaluateCommand({ command, loadedSkills = new Set(), state, host = {}, env = {}, worktrees = {}, python = null, readTool = false, rules }) {
+// `worktrees`, `branches`, `regenerable`: facts the adapters gather (worktreeFacts, branchFacts, regenFacts).
+export function evaluateCommand({ command, loadedSkills = new Set(), state, host = {}, env = {}, worktrees = {}, branches = {}, regenerable = {}, python = null, readTool = false, rules }) {
   // Hard denies come first and fire every time, like the title guard. A `when` rule denies only in a repo
   // that adopted that manager; elsewhere it lets the command through with a once-per-session note.
   const denied = deniedBy(command, rules)
   if (denied && (!denied.when || denied.when === python)) return { action: 'deny', rule: denied.id, reason: denied.why }
   const note = denied && !state.reminded.has(denied.id) ? denied.id : null
 
-  const exempt = safeRemoval(command, rules, env, worktrees);
-  const risky = rules.risky.find((r) => riskyMatch(r, command) && !(exempt && REMOVAL.has(r.id)));
+  const exempt = new Set([...(safeRemoval(command, rules, env, worktrees, regenerable) ? REMOVAL : []), ...(safeBranchDelete(command, rules, branches) ? ['branch-delete'] : [])]);
+  const risky = rules.risky.find((r) => riskyMatch(r, command) && !exempt.has(r.id));
   if (risky) {
-    const why = Object.entries(worktrees).filter(([, f]) => !f.safe).map(([t, f]) => `\nWorktree ${t}: ${f.why}`).join('');
+    const why = [
+      ...Object.entries(worktrees).filter(([, f]) => !f.safe).map(([t, f]) => `\nWorktree ${t}: ${f.why}`),
+      ...Object.entries(branches).filter(([, f]) => !f.safe).map(([k, f]) => `\nBranch ${k.slice(k.indexOf('|') + 1)}: ${f.why}`),
+    ].join('');
     return { action: 'ask', rule: risky.id, command, reason: `Risky command (${risky.why}): ${command}${why}` };
   }
 
@@ -213,6 +404,10 @@ export function evaluateCommand({ command, loadedSkills = new Set(), state, host
     state.reminded.add('read');
     return { action: 'allow', rule: 'read', remind: true, context: 'Read files with the harness\'s read tool, not cat/head/tail/sed: it shows line numbers, pages large files and a wrong path is a plain error, not a failed shell command.' };
   }
+  if (!note && !state.reminded.has('edit') && shellEdit(command, env)) {
+    state.reminded.add('edit');
+    return { action: 'allow', rule: 'edit', remind: true, context: 'Edit files with the harness\'s edit tool, not sed -i, perl -pi, inline Python or shell redirects: the post-edit lint and the docs and skill hints run only on edit tools.' };
+  }
   if (!note) return { action: 'allow' };
   state.reminded.add(note);
   const uses = python ? `This repo uses ${python}` : 'This directory has no uv project';
@@ -252,7 +447,7 @@ export function evaluateSpawn({ usagePercent, resetsAt, rules }) {
 
 // Adapters ask this before gathering host facts, so the (slow) uptime/df calls run only for heavy commands.
 export function isHeavy(command, rules) {
-  return rules.heavy.some((r) => new RegExp(r.match, 'i').test(executable(command)));
+  return rules.heavy.some((r) => new RegExp(r.match, 'i').test(matchable(command)));
 }
 
 export function isRisky(command, rules) {
@@ -285,8 +480,12 @@ export const opencodeAsks = (rules) => Object.fromEntries(rules.risky.flatMap((r
 const SAFE_TOKEN = /^[\w./~@%+=:,-]+$/;
 
 export function previewCommand(ruleId, command) {
-  if (ruleId === 'reset') return ['git', 'status', '--short'];
-  if (ruleId === 'force') return ['git', 'log', '--oneline', '-n', '10', 'HEAD..@{u}'];
+  // `git -C DIR` previews DIR; a DIR with shell syntax gets no preview.
+  const dirs = gitDirs(command);
+  if (['reset', 'force'].includes(ruleId) && !dirs.every((d) => SAFE_TOKEN.test(d))) return null;
+  const git = ['git', ...dirs.flatMap((d) => ['-C', d])];
+  if (ruleId === 'reset') return [...git, 'status', '--short'];
+  if (ruleId === 'force') return [...git, 'log', '--oneline', '-n', '10', 'HEAD..@{u}'];
   if (ruleId === 'rm') {
     const args = command.replace(/^.*?\brm\b/i, '').trim().split(/\s+/);
     const paths = args.filter((a) => !a.startsWith('-'));
