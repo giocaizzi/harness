@@ -2,13 +2,14 @@
 // End-to-end check of each installed harness against a scripted model (mock-llm.mjs), with no login and
 // nothing touching the real config: every harness gets a throwaway home. For each one it installs this
 // checkout the documented way, asks the model to run `pip install requests` in a uv project, and checks
-// that the guard's deny reached the model, that the skills and the scout agent are in its prompt, and that a
+// that the guard's deny reached the model, that every skill and agent is in its prompt, and that a
 // risky command is not run. A harness whose CLI is missing is skipped (failed with E2E_REQUIRE=1). Usage: node tests/e2e/run.mjs [harness...]
 import { spawn, spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { inventory } from '../../scripts/parity.mjs'
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 const MOCK = join(REPO, 'tests', 'e2e', 'mock-llm.mjs')
@@ -56,7 +57,8 @@ const HARNESSES = {
     install(home) {
       const env = { ...process.env, CODEX_HOME: home }
       sh('codex', ['plugin', 'marketplace', 'add', REPO], { env })
-      for (const p of ['guard', 'dev-tools', 'sounds']) sh('codex', ['plugin', 'add', `${p}@giocaizzi-harness`], { env })
+      const market = JSON.parse(readFileSync(join(REPO, '.claude-plugin', 'marketplace.json'), 'utf8'))
+      for (const { name } of market.plugins) sh('codex', ['plugin', 'add', `${name}@giocaizzi-harness`], { env })
       sh(process.execPath, [join(REPO, 'scripts', 'install.mjs'), 'codex'], { env })
       return env
     },
@@ -96,14 +98,16 @@ const HARNESSES = {
   },
 }
 
-// What each harness must show; pi reaches the agents through the dev-tools `subagent` tool. `asked`: the
-// harness's own prompt for a plain risky command, which a non-interactive run rejects (Codex's prompt rules,
-// opencode's bash ask entries, pi's confirm dialog without a UI).
+// What each harness must show. `skill`/`agent`: how its prompt lists one (Codex `- plugin:skill: …` and
+// `name: {`, opencode and pi `<name>skill</name>` and `- name: …`; pi lists the agents in the dev-tools
+// `subagent` tool). `asked`: the harness's own prompt for a plain risky command, which a non-interactive run
+// rejects (Codex's prompt rules, opencode's bash ask entries, pi's confirm dialog without a UI).
 const EXPECT = {
-  codex: { agents: true, asked: /approval required by policy/ },
-  opencode: { agents: true, asked: /permission requested: bash \(git reset --hard/ },
-  pi: { agents: true, asked: /Risky command/ },
+  codex: { skill: (s) => `- ${s.plugin}:${s.name}: `, agent: (a) => `${a.name}: {`, asked: /approval required by policy/ },
+  opencode: { skill: (s) => `<name>${s.name}</name>`, agent: (a) => `- ${a.name}: `, asked: /permission requested: bash \(git reset --hard/ },
+  pi: { skill: (s) => `<name>${s.name}</name>`, agent: (a) => `- ${a.name}: `, asked: /Risky command/ },
 }
+const { skills: SKILLS, agents: AGENTS } = inventory()
 
 async function check(name) {
   const h = HARNESSES[name]
@@ -130,8 +134,9 @@ async function check(name) {
       const seen = expect === EXPECT[name].asked ? `${result}\n${out.stdout}\n${out.stderr}` : result
       if (!expect.test(seen)) failures.push(`${command}: tool result ${JSON.stringify(result.slice(0, 200))} does not match ${expect}\n${out.stdout?.slice(-600)}\n${out.stderr?.slice(-600)}`)
       if (command.startsWith('pip')) {
-        if (!entries.some((e) => e.skills)) failures.push('skills (conventional-commits) not in the model prompt')
-        if (EXPECT[name].agents && !entries.some((e) => e.agent)) failures.push('agent scout not in the model prompt')
+        const prompt = entries.map((e) => e.prompt).join('\n')
+        const missing = [...SKILLS.filter((s) => !prompt.includes(EXPECT[name].skill(s))).map((s) => `skill ${s.name}`), ...AGENTS.filter((a) => !prompt.includes(EXPECT[name].agent(a))).map((a) => `agent ${a.name}`)]
+        if (missing.length) failures.push(`not in the model prompt: ${missing.join(', ')}`)
       }
       rmSync(join(root, 'mock.jsonl'), { force: true })
     }

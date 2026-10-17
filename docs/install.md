@@ -81,8 +81,12 @@ To try one without touching your own config, give the harness a throwaway home: 
 ## Verify
 
 ```bash
-make check   # manifests, generated files, skills, README sync, node tests, `claude plugin test`
+make check   # manifests, generated files, skills, README sync, harness parity, node tests, `claude plugin test`
 make e2e     # Codex, opencode, pi against a scripted model; no login needed
 ```
 
-`make e2e` skips a CLI that is not installed. Install them with `npm install -g @openai/codex opencode-ai @earendil-works/pi-coding-agent`.
+`make e2e` skips a CLI that is not on `PATH`. To run all three without a global install, let `npx` fetch them into its cache and put them on `PATH` for one run:
+
+```bash
+npx -y -p @openai/codex -p opencode-ai -p @earendil-works/pi-coding-agent -c "make e2e"
+```
