@@ -155,13 +155,20 @@ test('other tools and empty commands are ignored', async () => {
   assert.deepEqual(await h({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: {} }), {})
 })
 
-test('SessionEnd drops the session state', async () => {
+test('SessionEnd keeps the session state, so a resumed session remembers its skills', async () => {
   const dataDir = mkdtempSync(join(tmpdir(), 'guard-test-'))
   const deps = { dataDir, env: {}, hostFacts: calm, run: async () => null }
   await handle({ session_id: 'x', hook_event_name: 'UserPromptSubmit', prompt: '/ship' }, deps)
-  assert.ok(existsSync(join(dataDir, 'sessions', 'x.json')))
   await handle({ session_id: 'x', hook_event_name: 'SessionEnd' }, deps)
-  assert.ok(!existsSync(join(dataDir, 'sessions', 'x.json')))
+  assert.ok(existsSync(join(dataDir, 'sessions', 'x.json')))
+  assert.equal(decision(await handle({ ...pre('Bash', 'git commit -m "fix: x"'), session_id: 'x' }, deps)), undefined)
+})
+
+test('a deny or ask is logged with the tool_use_id, to join it with the harness tool decision', async () => {
+  const events = []
+  const h = setup({ emit: async (event, attrs) => events.push([event, attrs]) })
+  await h({ ...pre('Bash', 'rm -rf build'), tool_use_id: 'toolu_1' })
+  assert.equal(events[0][1].tool_use_id, 'toolu_1')
 })
 
 test('a squash-merged worktree (merged PR found by gh in the worktree) is not asked about', async () => {

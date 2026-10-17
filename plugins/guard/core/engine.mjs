@@ -48,9 +48,12 @@ export const deniedBy = (command, rules) => hit(rules.deny ?? [], command);
 // Targets of every recursive delete (`rm -r`, `Remove-Item -Recurse`, `git worktree remove --force`) in a command,
 // as written. Redirections are dropped; quoted, $(...) or glob targets come through as-is and are judged unsafe later.
 const REMOVAL = new Set(['rm', 'worktree-rm']);
+// A double-quoted word with no spaces or other expansions ("$TMPDIR/x", "$S") is that word: unquote it so the
+// temp check can resolve it instead of seeing the blanked string.
+const SIMPLE_QUOTED = /"((?:\$\{?\w+\}?)?[^"\s$`\\]*)"/g;
 export function removalTargets(command, rules) {
   const removes = rules.risky.filter((r) => REMOVAL.has(r.id)).map((r) => new RegExp(r.match, 'i'));
-  return executable(command)
+  return executable(command.replace(SIMPLE_QUOTED, '$1'))
     .replace(/\d*[<>]+(&\d+|\s*[^\s;&|]+)/g, ' ')
     .split(/&&|\|\||[;|&\n]/)
     .filter((seg) => removes.some((re) => re.test(seg)))
@@ -120,10 +123,25 @@ export async function worktreeFacts(command, env, rules, run) {
   return facts;
 }
 
+// Variables the command itself points at a temp dir: `S=$(mktemp -d)` (no template, so it lands in $TMPDIR; `-t`
+// keeps it there) or `T=/tmp/x` / `T="$TMPDIR/x"`. Name -> path, a placeholder temp path for mktemp.
+// ponytail: a later reassignment of the same variable in the command is not tracked.
+const MKTEMP = /^\$\(mktemp(\s+-[dqu]+)*(\s+(-t|--tmpdir(=\S+)?)(\s+[\w.-]+)?)?\)$/;
+export function tempVars(command, env = {}) {
+  const vars = {};
+  for (const [, name, raw] of command.replace(SIMPLE_QUOTED, '$1').matchAll(/(?:^|[\s;&|(])(?:export\s+)?([A-Za-z_]\w*)=(\$\([^)]*\)|[^\s;&|]+)/g)) {
+    if (MKTEMP.test(raw)) vars[name] = '/tmp/mktemp.placeholder';
+    else if (isTempPath(raw, env)) vars[name] = raw;
+  }
+  return vars;
+}
+
 // A removal is exempt when it has targets and every one is a temp path or a safe worktree.
 function safeRemoval(command, rules, env, worktrees) {
   const targets = removalTargets(command, rules);
-  return targets.length > 0 && targets.every((t) => isTempPath(t, env) || worktrees[t]?.safe === true);
+  const vars = tempVars(command, env);
+  const resolve = (t) => t.replace(/^\$\{?([A-Za-z_]\w*)\}?(?=\/|$)/, (m, name) => vars[name] ?? m);
+  return targets.length > 0 && targets.every((t) => isTempPath(resolve(t), env) || worktrees[t]?.safe === true);
 }
 
 // `python`: the Python manager of the repo in cwd ('uv', 'poetry', 'pipenv', 'pip'; null for none), for deny rules with `when`.
