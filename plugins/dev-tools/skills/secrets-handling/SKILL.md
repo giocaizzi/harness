@@ -30,6 +30,7 @@ Never ask for the master password or a session token, and never export `BW_SESSI
 ## Secrets Manager CLI (`bws`)
 
 - The access token lives in the OS keyring, not in a config file or the shell environment of your session.
+- Before asking the user for a token or reporting that you lack access, look for an existing wrapper that injects it from the keyring (a shell function or alias, a task-runner target, the private agent instructions) and run that. A token absent from your environment is not a token you cannot use.
 - List names and counts (`bws secret list <project> --output json | jq 'map(.key)'`); fetch a value only to hand it straight to a process, never to display it.
 - Names that are not valid variable names need renaming before they can be injected as env vars.
 
