@@ -1,0 +1,12 @@
+{
+  "costByHarness": "sum by (service_name, model) (sum_over_time({service_name=~\"claude-code|codex.*|github-copilot|copilot-chat|opencode|pi\", deployment_environment_name!=\"test\"} | agent_event=\"api_request\" or event_name=\"api_request\" | unwrap cost_usd | __error__=\"\" [$r]))",
+  "costBySource": "sum by (model, query_source) (sum_over_time({service_name=\"claude-code\"} | event_name=\"api_request\" | unwrap cost_usd | __error__=\"\" [$r]))",
+  "subagents": "sum by (agent_type, model) (count_over_time({service_name=\"claude-code\"} | event_name=\"subagent_completed\" [$r]))",
+  "skillsClaude": "sum by (skill_name, invocation_trigger) (count_over_time({service_name=\"claude-code\"} | event_name=\"skill_activated\" [$r]))",
+  "skillsGuard": "sum by (skill, via) (count_over_time({service_name=\"guard\"} | event_name=\"guard.skill\" [$r]))",
+  "reminders": "sum by (rule) (count_over_time({service_name=\"guard\"} | event_name=\"guard.reminder\" [$r]))",
+  "decisions": "sum by (rule, action) (count_over_time({service_name=\"guard\"} | event_name=\"guard.decision\" [$r]))",
+  "approvals": "sum by (tool_name) (count_over_time({service_name=\"claude-code\"} | event_name=\"tool_result\" | decision_source=~\"user_.*\" [$r]))",
+  "failing": "topk(15, sum by (bash_command) (count_over_time({service_name=\"claude-code\"} | event_name=\"tool_result\" | success=\"false\" | tool_name=\"Bash\" | line_format \"{{.tool_parameters}}\" | json bash_command [$r])))",
+  "rateLimits": "sum(count_over_time({service_name=\"claude-code\"} | event_name=\"api_error\" | status_code=\"429\" [$r]))"
+}
