@@ -39,3 +39,9 @@ test('emit: GUARD_-prefixed copies stand in for the OTEL_* the harness stripped'
   await emit({ OTEL_EXPORTER_OTLP_ENDPOINT: 'http://o', GUARD_OTEL_EXPORTER_OTLP_ENDPOINT: 'http://g' }, 'guard.decision', {}, async (url) => (sent = { url }))
   assert.equal(sent.url, 'http://o/v1/logs')
 })
+
+test('logRequest: a harness reported by the guard owns service.name and service.namespace', () => {
+  const r = logRequest({ endpoint: 'http://c', resource: 'service.namespace=claude-code,host.name=mac' }, 'api_request', {}, 1, 'pi')
+  const attrs = Object.fromEntries(JSON.parse(r.body).resourceLogs[0].resource.attributes.map((a) => [a.key, a.value.stringValue]))
+  assert.deepEqual(attrs, { 'service.namespace': 'pi', 'host.name': 'mac', 'service.name': 'pi' })
+})

@@ -106,3 +106,22 @@ test('pi: a failing make check on settle is sent back once, an aborted run is le
   assert.equal(sent.length, 1)
   assert.match(sent[0], /make check failed/)
 })
+
+test('usage: opencode and pi report each assistant message once, as their own service', async () => {
+  const sent = []
+  const report = async (event, attrs) => sent.push([event, attrs.model, attrs.input_tokens, attrs.cache_read_tokens, attrs.cost_usd, attrs['session.id']])
+  const hooks = await GuardPlugin({ client: {}, directory: dir() }, { ...deps(), report })
+  const info = { id: 'm1', role: 'assistant', sessionID: 's1', modelID: 'gpt-6.1-sol', providerID: 'openai', time: { completed: 1 }, tokens: { input: 10, output: 5, reasoning: 0, cache: { read: 3, write: 0 } }, cost: 0.002 }
+  await hooks.event({ event: { type: 'message.updated', properties: { info: { ...info, time: {} } } } }) // still streaming
+  await hooks.event({ event: { type: 'message.updated', properties: { info } } })
+  await hooks.event({ event: { type: 'message.updated', properties: { info } } }) // repeated update
+  const handlers = {}
+  guardExtension({ on: (name, fn) => (handlers[name] = fn) }, { ...deps(), report })
+  const ctx = { cwd: dir(), sessionManager: { getSessionId: () => 'p1' } }
+  await handlers.message_end({ message: { role: 'user' } }, ctx)
+  await handlers.message_end({ message: { role: 'assistant', model: 'claude-sonnet-5-5', provider: 'anthropic', usage: { input: 7, output: 2, cacheRead: 1, cacheWrite: 0, cost: { total: 0.0001 } } } }, ctx)
+  assert.deepEqual(sent, [
+    ['api_request', 'gpt-6.1-sol', 10, 3, 0.002, 's1'],
+    ['api_request', 'claude-sonnet-5-5', 7, 1, 0.0001, 'p1'],
+  ])
+})
