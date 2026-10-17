@@ -39,6 +39,9 @@ export function badTitle(command, rules) {
 
 const hit = (rules, command) => rules.find((r) => new RegExp(r.match, 'i').test(executable(command)));
 
+// A risky rule's `raw` must also match the command as written (quoted text included).
+const riskyMatch = (r, command) => new RegExp(r.match, 'i').test(executable(command)) && (!r.raw || new RegExp(r.raw, 'i').test(command));
+
 // The deny rule a command hits, so adapters gather repo facts (the Python manager) only when one applies.
 export const deniedBy = (command, rules) => hit(rules.deny ?? [], command);
 
@@ -132,7 +135,7 @@ export function evaluateCommand({ command, loadedSkills = new Set(), state, host
   const note = denied && !state.reminded.has(denied.id) ? denied.id : null
 
   const exempt = safeRemoval(command, rules, env, worktrees);
-  const risky = rules.risky.find((r) => new RegExp(r.match, 'i').test(executable(command)) && !(exempt && REMOVAL.has(r.id)));
+  const risky = rules.risky.find((r) => riskyMatch(r, command) && !(exempt && REMOVAL.has(r.id)));
   if (risky) {
     const why = Object.entries(worktrees).filter(([, f]) => !f.safe).map(([t, f]) => `\nWorktree ${t}: ${f.why}`).join('');
     return { action: 'ask', rule: risky.id, command, reason: `Risky command (${risky.why}): ${command}${why}` };
@@ -211,7 +214,7 @@ export function isHeavy(command, rules) {
 }
 
 export function isRisky(command, rules) {
-  return rules.risky.some((r) => new RegExp(r.match, 'i').test(executable(command)));
+  return rules.risky.some((r) => riskyMatch(r, command));
 }
 
 // Where a hook cannot ask (Codex, opencode), the harness's own prompt rules ask for the risky rule's `prefixes`.
