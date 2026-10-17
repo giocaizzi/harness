@@ -93,9 +93,10 @@ You never call guard. You see it when it denies or asks:
 
 | You see | Why | What to do |
 |---|---|---|
-| A commit or PR command denied once with "load skill X" | The first `git commit`, `gh pr create/merge`, `git worktree add`, release or `bw`/`bws` command of a session needs the matching skill loaded first. | Nothing: the agent loads it and retries. |
+| A commit or PR command denied once with "load skill X" | The first `git commit`, `gh pr create/merge`, `git worktree add`, or release command of a session needs the matching skill loaded first. | Nothing: the agent loads it and retries. |
 | `git commit -m "..."` denied: not a Conventional Commit | Subject must be `type(scope): summary`, types `feat fix perf refactor revert docs style test build ci chore`. Also PR titles. | Nothing: the agent rewrites it. |
 | A permission prompt with `Would affect:` | Risky command: `rm -r`, `git push --force`, `git reset --hard`, `git worktree remove --force`, `terraform apply/destroy`, `gh pr merge --admin`. Deletes under a temp dir or of a clean, pushed or merged worktree skip it. | Read the preview, then allow or deny. |
+| A permission prompt naming `secrets-handling` | A command that reads or prints a secret: `bw`/`bws` get/list/run/unlock/login/export, `security find-generic-password -w`, `chezmoi secret keyring get`, `op read`, `pass show`, `gcloud secrets versions access`, `az keyvault secret show`, `printenv`/`env \| grep TOKEN`, `cat .env`. A token injected with `VAR="$(…)" ./script` does not ask. | Allow when the task needs it; the value must not reach the chat. |
 | `pip`/`poetry` denied: "This repo uses uv" | The repo has `uv.lock` (or a plain `pyproject.toml`). In a poetry or pip repo it runs, with a one-time note. | Nothing: the agent switches to `uv`. |
 | A heavy build or test run denied once | Load over 30, CPU over 90 % or under 20 GB free disk. | Wait, or let the agent wrap it in `heavy.sh`. |
 | Subagent spawn refused (Claude Code) | A plan window is at 90 %. | Wait for the reset. |

@@ -46,14 +46,6 @@ export const rules = {
         "semver"
       ],
       "why": "versions and tags are owned by release automation"
-    },
-    {
-      "id": "secrets",
-      "match": "\\bbws?\\s+(secret|run|get|list|unlock|login)\\b",
-      "skills": [
-        "secrets-handling"
-      ],
-      "why": "secrets are never printed or inlined"
     }
   ],
   "deny": [
@@ -117,6 +109,27 @@ export const rules = {
       "id": "merge",
       "match": "\\bgh\\s+pr\\s+merge\\b.*--admin|\\baz\\s+repos\\s+pr\\s+(create|update)\\b.*--bypass-policy\\b(?![\\s=]+false)",
       "why": "bypasses merge rules"
+    },
+    // Matched on what runs, so a token injected through a quoted `VAR="$(keyring read)" ./script` passes:
+    // the value goes to one process's environment, never to output. ponytail: `echo "$(bws secret get x)"` passes too.
+    {
+      "id": "secrets",
+      "match": "\\bbws?\\s+(secret|get|list|run|unlock|login|export|serve)\\b|\\bsecurity\\s+find-(generic|internet)-password\\b[^|;&\\n]*\\s-[a-z]*[wg][a-z]*\\b|\\bchezmoi\\s+secret\\s+keyring\\s+get\\b|\\bop\\s+read\\b|\\bop\\s+item\\s+get\\b[^|;&\\n]*\\s--reveal\\b|\\bpass\\s+show\\b|\\bgcloud\\s+secrets\\s+versions\\s+access\\b|\\baz\\s+keyvault\\s+secret\\s+show\\b|(^|[;&|(\\n]\\s*)printenv\\s+\\w*(token|secret|key|pass|credential)|\\b(cat|less|more|head|tail|bat)\\s+([^\\s;&|]+\\s+)*([^\\s;&|]*/)?\\.env(\\.(?!example\\b|sample\\b|template\\b|dist\\b)[\\w.-]+)?(?=[\\s;&|)]|$)",
+      "why": "reads a secret; load `secrets-handling` and never print or inline the value",
+      "prefixes": [
+        ["bw", "get"], ["bw", "list"], ["bw", "unlock"], ["bw", "login"], ["bw", "export"], ["bw", "serve"],
+        ["bws", "secret"], ["bws", "get"], ["bws", "list"], ["bws", "run"],
+        ["chezmoi", "secret", "keyring", "get"], ["op", "read"], ["pass", "show"],
+        ["gcloud", "secrets", "versions", "access"], ["az", "keyvault", "secret", "show"],
+        ["cat", ".env"], ["less", ".env"]
+      ]
+    },
+    // `raw` must also match the command as written: the grep pattern is usually quoted, which `match` cannot see.
+    {
+      "id": "secrets-env",
+      "match": "(^|[;&|(\\n]\\s*)(printenv|env)\\b(?![-.=])[^;&\\n]*\\|\\s*(e?grep|rg|findstr|select-string)\\b",
+      "raw": "token|secret|key|pass|credential",
+      "why": "dumps secret environment variables; load `secrets-handling` and filter to names only"
     }
   ],
   "titles": {
