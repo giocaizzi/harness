@@ -13,7 +13,6 @@ Toasts and configurable sounds for Claude Code (a mod), and the turn and context
 | `soundAborted`, `soundRefused`, `soundError` | A turn interrupted (also a message sent mid-turn), refused, or ended by an API error | `off`, `error`, `error` |
 | `soundSubagent` | A subagent's turn ended | `tick` |
 | `soundNeedsInput` | A permission prompt or a question waiting on you (also Codex and opencode) | `chime` |
-
 | `notify` | System notification: a turn of at least `notifyAfterSeconds` (default 60) finishing or ending badly, Claude asking a question, the PR checks finishing (with `hud`) | on |
 
 Each sound is a picker in `/config` over `off`, `chime`, `ping`, `alert`, `warn`, `error`, `done`, `tick`; `soundGain` sets the volume. Sounds play on macOS only.

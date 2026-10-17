@@ -15,6 +15,8 @@ My personal marketplace with plugins for AI coding assistants, including skills,
 
 Works with [Claude Code](https://code.claude.com/), [GitHub Copilot CLI](https://github.com/features/copilot/cli), [VS Code](https://code.visualstudio.com/) Copilot, [Codex CLI](https://github.com/openai/codex), [opencode](https://opencode.ai/) and [pi](https://pi.dev/), on macOS, Linux and Windows. What each harness gets: [docs/compatibility.md](docs/compatibility.md).
 
+**New here?** [Quickstart](docs/quickstart.md) (install, what you'll see, first task) · [Usage guide](docs/usage.md) (every skill, agent, command and setting, and how to call each).
+
 ## Available plugins
 
 | Plugin | Description |
@@ -60,7 +62,7 @@ Each plugin's README lists the skills, agents and hooks it ships.
 | opencode | `make install HARNESS=opencode` from a clone |
 | pi | `pi install git:github.com/giocaizzi/harness` |
 
-Updating, verifying, trusting Codex hooks and running from a checkout: [docs/install.md](docs/install.md).
+The `hud` status line needs one more line in your settings: [docs/hud.md](docs/hud.md#install). Updating, verifying, trusting Codex hooks and running from a checkout: [docs/install.md](docs/install.md).
 
 ---
 

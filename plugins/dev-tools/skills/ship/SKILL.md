@@ -5,7 +5,7 @@ description: Commit the current changes as small Conventional Commits, push the 
 
 # Ship
 
-Take the working tree to an open PR. Arguments (`$ARGUMENTS`): an optional hint for the commit message, or `draft`.
+Take the working tree to an open PR. Arguments (`$ARGUMENTS`, or the text after the skill name where that placeholder is left as is): an optional hint for the commit message, or `draft`.
 
 1. **Not on the default branch.** If on `main`, stop and start a branch (see `wt`). Pushing to the default branch is never the intent.
 2. **Look before staging.** Read `git status` and the diff. Never stage secrets, `.env` files or build output; if a value looks like a credential, stop and say so (see `secrets-handling`).

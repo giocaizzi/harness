@@ -83,6 +83,33 @@ test('every prefix is risky under its own rule, and renders for Codex and openco
   assert.equal(opencodeAsks(rules)['git reset --hard *'], 'ask');
 });
 
+test('telemetry false positives stay fixed: read-only release, ruleset and tag commands pass', () => {
+  const skill = (command) => evaluateCommand({ command, state: fresh(), host: calm, rules }).rule;
+  for (const c of ['cat release-please-config.json', 'git show origin/main:release-please-config.json', 'gh run list --workflow release-please.yml',
+    'git tag', 'git tag -l', 'git tag --list "v*"', 'git tag --contains HEAD', 'git tag --sort=-v:refname', 'gh api repos/o/r/rulesets', 'gh api repos/o/r/branches/main/protection --jq .x'])
+    assert.equal(skill(c), undefined, c);
+  for (const [c, rule] of [['git tag v1.2.0', 'release'], ['git tag -a v1 -m x', 'release'], ['npx release-please release-pr --repo-url o/r', 'release'], ['npm version patch', 'release'],
+    ['gh api -X PUT repos/o/r/branches/main/protection --input p.json', 'ruleset'], ['gh api repos/o/r/rulesets -f name=x', 'ruleset'], ['gh api --method DELETE repos/o/r/rulesets/1', 'ruleset']])
+    assert.equal(skill(c), rule, c);
+});
+
+test('--force-with-lease to a feature branch passes; plain force, + refspecs and main still ask', () => {
+  const act = (command) => evaluateCommand({ command, state: fresh(), host: calm, rules }).action;
+  for (const c of ['git push --force-with-lease', 'git push -q --force-with-lease origin feat/x', 'git push --force-with-lease=feat/x:abc123 origin feat/x', 'git push origin --follow-tags'])
+    assert.equal(act(c), 'allow', c);
+  for (const c of ['git push --force', 'git push -f origin x', 'git push -qf origin x', 'git push origin +feat/x', 'git push --force-with-lease origin main', 'git push --force-with-lease origin HEAD:master'])
+    assert.equal(act(c), 'ask', c);
+});
+
+test('a recursive delete of a temp dir held in a variable or a quoted $TMPDIR path does not ask', () => {
+  const env = { TMPDIR: '/var/folders/ab/T/' };
+  const act = (command) => evaluateCommand({ command, state: fresh(), host: calm, env, rules }).action;
+  for (const c of ['S=$(mktemp -d); do_x; rm -rf $S', 'T=$(mktemp -d -t probe) && rm -rf "$T"', 'rm -rf "$TMPDIR/x"', 'R=/private/tmp/claude-1/s/x; rm -rf $R/home', 'export E="$TMPDIR/e"; rm -rf ${E}'])
+    assert.equal(act(c), 'allow', c);
+  for (const c of ['S=$(mktemp -d foo.XXXX); rm -rf $S', 'S=build; rm -rf $S', 'rm -rf $S', 'S=$(mktemp -d); rm -rf $S/..', 'S=$(mktemp -d); rm -rf $S /', 'rm -rf "$HOME/x"'])
+    assert.equal(act(c), 'ask', c);
+});
+
 test('a plain push and rm of a file are not risky', () => {
   assert.equal(evaluateCommand({ command: 'git push origin x', state: fresh(), host: calm, rules }).action, 'allow');
   assert.equal(evaluateCommand({ command: 'rm notes.txt', state: fresh(), host: calm, rules }).action, 'allow');
@@ -323,4 +350,49 @@ test('glab and az PR commands need the PR skills; an az policy bypass asks', () 
   const ask = (c) => evaluateCommand({ command: c, loadedSkills: new Set(['land']), state: fresh(), host: calm, rules }).action;
   assert.equal(ask('az repos pr update --id 4 --bypass-policy true --bypass-policy-reason x'), 'ask');
   assert.equal(ask('az repos pr update --id 4 --bypass-policy false'), 'allow');
+});
+
+test('secret reads ask every time, naming secrets-handling; look-alikes and injection wrappers pass', () => {
+  const decide = (command) => evaluateCommand({ command, state: fresh(), host: calm, rules });
+  const asks = {
+    secrets: [
+      'bws secret get 0000', 'bws secret list', 'bws run -- make deploy', 'bw get password github', 'bw list items --search x',
+      'bw unlock', 'bw login', 'bw export --format json', 'bw serve --port 8087',
+      'security find-generic-password -s svc -w', 'security find-generic-password -wa acct', 'security find-internet-password -s host -g',
+      'chezmoi secret keyring get --service=svc --user=me',
+      'op read op://vault/item/field', 'op item get github --fields password --reveal',
+      'pass show email/me', 'gcloud secrets versions access latest --secret=api', 'az keyvault secret show --vault-name v --name n',
+      'printenv GITHUB_TOKEN', 'echo ok && printenv API_KEY',
+      'cat .env', 'less .env.local', 'cat ./app/.env', 'head -n 5 config/.env.production', 'X=$(bws secret get 0000) ./run.sh',
+    ],
+    'secrets-env': ['printenv | grep TOKEN', 'env | grep -i "secret"', "env | rg -i 'api_key'", 'env | sort | grep PASSWORD'],
+  };
+  for (const [rule, commands] of Object.entries(asks))
+    for (const command of commands) {
+      const d = decide(command);
+      assert.equal(d.action, 'ask', command);
+      assert.equal(d.rule, rule, command);
+      assert.match(d.reason, /secrets-handling/, command);
+      assert.equal(decide(command).action, 'ask', command);
+    }
+  for (const command of [
+    'BWS_ACCESS_TOKEN="$(security find-generic-password -s bws -w)" ./scripts/create_secrets.sh n8n',
+    'BWS_ACCESS_TOKEN="$(chezmoi secret keyring get --service=bws --user=me)" make sync',
+    'bws --version', 'bw status', 'bw sync', 'bws project list',
+    'security find-generic-password -s svc', 'security find-generic-password -a me -s gmail', 'security list-keychains',
+    'op item get github --fields username', 'op whoami', 'pass ls', 'pass insert x',
+    'gcloud secrets list', 'gcloud secrets versions list api', 'az keyvault secret list --vault-name v',
+    'printenv PATH', 'printenv', 'env | grep PATH', 'env FOO=1 node app.js | grep ok', 'docker compose --env-file .env config | grep image',
+    'cat .env.example', 'cat .env.sample', 'cat .envrc.example', 'cat foo.env', 'cat environment.md', 'echo "cat .env"',
+    "grep -rn 'bws secret get' docs/", 'git commit -m "docs: never run printenv | grep TOKEN"',
+  ])
+    assert.notEqual(decide(command).action, 'ask', command);
+});
+
+test('the secrets prefixes leave plain secret reads to the Codex and opencode prompts', () => {
+  assert.equal(nativeAsk('bws secret get 0000', 'secrets', rules), true);
+  assert.equal(nativeAsk('cat .env', 'secrets', rules), true);
+  assert.equal(nativeAsk('op item get github --reveal', 'secrets', rules), false);
+  assert.equal(nativeAsk('env | grep TOKEN', 'secrets-env', rules), false);
+  assert.equal(opencodeAsks(rules)['pass show *'], 'ask');
 });

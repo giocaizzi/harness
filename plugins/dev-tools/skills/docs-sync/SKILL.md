@@ -5,7 +5,7 @@ description: Update docs, runbooks, README and AGENTS.md that the current diff m
 
 # Docs sync
 
-Argument (`$ARGUMENTS`): an optional path to limit the scope.
+Argument (`$ARGUMENTS`, or the text after the skill name where that placeholder is left as is): an optional path to limit the scope.
 
 1. **Read the diff** (`git diff` against the default branch) and list what changed in behavior, commands, config, interfaces or procedures.
 2. **Find the docs that describe them:** everything under `docs/`, the README, and `AGENTS.md`.

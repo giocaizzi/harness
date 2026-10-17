@@ -23,7 +23,8 @@ export const rules = {
     },
     {
       "id": "ruleset",
-      "match": "\\bgh\\s+api\\b.*\\b(rulesets|protection)\\b",
+      // Writes only: an explicit write method, or body fields (gh api then defaults to POST).
+      "match": "\\bgh\\s+api\\b(?=.*\\b(rulesets|protection)\\b)(?=.*(\\s(-X|--method)[\\s=]*(POST|PUT|PATCH|DELETE)\\b|\\s(-f|-F|--field|--raw-field|--input)\\b))",
       "skills": [
         "github-workflow"
       ],
@@ -40,20 +41,14 @@ export const rules = {
     },
     {
       "id": "release",
-      "match": "\\b(release-please|npm\\s+version|git\\s+tag)\\b",
+      // What cuts a release, not what reads one: release-please-config.json, a release-please workflow or
+      // `git tag -l` pass. Bare `git tag` lists, so a tag name or a creating flag must follow.
+      "match": "\\brelease-please\\s+(release-pr|github-release|bootstrap)\\b|\\bnpm\\s+version\\b|\\bgit\\s+tag\\s+(?!(-l|--list|-n\\d*|--contains|--no-contains|--points-at|--merged|--no-merged|-v|--verify|--sort|--format|--column|-i|--ignore-case)\\b)[^\\s;&|]",
       "skills": [
         "release-please",
         "semver"
       ],
       "why": "versions and tags are owned by release automation"
-    },
-    {
-      "id": "secrets",
-      "match": "\\bbws?\\s+(secret|run|get|list|unlock|login)\\b",
-      "skills": [
-        "secrets-handling"
-      ],
-      "why": "secrets are never printed or inlined"
     }
   ],
   "deny": [
@@ -103,9 +98,11 @@ export const rules = {
     },
     {
       "id": "force",
-      "match": "\\bgit\\s+push\\b.*(--force|\\s-f\\b)",
+      // `--force-with-lease` to a feature branch passes: it cannot clobber work it has not seen, and a branch
+      // ruleset rejects it on a protected default branch. ponytail: a bare lease push from main is not caught.
+      "match": "\\bgit\\s+push\\b[^;&|\\n]*(--force(?!-with-lease)\\b|\\s-[a-z]*f[a-z]*\\b|\\s\\+[^\\s;&|]|--force-with-lease\\b[^;&|\\n]*\\b(main|master)\\b)",
       "why": "rewrites remote history",
-      "prefixes": [["git", "push", "--force"], ["git", "push", "-f"], ["git", "push", "--force-with-lease"]]
+      "prefixes": [["git", "push", "--force"], ["git", "push", "-f"]]
     },
     {
       "id": "terraform",
@@ -117,6 +114,27 @@ export const rules = {
       "id": "merge",
       "match": "\\bgh\\s+pr\\s+merge\\b.*--admin|\\baz\\s+repos\\s+pr\\s+(create|update)\\b.*--bypass-policy\\b(?![\\s=]+false)",
       "why": "bypasses merge rules"
+    },
+    // Matched on what runs, so a token injected through a quoted `VAR="$(keyring read)" ./script` passes:
+    // the value goes to one process's environment, never to output. Known gap: `echo "$(bws secret get x)"` passes too.
+    {
+      "id": "secrets",
+      "match": "\\bbws?\\s+(secret|get|list|run|unlock|login|export|serve)\\b|\\bsecurity\\s+find-(generic|internet)-password\\b[^|;&\\n]*\\s-[a-z]*[wg][a-z]*\\b|\\bchezmoi\\s+secret\\s+keyring\\s+get\\b|\\bop\\s+read\\b|\\bop\\s+item\\s+get\\b[^|;&\\n]*\\s--reveal\\b|\\bpass\\s+show\\b|\\bgcloud\\s+secrets\\s+versions\\s+access\\b|\\baz\\s+keyvault\\s+secret\\s+show\\b|(^|[;&|(\\n]\\s*)printenv\\s+\\w*(token|secret|key|pass|credential)|\\b(cat|less|more|head|tail|bat)\\s+([^\\s;&|]+\\s+)*([^\\s;&|]*/)?\\.env(\\.(?!example\\b|sample\\b|template\\b|dist\\b)[\\w.-]+)?(?=[\\s;&|)]|$)",
+      "why": "reads a secret; load `secrets-handling` and never print or inline the value",
+      "prefixes": [
+        ["bw", "get"], ["bw", "list"], ["bw", "unlock"], ["bw", "login"], ["bw", "export"], ["bw", "serve"],
+        ["bws", "secret"], ["bws", "get"], ["bws", "list"], ["bws", "run"],
+        ["chezmoi", "secret", "keyring", "get"], ["op", "read"], ["pass", "show"],
+        ["gcloud", "secrets", "versions", "access"], ["az", "keyvault", "secret", "show"],
+        ["cat", ".env"], ["less", ".env"]
+      ]
+    },
+    // `raw` must also match the command as written: the grep pattern is usually quoted, which `match` cannot see.
+    {
+      "id": "secrets-env",
+      "match": "(^|[;&|(\\n]\\s*)(printenv|env)\\b(?![-.=])[^;&\\n]*\\|\\s*(e?grep|rg|findstr|select-string)\\b",
+      "raw": "token|secret|key|pass|credential",
+      "why": "dumps secret environment variables; load `secrets-handling` and filter to names only"
     }
   ],
   "titles": {
