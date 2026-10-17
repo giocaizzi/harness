@@ -1,11 +1,11 @@
 ---
-name: recap
-description: Terse status of the current work - what is done (merged PRs with SHAs, releases, deploys), what is in flight (open PRs and CI, running subagents or peer sessions), what waits on the user, and leftovers (worktrees, branches, temp files). Use when the user asks for a recap, status, summary or "where are we", or types /recap.
+name: standup
+description: Terse status of the current work - what is done (merged PRs with SHAs, releases, deploys), what is in flight (open PRs and CI, running subagents or peer sessions), what waits on the user, and leftovers (worktrees, branches, temp files). Use when the user asks for a recap, status, summary or "where are we", or types /standup.
 ---
 
-# Recap
+# Standup
 
-Answer "where are we" in one screen. Argument (`$ARGUMENTS`, or the text after the skill name where that placeholder is left as is): an optional scope, such as a repo, PR or topic; default is everything this session touched.
+Answer "where are we" in one screen. Argument: an optional scope, such as a repo, PR or topic; default is everything this session touched. The argument is the text after the skill name, repeated here when the harness fills it in: $ARGUMENTS
 
 Gather, read-only:
 

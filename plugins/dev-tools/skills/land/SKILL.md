@@ -5,7 +5,7 @@ description: Wait for CI on a PR, fix trivial failures, merge it through auto-me
 
 # Land
 
-Take an open PR (GitLab: MR) to merged and clean. Argument (`$ARGUMENTS`, or the text after the skill name where that placeholder is left as is): a PR number; default is the current branch's PR. Detect the forge and take its commands from the `repo-standard` mapping; on GitHub also follow `github-workflow`.
+Take an open PR (GitLab: MR) to merged and clean. Argument: a PR number; default is the current branch's PR. Detect the forge and take its commands from the `repo-standard` mapping; on GitHub also follow `github-workflow`. The argument is the text after the skill name, repeated here when the harness fills it in: $ARGUMENTS
 
 1. **Watch CI** (GitHub `gh pr checks --watch`, GitLab `glab ci status --live`, Azure DevOps `az repos pr policy list`). On failure, fix lint or format problems with a new commit and push; for anything else, stop and report the failing job and its log.
 2. **Merge only when every check passed.** Never merge on a failing or missing check, even if branch protection would not stop you; a red check on `main` is fixed first, in its own PR.
