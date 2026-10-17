@@ -34,9 +34,9 @@ export function sessionStore(dir, sessionId) {
       mkdirSync(join(dir, 'sessions'), { recursive: true })
       writeFileSync(file, JSON.stringify(state))
     },
-    // Drop this session's file and any left behind by sessions that never ended cleanly.
-    drop() {
-      rmSync(file, { force: true })
+    // Drop files of sessions idle for a week. Not this session's own: a resumed session keeps its id, and
+    // forgetting its loaded skills denied every skill rule again after each resume.
+    sweep() {
       const sessions = join(dir, 'sessions')
       try {
         for (const f of readdirSync(sessions)) if (Date.now() - statSync(join(sessions, f)).mtimeMs > WEEK_MS) rmSync(join(sessions, f), { force: true })
@@ -109,7 +109,7 @@ async function onShell(input, state, deps) {
     const reminded = new Set(state.reminded)
     const d = evaluateCommand({ command, loadedSkills: new Set(state.loaded), state: { reminded }, host, ...facts, rules })
     state.reminded = [...reminded]
-    if (d.action === 'deny' || d.action === 'ask') await deps.emit?.('guard.decision', { rule: d.rule, action: d.action, tool: String(input.tool_name ?? ''), session_id: input.session_id })
+    if (d.action === 'deny' || d.action === 'ask') await deps.emit?.('guard.decision', { rule: d.rule, action: d.action, tool: String(input.tool_name ?? ''), session_id: input.session_id, tool_use_id: input.tool_use_id })
     if (d.action === 'deny') return preToolUse('deny', d.reason)
     // Unattended run (GUARD_UNATTENDED=1): nobody can answer an ask, so it becomes a deny and the agent picks another way.
     if (d.action === 'ask' && /^(1|true|on)$/i.test(deps.env?.GUARD_UNATTENDED ?? '')) {
@@ -128,7 +128,7 @@ async function onShell(input, state, deps) {
     return d.context ? note(d.context) : {}
   } catch (err) {
     // Fail open for reminders, closed for risky commands.
-    if (isRisky(command, rules)) await deps.emit?.('guard.decision', { rule: 'guard-error', action: 'deny', tool: String(input.tool_name ?? ''), session_id: input.session_id })
+    if (isRisky(command, rules)) await deps.emit?.('guard.decision', { rule: 'guard-error', action: 'deny', tool: String(input.tool_name ?? ''), session_id: input.session_id, tool_use_id: input.tool_use_id })
     return isRisky(command, rules) ? preToolUse('deny', `The command guard failed, so this risky command was not run: ${err?.message ?? err}`) : {}
   }
 }
@@ -141,7 +141,7 @@ export async function handle(input, deps) {
   let out = {}
 
   if (event === 'SessionEnd') {
-    store.drop()
+    store.sweep()
     return out
   }
   if (event === 'UserPromptSubmit') {
