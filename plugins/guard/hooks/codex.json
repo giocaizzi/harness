@@ -14,7 +14,7 @@
     ],
     "PreToolUse": [
       {
-        "matcher": "Bash|PowerShell|Skill|bash|powershell|skill",
+        "matcher": "Bash|PowerShell|Skill|Edit|Write|MultiEdit|bash|powershell|skill|edit|create",
         "hooks": [
           {
             "type": "command",

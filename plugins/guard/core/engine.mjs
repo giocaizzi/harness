@@ -145,7 +145,12 @@ function safeRemoval(command, rules, env, worktrees) {
 }
 
 // `python`: the Python manager of the repo in cwd ('uv', 'poetry', 'pipenv', 'pip'; null for none), for deny rules with `when`.
-export function evaluateCommand({ command, loadedSkills = new Set(), state, host = {}, env = {}, worktrees = {}, python = null, rules }) {
+// A whole command that only prints files (`cat f`, `head -n 5 f`, `sed -n 1,20p f`): the harness's read tool does it better.
+const SHELL_READ = /^\s*(?:(?:cat|head|tail|less|more)(?:\s+-[\w-]+(?:\s+\d+)?)*|sed\s+-n\s+\S+)(?:\s+[^\s|;&<>()`$]+)+\s*$/;
+const hint = (rule) => `Skill hint (${rule.why}): load ${rule.skills.map((s) => `\`${s}\``).join(' or ')} if this task is that work.`;
+
+// `readTool`: the harness has a file-read tool (all but Codex), so a shell read gets a once-per-session hint.
+export function evaluateCommand({ command, loadedSkills = new Set(), state, host = {}, env = {}, worktrees = {}, python = null, readTool = false, rules }) {
   // Hard denies come first and fire every time, like the title guard. A `when` rule denies only in a repo
   // that adopted that manager; elsewhere it lets the command through with a once-per-session note.
   const denied = deniedBy(command, rules)
@@ -191,6 +196,7 @@ export function evaluateCommand({ command, loadedSkills = new Set(), state, host
   const rule = hit(rules.skills, command);
   if (rule && !rule.skills.some((s) => loaded.has(s)) && !state.reminded.has(rule.id)) {
     state.reminded.add(rule.id);
+    if (rule.remind) return { action: 'allow', rule: rule.id, remind: true, context: hint(rule) };
     return {
       action: 'deny',
       rule: rule.id,
@@ -199,10 +205,24 @@ export function evaluateCommand({ command, loadedSkills = new Set(), state, host
         'first, then retry the same command.',
     };
   }
+  if (!note && readTool && !state.reminded.has('read') && SHELL_READ.test(command)) {
+    state.reminded.add('read');
+    return { action: 'allow', rule: 'read', remind: true, context: 'Read files with the harness\'s read tool, not cat/head/tail/sed: it shows line numbers, pages large files and a wrong path is a plain error, not a failed shell command.' };
+  }
   if (!note) return { action: 'allow' };
   state.reminded.add(note);
   const uses = python ? `This repo uses ${python}` : 'This directory has no uv project';
   return { action: 'allow', rule: note, context: `${uses}, so \`${note}\` is allowed here; uv is preferred where the repo adopts it.` };
+}
+
+// An edit (any harness's edit or write tool) to a path a `files` rule watches: a once-per-session skill hint.
+export function evaluateEdit({ path, loadedSkills = new Set(), state, rules }) {
+  const p = String(path ?? '').replace(/\\/g, '/');
+  const rule = (rules.files ?? []).find((r) => new RegExp(r.match, 'i').test(p));
+  const loaded = new Set([...loadedSkills].map(bare));
+  if (!rule || rule.skills.some((s) => loaded.has(s)) || state.reminded.has(rule.id)) return { action: 'allow' };
+  state.reminded.add(rule.id);
+  return { action: 'allow', rule: rule.id, remind: true, context: hint(rule) };
 }
 
 export function usageLevel(percent, rules) {

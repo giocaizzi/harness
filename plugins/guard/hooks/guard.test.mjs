@@ -246,3 +246,21 @@ test('telemetry: a deny and an ask emit a decision record, an allow does not', a
   await run({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'ls' } })
   assert.equal(sent.length, 1)
 })
+
+test('telemetry: guard.skill once per loaded skill (typed /name only for marketplace skills), guard.reminder per hint', async () => {
+  const events = []
+  const h = setup({ emit: async (event, attrs) => events.push([event, attrs.skill ?? attrs.rule, attrs.via]), knownSkills: new Set(['ship', 'docs-sync']) })
+  await h({ hook_event_name: 'UserPromptSubmit', prompt: '/model opus' })
+  await h({ hook_event_name: 'UserPromptSubmit', prompt: '/ship' })
+  await h({ hook_event_name: 'PreToolUse', tool_name: 'Skill', tool_input: { skill: 'dev-tools:land' } })
+  await h({ hook_event_name: 'PreToolUse', tool_name: 'Skill', tool_input: { skill: 'dev-tools:land' } })
+  await h(pre('Bash', 'gh pr view 3 --comments'))
+  const edit = await h({ hook_event_name: 'PreToolUse', tool_name: 'Edit', tool_input: { file_path: '/r/docs/a.md' } })
+  assert.match(decision(edit).additionalContext, /docs-sync/)
+  assert.deepEqual(events, [['guard.skill', 'ship', 'prompt'], ['guard.skill', 'land', 'tool'], ['guard.reminder', 'docs', undefined]])
+})
+
+test('Codex has no read tool, so a shell read gets no hint there', async () => {
+  assert.equal(decision(await setup({ readTool: false })(pre('Bash', 'cat a.txt'))), undefined)
+  assert.match(decision(await setup()(pre('Bash', 'cat a.txt'))).additionalContext, /read tool/)
+})
