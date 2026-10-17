@@ -7,8 +7,8 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync, readdirSync
 import { statfs } from 'node:fs/promises'
 import { cpus, homedir, loadavg, platform, tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
-import { pathToFileURL } from 'node:url'
-import { codexRules, deniedBy, evaluateCommand, isHeavy, isRisky, nativeAsk, previewCommand, withPreview, worktreeFacts } from '../core/engine.mjs'
+import { fileURLToPath, pathToFileURL } from 'node:url'
+import { codexRules, deniedBy, evaluateCommand, evaluateEdit, isHeavy, isRisky, nativeAsk, previewCommand, withPreview, worktreeFacts } from '../core/engine.mjs'
 import { cpuPercentFrom } from '../core/host.mjs'
 import { emit } from '../core/otel.mjs'
 import { rules } from '../core/rules.mjs'
@@ -16,7 +16,31 @@ import { rules } from '../core/rules.mjs'
 // Claude Bash/PowerShell, Copilot bash/powershell, VS Code run_in_terminal. VS Code ignores matchers, so every
 // tool call reaches this script and anything else passes untouched.
 const SHELLS = new Set(['bash', 'powershell', 'run_in_terminal'])
+// Edit and write tools across harnesses (Claude, Copilot CLI, VS Code, opencode, pi), for the `files` skill hints.
+const EDITS = new Set(['edit', 'write', 'multiedit', 'create', 'create_file', 'replace_string_in_file', 'insert_edit_into_file'])
 const WEEK_MS = 7 * 24 * 3600 * 1000
+
+// This marketplace's skill names, from the plugins beside this one: `plugins/<p>/skills/<s>` in a checkout,
+// `<p>/<version>/skills/<s>` in a harness's plugin cache. A typed `/name` counts as a skill load only for these,
+// so built-in commands (`/model`, `/clear`) stay out of guard.skill.
+export function knownSkills(here = dirname(fileURLToPath(import.meta.url))) {
+  const names = new Set()
+  const ls = (dir) => {
+    try {
+      return readdirSync(dir)
+    } catch {
+      return []
+    }
+  }
+  const plugins = resolve(here, '..', '..')
+  if (existsSync(join(plugins, 'guard', 'core'))) {
+    for (const p of ls(plugins)) for (const s of ls(join(plugins, p, 'skills'))) names.add(s)
+    return names
+  }
+  const cache = resolve(here, '..', '..', '..')
+  for (const p of ls(cache)) for (const v of ls(join(cache, p))) for (const s of ls(join(cache, p, v, 'skills'))) names.add(s)
+  return names
+}
 
 // Per-session state: { reminded: string[], loaded: string[] }.
 // ponytail: read-modify-write without a lock; parallel tool calls can lose a write (a reminder repeats once).
@@ -107,9 +131,10 @@ async function onShell(input, state, deps) {
     }
     if (deniedBy(command, rules)?.when) facts.python = deps.pythonManager(input.cwd)
     const reminded = new Set(state.reminded)
-    const d = evaluateCommand({ command, loadedSkills: new Set(state.loaded), state: { reminded }, host, ...facts, rules })
+    const d = evaluateCommand({ command, loadedSkills: new Set(state.loaded), state: { reminded }, host, readTool: deps.readTool ?? true, ...facts, rules })
     state.reminded = [...reminded]
     if (d.action === 'deny' || d.action === 'ask') await deps.emit?.('guard.decision', { rule: d.rule, action: d.action, tool: String(input.tool_name ?? ''), session_id: input.session_id, tool_use_id: input.tool_use_id })
+    if (d.remind) await deps.emit?.('guard.reminder', { rule: d.rule, tool: String(input.tool_name ?? ''), session_id: input.session_id, tool_use_id: input.tool_use_id })
     if (d.action === 'deny') return preToolUse('deny', d.reason)
     // Unattended run (GUARD_UNATTENDED=1): nobody can answer an ask, so it becomes a deny and the agent picks another way.
     if (d.action === 'ask' && /^(1|true|on)$/i.test(deps.env?.GUARD_UNATTENDED ?? '')) {
@@ -133,10 +158,21 @@ async function onShell(input, state, deps) {
   }
 }
 
+async function onEdit(input, state, deps) {
+  const t = input.tool_input ?? {}
+  const reminded = new Set(state.reminded)
+  const d = evaluateEdit({ path: t.file_path ?? t.path ?? t.filePath, loadedSkills: new Set(state.loaded), state: { reminded }, rules })
+  state.reminded = [...reminded]
+  if (!d.remind) return {}
+  await deps.emit?.('guard.reminder', { rule: d.rule, tool: String(input.tool_name ?? ''), session_id: input.session_id, tool_use_id: input.tool_use_id })
+  return note(d.context)
+}
+
 // One hook event in, { stdout?, stderr?, code? } out. `deps` is injected so tests run without a host.
 export async function handle(input, deps) {
   const store = sessionStore(deps.dataDir, input.session_id)
   const state = { reminded: [], loaded: [], ...store.load() }
+  const loadedBefore = [...state.loaded]
   const event = input.hook_event_name
   let out = {}
 
@@ -155,6 +191,14 @@ export async function handle(input, deps) {
     for (const m of `${t.command ?? ''} ${t.file_path ?? t.path ?? t.filePath ?? ''}`.matchAll(/skills[\\/]([\w-]+)[\\/]SKILL\.md/g)) state.loaded.push(m[1])
     if (tool === 'skill' && (t.skill || t.name)) state.loaded.push(String(t.skill || t.name))
     else if (SHELLS.has(tool)) out = await onShell(input, state, deps)
+    else if (EDITS.has(tool)) out = await onEdit(input, state, deps)
+  }
+  // One guard.skill per skill and session, in every harness: the same skill-usage figure everywhere.
+  const before = new Set(loadedBefore)
+  const known = deps.knownSkills ?? knownSkills()
+  for (const skill of new Set(state.loaded)) {
+    const name = skill.split(':').pop()
+    if (!before.has(skill) && (event !== 'UserPromptSubmit' || known.has(name))) await deps.emit?.('guard.skill', { skill: name, via: event === 'UserPromptSubmit' ? 'prompt' : 'tool', session_id: input.session_id })
   }
   state.loaded = [...new Set(state.loaded)]
   try {
@@ -201,7 +245,8 @@ async function main() {
   // Never exit non-zero: Copilot denies a preToolUse whose hook fails. The risky path fails closed inside onShell.
   // `--no-ask` comes from the Codex hooks file (hooks/codex.json), which build_agents.py generates.
   const noAsk = process.argv.includes('--no-ask')
-  const out = await handle(input, { dataDir, env: process.env, hostFacts, run, pythonManager, noAsk, nativeAsk: noAsk ? codexAsks(process.env, input.transcript_path) : null, emit: (event, attrs) => emit(process.env, event, { ...attrs, harness: noAsk ? 'codex' : harness() }) }).catch(() => ({}))
+  // Codex (`--no-ask`) is the one harness without a file-read tool.
+  const out = await handle(input, { dataDir, env: process.env, hostFacts, run, pythonManager, noAsk, readTool: !noAsk, nativeAsk: noAsk ? codexAsks(process.env, input.transcript_path) : null, emit: (event, attrs) => emit(process.env, event, { ...attrs, harness: noAsk ? 'codex' : harness() }) }).catch(() => ({}))
   if (out.stdout) process.stdout.write(out.stdout)
   if (out.stderr) process.stderr.write(out.stderr)
 }
