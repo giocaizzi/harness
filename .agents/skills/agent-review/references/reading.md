@@ -27,4 +27,6 @@ Run from the plugin directory:
 claude plugin eval . --tag trigger --ablation none
 ```
 
+A skill that fires only mid-task (editing code, not answering a question) needs a repo to work in: write `case.yaml` with the prompt under `execution` and `context.scaffold_script: scaffold.sh`, a script that builds the repo in its working directory (a top-level `scaffold_script` is silently ignored), and add `Edit` and `Write` to `allowed_tools`. Run it with `--scaffold --allow-tools Edit Write`. Example: `plugins/dev-tools/evals/docs-sync-trigger/`.
+
 `--ablation none` scores the trigger itself; under the default with/without ablation a `Skill` grader is only reported as an indicator. A case that fails points at the description: reword it, rerun, and commit the case with the fix so the next review catches a regression.

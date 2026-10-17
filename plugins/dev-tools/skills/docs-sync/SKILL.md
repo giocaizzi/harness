@@ -1,6 +1,6 @@
 ---
 name: docs-sync
-description: Update docs, runbooks, README and AGENTS.md that the current diff made stale. Use when code, commands or procedures changed, or when the user types /docs-sync (optionally a path).
+description: Repo conventions for keeping docs/, runbooks, README and AGENTS.md in step with a change, including which file owns what and when a runbook is required. Use before editing any doc, runbook, README or AGENTS.md, and whenever a change renames, adds or removes a make target, command, flag, config key or procedure, even if the user did not mention docs; or when the user types /docs-sync (optionally a path).
 ---
 
 # Docs sync
