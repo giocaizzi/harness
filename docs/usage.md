@@ -118,6 +118,8 @@ Settings are env vars, set in the shell that starts the harness (or the `env` bl
 
 A repo with a slow suite defines a `check-fast` make target; the stop hook runs that instead of `check`.
 
+With that telemetry in Loki, `make agent-review` in a clone of this repo reports cost, skill use, guard reminders and subagent routing for the week ([agent-review.md](agent-review.md)).
+
 ## hud: what's on screen
 
 Claude Code shows everything; Copilot CLI and pi a subset ([compatibility.md](compatibility.md)). Sample output for each part: [hud plugin README](../plugins/hud/README.md).
