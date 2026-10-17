@@ -1,4 +1,4 @@
-.PHONY: help check lint test e2e install build validate new-agent new-skill clean
+.PHONY: help check lint test e2e install build validate new-agent new-skill clean agent-review
 
 help: ## Show this help.
 	@awk 'BEGIN {FS = ":.*##"; printf "Usage: make \033[36m<target>\033[0m\n\nTargets:\n"} /^[a-zA-Z0-9_-]+:.*?##/ { printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
@@ -41,6 +41,9 @@ endif
 
 e2e: ## Drive each installed harness CLI (Codex, opencode, pi) against a scripted model in a throwaway home.
 	@node tests/e2e/run.mjs
+
+agent-review: ## Weekly agent telemetry review from Loki (docs/agent-review.md).  Usage: make agent-review [RANGE=7d] [EVALS=<dir>]
+	@node scripts/agent-review.mjs --range $(or $(RANGE),7d) $(if $(EVALS),--evals $(EVALS))
 
 install: ## Install what Codex and opencode cannot take from the marketplace.  Usage: make install HARNESS="codex opencode"
 	@node scripts/install.mjs $(or $(HARNESS),codex opencode)
