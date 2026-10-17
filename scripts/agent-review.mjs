@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-// Weekly agent review: reads agent telemetry from Loki and prints a Markdown report of cost, skill use, guard
-// reminders, subagent routing and failing commands; with --evals <dir>, also writes skill-trigger eval stubs for
-// `claude plugin eval`. Runbook: docs/agent-review.md.
+// Weekly agent review without an agent: the agent-review skill's queries, run straight against Loki, printed as
+// Markdown; with --evals <dir>, also writes skill-trigger eval stubs for `claude plugin eval`. Runbook:
+// docs/agent-review.md.
 //
 // Loki access, read from the environment (never printed):
 //   GRAFANA_URL + GRAFANA_TOKEN  query through Grafana's datasource proxy (LOKI_UID, default "loki")
@@ -9,26 +9,11 @@
 import { readdirSync, existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
+// The review's LogQL, shared with the repo's agent-review skill; `$r` is the review range (e.g. 7d).
+import QUERIES from '../.agents/skills/agent-review/references/queries.json' with { type: 'json' }
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
-const HARNESSES = 'claude-code|codex.*|github-copilot|copilot-chat|opencode|pi'
-const REQ = `{service_name=~"${HARNESSES}", deployment_environment_name!="test"} | agent_event="api_request" or event_name="api_request"`
-const CC = '{service_name="claude-code"}'
-const GUARD = '{service_name="guard"}'
-
-// One instant query per section; `$r` is the review range (e.g. 7d).
-export const QUERIES = {
-  costByHarness: `sum by (service_name, model) (sum_over_time(${REQ} | unwrap cost_usd | __error__="" [$r]))`,
-  costBySource: `sum by (model, query_source) (sum_over_time(${CC} | event_name="api_request" | unwrap cost_usd | __error__="" [$r]))`,
-  subagents: `sum by (agent_type, model) (count_over_time(${CC} | event_name="subagent_completed" [$r]))`,
-  skillsClaude: `sum by (skill_name, invocation_trigger) (count_over_time(${CC} | event_name="skill_activated" [$r]))`,
-  skillsGuard: `sum by (skill, via) (count_over_time(${GUARD} | event_name="guard.skill" [$r]))`,
-  reminders: `sum by (rule) (count_over_time(${GUARD} | event_name="guard.reminder" [$r]))`,
-  decisions: `sum by (rule, action) (count_over_time(${GUARD} | event_name="guard.decision" [$r]))`,
-  approvals: `sum by (tool_name) (count_over_time(${CC} | event_name="tool_result" | decision_source=~"user_.*" [$r]))`,
-  failing: `topk(15, sum by (bash_command) (count_over_time(${CC} | event_name="tool_result" | success="false" | tool_name="Bash" | line_format "{{.tool_parameters}}" | json bash_command [$r])))`,
-  rateLimits: `sum(count_over_time(${CC} | event_name="api_error" | status_code="429" [$r]))`,
-}
+export { QUERIES }
 
 export function parsePairs(s = '') {
   return Object.fromEntries(s.split(',').map((p) => p.split('=')).filter(([k, v]) => k && v != null).map(([k, ...v]) => [k.trim(), v.join('=').trim()]))
