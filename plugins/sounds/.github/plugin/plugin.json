@@ -1,6 +1,6 @@
 {
   "name": "sounds",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Toasts, configurable sounds and system notifications for Claude Code: usage limits, context, prompt-cache expiry, every way a turn ends, questions and permission prompts waiting and PR checks finishing (Claude mod)",
   "author": {
     "name": "giocaizzi",
@@ -250,6 +250,6 @@
     }
   },
   "agents": [
-    "./copilot/"
+    "./.generated/copilot/"
   ]
 }

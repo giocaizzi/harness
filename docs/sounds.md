@@ -10,7 +10,7 @@ Toasts and sounds for Claude Code, drawn by a mod; the turn and context alerts w
 | `hooks/alerts.mjs` | Pure logic: which alerts a turn raises (`alerts`), which sound a finished turn plays (`turnSound`), and `settle`, the clips and notices with the default `CLIPS` for the harnesses without settings; node tests in `alerts.test.mjs`. |
 | `hooks/play.mjs` | `afplay` for pi, Codex and opencode: detached, so a hook process does not wait for the clip. |
 | `hooks/pi.mjs` | pi extension (loaded from the root `package.json`). |
-| `hooks/codex.mjs` | Codex `Stop` and `PermissionRequest` hooks, named by `hooks/codex-only.json`, which `make build` merges into the generated `hooks/codex.json`. |
+| `hooks/codex.mjs` | Codex `Stop` and `PermissionRequest` hooks, named by `hooks/codex-only.json`, which `make build` merges into the generated `.generated/codex/hooks.json`. |
 | `hooks/opencode.mjs` | opencode plugin; `scripts/install.mjs` writes the stub `~/.config/opencode/plugins/giocaizzi-sounds.js` that re-exports it. |
 | `sounds/*.wav` | The clips: `chime`, `ping`, `alert`, `warn`, `error`, `done`, `tick`. |
 

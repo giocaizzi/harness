@@ -1,5 +1,0 @@
-# Claude Code-specific frontmatter. Merged on top of agent.yaml.
-# See https://code.claude.com/docs/en/plugins-reference#agents for all keys.
-tools: Read, Edit, Bash, Grep, Glob, WebSearch
-effort: medium
-model: opus

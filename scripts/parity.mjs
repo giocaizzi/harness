@@ -18,15 +18,11 @@ const dirs = (dir) => (existsSync(dir) ? readdirSync(dir, { withFileTypes: true 
 const files = (dir, ext) => (existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith(ext)).map((f) => f.slice(0, -ext.length)) : [])
 const posix = (path) => path.split(sep).join('/')
 
-// What the repo authors: skills (plugins/*/skills/*/SKILL.md) and agents (src/agents/*), each with its plugin.
+// What the repo authors: skills (plugins/*/skills/*/SKILL.md) and agents (plugins/*/agents/*.md), each with its plugin.
 export function inventory() {
   const plugins = dirs(join(repo, 'plugins'))
   const skills = plugins.flatMap((plugin) => dirs(join(repo, 'plugins', plugin, 'skills')).filter((s) => existsSync(join(repo, 'plugins', plugin, 'skills', s, 'SKILL.md'))).map((name) => ({ plugin, name })))
-  const agents = dirs(join(repo, 'src', 'agents')).map((name) => {
-    const yaml = readFileSync(join(repo, 'src', 'agents', name, 'agent.yaml'), 'utf8')
-    // Same default as build_agents.py: the `plugin` key, else the name up to its first `-`.
-    return { plugin: /^plugin:\s*["']?([\w-]+)/m.exec(yaml)?.[1] ?? name.split('-')[0], name }
-  })
+  const agents = plugins.flatMap((plugin) => files(join(repo, 'plugins', plugin, 'agents'), '.md').map((name) => ({ plugin, name })))
   return { skills, agents }
 }
 
@@ -40,11 +36,11 @@ export function deliveries() {
   // Claude Code: marketplace plugins, skills and agents/*.md auto-discovered.
   out.claude = { skills: skillsOf(listed), agents: listed.flatMap((p) => files(join(repo, 'plugins', p, 'agents'), '.md')) }
 
-  // Copilot CLI: its own manifest, which must point at copilot/ for the .agent.md files.
+  // Copilot CLI: its own manifest, which must point at .generated/copilot/ for the .agent.md files.
   const copilot = listed.filter((p) => manifest(p, '.github/plugin/plugin.json'))
   out.copilot = {
     skills: skillsOf(copilot),
-    agents: copilot.filter((p) => manifest(p, '.github/plugin/plugin.json').agents?.includes('./copilot/')).flatMap((p) => files(join(repo, 'plugins', p, 'copilot'), '.agent.md')),
+    agents: copilot.filter((p) => manifest(p, '.github/plugin/plugin.json').agents?.includes('./.generated/copilot/')).flatMap((p) => files(join(repo, 'plugins', p, '.generated', 'copilot'), '.agent.md')),
   }
 
   // Codex: plugins (skills) through .codex-plugin/plugin.json; agents only as the TOML install.mjs copies.
@@ -96,9 +92,9 @@ export function tiers({ agents }) {
       plugin,
       name,
       claude: { model: field(join(dir, 'agents', `${name}.md`), 'model'), effort: field(join(dir, 'agents', `${name}.md`), 'effort') },
-      codex: { model: field(join(dir, 'codex', `${name}.toml`), 'model'), effort: field(join(dir, 'codex', `${name}.toml`), 'model_reasoning_effort') },
-      copilot: { model: field(join(dir, 'copilot', `${name}.agent.md`), 'model') },
-      opencode: { model: field(join(dir, 'opencode', `${name}.md`), 'model') },
+      codex: { model: field(join(dir, '.generated', 'codex', `${name}.toml`), 'model'), effort: field(join(dir, '.generated', 'codex', `${name}.toml`), 'model_reasoning_effort') },
+      copilot: { model: field(join(dir, '.generated', 'copilot', `${name}.agent.md`), 'model') },
+      opencode: { model: field(join(dir, '.generated', 'opencode', `${name}.md`), 'model') },
     }
   })
 }

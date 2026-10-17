@@ -1,6 +1,6 @@
 {
   "name": "python",
-  "version": "1.5.2",
+  "version": "1.5.3",
   "description": "Python development and testing best practices",
   "author": {
     "name": "giocaizzi",
@@ -15,6 +15,6 @@
     "pytest"
   ],
   "agents": [
-    "./copilot/"
+    "./.generated/copilot/"
   ]
 }
