@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Scaffold a new agent source tree under src/agents/<name>/.
+# Scaffold a new agent: plugins/<plugin>/agents/<name>.md (Claude Code) and <name>.yaml (other harnesses).
 # Usage: scripts/new-agent.sh <name> <plugin>
 set -euo pipefail
 
@@ -12,45 +12,42 @@ if [[ -z "$name" || -z "$plugin" ]]; then
 fi
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
-src_dir="$repo_root/src/agents/$name"
-plugin_dir="$repo_root/plugins/$plugin"
+agents_dir="$repo_root/plugins/$plugin/agents"
 
-if [[ ! -d "$plugin_dir" ]]; then
-  echo "Error: plugin '$plugin' does not exist (looked for $plugin_dir)" >&2
+if [[ ! -d "$repo_root/plugins/$plugin" ]]; then
+  echo "Error: plugin '$plugin' does not exist (looked for $repo_root/plugins/$plugin)" >&2
   exit 1
 fi
 
-if [[ -d "$src_dir" ]]; then
-  echo "Error: src/agents/$name already exists" >&2
+if [[ -e "$agents_dir/$name.md" ]]; then
+  echo "Error: plugins/$plugin/agents/$name.md already exists" >&2
   exit 1
 fi
 
-mkdir -p "$src_dir"
+mkdir -p "$agents_dir"
 
-cat > "$src_dir/agent.yaml" <<EOF
+cat > "$agents_dir/$name.md" <<EOF
+---
 name: $name
 description: TODO. Use when ...
-plugin: $plugin
-model: sonnet
-EOF
-
-cat > "$src_dir/claude.yaml" <<'EOF'
 tools: Read, Edit, Bash, Grep, Glob, WebSearch
-EOF
+model: sonnet
+---
 
-cat > "$src_dir/copilot.yaml" <<'EOF'
-tools:
-  - read
-  - edit
-  - execute
-  - search
-EOF
-
-cat > "$src_dir/body.md" <<'EOF'
 # Role
 
 Describe the agent role and behaviour here.
 EOF
 
-echo "Created src/agents/$name/ for plugin '$plugin'."
-echo "Next: edit the four files, then run \`make build\`."
+cat > "$agents_dir/$name.yaml" <<'EOF'
+# Overrides for the harnesses that do not read the .md as-is (make build).
+copilot:
+  tools:
+    - read
+    - edit
+    - execute
+    - search
+EOF
+
+echo "Created plugins/$plugin/agents/$name.md and $name.yaml."
+echo "Next: edit both, then run \`make build\`."

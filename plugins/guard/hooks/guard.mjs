@@ -243,7 +243,7 @@ async function main() {
   if (!input.hook_event_name && process.argv[2]) input.hook_event_name = process.argv[2]
   const dataDir = process.env.CLAUDE_PLUGIN_DATA || process.env.COPILOT_PLUGIN_DATA || join(tmpdir(), 'guard-plugin')
   // Never exit non-zero: Copilot denies a preToolUse whose hook fails. The risky path fails closed inside onShell.
-  // `--no-ask` comes from the Codex hooks file (hooks/codex.json), which build_agents.py generates.
+  // `--no-ask` comes from the Codex hooks file (.generated/codex/hooks.json), which build_agents.py generates.
   const noAsk = process.argv.includes('--no-ask')
   // Codex (`--no-ask`) is the one harness without a file-read tool.
   const out = await handle(input, { dataDir, env: process.env, hostFacts, run, pythonManager, noAsk, readTool: !noAsk, nativeAsk: noAsk ? codexAsks(process.env, input.transcript_path) : null, emit: (event, attrs) => emit(process.env, event, { ...attrs, harness: noAsk ? 'codex' : harness() }) }).catch(() => ({}))

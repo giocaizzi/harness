@@ -1,6 +1,6 @@
 {
   "name": "python",
-  "version": "1.5.2",
+  "version": "1.5.3",
   "description": "Python development and testing best practices",
   "author": {
     "name": "giocaizzi",
@@ -8,5 +8,10 @@
   },
   "repository": "https://github.com/giocaizzi/harness",
   "license": "MIT",
-  "keywords": ["python", "development", "testing", "pytest"]
+  "keywords": [
+    "python",
+    "development",
+    "testing",
+    "pytest"
+  ]
 }

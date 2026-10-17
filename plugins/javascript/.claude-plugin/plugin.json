@@ -1,6 +1,6 @@
 {
   "name": "javascript",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "description": "JavaScript, TypeScript, React and Next.js development",
   "author": {
     "name": "giocaizzi",
@@ -8,5 +8,11 @@
   },
   "repository": "https://github.com/giocaizzi/harness",
   "license": "MIT",
-  "keywords": ["javascript", "typescript", "react", "nextjs", "frontend"]
+  "keywords": [
+    "javascript",
+    "typescript",
+    "react",
+    "nextjs",
+    "frontend"
+  ]
 }

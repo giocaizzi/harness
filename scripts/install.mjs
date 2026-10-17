@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Install what a harness cannot take from the marketplace, from this checkout, on every OS (plain copies, no
 // symlinks). Re-run after `git pull`; files a previous run installed and this one no longer ships are removed.
-//   node scripts/install.mjs codex      agents (codex/*.toml) -> $CODEX_HOME/agents (default ~/.codex), guard prompt rules -> rules/
+//   node scripts/install.mjs codex      agents (.generated/codex/*.toml) -> $CODEX_HOME/agents (default ~/.codex), guard prompt rules -> rules/
 //   node scripts/install.mjs opencode   skills, agents and the guard and sounds plugins -> $XDG_CONFIG_HOME/opencode (default ~/.config)
 // Claude Code, Copilot CLI and VS Code install from the marketplace, Codex its plugins too, pi with
 // `pi install git:github.com/giocaizzi/harness`: see docs/install.md.
@@ -22,7 +22,7 @@ const ls = (dir) => (existsSync(dir) ? readdirSync(dir, { withFileTypes: true })
 export function plan(harness) {
   if (harness === 'codex')
     return [
-      ...plugins().flatMap((p) => ls(join(p, 'codex')).filter((f) => f.name.endsWith('.toml')).map((f) => [join(p, 'codex', f.name), join('agents', f.name)])),
+      ...plugins().flatMap((p) => ls(join(p, '.generated', 'codex')).filter((f) => f.name.endsWith('.toml')).map((f) => [join(p, '.generated', 'codex', f.name), join('agents', f.name)])),
       // The guard's prompt rules: Codex asks for these risky commands itself (hooks cannot ask).
       [null, join('rules', CODEX_RULES), codexRules(rules)],
     ]
@@ -30,7 +30,7 @@ export function plan(harness) {
     const stub = (plugin) => `// Installed by giocaizzi/harness scripts/install.mjs; re-run it after a pull.\nexport * from ${JSON.stringify(pathToFileURL(join(PLUGINS, plugin, 'hooks', 'opencode.mjs')).href)}\n`
     return [
       ...plugins().flatMap((p) => ls(join(p, 'skills')).filter((d) => d.isDirectory()).map((d) => [join(p, 'skills', d.name), join('skills', d.name)])),
-      ...plugins().flatMap((p) => ls(join(p, 'opencode')).filter((f) => f.name.endsWith('.md')).map((f) => [join(p, 'opencode', f.name), join('agents', f.name)])),
+      ...plugins().flatMap((p) => ls(join(p, '.generated', 'opencode')).filter((f) => f.name.endsWith('.md')).map((f) => [join(p, '.generated', 'opencode', f.name), join('agents', f.name)])),
       ...['guard', 'sounds'].map((plugin) => [null, join('plugins', `giocaizzi-${plugin}.js`), stub(plugin)]),
     ]
   }

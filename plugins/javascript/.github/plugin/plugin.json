@@ -1,6 +1,6 @@
 {
   "name": "javascript",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "description": "JavaScript, TypeScript, React and Next.js development",
   "author": {
     "name": "giocaizzi",
@@ -16,6 +16,6 @@
     "frontend"
   ],
   "agents": [
-    "./copilot/"
+    "./.generated/copilot/"
   ]
 }

@@ -1,43 +1,35 @@
 #!/usr/bin/env python3
 """Generate the per-harness plugin artifacts.
 
-For every agent in src/agents/<name>/ the script writes:
-  plugins/<plugin>/agents/<name>.md          ← Claude Code agent (.md)
-  plugins/<plugin>/copilot/<name>.agent.md   ← Copilot CLI agent (.agent.md)
-  plugins/<plugin>/codex/<name>.toml         ← Codex custom agent (TOML), installed by scripts/install.mjs
-  plugins/<plugin>/opencode/<name>.md        ← opencode subagent, installed by scripts/install.mjs
+Agents are authored in place, as the Claude Code file, with an optional sidecar for the other harnesses:
+  plugins/<plugin>/agents/<name>.md      Claude Code agent: frontmatter + system prompt (authored)
+  plugins/<plugin>/agents/<name>.yaml    optional `copilot:`, `codex:`, `opencode:` override mappings (authored)
+
+Claude Code and VS Code read agents/*.md as-is. From each one the script writes:
+  plugins/<plugin>/.generated/copilot/<name>.agent.md   Copilot CLI agent: name, description + copilot overrides
+  plugins/<plugin>/.generated/codex/<name>.toml         Codex custom agent, installed by scripts/install.mjs
+  plugins/<plugin>/.generated/opencode/<name>.md        opencode subagent, installed by scripts/install.mjs
+
+The other harnesses get only `name`/`description` from the Claude file: its `tools`, `effort` and `model` are
+Claude values (a `model` names a Claude tier), so they inherit the session's unless their override sets one.
 
 For every plugin in plugins/<plugin>/ with .claude-plugin/plugin.json the script writes:
-  plugins/<plugin>/.github/plugin/plugin.json   ← Copilot manifest, derived from the
-                                                  Claude one, with `agents: ["./copilot/"]`
-                                                  added so Copilot scans the copilot/ dir.
-  plugins/<plugin>/.codex-plugin/plugin.json    ← Codex manifest; with hooks, it points Codex at
-  plugins/<plugin>/hooks/codex.json               hooks/codex.json: hooks.json without the Claude
-                                                  `modules` key (Codex rejects the file otherwise),
-                                                  the guard run with `--no-ask` (Codex has no ask),
-                                                  plus the Codex-only hooks of hooks/codex-only.json.
+  plugins/<plugin>/.github/plugin/plugin.json       Copilot manifest: the Claude one plus
+                                                    `agents: ["./.generated/copilot/"]`.
+  plugins/<plugin>/.codex-plugin/plugin.json        Codex manifest; with hooks, it points Codex at
+  plugins/<plugin>/.generated/codex/hooks.json      hooks.json without the Claude `modules` key (Codex rejects
+                                                    the file otherwise), the guard run with `--no-ask` (Codex
+                                                    has no ask), plus the Codex-only hooks of hooks/codex-only.json.
 
-Why two locations?
-  Claude scans agents/ for any *.md (including *.agent.md), so Copilot files MUST live
-  outside agents/ or Claude double-loads them. Copilot's plugin.json discovery prefers
-  .github/plugin/ over .claude-plugin/, so each harness reads its own manifest.
-
-Agent source layout:
-  src/agents/<name>/agent.yaml      shared frontmatter (name, description, plugin, model)
-  src/agents/<name>/body.md         shared system prompt
-  src/agents/<name>/claude.yaml     Claude-only overrides (optional)
-  src/agents/<name>/copilot.yaml    Copilot-only overrides (optional)
-  src/agents/<name>/codex.yaml      Codex-only keys (optional; e.g. sandbox_mode, model)
-  src/agents/<name>/opencode.yaml   opencode-only keys (optional; e.g. permission, model)
-
-Codex and opencode get only `name`/`description` from agent.yaml: a shared `model` names a Claude tier,
-which neither understands, so they inherit the session model unless their own file sets one.
+Everything generated lives in a dot-folder, so every visible file under plugins/<plugin>/ is authored.
+Copilot files stay out of agents/: Claude loads any *.md there, including *.agent.md.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -46,8 +38,9 @@ import tomllib
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-SRC_AGENTS = REPO_ROOT / "src" / "agents"
 PLUGINS_ROOT = REPO_ROOT / "plugins"
+GENERATED = ".generated"
+HARNESS_KEYS = ("copilot", "codex", "opencode")
 
 
 # --------------------------------------------------------------------------- agents
@@ -62,9 +55,14 @@ def _load_yaml(path: Path) -> dict:
     return data
 
 
-def _resolve_plugin(name: str, shared: dict) -> str:
-    plugin = shared.get("plugin")
-    return str(plugin) if plugin else name.split("-", 1)[0]
+def _parse(path: Path) -> tuple[dict, str]:
+    m = re.match(r"^---\r?\n(.*?)\r?\n---\r?\n(.*)$", path.read_text(encoding="utf-8"), re.S)
+    if not m:
+        raise ValueError(f"{path}: expected YAML frontmatter between --- lines")
+    fm = yaml.safe_load(m.group(1)) or {}
+    if not isinstance(fm, dict):
+        raise ValueError(f"{path}: frontmatter must be a YAML mapping")
+    return fm, m.group(2)
 
 
 def _render(frontmatter: dict, body: str) -> str:
@@ -95,58 +93,35 @@ def _render_toml(data: dict) -> str:
     return out
 
 
-def _build_agent(name: str, *, check: bool) -> bool:
-    src = SRC_AGENTS / name
-    if not (src / "agent.yaml").exists() or not (src / "body.md").exists():
-        print(f"ERROR: {name}: agent.yaml and body.md are required in {src.relative_to(REPO_ROOT)}", file=sys.stderr)
-        return False
+def _build_agent(path: Path, *, check: bool) -> bool:
+    name = path.stem
+    rel = path.relative_to(REPO_ROOT)
+    claude, body = _parse(path)
+    overrides = _load_yaml(path.with_suffix(".yaml"))
 
-    shared = _load_yaml(src / "agent.yaml")
-    claude_overrides = _load_yaml(src / "claude.yaml")
-    copilot_overrides = _load_yaml(src / "copilot.yaml")
-    codex_overrides = _load_yaml(src / "codex.yaml")
-    opencode_overrides = _load_yaml(src / "opencode.yaml")
-    body = (src / "body.md").read_text(encoding="utf-8")
-
-    if shared.get("name") != name:
-        print(f"ERROR: {name}: agent.yaml `name` ({shared.get('name')!r}) must match dir name", file=sys.stderr)
+    if claude.get("name") != name:
+        print(f"ERROR: {rel}: `name` ({claude.get('name')!r}) must match the file name", file=sys.stderr)
         return False
-    if "description" not in shared:
-        print(f"ERROR: {name}: agent.yaml is missing required `description`", file=sys.stderr)
+    if "description" not in claude:
+        print(f"ERROR: {rel}: missing required `description`", file=sys.stderr)
         return False
-
-    plugin = _resolve_plugin(name, shared)
-    plugin_dir = PLUGINS_ROOT / plugin
-    if not plugin_dir.exists():
-        print(f"ERROR: {name}: plugin {plugin!r} does not exist (expected {plugin_dir.relative_to(REPO_ROOT)})", file=sys.stderr)
+    if unknown := set(overrides) - set(HARNESS_KEYS):
+        print(f"ERROR: {rel.with_suffix('.yaml')}: unknown keys {sorted(unknown)}; expected {', '.join(HARNESS_KEYS)}", file=sys.stderr)
         return False
+    copilot_overrides, codex_overrides, opencode_overrides = (overrides.get(k) or {} for k in HARNESS_KEYS)
 
-    base = {k: v for k, v in shared.items() if k != "plugin"}
-    claude_fm = {**base, **claude_overrides}
+    base = {"name": name, "description": claude["description"]}
     copilot_fm = {**base, **copilot_overrides}
+    codex = {**base, **codex_overrides, "developer_instructions": body.strip() + "\n"}
+    opencode_fm = {"description": claude["description"], "mode": "subagent", **opencode_overrides}
 
-    codex = {"name": name, "description": shared["description"], **codex_overrides, "developer_instructions": body.strip() + "\n"}
-    opencode_fm = {"description": shared["description"], "mode": "subagent", **opencode_overrides}
-
+    out = path.parent.parent / GENERATED
     targets = {
-        plugin_dir / "agents" / f"{name}.md": _render(claude_fm, body),
-        plugin_dir / "copilot" / f"{name}.agent.md": _render(copilot_fm, body),
-        plugin_dir / "codex" / f"{name}.toml": _render_toml(codex),
-        plugin_dir / "opencode" / f"{name}.md": _render(opencode_fm, body),
+        out / "copilot" / f"{name}.agent.md": _render(copilot_fm, body),
+        out / "codex" / f"{name}.toml": _render_toml(codex),
+        out / "opencode" / f"{name}.md": _render(opencode_fm, body),
     }
-
-    ok = True
-    for path, content in targets.items():
-        rel = path.relative_to(REPO_ROOT)
-        if check:
-            if not path.exists() or path.read_text(encoding="utf-8") != content:
-                print(f"  OUT OF SYNC: {rel}", file=sys.stderr)
-                ok = False
-        else:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(content, encoding="utf-8")
-            print(f"  written: {rel}")
-    return ok
+    return all([_sync(p, content, check=check) for p, content in targets.items()])
 
 
 # --------------------------------------------------------------------------- manifests
@@ -182,8 +157,8 @@ def _build_codex(plugin_dir: Path, *, check: bool) -> bool:
         if codex_only.exists():
             for event, groups in json.loads(codex_only.read_text(encoding="utf-8"))["hooks"].items():
                 codex_hooks["hooks"].setdefault(event, []).extend(groups)
-        ok =_sync(plugin_dir / "hooks" / "codex.json", json.dumps(codex_hooks, indent=2) + "\n", check=check)
-        data = {**data, "hooks": "./hooks/codex.json"}
+        ok = _sync(plugin_dir / GENERATED / "codex" / "hooks.json", json.dumps(codex_hooks, indent=2) + "\n", check=check)
+        data = {**data, "hooks": f"./{GENERATED}/codex/hooks.json"}
     return _sync(plugin_dir / ".codex-plugin" / "plugin.json", json.dumps(data, indent=2) + "\n", check=check) and ok
 
 
@@ -195,19 +170,8 @@ def _build_copilot_manifest(plugin_dir: Path, *, check: bool) -> bool:
         return False
 
     data = json.loads(claude_manifest.read_text(encoding="utf-8"))
-    copilot_data = {**data, "agents": ["./copilot/"]}
-    content = json.dumps(copilot_data, indent=2) + "\n"
-
-    rel = copilot_manifest.relative_to(REPO_ROOT)
-    if check:
-        if not copilot_manifest.exists() or copilot_manifest.read_text(encoding="utf-8") != content:
-            print(f"  OUT OF SYNC: {rel}", file=sys.stderr)
-            return False
-    else:
-        copilot_manifest.parent.mkdir(parents=True, exist_ok=True)
-        copilot_manifest.write_text(content, encoding="utf-8")
-        print(f"  written: {rel}")
-    return True
+    copilot_data = {**data, "agents": [f"./{GENERATED}/copilot/"]}
+    return _sync(copilot_manifest, json.dumps(copilot_data, indent=2) + "\n", check=check)
 
 
 # --------------------------------------------------------------------------- main
@@ -218,22 +182,16 @@ def main() -> None:
     parser.add_argument("--check", action="store_true", help="Exit 1 if generated files are out of sync.")
     args = parser.parse_args()
 
-    if not SRC_AGENTS.exists():
-        print(f"ERROR: source dir not found: {SRC_AGENTS}", file=sys.stderr)
-        sys.exit(1)
-
-    agents = sorted(
-        d.name for d in SRC_AGENTS.iterdir()
-        if d.is_dir() and not d.name.startswith(".") and (d / "agent.yaml").exists()
-    )
     plugins = sorted(
         p for p in PLUGINS_ROOT.iterdir()
         if p.is_dir() and not p.name.startswith(".") and (p / ".claude-plugin" / "plugin.json").exists()
     )
 
+    agents = sorted(p for plugin in plugins for p in (plugin / "agents").glob("*.md"))
+
     verb = "Checking" if args.check else "Building"
-    print(f"{verb} {len(agents)} agent(s): {', '.join(agents) or '(none)'}")
-    ok_agents = all(_build_agent(n, check=args.check) for n in agents)
+    print(f"{verb} {len(agents)} agent(s): {', '.join(p.stem for p in agents) or '(none)'}")
+    ok_agents = all([_build_agent(p, check=args.check) for p in agents])
 
     print(f"{verb} {len(plugins)} Copilot manifest(s): {', '.join(p.name for p in plugins) or '(none)'}")
     ok_manifests = all(_build_copilot_manifest(p, check=args.check) for p in plugins)
