@@ -16,7 +16,7 @@ Versions checked: Claude Code 2.1.296, Copilot CLI 1.0.95, VS Code 1.139, Codex 
 | `guard` deny rules, title guard, host guard, pip deny | yes | yes | yes, Local agent (`chat.useHooks`) | yes | yes | yes |
 | `guard` risky-command ask | yes, ask | yes, ask | yes, ask | plain forms (plain words only: `rm -rf build`, `git reset --hard`): Codex's own approval prompt, from the prompt rules `make install` writes; other forms (`$VAR`, `~`, globs, quotes, compound, flag later) or a session whose approvals reviewer is not the user denied with the reason | plain forms: opencode's own permission prompt, from `permission.bash` ask entries the plugin adds; other forms, a user `deny` on bash or `opencode run --auto` (any spelling) denied with the reason | yes, confirm dialog; blocked without a UI (`-p`, JSON) |
 | `guard` `GUARD_UNATTENDED=1` (risky ask becomes a deny; [guard.md](guard.md#unattended-and-auto-approve-runs)) | yes | yes | yes | yes | yes | yes |
-| `guard` skill tracker | `Skill` tool, `/skill` | `skill` tool, `/skill` | `skill` tool | `$skill`, a read of its `SKILL.md` | `skill` tool, `/skill` | `/skill:name`, a read of its `SKILL.md` |
+| `guard` skill tracker | `Skill` tool, `/skill` | `skill` tool, `/skill` | `skill` tool | `$plugin:skill`, a read of its `SKILL.md` | `skill` tool, `/skill` | `/skill:name`, a read of its `SKILL.md` |
 | `guard` post-edit lint | yes | yes | yes | yes | yes, appended to the tool output | yes, appended to the tool result |
 | `guard` stop `make check` | yes, blocks the stop | yes | yes | yes, blocks the stop | yes, sends the failure back on idle | yes, sends the failure back when the run settles |
 | `guard` keep-awake | yes | yes | yes, while the window is open | yes | yes | yes |
