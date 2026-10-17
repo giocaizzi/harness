@@ -12,7 +12,7 @@ Take an open PR (GitLab: MR) to merged and clean. Argument: a PR number; default
 3. **Merge without bypassing** through the forge's auto-merge (`gh pr merge --auto --squash`, `glab mr merge --auto-merge --squash`, `az repos pr update --auto-complete true --squash true`), or enqueue when a merge queue exists. Never use `--admin`, `--bypass-policy` or disable a rule.
 4. **Keep stacked children alive:** if other PRs are based on this branch, do not delete it (`gh pr list --base <branch>`, `glab mr list --target-branch <branch>`, `az repos pr list --target-branch <branch>`); a forge may close PRs whose base disappears. Retarget them first.
 5. **Wait until merged**, then `git pull --ff-only` on the default branch.
-6. **Clean up:** delete the local branch, `git worktree remove` this task's worktree, `git worktree prune`.
+6. **Clean up:** `git worktree remove <path>` for this task's worktree, never `--force`; if it refuses, report what is left in the worktree (`git -C <path> status --short`) and stop. Then delete the local branch and `git worktree prune`.
 7. **Verify where it lands.** Merged is not working: wait for whatever the merge triggers, then prove the change took effect with one check that reads the real target, not the repo. For example:
    - a deployed service: the deploy or release run finished green, then its health endpoint or service status;
    - dotfiles: `chezmoi diff` is empty after apply, and the changed line is in the rendered file;
