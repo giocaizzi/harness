@@ -110,6 +110,7 @@ The other three harnesses read the same sources differently (details in [docs/co
 | `make validate` | Build sync + plugin manifest hygiene + SKILL.md spec + marketplace ↔ disk + README ↔ disk + harness parity (`scripts/parity.mjs`: every skill and agent reaches every harness). |
 | `make check` | `make lint` + `make test` (standard entrypoint, run by CI; `make lint` is an alias for `make validate`). |
 | `make e2e` | Codex, opencode and pi against a scripted model in throwaway homes (skips a CLI that is missing; CI runs it on Linux, macOS and Windows). |
+| `make agent-review` | Weekly review of agent telemetry (cost, skill use, guard reminders, subagent routing) from Loki, with optional description-eval stubs: [docs/agent-review.md](docs/agent-review.md). |
 | `make install HARNESS="codex opencode"` | Copy what Codex and opencode cannot take from the marketplace into their config dirs. |
 | `make new-agent NAME=<name> PLUGIN=<plugin>` | Scaffold a new agent under `src/agents/<name>/`. |
 | `make new-skill PLUGIN=<plugin> NAME=<name>` | Scaffold `plugins/<plugin>/skills/<name>/SKILL.md`. |
