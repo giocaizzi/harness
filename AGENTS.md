@@ -134,6 +134,7 @@ If `make validate` fails, check the common drift points first:
 - VS Code ignores `matcher`: every hook of an event runs, so each script checks `tool_name` itself. One `command` field runs under bash and PowerShell, so keep it to `node "<path>" <args>`.
 - Codex reads `hooks/codex.json`, generated from `hooks.json`; opencode and pi run `hooks/opencode.mjs` and `hooks/pi.mjs`, which go through `hooks/bridge.mjs` to the same handlers. A new hook script needs its event mapped in both adapters (and a case in `adapters.test.mjs`), or a row in docs/compatibility.md saying why not.
 - Rules are data in `plugins/guard/core/rules.mjs`; `core/engine.mjs` stays pure (no I/O). Bump the `guard` version (plugin.json + marketplace entry) for every behaviour change: installed caches update only on a version change.
+- To probe a harness from this checkout (`claude -p "What skills are available?"`, a hook check), set `GUARD_STOP_CHECK=off`: otherwise the probe's Stop hook runs `make check` and the probe tries to fix what fails, editing files here.
 
 ---
 
