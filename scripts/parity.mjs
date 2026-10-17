@@ -86,10 +86,39 @@ export function gaps({ skills, agents }, delivered) {
   return found
 }
 
+// The tier each harness's definition of an agent sets: Claude `model` and `effort`, Codex `model` and
+// `model_reasoning_effort`, a Copilot or opencode `model`. pi has no per-agent settings (session model).
+export function tiers({ agents }) {
+  const field = (path, key) => (existsSync(path) ? new RegExp(`^${key}\\s*[:=]\\s*"?([^"\\r\\n]*)"?\\s*$`, 'm').exec(readFileSync(path, 'utf8'))?.[1] : undefined)
+  return agents.map(({ plugin, name }) => {
+    const dir = join(repo, 'plugins', plugin)
+    return {
+      plugin,
+      name,
+      claude: { model: field(join(dir, 'agents', `${name}.md`), 'model'), effort: field(join(dir, 'agents', `${name}.md`), 'effort') },
+      codex: { model: field(join(dir, 'codex', `${name}.toml`), 'model'), effort: field(join(dir, 'codex', `${name}.toml`), 'model_reasoning_effort') },
+      copilot: { model: field(join(dir, 'copilot', `${name}.agent.md`), 'model') },
+      opencode: { model: field(join(dir, 'opencode', `${name}.md`), 'model') },
+    }
+  })
+}
+
+// One agent, one tier everywhere. Claude names the tier with its model; the other harnesses take the session's
+// model (the driver tier by default, user settings per agent), so a model pinned in their files would drift from
+// it. Effort is per agent in Claude and Codex only, and must agree.
+export function tierGaps(defs) {
+  const found = []
+  for (const d of defs) {
+    for (const h of ['codex', 'copilot', 'opencode']) if (d[h].model) found.push(`agent ${d.plugin}:${d.name}: ${h} pins model ${d[h].model}; leave it to the session so the tier matches Claude's ${d.claude.model ?? 'default'}`)
+    if (d.claude.effort !== d.codex.effort) found.push(`agent ${d.plugin}:${d.name}: effort ${d.claude.effort ?? 'unset'} in Claude but ${d.codex.effort ?? 'unset'} in Codex`)
+  }
+  return found
+}
+
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
   const inv = inventory()
-  const found = gaps(inv, deliveries())
+  const found = [...gaps(inv, deliveries()), ...tierGaps(tiers(inv))]
   for (const g of found) console.error(g)
   if (found.length) process.exit(1)
-  console.log(`${inv.skills.length} skills and ${inv.agents.length} agents reach ${HARNESSES.join(', ')}`)
+  console.log(`${inv.skills.length} skills and ${inv.agents.length} agents reach ${HARNESSES.join(', ')}, each agent at one tier`)
 }

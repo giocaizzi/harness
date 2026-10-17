@@ -1,7 +1,6 @@
 ---
 name: API Reviewer
 description: Scans the API for vulnerabilities, RBAC leaks and compliance issues. Use when asked to review API security, audit endpoints, or check RBAC.
-model: sonnet
 argument-hint: API Security Review
 tools:
 - vscode
