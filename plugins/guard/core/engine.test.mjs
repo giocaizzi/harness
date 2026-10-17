@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { codexRules, evaluateCommand, evaluateSpawn, nativeAsk, opencodeAsks, removalTargets, usageLevel, worktreeFacts } from './engine.mjs';
+import { codexRules, evaluateCommand, evaluateEdit, evaluateSpawn, nativeAsk, opencodeAsks, removalTargets, usageLevel, worktreeFacts } from './engine.mjs';
 import { rules } from './rules.mjs';
 
 const fresh = () => ({ reminded: new Set() });
@@ -395,4 +395,35 @@ test('the secrets prefixes leave plain secret reads to the Codex and opencode pr
   assert.equal(nativeAsk('op item get github --reveal', 'secrets', rules), false);
   assert.equal(nativeAsk('env | grep TOKEN', 'secrets-env', rules), false);
   assert.equal(opencodeAsks(rules)['pass show *'], 'ask');
+});
+
+test('remind rules hint once per session and never deny', () => {
+  const state = fresh();
+  const first = evaluateCommand({ command: 'gh pr view 12 --comments', state, host: calm, rules });
+  assert.deepEqual([first.action, first.rule, first.remind], ['allow', 'pr-fix', true]);
+  assert.match(first.context, /`pr-fix` or `land`/);
+  assert.equal(evaluateCommand({ command: 'gh run view 9 --log-failed', state, host: calm, rules }).context, undefined);
+  assert.equal(evaluateCommand({ command: 'uv run pytest -q', loadedSkills: new Set(['python:python-testing']), state: fresh(), host: calm, rules }).remind, undefined);
+  assert.equal(evaluateCommand({ command: 'uv run pytest -q', state: fresh(), host: calm, rules }).rule, 'pytest');
+});
+
+test('a shell-only file read hints at the read tool once, only where the harness has one', () => {
+  const state = fresh();
+  for (const c of ['cat src/a.py', 'head -n 20 README.md', 'sed -n 1,40p x.ts', 'tail -50 log.txt']) {
+    assert.equal(evaluateCommand({ command: c, state: fresh(), host: calm, readTool: true, rules }).rule, 'read', c);
+    assert.equal(evaluateCommand({ command: c, state: fresh(), host: calm, readTool: false, rules }).rule, undefined, c);
+  }
+  for (const c of ['cat a | grep x', 'cd x && cat a', 'cat <<EOF', 'cat $(ls)', 'head -c 10 /dev/urandom > f'])
+    assert.equal(evaluateCommand({ command: c, state: fresh(), host: calm, readTool: true, rules }).rule, undefined, c);
+  assert.equal(evaluateCommand({ command: 'cat a', state, host: calm, readTool: true, rules }).rule, 'read');
+  assert.equal(evaluateCommand({ command: 'cat b', state, host: calm, readTool: true, rules }).rule, undefined);
+});
+
+test('an edit under docs/ or to README/AGENTS hints at docs-sync once', () => {
+  const state = fresh();
+  assert.equal(evaluateEdit({ path: '/r/docs/guard.md', state, rules }).rule, 'docs');
+  assert.equal(evaluateEdit({ path: '/r/README.md', state, rules }).rule, undefined); // once
+  assert.equal(evaluateEdit({ path: 'C:\\r\\AGENTS.md', state: fresh(), rules }).rule, 'docs');
+  assert.equal(evaluateEdit({ path: '/r/src/docs.ts', state: fresh(), rules }).rule, undefined);
+  assert.equal(evaluateEdit({ path: '/r/docs/x.md', loadedSkills: new Set(['dev-tools:docs-sync']), state: fresh(), rules }).rule, undefined);
 });
