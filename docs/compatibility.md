@@ -32,6 +32,27 @@ Versions checked: Claude Code 2.1.296, Copilot CLI 1.0.95, VS Code 1.139, Codex 
 
 Hosts: everything runs on macOS, Linux and Windows; the hooks need `node` 22+ on PATH. CI drives Codex, opencode and pi on all three ([Verify](#verify)); Claude Code, Copilot CLI and VS Code are checked live on macOS only, Windows is pending ([#25](https://github.com/giocaizzi/harness/issues/25)).
 
+**Parity rule:** every skill and agent reaches every harness above. `make validate` enforces it through `scripts/parity.mjs`, which reads each harness's delivery from what that harness consumes: the marketplace and the Claude, Copilot and Codex plugin manifests, the plan of `scripts/install.mjs` (Codex agents, opencode) and `package.json`'s `pi` key plus the agents the `subagent` tool loads. VS Code reads the Claude format, so the Claude delivery covers it. It also fails on a skill name used by two plugins, since opencode and pi install skills by name. A row above that says "no" is a hook or UI feature, never a skill or agent.
+
+## User-level setup
+
+What a harness reads from the user's home rather than from a plugin. This repo ships none of it; a dotfiles repo renders it per machine. Paths are the defaults (`$CODEX_HOME`, `$XDG_CONFIG_HOME`, `$PI_CODING_AGENT_DIR` move them).
+
+| | Claude Code | Copilot CLI | VS Code Copilot | Codex CLI | opencode | pi |
+|---|---|---|---|---|---|---|
+| Global instructions | `~/.claude/CLAUDE.md` | `~/.copilot/copilot-instructions.md` (`copilot instruction list` shows it) | user `*.instructions.md` files in the profile (unverified) | `~/.codex/AGENTS.md` | `~/.config/opencode/AGENTS.md` | `~/.pi/agent/AGENTS.md` |
+| Private instructions (a second file kept out of the shared one) | imported from the global file with `@<path>` | no import: inlined into the global file | a second `*.instructions.md` | no import: inlined | inlined, or listed in `instructions` of `opencode.json` | no import: inlined |
+| User MCP servers ([details](#mcp-servers)) | `~/.claude.json` | `~/.copilot/mcp-config.json` | profile `mcp.json` | `~/.codex/config.toml` | `~/.config/opencode/opencode.json` | `~/.pi/agent/mcp.json` |
+| Invoke a skill | `/<plugin>:<skill>`, `Skill` tool | `/<skill>`, `skill` tool | `skill` tool | `$<skill>` | `/<skill>`, `skill` tool | `/skill:<name>` |
+
+The global instructions are one `AGENTS.md`, rendered per machine role and placed (or linked) at each harness's path above; the private part lives outside the public dotfiles and is imported where the harness can, inlined where it cannot.
+
+Machine roles:
+
+- **Full, personal (macOS):** every harness above, every plugin.
+- **Full, work (Windows):** the harnesses that machine selects, the same plugins; the hooks need `node` 22+ there too.
+- **Light (Linux, Raspberry Pi):** harness-free on purpose: no harness config, instructions or plugins, and agents never run there, so nothing in this repo targets it. Linux stays supported for other machines and CI.
+
 ## How each harness reads the repo
 
 | Harness | Marketplace | Plugin manifest | Agents | Hooks |
@@ -91,11 +112,11 @@ Where each harness reads MCP servers, for the `repo-standard` rule (repo servers
 ## Verify
 
 ```bash
-make check   # validate (incl. `claude plugin validate`) + node tests + `claude plugin test`
+make check   # validate (incl. `claude plugin validate` and the parity check) + node tests + `claude plugin test`
 make e2e     # Codex, opencode and pi against a scripted model (tests/e2e), each in a throwaway home
 ```
 
-`make e2e` needs the three CLIs on `PATH` ([install runbook](install.md#verify), no global install needed) but no login: `tests/e2e/mock-llm.mjs` speaks the Responses and Chat Completions APIs and scripts one shell call. For each harness it installs this checkout the documented way, then checks that a `pip install` in a uv project is denied with the guard's reason, that a plain risky command (`git reset --hard`) reaches the harness's own prompt, rejected in a non-interactive run (pi: blocked without a UI), that a compound one (`cd . && rm -rf ~/…`) is denied, and that the skills and the `scout` agent are in the model's prompt; on Codex it also checks that sounds' `Stop` hook ran; on pi it also delegates to `scout` through the `subagent` tool and checks the child session ran. CI runs it on Linux, macOS and Windows (`e2e` job).
+`make e2e` needs the three CLIs on `PATH` ([install runbook](install.md#verify), no global install needed) but no login: `tests/e2e/mock-llm.mjs` speaks the Responses and Chat Completions APIs and scripts one shell call. For each harness it installs this checkout the documented way, then checks that a `pip install` in a uv project is denied with the guard's reason, that a plain risky command (`git reset --hard`) reaches the harness's own prompt, rejected in a non-interactive run (pi: blocked without a UI), that a compound one (`cd . && rm -rf ~/…`) is denied, and that every skill and agent in the repo is in the model's prompt (Codex installs every marketplace plugin for this); on Codex it also checks that sounds' `Stop` hook ran; on pi it also delegates to `scout` through the `subagent` tool and checks the child session ran. CI runs it on Linux, macOS and Windows (`e2e` job).
 
 ### With a real model
 
