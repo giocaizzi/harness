@@ -324,3 +324,48 @@ test('glab and az PR commands need the PR skills; an az policy bypass asks', () 
   assert.equal(ask('az repos pr update --id 4 --bypass-policy true --bypass-policy-reason x'), 'ask');
   assert.equal(ask('az repos pr update --id 4 --bypass-policy false'), 'allow');
 });
+
+test('secret reads ask every time, naming secrets-handling; look-alikes and injection wrappers pass', () => {
+  const decide = (command) => evaluateCommand({ command, state: fresh(), host: calm, rules });
+  const asks = {
+    secrets: [
+      'bws secret get 0000', 'bws secret list', 'bws run -- make deploy', 'bw get password github', 'bw list items --search x',
+      'bw unlock', 'bw login', 'bw export --format json', 'bw serve --port 8087',
+      'security find-generic-password -s svc -w', 'security find-generic-password -wa acct', 'security find-internet-password -s host -g',
+      'chezmoi secret keyring get --service=svc --user=me',
+      'op read op://vault/item/field', 'op item get github --fields password --reveal',
+      'pass show email/me', 'gcloud secrets versions access latest --secret=api', 'az keyvault secret show --vault-name v --name n',
+      'printenv GITHUB_TOKEN', 'echo ok && printenv API_KEY',
+      'cat .env', 'less .env.local', 'cat ./app/.env', 'head -n 5 config/.env.production', 'X=$(bws secret get 0000) ./run.sh',
+    ],
+    'secrets-env': ['printenv | grep TOKEN', 'env | grep -i "secret"', "env | rg -i 'api_key'", 'env | sort | grep PASSWORD'],
+  };
+  for (const [rule, commands] of Object.entries(asks))
+    for (const command of commands) {
+      const d = decide(command);
+      assert.equal(d.action, 'ask', command);
+      assert.equal(d.rule, rule, command);
+      assert.match(d.reason, /secrets-handling/, command);
+      assert.equal(decide(command).action, 'ask', command);
+    }
+  for (const command of [
+    'BWS_ACCESS_TOKEN="$(security find-generic-password -s bws -w)" ./scripts/create_secrets.sh n8n',
+    'BWS_ACCESS_TOKEN="$(chezmoi secret keyring get --service=bws --user=me)" make sync',
+    'bws --version', 'bw status', 'bw sync', 'bws project list',
+    'security find-generic-password -s svc', 'security find-generic-password -a me -s gmail', 'security list-keychains',
+    'op item get github --fields username', 'op whoami', 'pass ls', 'pass insert x',
+    'gcloud secrets list', 'gcloud secrets versions list api', 'az keyvault secret list --vault-name v',
+    'printenv PATH', 'printenv', 'env | grep PATH', 'env FOO=1 node app.js | grep ok', 'docker compose --env-file .env config | grep image',
+    'cat .env.example', 'cat .env.sample', 'cat .envrc.example', 'cat foo.env', 'cat environment.md', 'echo "cat .env"',
+    "grep -rn 'bws secret get' docs/", 'git commit -m "docs: never run printenv | grep TOKEN"',
+  ])
+    assert.notEqual(decide(command).action, 'ask', command);
+});
+
+test('the secrets prefixes leave plain secret reads to the Codex and opencode prompts', () => {
+  assert.equal(nativeAsk('bws secret get 0000', 'secrets', rules), true);
+  assert.equal(nativeAsk('cat .env', 'secrets', rules), true);
+  assert.equal(nativeAsk('op item get github --reveal', 'secrets', rules), false);
+  assert.equal(nativeAsk('env | grep TOKEN', 'secrets-env', rules), false);
+  assert.equal(opencodeAsks(rules)['pass show *'], 'ask');
+});
