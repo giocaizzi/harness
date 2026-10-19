@@ -94,7 +94,7 @@ test('telemetry false positives stay fixed: read-only release, ruleset and tag c
     'git tag', 'git tag -l', 'git tag --list "v*"', 'git tag --contains HEAD', 'git tag --sort=-v:refname', 'gh api repos/o/r/rulesets', 'gh api repos/o/r/branches/main/protection --jq .x'])
     assert.equal(skill(c), undefined, c);
   for (const [c, rule] of [['git tag v1.2.0', 'release'], ['git tag -a v1 -m x', 'release'], ['npx release-please release-pr --repo-url o/r', 'release'], ['npm version patch', 'release'],
-    ['gh api -X PUT repos/o/r/branches/main/protection --input p.json', 'ruleset'], ['gh api repos/o/r/rulesets -f name=x', 'ruleset'], ['gh api --method DELETE repos/o/r/rulesets/1', 'ruleset']])
+    ['gh api -X PUT repos/o/r/branches/main/protection --input p.json', 'ruleset'], ['gh api repos/o/r/rulesets -f name=x', 'ruleset'], ['gh api --method DELETE repos/o/r/rulesets/1', 'gh-delete']])
     assert.equal(skill(c), rule, c);
 });
 
@@ -354,7 +354,7 @@ test('git worktree remove without --force is not risky', () => {
 test('in a uv repo pip, pipx and poetry are denied every time; uv and quoted mentions pass', () => {
   const state = fresh();
   const run = (command, s = state) => evaluateCommand({ command, state: s, host: calm, python: 'uv', rules });
-  for (const c of ['pip install x', 'pip3 install -r r.txt', 'pipx run black', 'python3 -m pip install x', 'cd a && pip', 'PIP install x']) {
+  for (const c of ['pip install x', 'pip3 install -r r.txt', 'pipx run black', 'python3 -m pip install x', 'cd a && pip install x', 'PIP install x']) {
     const r = run(c);
     assert.equal(r.action, 'deny', c);
     assert.equal(r.rule, 'pip', c);
@@ -700,4 +700,30 @@ test('shell edits judged where they write: cd, variables and sed -i operands (G0
   assert.equal(edit('sed -i s/a/b/ src/x.py'), true);
   assert.equal(edit('cd src && cat > x.py <<EOF\nx\nEOF'), true);
   assert.equal(edit("sed -i -e s/a/b/ /tmp/a src/b"), true);
+});
+
+test('a worktree with an ignored local secret is not safe to force-remove; ignored build output is (G21)', async () => {
+  const { worktreeFact } = await import('./engine.mjs');
+  const run = (status) => fakeGit({ w: { status } });
+  assert.deepEqual(await worktreeFact('w', run('!! .env\n!! node_modules/\n')), { safe: false, why: 'ignored secrets: .env' });
+  assert.deepEqual(await worktreeFact('w', run('!! certs/server.key\n')), { safe: false, why: 'ignored secrets: certs/server.key' });
+  assert.deepEqual(await worktreeFact('w', run('!! node_modules/\n!! dist/\n')), { safe: true, why: '' });
+});
+
+test('temp paths: only the per-user macOS temp dir, never the tmux, X11 or ssh sockets (G18)', async () => {
+  const { isTempPath } = await import('./engine.mjs');
+  for (const p of ['/var/folders/ab', '/var/folders/ab/xyz', '/var/folders/ab/xyz/C/x', '/tmp/tmux-501', '/private/tmp/ssh-x/agent.1', '/tmp/.X11-unix/X0', '/tmp/com.apple.launchd.x'])
+    assert.equal(isTempPath(p, {}), false, p);
+  for (const p of ['/var/folders/ab/xyz/T/tmp.1', '/tmp/x', '/private/tmp/claude-501/s'])
+    assert.equal(isTempPath(p, {}), true, p);
+  assert.equal(isTempPath('/run/user/1000/tmp/x', { TMPDIR: '/run/user/1000/tmp' }), true);
+});
+
+test('the new risky rules reach Codex and opencode as prompt prefixes (D3)', () => {
+  const rulesFile = codexRules(rules);
+  for (const p of ['["docker","volume","rm"]', '["gh","repo","delete"]', '["kubectl","delete"]', '["helm","uninstall"]', '["tofu","destroy"]', '["git","filter-repo"]', '["mkfs"]'])
+    assert.ok(rulesFile.includes(`pattern = ${p}`), p);
+  assert.equal(opencodeAsks(rules)['docker volume rm *'], 'ask');
+  assert.equal(nativeAsk('docker volume rm firefly_db', 'docker', rules), true);
+  assert.equal(nativeAsk('gcloud projects delete p', 'cloud-delete', rules), false);
 });
