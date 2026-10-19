@@ -125,6 +125,8 @@ If `make validate` fails, check the common drift points first:
 - Codex reads `.generated/codex/hooks.json`, generated from `hooks.json`; opencode and pi run `hooks/opencode.mjs` and `hooks/pi.mjs`, which go through `hooks/bridge.mjs` to the same handlers. A new hook script needs its event mapped in both adapters (and a case in `adapters.test.mjs`), or a row in docs/compatibility.md saying why not.
 - Rules are data in `plugins/guard/core/rules.mjs`; `core/engine.mjs` stays pure (no I/O). Bump the `guard` version (plugin.json + marketplace entry) for every behaviour change: installed caches update only on a version change.
 - To probe a harness from this checkout (`claude -p "What skills are available?"`, a hook check), set `GUARD_STOP_CHECK=off`: otherwise the probe's Stop hook runs `make check` and the probe tries to fix what fails, editing files here.
+- Probe the guard (spawning `hooks/guard.mjs`, importing the engine) with `GUARD_OTEL=off`: the hook otherwise posts its decisions to the collector your shell exports, and fake sessions pollute the real telemetry. `make test` sets it.
+- Every guard false ask or missed command found in telemetry or transcripts becomes a row in `plugins/guard/core/corpus.json` (the regression corpus, [docs/guard.md](docs/guard.md#regression-corpus)), with its bug id open in `corpus.test.mjs` until the fix lands.
 
 ---
 
