@@ -235,12 +235,14 @@ export function branchTargets(command, rules, env = {}) {
     });
 }
 
-// A temp path: strictly under /tmp, /private/tmp, /var/folders (macOS $TMPDIR) or a Windows user's AppData\Local\Temp.
+// A temp path: strictly under /tmp, /private/tmp, the macOS per-user temp dir or a Windows user's AppData\Local\Temp.
 // $TMPDIR, ${TMPDIR}, $env:TEMP, %TEMP% (and TMP) resolve through `env`; an unset variable, other glob, `~`, `.`/`..`
 // or shell syntax is not resolvable statically, so it is not a temp path. The temp dir itself is not either.
 // ponytail: `/tmp/link/` with a trailing slash follows a planted symlink; resolve with realpath if that matters.
 const TEMP_VAR = /^(?:\$\{?(TMPDIR|TEMP|TMP)\}?|\$env:(TEMP|TMP)|%(TEMP|TMP)%)(?=[\\/]|$)/i;
-const UNIX_TEMP = /^\/(?:private\/)?(?:tmp|var\/folders)\/[^/]/;
+// Under /var/folders only the per-user temp dir counts (`/var/folders/<a>/<b>/T/…`, its `C/` caches do not), and under
+// /tmp not the sockets of tmux, X11 and ssh agents or macOS's own folders.
+const UNIX_TEMP = /^\/(?:private\/)?(?:tmp\/(?!(?:tmux-|\.X11-unix|\.ICE-unix|ssh-|com\.apple\.|launchd-))[^/]|var\/folders\/[^/]+\/[^/]+\/T\/[^/])/;
 const WINDOWS_TEMP = /^[a-z]:\/users\/[^/]+\/appdata\/local\/temp\/[^/]/i;
 const norm = (p) => p.replace(/\\/g, '/').replace(/\/+/g, '/').replace(/(.)\/$/, '$1');
 export function isTempPath(target, env = {}) {
@@ -253,7 +255,9 @@ export function isTempPath(target, env = {}) {
   const p = norm(path);
   if (p.split('/').some((s) => s === '.' || s === '..')) return false;
   const tempDirs = ['TMPDIR', 'TEMP', 'TMP'].map((k) => env[k] && norm(env[k]).toLowerCase());
-  return (UNIX_TEMP.test(p) || WINDOWS_TEMP.test(p)) && !tempDirs.includes(p.toLowerCase());
+  // Strictly under the environment's own temp dir counts too, whatever its layout (Linux, a CI runner).
+  const underTemp = tempDirs.some((d) => d && p.toLowerCase().startsWith(`${d.replace(/\/$/, '')}/`));
+  return (UNIX_TEMP.test(p) || WINDOWS_TEMP.test(p) || underTemp) && !tempDirs.includes(p.toLowerCase());
 }
 
 // Git facts for one removal target, through an injected `run(argv, cwd?) -> stdout | null` (null on failure or timeout).
@@ -267,8 +271,13 @@ export async function worktreeFact(path, run) {
   if (rp == null) return undefined;
   const [gitDir, commonDir, prefix = '', top] = rp.split(/\r?\n/);
   if (!gitDir || gitDir === commonDir || prefix !== '') return undefined;
-  const [status, ahead] = await Promise.all([git('status', '--porcelain'), git('rev-list', '--count', 'HEAD', '--not', '--remotes')]);
-  if (status == null || ahead == null || !/^\d+\s*$/.test(ahead)) return { safe: false, why: 'git check failed' };
+  const [all, ahead] = await Promise.all([git('status', '--porcelain', '--ignored'), git('rev-list', '--count', 'HEAD', '--not', '--remotes')]);
+  if (all == null || ahead == null || !/^\d+\s*$/.test(ahead)) return { safe: false, why: 'git check failed' };
+  // Ignored files are normally regenerable, but a local secret (`.env`, `*.key`) exists nowhere else.
+  const lines = all.split(/\r?\n/).filter(Boolean);
+  const status = lines.filter((l) => !l.startsWith('!!')).join('\n');
+  const secrets = lines.filter((l) => l.startsWith('!!')).map((l) => l.slice(3).replace(/\/$/, '')).filter((f) => f.split('/').some((seg) => NEVER_REGEN.test(seg)));
+  if (secrets.length) return { safe: false, why: `ignored secrets: ${secrets.slice(0, 3).join(', ')}` };
   const n = Number(ahead);
   if (n && !status.trim()) {
     const merged = await mergedPrHead(git, sh, top || path, (await git('branch', '--show-current'))?.trim());
@@ -324,7 +333,7 @@ export async function branchFacts(command, rules, run, env = {}) {
 // Build output and caches a tool regenerates. A delete of one passes when git ignores it (`git check-ignore`, so it
 // is inside a repo and untracked): nothing there is lost that a build or install cannot make again. `results` only
 // under `evals/` (`claude plugin eval` output). No glob, no secret-looking segment, ever.
-const REGENERABLE = new Set(['node_modules', '.venv', 'venv', '__pycache__', '.pytest_cache', '.mypy_cache', '.ruff_cache', '.terraform', 'dist', 'build', '.next', 'target', 'coverage', '.turbo', '.cache']);
+const REGENERABLE = new Set(['node_modules', '.venv', 'venv', '__pycache__', '.pytest_cache', '.mypy_cache', '.ruff_cache', '.terraform', 'dist', 'build', '.next', 'target', 'coverage', '.turbo', '.cache', '.wrangler', '.vitest-cache', '.vite', '.gradle', '.parcel-cache', '.svelte-kit', '.nuxt']);
 const NEVER_REGEN = /^\.env|secret|\.key$/i;
 export function regenerableName(target) {
   const segs = target.replace(/\\/g, '/').replace(/\/+$/, '').split('/');
