@@ -11,7 +11,7 @@ The `factory` plugin works tickets from a GitHub issue board, one at a time and 
 
 ## Attended flow
 
-The `ticket-run` skill carries one ticket through these steps; call it with the issue number, and again on a parked ticket once you have answered.
+The `ticket-run` skill carries one ticket through these steps; call it with the issue number, and again on a parked ticket once you have answered. `factory-status` lists what needs you, what is in progress and what is done, from the labels and marked comments.
 
 
 1. **Gate.** The ticket is open and carries the approval label, and the issue timeline shows an approver applied it. Otherwise the run stops and says why.
