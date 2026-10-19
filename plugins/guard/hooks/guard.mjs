@@ -8,7 +8,7 @@ import { statfs } from 'node:fs/promises'
 import { cpus, homedir, loadavg, platform, tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { branchFacts, codexRules, deniedBy, evaluateCommand, evaluateEdit, isHeavy, isRisky, nativeAsk, previewCommand, regenFacts, withPreview, worktreeFacts } from '../core/engine.mjs'
+import { branchFacts, codexRules, deniedBy, deniedDir, evaluateCommand, evaluateEdit, isHeavy, isRisky, nativeAsk, previewCommand, regenFacts, withPreview, worktreeFacts } from '../core/engine.mjs'
 import { cpuPercentFrom } from '../core/host.mjs'
 import { emit } from '../core/otel.mjs'
 import { rules } from '../core/rules.mjs'
@@ -128,16 +128,21 @@ async function onShell(input, state, deps) {
   if (!command) return {}
   try {
     const host = isHeavy(command, rules) ? await deps.hostFacts(input.cwd) : {}
-    const facts = { env: { TMPDIR: deps.env.TMPDIR, TEMP: deps.env.TEMP, TMP: deps.env.TMP } }
+    // HOME resolves `~` and `$HOME` in paths (USERPROFILE on Windows).
+    const facts = { env: { TMPDIR: deps.env.TMPDIR, TEMP: deps.env.TEMP, TMP: deps.env.TMP, HOME: deps.env.HOME || deps.env.USERPROFILE } }
     if (isRisky(command, rules)) {
       const inCwd = (argv, cwd) => deps.run(argv, cwd ?? input.cwd)
       ;[facts.worktrees, facts.branches, facts.regenerable] = await Promise.all([
         worktreeFacts(command, facts.env, rules, inCwd),
-        branchFacts(command, rules, inCwd),
+        branchFacts(command, rules, inCwd, facts.env),
         regenFacts(command, facts.env, rules, inCwd),
       ])
     }
-    if (deniedBy(command, rules)?.when) facts.python = deps.pythonManager(input.cwd)
+    // The manager of the repo the denied command runs in (`cd <repo> && pip install x`), not just the cwd's.
+    if (deniedBy(command, rules)?.when) {
+      const dir = deniedDir(command, rules, facts.env)
+      facts.python = deps.pythonManager(dir ? resolve(input.cwd || '.', dir) : input.cwd)
+    }
     const reminded = new Set(state.reminded)
     const d = evaluateCommand({ command, loadedSkills: new Set(state.loaded), state: { reminded }, host, readTool: deps.readTool ?? true, ...facts, rules })
     state.reminded = [...reminded]
@@ -167,7 +172,7 @@ async function onShell(input, state, deps) {
     }
     if (d.action === 'ask') {
       await report('ask')
-      const argv = previewCommand(d.rule, command)
+      const argv = previewCommand(d.rule, command, rules, facts.env)
       return preToolUse('ask', argv ? withPreview(d.reason, await deps.run(argv, input.cwd).catch(() => '')) : d.reason)
     }
     return d.context ? note(d.context) : {}
