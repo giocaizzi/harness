@@ -72,4 +72,7 @@ createServer((req, res) => {
     ;(req.url.includes('/responses') ? responses : chat)(res, call, 'done')
     res.end()
   })
-}).listen(Number(process.argv[2] ?? 4011), '127.0.0.1')
+})
+  // A taken port exits non-zero; `ready` on stdout tells the runner it may start the harness.
+  .on('error', () => process.exit(1))
+  .listen(Number(process.argv[2] ?? 4011), '127.0.0.1', () => process.stdout.write('ready\n'))

@@ -40,11 +40,21 @@ const has = (cmd) => sh(cmd, ['--version'], { allowFail: true }).status === 0
 // Start the mock on a free port with a scripted command; resolves to { port, log, stop }.
 async function mock(command, root, extraEnv = {}) {
   const log = join(root, 'mock.jsonl')
-  const port = 40_000 + Math.floor(Math.random() * 20_000)
-  const child = spawn(process.execPath, [MOCK, String(port)], { env: { ...BASE_ENV, MOCK_COMMAND: command, MOCK_LOG: log, ...extraEnv }, stdio: 'ignore' })
-  await new Promise((r) => setTimeout(r, 300))
   const entries = () => (existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l)) : [])
-  return { port, entries, stop: () => child.kill() }
+  // Wait for the mock to listen: a fixed sleep raced slow Windows runners, whose harnesses then found no server.
+  // A taken port, or no `ready` within 20 s, retries on another port; a crash prints its error to the CI log.
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const port = 40_000 + Math.floor(Math.random() * 20_000)
+    const child = spawn(process.execPath, [MOCK, String(port)], { env: { ...BASE_ENV, MOCK_COMMAND: command, MOCK_LOG: log, ...extraEnv }, stdio: ['ignore', 'pipe', 'inherit'] })
+    const ready = await new Promise((resolve) => {
+      const timer = setTimeout(() => resolve(false), 20_000)
+      child.stdout.on('data', (d) => String(d).includes('ready') && (clearTimeout(timer), resolve(true)))
+      child.on('exit', () => (clearTimeout(timer), resolve(false)))
+    })
+    if (ready) return { port, entries, stop: () => child.kill() }
+    child.kill()
+  }
+  throw new Error('mock LLM did not start')
 }
 
 const project = (root) => {
