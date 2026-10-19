@@ -86,7 +86,11 @@ Each run writes `.factory/runs/<number>/result.json` in the repo's main checkout
 | `harness` | string | `claude-code`, `copilot-cli`, `vscode`, `codex`, `opencode` or `pi`. |
 | `model` | string | The model id as the harness reports it. |
 | `effort` | string \| null | The session's effort level (`low` to `max`), or `null` when the harness has none. |
+| `sessions` | array | `{role, id}` per harness session in the run (`main`, `verifier`, other subagents), where the harness exposes the id. Joins the run to its telemetry's `session.id`. |
+| `plugin_versions` | object | Plugin name to installed version for the harness plugins the run used (`factory`, `dev-tools`, ...). |
 | `finished_at` | string | ISO 8601 timestamp. |
+
+**Telemetry.** `sessions` and `plugin_versions` let a run be joined to the harness's OpenTelemetry data by `session.id` and compared across plugin versions. A future launcher may also tag a run's telemetry through `OTEL_RESOURCE_ATTRIBUTES` (for example `factory.run_id`, `factory.ticket`, `factory.role`, `factory.phase`); the skills emit nothing themselves.
 
 ## Config: `.factory/config.yaml`
 

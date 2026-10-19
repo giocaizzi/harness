@@ -23,5 +23,19 @@
   "harness": "<claude-code|copilot-cli|vscode|codex|opencode|pi>",
   "model": "<model id as the harness reports it>",
   "effort": "<effort level, or null>",
+  "sessions": [
+    {
+      "role": "main",
+      "id": "<harness session id>"
+    },
+    {
+      "role": "verifier",
+      "id": "<subagent or session id>"
+    }
+  ],
+  "plugin_versions": {
+    "factory": "<version>",
+    "dev-tools": "<version>"
+  },
   "finished_at": "<ISO 8601 timestamp>"
 }

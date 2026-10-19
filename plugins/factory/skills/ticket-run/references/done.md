@@ -26,6 +26,6 @@ A failed live check means the change does not work where it lands: open a revert
 Every run, `done`, `parked` or `failed`, ends with both:
 
 1. The result comment (kind `factory:result`, [comments.md](comments.md#comments)).
-2. `result.json` at `.factory/runs/N/result.json` in the main checkout, which outlives the worktree (the parent of `git rev-parse --path-format=absolute --git-common-dir`). Keys: `schema` (1), `ticket`, `end_state`, `reason`, `pr`, `decisions` (the log rows: `item`, `test`, `decision`, `where`), `evidence`, `follow_ups`, `cost_usd`, `turns`, `harness`, `model`, `effort`, `finished_at`; their meaning is in `docs/factory.md` (Result contract). `cost_usd` and `turns` are `null` unless the harness reports them.
+2. `result.json` at `.factory/runs/N/result.json` in the main checkout, which outlives the worktree (the parent of `git rev-parse --path-format=absolute --git-common-dir`). Keys: `schema` (1), `ticket`, `end_state`, `reason`, `pr`, `decisions` (the log rows: `item`, `test`, `decision`, `where`), `evidence`, `follow_ups`, `cost_usd`, `turns`, `harness`, `model`, `effort`, `sessions` (`role`, `id`), `plugin_versions`, `finished_at`; their meaning is in `docs/factory.md` (Result contract). `cost_usd` and `turns` are `null` unless the harness reports them; `sessions` lists every session id the harness exposes, the verifier's and other subagents' included.
 
 A parked ticket keeps its worktree and pushed branch for the next run.

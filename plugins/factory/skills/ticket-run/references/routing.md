@@ -19,4 +19,4 @@ A run costs its turns times the context each one resends, so the cheapest turn i
 
 - Give every phase a real check (the component's tests or build) so it finds its mistakes early and finishes in fewer turns.
 - Gather what a step needs in one pass and batch independent tool calls; do not re-read large files already in context.
-- Record `harness`, `model`, `effort`, `turns` and `cost_usd` in `result.json` when the harness exposes them, so runs can be compared.
+- Record `harness`, `model`, `effort`, `turns`, `cost_usd`, `sessions` and `plugin_versions` in `result.json` when the harness exposes them, so runs can be compared and joined to telemetry.
