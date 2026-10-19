@@ -25,9 +25,9 @@ The main session (hub) plans, delegates and verifies. Subagents (spokes) do boun
 
 - `low`: quick, in-the-loop work.
 - `medium`: normal engineering, verification, edge cases.
-- `high`, `xhigh`, `max`: only when the user asks for them.
+- `high`, `xhigh`, `max`: only when the user asks for them, with one preset exception below.
 
-Anything preset or automatic (agent definitions, settings, spawns you choose) stays at `medium` or below. Implement at `low`, verify at `medium`. More effort catches missed edge cases; it does not fix a wrong approach, so re-plan instead of raising it. Give every agent a way to check its work (a test, a build), or effort buys little.
+Anything preset or automatic (agent definitions, settings, spawns you choose) stays at `medium` or below. Implement at `low`, verify at `medium`. The one exception is the `factory` plugin's `verifier`, preset at `high` because it is the last gate before a ticket ships; spawn it at `medium` for trivial changes (XS, docs-only, config-only), or `low` when a deterministic check fully covers the change. Nothing preset goes above `high`. More effort catches missed edge cases; it does not fix a wrong approach, so re-plan instead of raising it. Give every agent a way to check its work (a test, a build), or effort buys little.
 
 ## Delegation
 
