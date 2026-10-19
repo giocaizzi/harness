@@ -10,7 +10,7 @@ import { readFileSync } from 'node:fs'
 import { branchFacts, evaluateCommand, regenFacts, worktreeFacts } from './engine.mjs'
 import { rules } from './rules.mjs'
 
-const OPEN = new Set(['G09', 'G10', 'G11', 'G12', 'G13', 'G14', 'G22'])
+const OPEN = new Set(['G10', 'G11', 'G12', 'G13', 'G14'])
 
 const corpus = JSON.parse(readFileSync(new URL('./corpus.json', import.meta.url), 'utf8'))
 const env = { TMPDIR: '/var/folders/ab/xyz/T/', HOME: '/Users/me' }
