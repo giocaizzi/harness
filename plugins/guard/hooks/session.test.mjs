@@ -31,6 +31,15 @@ test('stop: blocks once with the output tail when make check fails', () => {
   assert.deepEqual(calls.filter((c) => c.startsWith('make')), ['make -n check-fast', 'make -n check', 'make check'])
 })
 
+test('stop: a failure is reported with the failing target and its last line, scrubbed', () => {
+  const events = []
+  const make = { status: 2, stdout: 'ok\n', stderr: 'make[1]: *** [Makefile:3: test] Error 1\nAPI_TOKEN=supersecret leaked' }
+  stopCheck({ cwd: '/r' }, stopRun([], make, { status: 2 }), { strain: () => null, report: (e) => events.push(e) })
+  assert.equal(events[0].result, 'fail')
+  assert.equal(events[0].failed_target, 'test')
+  assert.equal(events[0].last_line, 'API_TOKEN=*** leaked')
+})
+
 test('stop: prefers make check-fast when the Makefile defines it', () => {
   const calls = []
   const make = { status: 2, stdout: 'FAIL y\n', stderr: '' }

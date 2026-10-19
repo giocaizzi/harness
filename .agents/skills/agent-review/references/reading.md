@@ -9,6 +9,7 @@
 | Skills: never picked by the model | Loaded only when typed or by another skill: its description does not trigger. Write a trigger eval (below), then rework the description ([docs/skills.md](../../../../docs/skills.md)). |
 | Guard reminders | A rule reminds often: the matching skill's description misses that situation, or the read hint fires for commands a read tool cannot replace. |
 | Guard decisions | An ask the user always approves is a false positive; fix the rule in `plugins/guard/core/rules.mjs` with a test, and add the command (paraphrased, no private values) as a row in `plugins/guard/core/corpus.json`. A risky command that ran with no ask is a row too. |
+| Guard asks answered | `timeout` or `unavailable` is a large share of asks: the asks land while the user is away; look at which rule asks (decisions, `via`) before raising the timeout. A rule whose asks are nearly all `allow` is a false positive. |
 | Manual approvals | A tool approved often by hand is a candidate for an allow rule in the harness settings. |
 | Failing shell commands | A tool that is missing, a wrong flag, or reads done through the shell. |
 

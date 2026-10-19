@@ -12,6 +12,7 @@ import { branchFacts, codexRules, deniedBy, evaluateCommand, evaluateEdit, isHea
 import { cpuPercentFrom } from '../core/host.mjs'
 import { emit } from '../core/otel.mjs'
 import { rules } from '../core/rules.mjs'
+import { commandHash, harnessName, recordAttrs } from './telemetry.mjs'
 
 // Claude Bash/PowerShell, Copilot bash/powershell, VS Code run_in_terminal. VS Code ignores matchers, so every
 // tool call reaches this script and anything else passes untouched.
@@ -113,6 +114,9 @@ export function pythonManager(cwd) {
 export const run = (argv, cwd) =>
   new Promise((resolve) => execFile(argv[0], argv.slice(1), { cwd, timeout: 5000 }, (err, stdout) => resolve(err ? null : stdout)))
 
+// The host facts behind a host deny: what the caps were compared with.
+const hostAttrs = (host) => ({ load1: host.load1, cpu_percent: host.cpuPercent, free_gb: host.freeGb })
+
 const preToolUse = (decision, reason) => ({
   stdout: JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: decision, permissionDecisionReason: reason } }),
 })
@@ -137,27 +141,39 @@ async function onShell(input, state, deps) {
     const reminded = new Set(state.reminded)
     const d = evaluateCommand({ command, loadedSkills: new Set(state.loaded), state: { reminded }, host, readTool: deps.readTool ?? true, ...facts, rules })
     state.reminded = [...reminded]
-    if (d.action === 'deny' || d.action === 'ask') await deps.emit?.('guard.decision', { rule: d.rule, action: d.action, tool: String(input.tool_name ?? ''), session_id: input.session_id, tool_use_id: input.tool_use_id })
-    if (d.remind) await deps.emit?.('guard.reminder', { rule: d.rule, tool: String(input.tool_name ?? ''), session_id: input.session_id, tool_use_id: input.tool_use_id })
-    if (d.action === 'deny') return preToolUse('deny', d.reason)
+    // Logged after the harness-specific transforms, so `action` is what happened: an ask that became a deny is a deny,
+    // with `via` saying why (unattended, no-ask) or how the ask was made (native-ask: the harness's own prompt).
+    const report = (action, via) =>
+      deps.emit?.('guard.decision', { rule: d.rule, action, via, tool: String(input.tool_name ?? ''), session_id: input.session_id, tool_use_id: input.tool_use_id, cmd_hash: commandHash(command), ...(d.rule === 'host' ? hostAttrs(host) : {}) }, input.cwd)
+    if (d.remind) await deps.emit?.('guard.reminder', { rule: d.rule, tool: String(input.tool_name ?? ''), session_id: input.session_id, tool_use_id: input.tool_use_id }, input.cwd)
+    if (d.action === 'deny') {
+      await report('deny')
+      return preToolUse('deny', d.reason)
+    }
     // Unattended run (GUARD_UNATTENDED=1): nobody can answer an ask, so it becomes a deny and the agent picks another way.
     if (d.action === 'ask' && /^(1|true|on)$/i.test(deps.env?.GUARD_UNATTENDED ?? '')) {
+      await report('deny', 'unattended')
       return preToolUse('deny', `${d.reason}\nUnattended run (GUARD_UNATTENDED): nobody can confirm this, so the command was not run. Pick another approach, or leave it for the user.`)
     }
     // Codex and opencode hooks cannot ask: the harness's own prompt rule asks for the plain forms (`deps.nativeAsk`),
     // anything else is denied and the user runs it.
     if (d.action === 'ask' && deps.noAsk) {
-      if (await deps.nativeAsk?.(command, d.rule, input)) return {}
+      if (await deps.nativeAsk?.(command, d.rule, input)) {
+        await report('ask', 'native-ask')
+        return {}
+      }
+      await report('deny', 'no-ask')
       return preToolUse('deny', `${d.reason}\nThis harness cannot ask for confirmation for this form, so the command was not run: ask the user to run it.`)
     }
     if (d.action === 'ask') {
+      await report('ask')
       const argv = previewCommand(d.rule, command)
       return preToolUse('ask', argv ? withPreview(d.reason, await deps.run(argv, input.cwd).catch(() => '')) : d.reason)
     }
     return d.context ? note(d.context) : {}
   } catch (err) {
     // Fail open for reminders, closed for risky commands.
-    if (isRisky(command, rules)) await deps.emit?.('guard.decision', { rule: 'guard-error', action: 'deny', tool: String(input.tool_name ?? ''), session_id: input.session_id, tool_use_id: input.tool_use_id })
+    if (isRisky(command, rules)) await deps.emit?.('guard.decision', { rule: 'guard-error', action: 'deny', tool: String(input.tool_name ?? ''), session_id: input.session_id, tool_use_id: input.tool_use_id, cmd_hash: commandHash(command) }, input.cwd)
     return isRisky(command, rules) ? preToolUse('deny', `The command guard failed, so this risky command was not run: ${err?.message ?? err}`) : {}
   }
 }
@@ -168,7 +184,7 @@ async function onEdit(input, state, deps) {
   const d = evaluateEdit({ path: t.file_path ?? t.path ?? t.filePath, loadedSkills: new Set(state.loaded), state: { reminded }, rules })
   state.reminded = [...reminded]
   if (!d.remind) return {}
-  await deps.emit?.('guard.reminder', { rule: d.rule, tool: String(input.tool_name ?? ''), session_id: input.session_id, tool_use_id: input.tool_use_id })
+  await deps.emit?.('guard.reminder', { rule: d.rule, tool: String(input.tool_name ?? ''), session_id: input.session_id, tool_use_id: input.tool_use_id }, input.cwd)
   return note(d.context)
 }
 
@@ -202,7 +218,7 @@ export async function handle(input, deps) {
   const known = deps.knownSkills ?? knownSkills()
   for (const skill of new Set(state.loaded)) {
     const name = skill.split(':').pop()
-    if (!before.has(skill) && (event !== 'UserPromptSubmit' || known.has(name))) await deps.emit?.('guard.skill', { skill: name, via: event === 'UserPromptSubmit' ? 'prompt' : 'tool', session_id: input.session_id })
+    if (!before.has(skill) && (event !== 'UserPromptSubmit' || known.has(name))) await deps.emit?.('guard.skill', { skill: name, via: event === 'UserPromptSubmit' ? 'prompt' : 'tool', session_id: input.session_id }, input.cwd)
   }
   state.loaded = [...new Set(state.loaded)]
   try {
@@ -233,8 +249,6 @@ export function codexAsks(env, transcriptPath) {
   }
 }
 
-// Which harness runs the hook, from the data dir variable each one sets.
-const harness = () => (process.env.CLAUDE_PLUGIN_DATA ? 'claude' : process.env.COPILOT_PLUGIN_DATA ? 'copilot' : 'other')
 
 async function main() {
   let input = {}
@@ -250,7 +264,7 @@ async function main() {
   // `--no-ask` comes from the Codex hooks file (.generated/codex/hooks.json), which build_agents.py generates.
   const noAsk = process.argv.includes('--no-ask')
   // Codex (`--no-ask`) is the one harness without a file-read tool.
-  const out = await handle(input, { dataDir, env: process.env, hostFacts, run, pythonManager, noAsk, readTool: !noAsk, nativeAsk: noAsk ? codexAsks(process.env, input.transcript_path) : null, emit: (event, attrs) => emit(process.env, event, { ...attrs, harness: noAsk ? 'codex' : harness() }) }).catch(() => ({}))
+  const out = await handle(input, { dataDir, env: process.env, hostFacts, run, pythonManager, noAsk, readTool: !noAsk, nativeAsk: noAsk ? codexAsks(process.env, input.transcript_path) : null, emit: (event, attrs, cwd) => emit(process.env, event, recordAttrs(attrs, cwd, noAsk ? 'codex' : harnessName())) }).catch(() => ({}))
   if (out.stdout) process.stdout.write(out.stdout)
   if (out.stderr) process.stderr.write(out.stderr)
 }

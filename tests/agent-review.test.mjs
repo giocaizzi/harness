@@ -52,6 +52,11 @@ test('report lists unused and user-only skills and subagent spend on Opus', () =
   assert.match(md, /Never loaded: dev-tools:wt\./)
   assert.match(md, /from its description: dev-tools:ship\./)
   assert.match(md, /Opus or Fable: \$4\.00/)
+  data.askResults = [row({ harness: 'claude', result: 'timeout' }, 7)]
+  data.decisions = [row({ rule: 'rm', action: 'deny', via: 'unattended' }, 2)]
+  const asks = report(data, ['dev-tools:ship'], '7d')
+  assert.match(asks, /\| claude \| timeout \| 7 \|/)
+  assert.match(asks, /\| rm \| deny \| unattended \| 2 \|/)
 })
 
 test('evalStubs targets skills the model never loads itself', () => {

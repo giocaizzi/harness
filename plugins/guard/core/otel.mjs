@@ -7,6 +7,8 @@
 const TIMEOUT_MS = 2000
 
 export const otelOff = (env) => /^(off|0|false)$/i.test(String(env?.GUARD_OTEL ?? '').trim())
+// True when a record would be sent: an endpoint is set (OTEL_* or its GUARD_ copy) and the switch is not off.
+export const otelEnabled = (env) => !otelOff(env) && Boolean(env?.OTEL_EXPORTER_OTLP_ENDPOINT || env?.GUARD_OTEL_EXPORTER_OTLP_ENDPOINT)
 
 // `k=v,k=v` (percent-encoded values), as OTEL_EXPORTER_OTLP_HEADERS and OTEL_RESOURCE_ATTRIBUTES spell them.
 export function parsePairs(str) {
