@@ -45,8 +45,40 @@ const GIT_VAL = String.raw`(?:"(?:[^"\\]|\\.)*"|'[^']*'|[^\s;&|"'])+`;
 const GIT_GLOBALS = String.raw`(?<![\w./:@-])git((?:\s+(?:(?:-C|-c|--git-dir|--work-tree|--namespace|--config-env|--attr-source)(?:=|\s+)${GIT_VAL}|-[\w-]+(?:=${GIT_VAL})?))+)(?=\s+[^\s-])`;
 export const gitPlain = (code) => code.replace(new RegExp(GIT_GLOBALS, 'g'), 'git');
 const gitDirs = (seg) => [...(new RegExp(GIT_GLOBALS).exec(seg)?.[1] ?? '').matchAll(/(?:^|\s)-C\s+(\S+)/g)].map((m) => m[1]);
-// What rules match: the executable text with git's global options removed.
-const matchable = (command, opts) => gitPlain(executable(command, opts));
+// What rules match: the executable text with git's global options removed. A double-quoted word holding only a
+// variable or a plain word (`"$TOKEN"`, `".env"`) is that word, so a rule can see it (SIMPLE_QUOTED, below).
+const matchable = (command, opts) => gitPlain(executable(command.replace(SIMPLE_QUOTED, '$1'), opts));
+
+// Every pipeline of a command at every level, with its code and its text as written: { code, raw, depth,
+// siblings, host, top }, where `siblings` counts the commands at its level and `top` those of the whole command.
+const KEYWORD = /^(?:do|done|then|fi|else|esac|\{|\})?$/;
+function pipelines(command, { injected = true } = {}) {
+  const a = analysis(command.replace(SIMPLE_QUOTED, '$1'));
+  const count = (level) => level.commands.filter((c) => !KEYWORD.test(c.code.trim())).length;
+  const top = count(a);
+  const out = [];
+  const walk = (level, ctx) => {
+    let pipe = [];
+    const groups = [];
+    for (const c of level.commands) {
+      if (pipe.length && c.sep !== '|' && c.sep !== '|&') (groups.push(pipe), (pipe = []));
+      pipe.push(c);
+    }
+    if (pipe.length) groups.push(pipe);
+    for (const p of groups) {
+      out.push({ code: gitPlain(p.map((c) => c.code.trim()).join(' | ')), raw: p.map((c) => c.raw).join(' | '), depth: ctx.depth, siblings: count(level), host: ctx.host, top });
+      for (const c of p)
+        for (const pl of c.payloads) {
+          if (pl.injected && !injected) continue;
+          walk(pl.analysis, { depth: ctx.depth + 1, host: pl.host ?? ctx.host });
+        }
+    }
+  };
+  walk(a, { depth: 0, host: undefined });
+  return out;
+}
+// A `pipeline` rule fires on one pipeline whose code matches, whose text matches `raw` and not `unless`.
+const pipelineHit = (r, p) => riskyRe(r).test(p.code) && (!r.raw || new RegExp(r.raw, 'i').test(p.raw)) && !(r.unless && new RegExp(r.unless, 'i').test(p.raw));
 
 // The literal subject of `git commit -m` or of a PR/MR title flag, or null when it cannot be read statically
 // (heredoc, $(...), no flag). ponytail: first flag only, no shell parser; unreadable forms are allowed.
@@ -75,7 +107,10 @@ const hit = (rules, command, opts) => rules.find((r) => new RegExp(r.match, 'i')
 // A risky rule's `raw` must also match the command as written (quoted text included). `case` rules match
 // case-sensitively; `skipInjected` rules do not look inside a value injected into a variable.
 const riskyRe = (r) => new RegExp(r.match, r.case ? '' : 'i');
-const riskyMatch = (r, command) => riskyRe(r).test(matchable(command, { injected: !r.skipInjected })) && (!r.raw || new RegExp(r.raw, 'i').test(command));
+const riskyMatch = (r, command) =>
+  r.pipeline
+    ? pipelines(command, { injected: !r.skipInjected }).some((p) => pipelineHit(r, p))
+    : riskyRe(r).test(matchable(command, { injected: !r.skipInjected })) && (!r.raw || new RegExp(r.raw, 'i').test(command));
 
 // The deny rule a command hits, so adapters gather repo facts (the Python manager) only when one applies.
 export const deniedBy = (command, rules) => hit(rules.deny ?? [], command);
@@ -363,35 +398,12 @@ function safeRemoval(command, rules, env, worktrees, regenerable) {
   return entries.length > 0 && entries.every(({ target: t, remote }) => isTempPath(t, env) || (!remote && (worktrees[t]?.safe === true || regenerable[t] === true)));
 }
 
-// The pipeline a risky rule fires on, at whatever level of the command it sits: { raw, depth, siblings, host, top }
-// where `siblings` is how many commands share its level and `top` how many the whole command chains. The whole
-// command when no single pipeline matches (an opaque payload).
-const KEYWORD = /^(?:do|done|then|fi|else|esac|\{|\})?$/;
+// The pipeline a risky rule fires on, at whatever level of the command it sits: { raw, depth, siblings, host, top }.
+// The whole command when no single pipeline matches (an opaque payload).
 function riskyStep(command, rule) {
-  const re = riskyRe(rule);
-  const a = analysis(command);
-  const count = (level) => level.commands.filter((c) => !KEYWORD.test(c.code.trim())).length;
-  const top = count(a);
-  const walk = (level, ctx) => {
-    let pipe = [];
-    const pipes = [];
-    for (const c of level.commands) {
-      if (pipe.length && c.sep !== '|' && c.sep !== '|&') (pipes.push(pipe), (pipe = []));
-      pipe.push(c);
-    }
-    if (pipe.length) pipes.push(pipe);
-    for (const p of pipes) {
-      const code = gitPlain(p.map((c) => c.code.trim()).join(' | '));
-      if (re.test(code) && !(rule.skipInjected && ctx.injected)) return { raw: p.map((c) => c.raw).join(' | '), depth: ctx.depth, siblings: count(level), host: ctx.host, top };
-      for (const c of p)
-        for (const pl of c.payloads) {
-          const found = walk(pl.analysis, { depth: ctx.depth + 1, host: pl.host ?? ctx.host, injected: ctx.injected || Boolean(pl.injected) });
-          if (found) return found;
-        }
-    }
-    return null;
-  };
-  return walk(a, { depth: 0, host: undefined, injected: false }) ?? { raw: command.trim(), depth: 0, siblings: top, host: undefined, top };
+  const all = pipelines(command, { injected: !rule.skipInjected });
+  const hit = all.find((p) => (rule.pipeline ? pipelineHit(rule, p) : riskyRe(rule).test(p.code) && (!rule.raw || new RegExp(rule.raw, 'i').test(p.raw))));
+  return hit ?? { raw: command.trim(), depth: 0, siblings: all[0]?.top ?? 1, host: undefined, top: all[0]?.top ?? 1 };
 }
 
 // What the risky part does, in plain words, with the targets the guard resolved.
