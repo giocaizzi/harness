@@ -11,6 +11,8 @@ Label names and the marker come from `.factory/config.yaml` (defaults `agent-ok`
 
 ## Gather
 
+This is lookup work: when you delegate it, a scout-tier subagent (Haiku or Sonnet, `low`) is enough. Fetch in one pass and batch the per-ticket reads.
+
 ```bash
 gh issue list --state open --label needs-owner --json number,title,url,updatedAt
 gh issue list --state open --label needs-grooming --json number,title,url
