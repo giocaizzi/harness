@@ -9,6 +9,7 @@ import { handle, hostFacts, pythonManager, run } from './guard.mjs'
 import { lintFile } from './lint.mjs'
 import { stopCheck } from './stop.mjs'
 import { emit } from '../core/otel.mjs'
+import { recordAttrs } from './telemetry.mjs'
 
 // Neither harness gives plugins a data dir; the same fallback as VS Code.
 export const DATA_DIR = join(tmpdir(), 'guard-plugin')
@@ -30,7 +31,7 @@ export function createGuard({ harness, noAsk = false, dataDir = DATA_DIR, deps =
     run,
     pythonManager,
     noAsk,
-    emit: (event, attrs) => emit(process.env, event, { ...attrs, harness }),
+    emit: (event, attrs, cwd) => emit(process.env, event, recordAttrs(attrs, cwd, harness)),
     // The harness's own usage, as the harness (service.name opencode or pi): neither exports telemetry itself.
     report: (event, attrs) => emit(process.env, event, attrs, fetch, harness),
     ...deps,
@@ -52,6 +53,8 @@ export function createGuard({ harness, noAsk = false, dataDir = DATA_DIR, deps =
     },
     prompt: ({ sessionId, cwd, prompt }) => call({ hook_event_name: 'UserPromptSubmit', session_id: sessionId, cwd, prompt }),
     sessionEnd: ({ sessionId }) => call({ hook_event_name: 'SessionEnd', session_id: sessionId }),
+    // The answer to an ask the harness showed itself (pi's confirm): allow, deny, or unavailable with no UI.
+    askResult: ({ sessionId, cwd, tool, result, waitMs, via }) => Promise.resolve(d.emit('guard.ask_result', { result, wait_ms: waitMs, via, tool, session_id: sessionId }, cwd)).catch(() => {}),
     // Lint findings for an edit, or null.
     postTool({ cwd, tool, input }) {
       try {
@@ -64,7 +67,7 @@ export function createGuard({ harness, noAsk = false, dataDir = DATA_DIR, deps =
     // ponytail: synchronous, so the harness's UI waits for make check like a command hook would; async spawn if it hurts.
     stop({ cwd, active }) {
       try {
-        const out = stopCheck({ cwd, stop_hook_active: active }, d.spawnSync, { report: (attrs) => void d.emit('guard.stop', attrs) })
+        const out = stopCheck({ cwd, stop_hook_active: active }, d.spawnSync, { report: (attrs) => void d.emit('guard.stop', attrs, cwd) })
         return out?.decision === 'block' ? out.reason : null
       } catch {
         return null
