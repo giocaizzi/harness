@@ -106,6 +106,8 @@ export const rules = {
       "match": "\\b(pytest|vitest|jest|npm\\s+(run\\s+)?test|make\\s+(test|check))\\b"
     }
   ],
+  // `say`: what the rule's command does, in plain words, at the top of the ask (the rm family, branch-delete and
+  // force build theirs from the targets).
   // `prefixes`: the plain forms the harness itself asks for where a hook cannot (Codex prompt rules, opencode
   // `permission.bash` ask). A risky command outside them is denied there. Rules match with git's global options
   // removed (`git -C dir reset` is `git reset`) and ignore case unless `case` is set.
@@ -132,12 +134,14 @@ export const rules = {
     },
     {
       "id": "reset",
+      "say": "Discards uncommitted changes (git reset --hard)",
       "match": "\\bgit\\s+reset\\s+--hard\\b",
       "why": "discards local work",
       "prefixes": [["git", "reset", "--hard"]]
     },
     {
       "id": "clean",
+      "say": "Deletes untracked files, which git cannot restore",
       "match": "\\bgit\\s+clean\\b(?![^;&|\\n]*\\s(?:-[a-z]*n[a-z]*|--dry-run)\\b)(?=[^;&|\\n]*\\s(?:-[a-z]*f[a-z]*|--force)\\b)",
       "why": "deletes untracked files, which git cannot restore",
       "prefixes": [["git", "clean", "-f"], ["git", "clean", "-fd"], ["git", "clean", "-df"], ["git", "clean", "-fdx"], ["git", "clean", "-dfx"], ["git", "clean", "-xdf"], ["git", "clean", "-fx"], ["git", "clean", "-xf"], ["git", "clean", "-ffdx"], ["git", "clean", "--force"]]
@@ -146,12 +150,14 @@ export const rules = {
       // A whole-tree or directory pathspec (`.`, `:/`, `dir/`, a glob), or a forced checkout or switch. One named
       // file (`git checkout -- f`, `git restore f`) passes: a narrow, deliberate revert. `restore --staged` only unstages.
       "id": "discard",
+      "say": "Discards uncommitted changes in the working tree",
       "match": "\\bgit\\s+checkout\\b[^;&|\\n]*\\s(?:-f|--force|\\.{1,2}/?|:/?|:\\([^)\\s]*\\)\\S*|[^\\s;&|]*[*?][^\\s;&|]*|[^\\s;&|]+/)(?=[\\s;&|)]|$)|\\bgit\\s+switch\\b[^;&|\\n]*\\s(?:-f|--force|--discard-changes)\\b|\\bgit\\s+restore\\b(?=[^;&|\\n]*\\s(?:--worktree|-W)\\b|(?![^;&|\\n]*\\s(?:--staged|-S)\\b))[^;&|\\n]*\\s(?:\\.{1,2}/?|:/?|:\\([^)\\s]*\\)\\S*|[^\\s;&|]*[*?][^\\s;&|]*|[^\\s;&|]+/)(?=[\\s;&|)]|$)",
       "why": "discards uncommitted changes, which git cannot restore",
       "prefixes": [["git", "checkout", "."], ["git", "checkout", "--", "."], ["git", "checkout", "-f"], ["git", "checkout", "--force"], ["git", "restore", "."], ["git", "switch", "-f"], ["git", "switch", "--force"], ["git", "switch", "--discard-changes"]]
     },
     {
       "id": "stash",
+      "say": "Drops stashed work",
       "match": "\\bgit\\s+stash\\s+(?:drop|clear)\\b",
       "why": "discards stashed work; only git fsck can find it again",
       "prefixes": [["git", "stash", "drop"], ["git", "stash", "clear"]]
@@ -176,33 +182,39 @@ export const rules = {
     {
       // Deleting a feature branch on the remote passes; main and master do not.
       "id": "push-delete",
+      "say": "Deletes branches on the remote",
       "match": "\\bgit\\s+push\\b[^;&|\\n]*\\s(?:--mirror|--prune)\\b|\\bgit\\s+push\\b(?=[^;&|\\n]*\\s(?:--delete|-d)\\b)[^;&|\\n]*\\s(?:refs/heads/)?(?:main|master)(?=[\\s;&|)]|$)|\\bgit\\s+push\\b[^;&|\\n]*\\s:(?:refs/heads/)?(?:main|master)(?=[\\s;&|)]|$)",
       "why": "deletes remote branches",
       "prefixes": [["git", "push", "--mirror"], ["git", "push", "--prune"]]
     },
     {
       "id": "git-rm",
+      "say": "Removes files and drops their uncommitted changes",
       "match": "\\bgit\\s+rm\\b(?![^;&|\\n]*\\s--cached\\b)(?=[^;&|\\n]*\\s(?:-[a-z]*f[a-z]*|--force)\\b)",
       "why": "drops uncommitted changes to the removed files",
       "prefixes": [["git", "rm", "-f"], ["git", "rm", "-rf"], ["git", "rm", "-fr"], ["git", "rm", "--force"]]
     },
     {
       "id": "terraform",
+      "say": "Applies or destroys real infrastructure",
       "match": "\\bterraform\\s+(apply|destroy)\\b",
       "why": "changes real infrastructure",
       "prefixes": [["terraform", "apply"], ["terraform", "destroy"]]
     },
     {
       "id": "merge",
+      "say": "Merges past the branch rules",
       "match": "\\bgh\\s+pr\\s+merge\\b[^;&|\\n]*--admin|\\baz\\s+repos\\s+pr\\s+(create|update)\\b[^;&|\\n]*--bypass-policy\\b(?![\\s=]+false)",
       "why": "bypasses merge rules"
     },
-    // Matched on what runs, so a token injected through a quoted `VAR="$(keyring read)" ./script` passes:
-    // the value goes to one process's environment, never to output. Known gap: `echo "$(bws secret get x)"` passes too.
+    // Matched on what runs, so a token injected through a quoted `VAR="$(keyring read)" ./script` passes
+    // (`skipInjected`): the value goes to one process's environment, never to output. `echo "$(bws secret get x)"` asks.
     {
       "id": "secrets",
+      "say": "Reads a secret",
       "match": "\\bbws?\\s+(secret|get|list|run|unlock|login|export|serve)\\b|\\bsecurity\\s+find-(generic|internet)-password\\b[^|;&\\n]*\\s-[a-z]*[wg][a-z]*\\b|\\bchezmoi\\s+secret\\s+keyring\\s+get\\b|\\bop\\s+read\\b|\\bop\\s+item\\s+get\\b[^|;&\\n]*\\s--reveal\\b|\\bpass\\s+show\\b|\\bgcloud\\s+secrets\\s+versions\\s+access\\b|\\baz\\s+keyvault\\s+secret\\s+show\\b|(^|[;&|(\\n]\\s*)printenv\\s+\\w*(token|secret|key|pass|credential)|\\b(cat|less|more|head|tail|bat)\\s+([^\\s;&|]+\\s+)*([^\\s;&|]*/)?\\.env(\\.(?!example\\b|sample\\b|template\\b|dist\\b)[\\w.-]+)?(?=[\\s;&|)]|$)",
       "why": "reads a secret; load `secrets-handling` and never print or inline the value",
+      "skipInjected": true,
       "prefixes": [
         ["bw", "get"], ["bw", "list"], ["bw", "unlock"], ["bw", "login"], ["bw", "export"], ["bw", "serve"],
         ["bws", "secret"], ["bws", "get"], ["bws", "list"], ["bws", "run"],
@@ -214,9 +226,19 @@ export const rules = {
     // `raw` must also match the command as written: the grep pattern is usually quoted, which `match` cannot see.
     {
       "id": "secrets-env",
+      "say": "Prints environment variables that hold secrets",
       "match": "(^|[;&|(\\n]\\s*)(printenv|env)\\b(?![-.=])[^;&\\n]*\\|\\s*(e?grep|rg|findstr|select-string)\\b",
       "raw": "token|secret|key|pass|credential",
-      "why": "dumps secret environment variables; load `secrets-handling` and filter to names only"
+      "why": "dumps secret environment variables; load `secrets-handling` and filter to names only",
+      "skipInjected": true
+    },
+    {
+      // core/shell.mjs marks what runs but cannot be read: an encoded PowerShell command, base64 decoded into a
+      // shell, payloads nested more than three levels deep.
+      "id": "opaque",
+      "say": "Runs a command the guard cannot read",
+      "match": "<guard:opaque>",
+      "why": "runs a command the guard cannot read (encoded, decoded at run time, or nested too deep)"
     }
   ],
   "titles": {

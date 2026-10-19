@@ -3,16 +3,40 @@
 // apply the decision. `state.reminded` (a Set) is mutated: each rule fires once
 // per session ("remind once, then let it through").
 
+import { analyze, units } from './shell.mjs';
+
 const bare = (skill) => skill.split(':').pop();
 
-// Rules match what a command would run, not text it carries: heredoc bodies and quoted strings
-// (commit messages, echo, grep patterns, file contents) are blanked, except the string after `-c`.
-// ponytail: a $(...) inside double quotes is blanked too; a real shell parser if that ever matters.
+// Rules match what a command would run, not text it carries: quoted strings (commit messages, echo, grep patterns)
+// and heredoc bodies are blanked. What runs although it is written as data (a shell's -c string, eval, ssh's remote
+// command, docker exec, a heredoc or echo piped into a shell, $(…) even inside double quotes) is read again by
+// core/shell.mjs and added, one line per level. `remote: false` leaves out what runs on another host or in a
+// container; `injected: false` leaves out a $(…) whose output only becomes a variable's value (`T="$(…)" cmd`).
+// A command the guard cannot read (an encoded PowerShell command, base64 decoded into a shell) adds OPAQUE.
 const HEREDOC = /(<<-?\s*(['"]?)(\w+)\2[^\n]*)\n[\s\S]*?\n[ \t]*\3[ \t]*(?=\n|$)/g;
-export function executable(command) {
-  return command
-    .replace(HEREDOC, '$1')
-    .replace(/(-c\s+)?("(?:[^"\\]|\\.)*"|'[^']*')/g, (m, c) => (c ? m : '""'));
+export const OPAQUE = '<guard:opaque>';
+const cache = new Map();
+export function analysis(command) {
+  if (!cache.has(command)) {
+    if (cache.size > 200) cache.clear();
+    cache.set(command, analyze(command));
+  }
+  return cache.get(command);
+}
+const levelCode = (a) => a.commands.map((c, i) => `${i && c.sep ? (c.sep === '\n' ? '\n' : ` ${c.sep} `) : ''}${c.code.trim()}`).join('');
+function levels(a, opts, ctx = { remote: false, injected: false }) {
+  const out = [levelCode(a)];
+  for (const c of a.commands)
+    for (const p of c.payloads) {
+      const sub = { remote: ctx.remote || Boolean(p.remote), injected: ctx.injected || Boolean(p.injected) };
+      if ((sub.remote && !opts.remote) || (sub.injected && !opts.injected)) continue;
+      out.push(...levels(p.analysis, opts, sub));
+    }
+  return out;
+}
+export function executable(command, { remote = true, injected = true } = {}) {
+  const a = analysis(command);
+  return [...levels(a, { remote, injected }), ...(a.opaque ? [OPAQUE] : [])].join('\n');
 }
 
 // Git's global options sit between `git` and the subcommand (`git -C dir`, `-c k=v`, `--git-dir=…`, `--no-pager`) and
@@ -22,7 +46,7 @@ const GIT_GLOBALS = String.raw`(?<![\w./:@-])git((?:\s+(?:(?:-C|-c|--git-dir|--w
 export const gitPlain = (code) => code.replace(new RegExp(GIT_GLOBALS, 'g'), 'git');
 const gitDirs = (seg) => [...(new RegExp(GIT_GLOBALS).exec(seg)?.[1] ?? '').matchAll(/(?:^|\s)-C\s+(\S+)/g)].map((m) => m[1]);
 // What rules match: the executable text with git's global options removed.
-const matchable = (command) => gitPlain(executable(command));
+const matchable = (command, opts) => gitPlain(executable(command, opts));
 
 // The literal subject of `git commit -m` or of a PR/MR title flag, or null when it cannot be read statically
 // (heredoc, $(...), no flag). ponytail: first flag only, no shell parser; unreadable forms are allowed.
@@ -46,11 +70,12 @@ export function badTitle(command, rules) {
   return re.test(title) ? null : title;
 }
 
-const hit = (rules, command) => rules.find((r) => new RegExp(r.match, 'i').test(matchable(command)));
+const hit = (rules, command, opts) => rules.find((r) => new RegExp(r.match, 'i').test(matchable(command, opts)));
 
-// A risky rule's `raw` must also match the command as written (quoted text included). `case` rules match case-sensitively.
+// A risky rule's `raw` must also match the command as written (quoted text included). `case` rules match
+// case-sensitively; `skipInjected` rules do not look inside a value injected into a variable.
 const riskyRe = (r) => new RegExp(r.match, r.case ? '' : 'i');
-const riskyMatch = (r, command) => riskyRe(r).test(matchable(command)) && (!r.raw || new RegExp(r.raw, 'i').test(command));
+const riskyMatch = (r, command) => riskyRe(r).test(matchable(command, { injected: !r.skipInjected })) && (!r.raw || new RegExp(r.raw, 'i').test(command));
 
 // The deny rule a command hits, so adapters gather repo facts (the Python manager) only when one applies.
 export const deniedBy = (command, rules) => hit(rules.deny ?? [], command);
@@ -88,26 +113,32 @@ export function expandLoops(command) {
 // temp check can resolve it instead of seeing the blanked string.
 const SIMPLE_QUOTED = /"((?:\$\{?\w+\}?)?[^"\s$`\\]*)"/g;
 const UNKNOWN_DIR = '<cd?>';
+const REMOTE_DIR = '<remote>';
 const NO_TARGET = '<none>';
 const CD = /(?:^|[\s({])(?:cd|chdir|set-location|sl)(?=\s|$)/i;
 const PLAIN_CD = /^\s*(?:cd|chdir|set-location|sl)\s+([\w.@%+=:,\\/][\w.@%+=:,\\/-]*)\s*$/i;
 const BRANCHY = /[(){}]|\|\||(?:^|[\s;&|])(?:pushd|popd|push-location|pop-location|if|then|else|elif|fi|case|esac|for|while|until|do|done)(?=[\s;]|$)/i;
 const ABSOLUTE = /^(?:[\\/]|[a-z]:|~|\$|%)/i;
 const inDir = (dir, p) => (!dir || ABSOLUTE.test(p) ? p : `${dir}/${p}`);
-function segments(command) {
-  const code = executable(expandLoops(command).replace(SIMPLE_QUOTED, '$1')).replace(/\d*[<>]+(&\d+|\s*[^\s;&|]+)/g, ' ');
-  const followCd = !BRANCHY.test(code);
-  let dir = '';
+// One level of commands (the top level, or a payload), each with its directory; payloads follow their command, in
+// the directory it runs in (a remote payload starts in no known directory). A command that hands its words to
+// another host or a container (`ssh host rm -rf x`) is judged only through its payload.
+function levelSegments(a, baseDir, remote) {
+  const followCd = !BRANCHY.test(levelCode(a));
+  let dir = baseDir;
   const out = [];
-  for (const seg of code.split(/&&|\|\||[;|&\n]/)) {
+  for (const cmd of a.commands) {
+    const seg = cmd.code.replace(/\d*[<>]+(&\d+|\s*[^\s;&|]+)/g, ' ');
     if (CD.test(seg)) {
       const to = followCd && PLAIN_CD.exec(seg)?.[1];
       dir = to ? inDir(dir, to) : UNKNOWN_DIR;
-      continue;
-    }
-    out.push({ seg: gitPlain(seg), dir: gitDirs(seg).reduce(inDir, dir) });
+    } else if (!cmd.payloads.some((p) => p.remote && p.kind !== 'subst')) out.push({ seg: gitPlain(seg), dir: gitDirs(seg).reduce(inDir, dir), remote });
+    for (const p of cmd.payloads) out.push(...levelSegments(p.analysis, p.remote ? REMOTE_DIR : dir, remote || Boolean(p.remote)));
   }
   return out;
+}
+function segments(command) {
+  return levelSegments(analysis(expandLoops(command).replace(SIMPLE_QUOTED, '$1')), '', false);
 }
 const plainArgs = (rest) => rest.split(/\s+/).filter((t) => t && !t.startsWith('-'));
 function findRoots(rest) {
@@ -124,25 +155,28 @@ function findRoots(rest) {
 // unsafe later; a delete with no target (`xargs rm -rf`) yields NO_TARGET, so it never rides on a safe one. A find's
 // targets are its start paths, before the first option or expression.
 const REMOVAL = new Set(['rm', 'find', 'worktree-rm']);
-export function removalTargets(command, rules) {
+export function removalEntries(command, rules) {
   const risky = (id) => riskyRe(rules.risky.find((r) => r.id === id));
   const removes = [...REMOVAL].map(risky);
-  const targets = [];
-  for (const { seg, dir } of segments(command)) {
+  const entries = [];
+  for (const { seg, dir, remote } of segments(command)) {
     if (!removes.some((re) => re.test(seg))) continue;
     const found = risky('find').test(seg)
       ? findRoots(/\bfind\b(.*)$/i.exec(seg)?.[1] ?? '')
       : plainArgs(/\b(?:rm|remove-item|ri|del|erase|rd|rmdir|worktree\s+remove)\b(.*)$/i.exec(seg)?.[1] ?? '');
-    targets.push(...(found.length ? found : [NO_TARGET]).map((t) => inDir(dir, t)));
+    entries.push(...(found.length ? found : [NO_TARGET]).map((t) => ({ target: inDir(dir, t), remote })));
   }
-  return targets;
+  return entries;
 }
+export const removalTargets = (command, rules) => removalEntries(command, rules).map((e) => e.target);
+// Targets on this machine: facts (git, gh) are never gathered for another host's or a container's paths.
+const localTargets = (command, rules) => removalEntries(command, rules).filter((e) => !e.remote).map((e) => e.target);
 
 // Branches every `git branch -D` in a command deletes: { dir, name }, `dir` from `cd`/`git -C` ('' for the cwd).
 export function branchTargets(command, rules) {
   const re = riskyRe(rules.risky.find((r) => r.id === 'branch-delete'));
   return segments(command)
-    .filter(({ seg }) => re.test(seg))
+    .filter(({ seg, remote }) => re.test(seg) && !remote)
     .flatMap(({ seg, dir }) => {
       const names = plainArgs(/\bbranch\b(.*)$/.exec(seg)?.[1] ?? '');
       return (names.length ? names : [NO_TARGET]).map((name) => ({ dir, name }));
@@ -207,7 +241,7 @@ async function mergedPrHead(git, sh, cwd, branch, rev = 'HEAD') {
 const PLAIN_PATH = /^[\w./\\@+=:,-]+$/;
 // Worktree facts for every non-temp removal target of a command, checked in parallel: { [target]: { safe, why } }.
 export async function worktreeFacts(command, env, rules, run) {
-  const targets = [...new Set(removalTargets(command, rules))].filter((t) => !isTempPath(t, env) && PLAIN_PATH.test(t));
+  const targets = [...new Set(localTargets(command, rules))].filter((t) => !isTempPath(t, env) && PLAIN_PATH.test(t));
   const facts = await Promise.all(targets.map((t) => worktreeFact(t, run)));
   return Object.fromEntries(targets.map((t, i) => [t, facts[i]]).filter(([, f]) => f));
 }
@@ -249,7 +283,7 @@ export function regenerableName(target) {
 
 // { [target]: true } for every removal target that is a regenerable name git ignores.
 export async function regenFacts(command, env, rules, run) {
-  const targets = [...new Set(removalTargets(command, rules))].filter((t) => !isTempPath(t, env) && regenerableName(t));
+  const targets = [...new Set(localTargets(command, rules))].filter((t) => !isTempPath(t, env) && regenerableName(t));
   const ignored = await Promise.all(
     targets.map((t) => {
       const p = t.replace(/\\/g, '/').replace(/\/+$/, '');
@@ -267,7 +301,9 @@ export async function regenFacts(command, env, rules, run) {
 const MKTEMP = /^\$\(mktemp(\s+-[dqu]+)*(\s+(-t|--tmpdir(=\S+)?)(\s+[\w.-]+)?)?\)$/;
 export function tempVars(command, env = {}) {
   const vars = {};
-  for (const [, name, raw] of command.replace(SIMPLE_QUOTED, '$1').matchAll(/(?:^|[\s;&|(])(?:export\s+)?([A-Za-z_]\w*)=(\$\([^)]*\)|[^\s;&|]+)/g)) {
+  // Every level's own text, so an assignment inside `bash -c '…'` counts for that payload.
+  const texts = [command, ...units(analysis(command)).filter((u) => u.depth > 0).map((u) => u.cmd.raw)].join('\n');
+  for (const [, name, raw] of texts.replace(SIMPLE_QUOTED, '$1').matchAll(/(?:^|[\s;&|(])(?:export\s+)?([A-Za-z_]\w*)=(\$\([^)]*\)|[^\s;&|]+)/g)) {
     if (MKTEMP.test(raw)) vars[name] = '/tmp/mktemp.placeholder';
     else if (isTempPath(raw, env)) vars[name] = raw;
   }
@@ -281,10 +317,62 @@ const tempResolver = (command, env) => {
 };
 
 // A removal is exempt when it has targets and every one is a temp path, a safe worktree or regenerable output.
+// A remote target (ssh, a container) passes only as a temp path: no fact about this machine applies to it.
 function safeRemoval(command, rules, env, worktrees, regenerable) {
-  const targets = removalTargets(command, rules);
+  const entries = removalEntries(command, rules);
   const resolve = tempResolver(command, env);
-  return targets.length > 0 && targets.every((t) => isTempPath(resolve(t), env) || worktrees[t]?.safe === true || regenerable[t] === true);
+  return entries.length > 0 && entries.every(({ target: t, remote }) => isTempPath(resolve(t), env) || (!remote && (worktrees[t]?.safe === true || regenerable[t] === true)));
+}
+
+// The pipeline a risky rule fires on, at whatever level of the command it sits: { raw, depth, siblings, host, top }
+// where `siblings` is how many commands share its level and `top` how many the whole command chains. The whole
+// command when no single pipeline matches (an opaque payload).
+const KEYWORD = /^(?:do|done|then|fi|else|esac|\{|\})?$/;
+function riskyStep(command, rule) {
+  const re = riskyRe(rule);
+  const a = analysis(command);
+  const count = (level) => level.commands.filter((c) => !KEYWORD.test(c.code.trim())).length;
+  const top = count(a);
+  const walk = (level, ctx) => {
+    let pipe = [];
+    const pipes = [];
+    for (const c of level.commands) {
+      if (pipe.length && c.sep !== '|' && c.sep !== '|&') (pipes.push(pipe), (pipe = []));
+      pipe.push(c);
+    }
+    if (pipe.length) pipes.push(pipe);
+    for (const p of pipes) {
+      const code = gitPlain(p.map((c) => c.code.trim()).join(' | '));
+      if (re.test(code) && !(rule.skipInjected && ctx.injected)) return { raw: p.map((c) => c.raw).join(' | '), depth: ctx.depth, siblings: count(level), host: ctx.host, top };
+      for (const c of p)
+        for (const pl of c.payloads) {
+          const found = walk(pl.analysis, { depth: ctx.depth + 1, host: pl.host ?? ctx.host, injected: ctx.injected || Boolean(pl.injected) });
+          if (found) return found;
+        }
+    }
+    return null;
+  };
+  return walk(a, { depth: 0, host: undefined, injected: false }) ?? { raw: command.trim(), depth: 0, siblings: top, host: undefined, top };
+}
+
+// What the risky part does, in plain words, with the targets the guard resolved.
+const shown = (t) => (t.startsWith(`${REMOTE_DIR}/`) ? t.slice(REMOTE_DIR.length + 1) : t.startsWith(`${UNKNOWN_DIR}/`) ? `${t.slice(UNKNOWN_DIR.length + 1)} (after a cd the guard cannot follow)` : t === NO_TARGET ? 'paths it cannot read (from a pipe or xargs)' : t);
+function summary(command, rule, step, rules) {
+  const list = (xs) => [...new Set(xs)].join(', ');
+  if (REMOVAL.has(rule.id)) {
+    const targets = removalTargets(command, rules);
+    if (rule.id === 'worktree-rm') return `Force-removes worktree${targets.length > 1 ? 's' : ''} ${list(targets.map(shown))}`;
+    return `Deletes${targets.length > 1 ? ` ${targets.length} paths` : ''} recursively: ${list(targets.map(shown))}`;
+  }
+  if (rule.id === 'branch-delete') {
+    const names = branchTargets(command, rules).map((b) => (b.dir ? `${b.name} (in ${b.dir})` : b.name));
+    return `Deletes branch${names.length > 1 ? 'es' : ''} ${list(names.length ? names : ['(unread)'])}`;
+  }
+  if (rule.id === 'force') {
+    const args = plainArgs(/\bpush\b(.*)$/.exec(gitPlain(step.raw))?.[1] ?? '');
+    return `Force-pushes${args.length ? ` ${args.join(' ')}` : ' the current branch'}`;
+  }
+  return rule.say ?? rule.why[0].toUpperCase() + rule.why.slice(1);
 }
 
 // A branch delete is exempt when every branch it names is safe (merged or pushed).
@@ -356,7 +444,22 @@ export function evaluateCommand({ command, loadedSkills = new Set(), state, host
       ...Object.entries(worktrees).filter(([, f]) => !f.safe).map(([t, f]) => `\nWorktree ${t}: ${f.why}`),
       ...Object.entries(branches).filter(([, f]) => !f.safe).map(([k, f]) => `\nBranch ${k.slice(k.indexOf('|') + 1)}: ${f.why}`),
     ].join('');
-    return { action: 'ask', rule: risky.id, command, reason: `Risky command (${risky.why}): ${command}${why}` };
+    const step = riskyStep(command, risky);
+    const what = summary(command, risky, step, rules);
+    const where = step.host ? ` on ${step.host}` : '';
+    const shown = step.raw !== command.trim() ? `\nStep: ${step.raw}` : '';
+    const rule = `\nRule: ${risky.id} (${risky.why})`;
+    // A risky step buried in a long chain, or in a shell -c, eval or ssh payload next to other commands, is hard to
+    // read at the prompt: the agent runs it on its own instead (owner decision D15).
+    if (step.top > 3 || (step.depth > 0 && step.siblings >= 3)) {
+      return {
+        action: 'deny',
+        rule: risky.id,
+        split: true,
+        reason: `Risky step buried in a longer command: ${what}${where}.${shown}${rule}${why}\nRun the risky step as its own simple command, not inside bash -c, eval or ssh next to other commands or in a chain of more than 3, so the user can read what they approve. Then retry.`,
+      };
+    }
+    return { action: 'ask', rule: risky.id, command, reason: `Risky command: ${what}${where}.${shown}${rule}${why}` };
   }
 
   const title = badTitle(command, rules);
@@ -370,7 +473,7 @@ export function evaluateCommand({ command, loadedSkills = new Set(), state, host
     };
   }
 
-  const heavy = hit(rules.heavy, command);
+  const heavy = hit(rules.heavy, command, { remote: false });
   const { loadCap, cpuPercentCap, freeFloorGb, wrapper } = rules.host;
   const strained = (host.load1 ?? 0) > loadCap || (host.cpuPercent ?? 0) > cpuPercentCap || (host.freeGb ?? Infinity) < freeFloorGb;
   // A command already run through the heavy wrapper waits for its slot and load on its own.
@@ -447,7 +550,7 @@ export function evaluateSpawn({ usagePercent, resetsAt, rules }) {
 
 // Adapters ask this before gathering host facts, so the (slow) uptime/df calls run only for heavy commands.
 export function isHeavy(command, rules) {
-  return rules.heavy.some((r) => new RegExp(r.match, 'i').test(matchable(command)));
+  return rules.heavy.some((r) => new RegExp(r.match, 'i').test(matchable(command, { remote: false })));
 }
 
 export function isRisky(command, rules) {

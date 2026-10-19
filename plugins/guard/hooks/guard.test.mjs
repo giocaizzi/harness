@@ -284,3 +284,11 @@ test('telemetry: a host deny carries the host facts it was judged on', async () 
   await setup({ emit: async (event, attrs) => events.push(attrs), hostFacts: async () => ({ load1: 45, freeGb: 100 }) })(pre('Bash', 'make test'))
   assert.deepEqual([events[0].rule, events[0].load1, events[0].free_gb], ['host', 45, 100])
 })
+
+test('a risky step buried in a long chain is denied with "split it out" and logged via=split', async () => {
+  const events = []
+  const out = decision(await setup({ emit: async (event, attrs) => events.push(attrs) })(pre('Bash', 'cd a && make && make test && rm -rf src')))
+  assert.equal(out.permissionDecision, 'deny')
+  assert.match(out.permissionDecisionReason, /own simple command/)
+  assert.deepEqual([events[0].action, events[0].via, events[0].rule], ['deny', 'split', 'rm'])
+})

@@ -623,3 +623,47 @@ test('git -C previews the right repo; a dir with shell syntax gets none', async 
   assert.deepEqual(previewCommand('reset', 'git -C ../x reset --hard'), ['git', '-C', '../x', 'status', '--short']);
   assert.equal(previewCommand('force', 'git -C $X push -f'), null);
 });
+
+test('readable asks: what the risky part does, the step on its own, where it runs and the rule', () => {
+  const ask = (command) => evaluateCommand({ command, state: fresh(), host: calm, loadedSkills: new Set(['ship']), rules });
+  const rm = ask('git status && cd sub && rm -rf build dist');
+  assert.equal(rm.action, 'ask');
+  assert.match(rm.reason, /^Risky command: Deletes 2 paths recursively: sub\/build, sub\/dist\.\nStep: rm -rf build dist\nRule: rm \(recursive delete\)$/);
+  assert.match(ask("ssh deploy@pi.local 'cd /srv && rm -rf data'").reason, /Deletes recursively: \/srv\/data on pi\.local\.\nStep: rm -rf data/);
+  assert.match(ask('git push -f origin feat').reason, /^Risky command: Force-pushes origin feat\.\nRule: force/);
+  assert.match(ask('git branch -D a b').reason, /Deletes branches a, b/);
+  assert.match(ask('git reset --hard').reason, /Discards uncommitted changes/);
+  assert.match(ask('xargs rm -rf').reason, /paths it cannot read/);
+});
+
+test('readable asks: a risky step in a chain of more than 3, or next to 2 others in a payload, is denied with "split it out"', () => {
+  const d = (command) => evaluateCommand({ command, state: fresh(), host: calm, loadedSkills: new Set(['ship']), rules });
+  for (const c of ['cd app && make && make test && rm -rf src', "bash -c 'cd /srv; make; rm -rf src'", "ssh h 'cd /srv && docker compose pull && rm -rf data'", "eval 'a; b; git reset --hard'"]) {
+    const r = d(c);
+    assert.deepEqual([r.action, r.split], ['deny', true], c);
+    assert.match(r.reason, /Run the risky step as its own simple command/, c);
+  }
+  for (const c of ['cd app && make && rm -rf src', "ssh h 'cd /srv && rm -rf data'", "bash -c 'rm -rf src'", 'for w in a b c d; do rm -rf $w; done'])
+    assert.equal(d(c).action, 'ask', c);
+});
+
+test('payloads are judged: shell -c, eval, ssh, heredoc and pipe into a shell ask; mentions do not', () => {
+  for (const [c, rule] of [["bash -lc 'rm -rf src'", 'rm'], ["sh -c -- 'git reset --hard'", 'reset'], ['eval "git push -f"', 'force'], ["ssh h 'git branch -D x'", 'branch-delete'], ['echo cm0= | base64 -d | sh', 'opaque']])
+    assert.equal(outcome(c), `ask:${rule}`, c);
+  for (const c of ["rg -c 'rm -rf x' f", "echo 'git reset --hard'", "ssh h 'rm -rf /tmp/x'"]) assert.equal(outcome(c), 'allow', c);
+});
+
+test('remote and container targets never get this machine\'s facts', async () => {
+  const calls = [];
+  const run = async (argv) => (calls.push(argv), '0\n');
+  assert.deepEqual(await branchFacts("ssh h 'git branch -D x'", rules, run), {});
+  assert.deepEqual(await regenFacts("ssh h 'rm -rf /srv/node_modules'", {}, rules, run), {});
+  assert.deepEqual(await worktreeFacts('docker exec c rm -rf /srv/x', {}, rules, run), {});
+  assert.deepEqual(calls, []);
+});
+
+test('a heavy command on another host does not trip the local host guard', () => {
+  const strained = { load1: 99, freeGb: 100 };
+  assert.equal(evaluateCommand({ command: "ssh h 'make test'", state: fresh(), host: strained, rules }).action, 'allow');
+  assert.equal(evaluateCommand({ command: "bash -c 'make test'", state: fresh(), host: strained, rules }).rule, 'host');
+});
