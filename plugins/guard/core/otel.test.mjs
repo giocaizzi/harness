@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { emit, logRequest, parsePairs } from './otel.mjs'
+import { emit, logRequest, otelOff, parsePairs } from './otel.mjs'
 
 test('parsePairs: comma pairs, percent-decoded, bad pairs skipped', () => {
   assert.deepEqual(parsePairs('Authorization=Bearer%20abc,x=1,junk,=no'), { Authorization: 'Bearer abc', x: '1' })
@@ -44,4 +44,11 @@ test('logRequest: a harness reported by the guard owns service.name and service.
   const r = logRequest({ endpoint: 'http://c', resource: 'service.namespace=claude-code,host.name=mac' }, 'api_request', {}, 1, 'pi')
   const attrs = Object.fromEntries(JSON.parse(r.body).resourceLogs[0].resource.attributes.map((a) => [a.key, a.value.stringValue]))
   assert.deepEqual(attrs, { 'service.namespace': 'pi', 'host.name': 'mac', 'service.name': 'pi' })
+})
+
+test('emit: GUARD_OTEL=off sends nothing, even with an endpoint', async () => {
+  const never = () => assert.fail('must not send')
+  for (const off of ['off', 'OFF', '0', 'false']) await emit({ GUARD_OTEL: off, OTEL_EXPORTER_OTLP_ENDPOINT: 'http://c', GUARD_OTEL_EXPORTER_OTLP_ENDPOINT: 'http://g' }, 'guard.decision', {}, never)
+  assert.equal(otelOff({ GUARD_OTEL: 'on' }), false)
+  assert.equal(otelOff({}), false)
 })

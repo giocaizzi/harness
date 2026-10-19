@@ -118,9 +118,17 @@ The resource carries `service.name=guard` plus `OTEL_RESOURCE_ATTRIBUTES` (`serv
 
 Verify: after a denied command, `{service_name="guard"}` in Grafana Explore shows the record; `sum by (rule) (count_over_time({service_name="guard"} | rule != "" [1h]))` counts denials per rule.
 
+`GUARD_OTEL=off` (also `0`, `false`) sends nothing, whatever the endpoint. `make test` sets it, and so must any probe that spawns `hooks/guard.mjs` or imports the engine from a shell that exports the collector: fake sessions otherwise land in the real telemetry.
+
 ### Usage for opencode and pi
 
 Neither exports telemetry, so the in-process guard reports for them, with the same endpoint and headers: one `api_request` log record per finished assistant message, as service `opencode` or `pi` (it owns `service.name` and `service.namespace`), with `session.id`, `model`, `provider`, `input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_creation_tokens`, `reasoning_tokens` and `cost_usd`. opencode prices the message itself (`cost`); pi prices it at its catalog rate (`usage.cost.total`). The names follow Claude Code's `api_request`, so one query covers every harness. Claude Code, Copilot CLI, VS Code and Codex export their own (enabled by the dotfiles); see the compatibility matrix.
+
+## Regression corpus
+
+`core/corpus.json` holds real commands from the guard reviews (telemetry, transcripts, code audit), paraphrased with hosts and paths anonymised and no secrets, each with the decision the guard must reach: `allow`, `allow:<hint>`, `ask:<rule>` or `deny:<rule>`, the bug id and the source. `core/corpus.test.mjs` runs each row through `evaluateCommand` with a fixed environment (`HOME=/Users/me`, a macOS `TMPDIR`) and favourable facts (every branch pushed, every regenerable name git-ignored, no linked worktree), so a row asks only where the guard cannot reach or read the facts. A row whose bug is still open runs as `todo`, so the suite stays green; the PR that fixes the bug removes its id from `OPEN` and the rows become enforced. Control rows (`control`, `probe`) are always enforced.
+
+Every guard false ask or missed command found in telemetry (`/agent-review`) or a transcript becomes a row, with a bug id, before or with its fix.
 
 ## Troubleshooting
 

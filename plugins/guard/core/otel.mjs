@@ -3,7 +3,10 @@
 // OTEL_EXPORTER_OTLP_HEADERS and are never logged. Every failure is swallowed: a decision never waits on telemetry.
 // Claude Code and Copilot CLI strip OTEL_* from a command hook's environment, so each variable falls back
 // to a GUARD_-prefixed copy (GUARD_OTEL_EXPORTER_OTLP_ENDPOINT, ...) that the launching shell exports.
+// GUARD_OTEL=off (also 0, false) sends nothing, whatever the endpoint: probes and `make test` set it.
 const TIMEOUT_MS = 2000
+
+export const otelOff = (env) => /^(off|0|false)$/i.test(String(env?.GUARD_OTEL ?? '').trim())
 
 // `k=v,k=v` (percent-encoded values), as OTEL_EXPORTER_OTLP_HEADERS and OTEL_RESOURCE_ATTRIBUTES spell them.
 export function parsePairs(str) {
@@ -55,6 +58,7 @@ export function logRequest({ endpoint, headers, resource }, event, attrs, now = 
 
 export async function emit(env, event, attrs, fetchFn = fetch, service = 'guard') {
   try {
+    if (otelOff(env)) return
     const v = (k) => env[k] || env[`GUARD_${k}`]
     const req = logRequest({ endpoint: v('OTEL_EXPORTER_OTLP_ENDPOINT'), headers: v('OTEL_EXPORTER_OTLP_HEADERS'), resource: v('OTEL_RESOURCE_ATTRIBUTES') }, event, attrs, Date.now(), service)
     if (req) await fetchFn(req.url, { method: 'POST', headers: req.headers, body: req.body, signal: AbortSignal.timeout(TIMEOUT_MS) })
