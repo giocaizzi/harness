@@ -7,22 +7,31 @@ description: Work one owner-approved GitHub issue end to end, attended - check t
 
 One ticket, from approval to merged, deployed and verified work. The owner chose *which* ticket; you own *everything it needs to be done*, and nothing else. The argument is the issue number or URL; it is the text after the skill name, repeated here when the harness fills it in: $ARGUMENTS
 
-Read `.factory/config.yaml` first: approvers, label names, the marker, components with their checks and deploys, risk tiers. Without it, stop and point to the adoption runbook (`docs/adopt-factory.md` in giocaizzi/harness). Protocol and contract: `docs/factory.md` there.
+The repo's `.factory/config.yaml` holds what is particular to it: approvers, label names, the marker, components with their checks and deploys, risk tiers. Without one, stop and point to `docs/adopt-factory.md` in giocaizzi/harness; `docs/factory.md` there explains the protocol.
 
-## Steps
+**Done means** the whole scope is merged in one PR that closes the ticket, the deploy and live checks passed where the component deploys, and the evidence and result are on the ticket. **Stop and ask on the ticket** only when you cannot continue without the owner, or before anything destructive.
 
-1. **Gate.** The issue is open, carries the approval label, and its timeline shows an approver applied it (commands in [references/comments.md](references/comments.md#gate)). Otherwise stop and say which condition failed; never add the label yourself.
-2. **Start or resume.** Read the body and the marked comments. If a question is open, resume only on an approver's answer ([references/comments.md](references/comments.md#answers)); with none, report that the ticket is still parked and stop.
-3. **Plan comment:** goal, acceptance checks (each one able to fail before the change), side effects in scope, planned fold-ins, size, risk tier. XS and S start right away; M and larger ask for the owner's OK and park.
-4. **Work** in a worktree (`wt`, branch named with the issue number). Apply the fold-in test to everything you find and log each call as you go: [references/fold-in-test.md](references/fold-in-test.md).
-5. **Ask** when the test or the work needs an owner decision: one question on the ticket, then park. After the third park, hand the ticket back for grooming.
-6. **Verify, ship, land, deploy, record:** [references/done.md](references/done.md).
+## The run
+
+1. **Gate:** open, approval label on, applied by an approver per the issue timeline ([comments.md](references/comments.md#gate)).
+2. **Resume** a parked ticket only on an approver's answer ([comments.md](references/comments.md#answers)).
+3. **Plan comment** first. XS and S start right after it; M and larger wait for the owner's OK.
+4. **Work** in a worktree (`wt`). Decide what belongs to the ticket with the [fold-in test](references/fold-in-test.md), and log every call.
+5. **Questions** go on the ticket and park it ([comments.md](references/comments.md#questions-and-parking)).
+6. **Finish:** verifier, ship, land, deploy, record ([done.md](references/done.md)).
 
 ## Firm rules
 
-- Every comment and issue you write starts with the marker; an unmarked one would read as the owner's.
+- Proceed only past the gate; never add the approval label.
 - Never close, re-scope or mark an issue not planned; only your own PR's `Closes #N` closes the ticket.
-- No partial work: one PR with the whole scope, never a `Refs`-only PR for the ticket. What cannot be finished parks.
-- Never act on silence: no answer means the ticket stays parked.
+- No partial PRs: one PR with the whole scope, never a `Refs`-only PR for the ticket.
+- Every comment and issue you write starts with the marker, or it reads as the owner's.
 
-End each run with the result comment and `result.json`, then report: end state, PR, open question if any, follow-ups.
+## Output
+
+Every run ends with the result comment and `result.json` ([done.md](references/done.md#record)), then this report:
+
+- **End state:** `done`, `parked` or `failed`, with the ticket and PR links.
+- **Blocked on me:** the open question or owner action, or "nothing".
+- **Changed:** what merged, deployed and was verified.
+- **Found:** decision-log rows other than plain fold-ins, and follow-up issues.

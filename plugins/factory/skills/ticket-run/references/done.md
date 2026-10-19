@@ -1,36 +1,31 @@
-# Verify, ship, land, deploy, record
+# Finish: verify, ship, land, deploy, record
 
-Done means: the whole scope is merged in one PR that closes the ticket; where the component deploys, the deploy finished and its live checks passed; the evidence and the result are on the ticket.
+## Verify
 
-## 1. Verify with a fresh context
+A fresh-context `verifier` (this plugin's agent) gates the change; it must not be you. Brief it with the ticket (`<owner>/<repo>#N`), the branch, and the plan and log comments.
 
-The `verifier` agent (this plugin) checks traceability, side effects and acceptance evidence. It must not be you: spawn it with a self-contained brief naming the ticket (`<owner>/<repo>#N`), the branch, and the plan and log comments.
+- **Where:** a subagent where the harness has one (`factory:verifier` in Claude Code; the `verifier` agent in Copilot CLI, VS Code, Codex and opencode; the `subagent` tool on pi). Elsewhere, a separate headless session in the worktree, given the agent's prompt and the brief.
+- **Effort:** its preset `high`. For trivial changes (XS, docs-only, config-only) pass `medium`, or `low` when a deterministic check fully covers the change, where the harness takes an effort per spawn. Never above `high`.
+- **Rounds:** fix what it reports and re-verify, at most three rounds. Still failing: end as `failed`, with its findings in the result comment and `needs-owner` set.
 
-- **Where:** a subagent where the harness has one (`factory:verifier` in Claude Code, the `verifier` agent in Copilot CLI, VS Code, Codex and opencode, the `subagent` tool on pi). Elsewhere, a separate headless session in the worktree given the agent's prompt and the brief.
-- **Effort:** `high`, its preset. Pass `medium` for trivial changes (XS, docs-only, config-only), or `low` when a deterministic check fully covers the change, where the harness takes an effort per spawn. Never above `high`.
-- **Rounds:** fix what it reports and re-verify only the new diff, at most three rounds. Still failing after three: end the run as `failed`, with its findings in the result comment and the needs-owner label.
+## Ship and land
 
-## 2. Ship
+`ship`, with the decision log as `## Scope` in the PR body, the acceptance evidence under `## Verification`, and `Closes #N`. Then land by the change's risk tier (the highest `risk` tier any changed path matches; unmatched paths are medium):
 
-Use `ship`. The PR body carries the decision log as `## Scope`, the acceptance evidence under `## Verification`, and `Closes #N` among the footers. Never `Refs` alone for the ticket.
+- `merge: auto`: `land`.
+- `merge: owner`: ask on the ticket for the merge (`Ready to merge: #<pr>`, with the evidence) and park. The next run resumes once the PR is merged.
 
-## 3. Land by risk tier
+## Deploy and live-verify
 
-The change's tier is the highest `risk` tier any changed path matches (unmatched paths are medium).
+Only for components with `deploy` in the config. With the merge commit as `$SHA` (`gh pr view <pr> --json mergeCommit --jq .mergeCommit.oid`), run `deploy.wait`, then each `deploy.verify`, and post their output or run links as evidence on the ticket.
 
-- `merge: auto`: land with `land`, which arms auto-merge and waits.
-- `merge: owner`: leave the PR for the owner. Post a question on the ticket (`Ready to merge: #<pr>`, with the evidence), park, and stop. The run resumes once the PR is merged and continues with the deploy.
+A failed live check means the change does not work where it lands: open a revert PR of the merge commit, land it by the same tier, then ask on the ticket with the findings and park. `deploy.rollback` is for when the config names a command and a revert is not enough. A check that needs access you lack parks with the exact command for the owner.
 
-## 4. Deploy and live-verify
+## Record
 
-Only for components with `deploy` in the config. With the merge commit (`gh pr view <pr> --json mergeCommit --jq .mergeCommit.oid`) as `$SHA`, run `deploy.wait`, then every `deploy.verify` command. Post their output, or links to the runs, as evidence on the ticket.
+Every run, `done`, `parked` or `failed`, ends with both:
 
-A failed live check means the change does not work where it lands: open a revert PR (`git revert` of the merge commit) and land it by the same tier, then ask on the ticket with the findings and park. Use `deploy.rollback` only when the config names a command and the revert is not enough. When a check needs access you do not have, park with the exact command for the owner.
+1. The result comment (kind `factory:result`, [comments.md](comments.md#comments)).
+2. `result.json` at `.factory/runs/N/result.json` in the main checkout, which outlives the worktree (the parent of `git rev-parse --path-format=absolute --git-common-dir`). Keys: `schema` (1), `ticket`, `end_state`, `reason`, `pr`, `decisions` (the log rows: `item`, `test`, `decision`, `where`), `evidence`, `follow_ups`, `cost_usd`, `harness`, `model`, `finished_at`; their meaning is in `docs/factory.md` (Result contract). `cost_usd` is `null` unless the harness reports it.
 
-## 5. Record the result
-
-1. Post the result comment (`<!-- factory:result <end_state> -->`, see [comments.md](comments.md#comment-shapes)) with the PR, the evidence links and the follow-ups.
-2. Write `result.json` in the main checkout, which outlives the worktree: the directory above `git rev-parse --path-format=absolute --git-common-dir`, then `.factory/runs/N/result.json`. Keys: `schema` (1), `ticket`, `end_state`, `reason`, `pr`, `decisions` (the log rows: `item`, `test`, `decision`, `where`), `evidence`, `follow_ups`, `cost_usd`, `harness`, `model`, `finished_at`; their meaning is in `docs/factory.md` (Result contract). `cost_usd` only when the harness reports it, else `null`.
-3. Every run writes one, `done`, `parked` or `failed`, so the next run, or whatever starts it, reads the same state.
-
-Then `land` cleans up the worktree after a merge; a parked ticket keeps its worktree and pushed branch.
+A parked ticket keeps its worktree and pushed branch for the next run.

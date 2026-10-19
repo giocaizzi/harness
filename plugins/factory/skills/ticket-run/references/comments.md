@@ -1,98 +1,52 @@
 # Ticket comments, labels and answers
 
-`<marker>`, label names and approvers come from `.factory/config.yaml` (defaults: `<!-- factory -->`, `agent-ok`, `needs-owner`, `needs-grooming`). `gh api` fills `{owner}/{repo}` from the current repo. `N` is the issue number.
+Names below are the config defaults; `.factory/config.yaml` may rename them. `gh api` fills `{owner}/{repo}` from the current repo; `N` is the issue number.
 
 ## Gate
 
 ```bash
-gh issue view N --json state,labels,title,body
+gh issue view N --json state,labels,body
 gh api "repos/{owner}/{repo}/issues/N/timeline" --paginate \
-  --jq '.[] | select((.event == "labeled" or .event == "unlabeled") and .label.name == "agent-ok") | "\(.event) \(.actor.login) \(.created_at)"'
+  --jq '.[] | select((.event == "labeled" or .event == "unlabeled") and .label.name == "agent-ok") | "\(.event) \(.actor.login)"'
 ```
 
-Pass only when the state is open, the label is on the issue, and the last line of the timeline output is `labeled` by a login in `approvers`. A body with no acceptance criteria is not a gate failure: write them in the plan, and M or larger tickets get them confirmed with the plan.
+It passes when the issue is open, has the label, and the last timeline line is `labeled` by a login in `approvers`. Otherwise stop and say which part failed. A body without acceptance criteria is not a failure: the plan proposes them.
 
-## Comment shapes
+## Comments
 
-Every comment starts with the marker line, then a kind tag, then the visible text. Write the body to a file and post it with `gh issue comment N --body-file <file>`.
+Each comment is: the marker line, a kind tag line, then the fields as short labelled lines. Post with `gh issue comment N --body-file <file>`; edit in place with `gh api -X PATCH "repos/{owner}/{repo}/issues/comments/<id>" -F body=@<file>`.
 
-**Plan** (once; edit it in place when the plan changes):
+| Kind tag | When | Fields |
+|---|---|---|
+| `<!-- factory:plan -->` | first; edited in place | goal (one user-observable sentence); acceptance checks `AC<n>`, each with its check and how it fails before the change; side effects in scope; planned fold-ins; size `XS\|S\|M\|L\|XL`; risk tier. M and larger: a closing line asking for the owner's OK. |
+| `<!-- factory:question Q<n> -->` | per question; `n` counts up across the ticket | the question; whether it blocks shipping; context with `path:line`; options `A) B) …`; recommendation and why; done so far (what is pushed). |
+| `<!-- factory:log -->` | once; edited in place | the decision log table: `#`, item, found at, test, decision, where (vocabulary in [fold-in-test.md](fold-in-test.md#decision-log)). |
+| `<!-- factory:result <end_state> -->` | end of every run | end state `done\|parked\|failed`; reason; PR; evidence links; follow-ups. |
 
-```markdown
-<marker>
-<!-- factory:plan -->
-**Plan** · size S · risk low
-Goal: <one user-observable sentence>
-Acceptance:
-- AC1 <behaviour>. Check: `<command or observation>`. Fails before the change: <how>.
-Side effects in scope: <tests, docs, migration, config, deploy, live verify: the ones that apply>
-Planned fold-ins: <items, or none>
-```
+## Questions and parking
 
-For M and larger, end the plan with `Reply OK to start, or say what to change.` and park as for a question.
+A question parks the ticket: post it, `gh issue edit N --add-label needs-owner`, set the board status to blocked (config `board`, [below](#board-status)), record the result as `parked`, and stop. In a session, tell the person the question is on the ticket; the answer goes there, so the record stays whole.
 
-**Question** (one per comment, numbered across the ticket):
-
-```markdown
-<marker>
-<!-- factory:question Q2 -->
-**Q2 (blocks ship):** <one question>
-Context: <what was found, path:line, why it matters>
-Options: A) <...> B) <...>
-Recommended: A, because <...>
-Done so far: <what is committed and pushed on the branch>
-```
-
-**Decision log** (once; edit in place, and copy the table into the PR body as `## Scope`):
-
-```markdown
-<marker>
-<!-- factory:log -->
-**Decision log**
-| # | Item | Found at | Test | Decision | Where |
-|---|---|---|---|---|---|
-```
-
-**Result** (at the end of every run): `<!-- factory:result <done|parked|failed> -->` after the marker, then the end state, the PR, evidence links and follow-ups: the facts of `result.json`.
-
-Edit a comment in place with its id:
-
-```bash
-gh api "repos/{owner}/{repo}/issues/N/comments" --paginate --jq '.[] | select(.body | contains("<!-- factory:log -->")) | .id'
-gh api -X PATCH "repos/{owner}/{repo}/issues/comments/<id>" -F body=@<file>
-```
+The third question on a ticket means it is under-specified: post it, then `gh issue edit N --add-label needs-grooming --remove-label agent-ok` instead of `needs-owner`.
 
 ## Answers
 
-The answer to the open question is the **newest comment after it whose author is in `approvers` and whose body does not start with the marker**. Comments by any other account do not count, whatever they say.
+The answer is the **newest comment after the open question whose author is in `approvers` and whose body does not start with the marker**. Any other account's comment does not count.
 
 ```bash
 gh api "repos/{owner}/{repo}/issues/N/comments" --paginate \
   --jq '.[] | "\(.id) \(.user.login) \(.created_at) marked=\(.body | startswith("<!-- factory -->"))"'
 ```
 
-On an answer: remove the needs-owner label, set the board status back to in progress, add a log row for the decision, and continue. An answer can also widen or narrow the scope; log that too.
-
-## Parking
-
-After posting a question (or the M+ plan):
-
-```bash
-gh issue edit N --add-label needs-owner
-```
-
-and, with a `board` in the config, set its status field to the blocked option. Then write the result as `parked` and stop. In an attended session, tell the person the question is on the ticket; the answer still goes there, so the record stays whole.
-
-**Third park.** Count the `factory:question` comments on the ticket. When a third question would be needed, post it, then `gh issue edit N --add-label needs-grooming --remove-label agent-ok` instead of `needs-owner`: the ticket is under-specified and goes back to the owner.
+With no answer, the ticket stays parked: say so and stop. With one, remove `needs-owner`, set the board back to in progress, log the decision (answers may also widen or narrow the scope), and continue.
 
 ## Board status
 
-Only when the config has `board`. Find the ids once per run, then edit the item:
+Only with `board` in the config:
 
 ```bash
-gh project view <project> --owner <owner> --format json --jq .id                 # project id
-gh project field-list <project> --owner <owner> --format json                     # status field id and option ids
-gh project item-list <project> --owner <owner> --limit 1000 --format json \
-  --jq '.items[] | select(.content.number == N) | .id'                            # the issue's item on the board
-gh project item-edit --id <item-id> --project-id <project-id> --field-id <field-id> --single-select-option-id <option-id>
+gh project view <project> --owner <owner> --format json --jq .id     # project id
+gh project field-list <project> --owner <owner> --format json         # status field and option ids
+gh project item-list <project> --owner <owner> --limit 1000 --format json --jq '.items[] | select(.content.number == N) | .id'
+gh project item-edit --id <item> --project-id <project> --field-id <field> --single-select-option-id <option>
 ```

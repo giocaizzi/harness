@@ -32,7 +32,7 @@ Otherwise ask on the ticket.
 
 Never in the diff: "while I'm here" refactors, style changes outside the lines you touch, work that belongs to another open issue (comment a cross-link there instead).
 
-## Decision log rows
+## Decision log
 
 One row per item: what, where you found it, which test (`R1`, `R2`, `R3`, `separate`; add the failing `L` when you asked), the decision (`folded`, `asked`, `noted`, `filed`, `commented`) and where it landed (commit, question, issue or comment). The verifier traces every changed hunk to an acceptance check or a row, so an unlogged change fails the gate.
 
