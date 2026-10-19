@@ -62,7 +62,7 @@ These load by themselves when the work touches their subject; call them by name 
 | `subagent-orchestration` | spawn subagents, pick a model or effort, coordinate with other running sessions |
 | `unattended-runs` | start an overnight, headless or auto-approve run |
 
-`host-hygiene` also ships scripts the agent runs for you: `heavy.sh` (one heavy command at a time), `lease.sh` (exclusive use of a device or port), `register-service.sh`, `sweep-stale.sh` (stale worktrees, `--branches` for stale branches), with `.ps1` twins for Windows.
+`host-hygiene` also ships scripts the agent runs for you: `heavy.sh` (one heavy command at a time), `lease.sh` (exclusive use of a device or port), `register-service.sh`, `memory-lint.mjs` (report-only memory lint), `sweep-stale.sh` (stale worktrees, `--branches` for stale branches), with `.ps1` twins for Windows.
 
 ### Language skills
 
