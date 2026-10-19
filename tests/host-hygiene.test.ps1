@@ -128,6 +128,26 @@ try {
     Test-Equal -Name 'sweep never touches the current worktree' -Got @(& $shell -NoProfile -File $sweep | Where-Object { $_ -match 'wt-recent: current' }).Count -Want 1
     Pop-Location
     Stop-Process -Id $busy.Id -ErrorAction SilentlyContinue
+
+    # sweep-stale.ps1 --branches
+    $origin = Join-Path $tmp 'origin.git'
+    $br = Join-Path $tmp 'brrepo'
+    git init -q --bare -b main $origin
+    git init -q -b main $br
+    git -C $br -c user.name=t -c user.email=t@t commit -q --allow-empty -m init
+    git -C $br remote add origin $origin
+    git -C $br push -q origin main
+    foreach ($n in 'orphan', 'open', 'gone') { git -C $br branch $n; git -C $br push -q -u origin $n 2>$null }
+    git -C $origin branch -q -D gone
+    $env:SWEEP_OPEN_BRANCHES = 'open'
+    Push-Location $br
+    $out = @(& $shell -NoProfile -File $sweep --branches)
+    Test-Equal -Name 'branch sweep reports orphan remote and gone local only' -Got (($out | Sort-Object) -join ';') -Want 'would delete gone: upstream gone;would delete origin/orphan: no open PR'
+    Test-Equal -Name 'branch dry run deletes nothing' -Got @(git -C $origin branch).Count -Want 3
+    & $shell -NoProfile -File $sweep --branches --apply | Out-Null
+    Test-Equal -Name 'branch --apply deletes them, keeps open and default' -Got ((@(git -C $origin branch) + @(git -C $br branch) | ForEach-Object { $_.Trim('* ') } | Sort-Object) -join ' ') -Want 'main main open open'
+    Pop-Location
+    Remove-Item Env:SWEEP_OPEN_BRANCHES
 } finally {
     Remove-Item -Recurse -Force $tmp
 }

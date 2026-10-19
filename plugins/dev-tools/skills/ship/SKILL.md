@@ -11,7 +11,7 @@ Take the working tree to an open PR. Arguments: an optional hint for the commit 
 2. **Look before staging.** Read `git status` and the diff. Never stage secrets, `.env` files or build output; if a value looks like a credential, stop and say so (see `secrets-handling`).
 3. **Commit in logical units**, each a Conventional Commit (see `conventional-commits`) explaining what and why, unless the repo has its own commit convention. Several small commits beat one large one.
 4. **Check.** Run `make check`, or the repo's own check command; do not push a failing tree.
-5. **Push** with upstream tracking.
+5. **Push** with upstream tracking. Every pushed branch gets a PR: a throwaway CI probe goes in a draft PR, or its branch is deleted when the probe is done.
 6. **Open the PR** (GitLab: MR) if the branch has none, with the forge's CLI (`gh pr create`, `glab mr create`, `az repos pr create`; detection and flags in `repo-standard`), as a draft when asked. Arm merging with `land`, not here.
    - **Title:** `type(scope): lowercase description`. With squash merge it becomes the commit on `main`, so pick the type for the whole PR.
    - **Body:** the repo's PR template if it has one, else `## What`, `## Why`, `## Verification` (commands run and their result, checks skipped and why).
