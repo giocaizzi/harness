@@ -19,7 +19,9 @@
     "https://github.com/<owner>/<repo>/issues/<number>"
   ],
   "cost_usd": null,
+  "turns": null,
   "harness": "<claude-code|copilot-cli|vscode|codex|opencode|pi>",
   "model": "<model id as the harness reports it>",
+  "effort": "<effort level, or null>",
   "finished_at": "<ISO 8601 timestamp>"
 }

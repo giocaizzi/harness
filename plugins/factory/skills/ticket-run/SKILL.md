@@ -20,6 +20,8 @@ The repo's `.factory/config.yaml` holds what is particular to it: approvers, lab
 5. **Questions** go on the ticket and park it ([comments.md](references/comments.md#questions-and-parking)).
 6. **Finish:** verifier, ship, land, deploy, record ([done.md](references/done.md)).
 
+Models, effort and cost per phase, for anything you spawn: [routing.md](references/routing.md).
+
 ## Firm rules
 
 - Proceed only past the gate; never add the approval label.

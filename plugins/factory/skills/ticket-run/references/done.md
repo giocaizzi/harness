@@ -5,7 +5,7 @@
 A fresh-context `verifier` (this plugin's agent) gates the change; it must not be you. Brief it with the ticket (`<owner>/<repo>#N`), the branch, and the plan and log comments.
 
 - **Where:** a subagent where the harness has one (`factory:verifier` in Claude Code; the `verifier` agent in Copilot CLI, VS Code, Codex and opencode; the `subagent` tool on pi). Elsewhere, a separate headless session in the worktree, given the agent's prompt and the brief.
-- **Effort:** its preset `high`. For trivial changes (XS, docs-only, config-only) pass `medium`, or `low` when a deterministic check fully covers the change, where the harness takes an effort per spawn. Never above `high`.
+- **Model and effort:** its preset, Opus at `high`. For trivial changes (XS, docs-only, config-only) spawn it on Sonnet at `medium`, or `low` when a deterministic check fully covers the change, where the harness takes them per spawn ([routing.md](routing.md)). Never above `high`.
 - **Rounds:** fix what it reports and re-verify, at most three rounds. Still failing: end as `failed`, with its findings in the result comment and `needs-owner` set.
 
 ## Ship and land
@@ -26,6 +26,6 @@ A failed live check means the change does not work where it lands: open a revert
 Every run, `done`, `parked` or `failed`, ends with both:
 
 1. The result comment (kind `factory:result`, [comments.md](comments.md#comments)).
-2. `result.json` at `.factory/runs/N/result.json` in the main checkout, which outlives the worktree (the parent of `git rev-parse --path-format=absolute --git-common-dir`). Keys: `schema` (1), `ticket`, `end_state`, `reason`, `pr`, `decisions` (the log rows: `item`, `test`, `decision`, `where`), `evidence`, `follow_ups`, `cost_usd`, `harness`, `model`, `finished_at`; their meaning is in `docs/factory.md` (Result contract). `cost_usd` is `null` unless the harness reports it.
+2. `result.json` at `.factory/runs/N/result.json` in the main checkout, which outlives the worktree (the parent of `git rev-parse --path-format=absolute --git-common-dir`). Keys: `schema` (1), `ticket`, `end_state`, `reason`, `pr`, `decisions` (the log rows: `item`, `test`, `decision`, `where`), `evidence`, `follow_ups`, `cost_usd`, `turns`, `harness`, `model`, `effort`, `finished_at`; their meaning is in `docs/factory.md` (Result contract). `cost_usd` and `turns` are `null` unless the harness reports them.
 
 A parked ticket keeps its worktree and pushed branch for the next run.

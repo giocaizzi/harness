@@ -59,6 +59,10 @@ Before the PR ships, a fresh-context `verifier` agent that did not write the cha
 
 Its definition pins the model and effort, since a subagent with neither inherits the session's model and price: Opus at `high`, the one preset above `medium` in `subagent-orchestration`, because it is the last gate before a ticket ships. Trivial changes (XS, docs-only, config-only) are verified on Sonnet at `medium`, or `low` when a deterministic check fully covers them, set on the spawn; nothing goes above `high`. A verifier finding counts only when it blocks the merge and says how to show the failure, and a check that is syntax-only or failed to start is not evidence. Where a harness runs no subagent, the verifier runs as a separate session given the same brief (on pi, the `subagent` tool already starts one).
 
+## Models and cost
+
+Each phase runs on the cheapest model that does it well, set explicitly on every spawn because a subagent with no model inherits the session's price: lookups on the scout tier, XS and S implementation with clear acceptance checks on Sonnet, M and larger or brownfield work on Opus, verification as above, escalation per `subagent-orchestration`. A run costs its turns times the context each resends, so every phase gets a real check to finish in fewer turns. `result.json` records harness, model, effort, turns and cost where the harness reports them, so runs can be compared. A headless run takes its per-ticket cap from the harness's budget limit where one exists (Claude Code: `--max-budget-usd`, print mode only). The agent-facing table: `ticket-run`'s `references/routing.md`.
+
 ## Definition of done
 
 The whole scope is merged in one PR that closes the ticket (no partial PRs, no `Refs`-only PR); the component's deploy finished and its live checks passed, where it has a deploy; the evidence and the result are posted on the ticket.
@@ -78,8 +82,10 @@ Each run writes `.factory/runs/<number>/result.json` in the repo's main checkout
 | `evidence` | array of URLs | Comments, check runs or deploy runs that prove the acceptance checks. |
 | `follow_ups` | array of URLs | Issues opened or commented for separate work. |
 | `cost_usd` | number \| null | Run cost when the harness reports it, else `null`. |
+| `turns` | integer \| null | Model turns in the run when the harness reports them, else `null`. |
 | `harness` | string | `claude-code`, `copilot-cli`, `vscode`, `codex`, `opencode` or `pi`. |
 | `model` | string | The model id as the harness reports it. |
+| `effort` | string \| null | The session's effort level (`low` to `max`), or `null` when the harness has none. |
 | `finished_at` | string | ISO 8601 timestamp. |
 
 ## Config: `.factory/config.yaml`
