@@ -61,15 +61,16 @@ test('an ask the person allows in the guard dialog runs', async ($, on) => {
   expect((await $.tool.check(call)).decision).toBe('allow')
 })
 
-test('an ask the person denies is refused', async ($, on) => {
+test('an ask the person denies is refused, and the agent is told not to retry', async ($, on) => {
   on('tool.check', ask)
   answer(on, 'Deny')
   const r = await $.tool.check(call)
   expect(r.decision).toBe('deny')
-  expect(r.reason).toContain('denied')
+  expect(r.reason).toContain('The user denied')
+  expect(r.reason).toContain('Do not retry')
 })
 
-test('an ask nobody answers is denied after the timeout', async ($, on) => {
+test('an ask nobody answers is parked after the timeout, never called a user deny', async ($, on) => {
   const clock = mock.clock(on)
   on('tool.check', ask)
   on('tool.call', { tool: 'AskUserQuestion' }, () => new Promise(() => {}))
@@ -77,7 +78,81 @@ test('an ask nobody answers is denied after the timeout', async ($, on) => {
   await clock.advance(60_000)
   const r = await pending
   expect(r.decision).toBe('deny')
-  expect(r.reason).toContain("isn't there")
+  expect(r.reason).toContain('No answer')
+  expect(r.reason).toContain('not a refusal')
+  expect(r.reason).not.toContain('denied')
+})
+
+test('an ask whose dialog cannot show (headless, dismissed) is parked, not called a user deny', async ($, on) => {
+  on('tool.check', ask)
+  on('tool.call', { tool: 'AskUserQuestion' }, () => {
+    throw new Error('no dialog')
+  })
+  const r = await $.tool.check(call)
+  expect(r.decision).toBe('deny')
+  expect(r.reason).toContain('could not be shown')
+  expect(r.reason).not.toContain('denied')
+})
+
+test('dontAsk mode leaves the ask to the engine', async ($, on) => {
+  on('tool.check', ask)
+  on('tool.call', { tool: 'AskUserQuestion' }, () => {
+    throw new Error('must not ask')
+  })
+  on('classic.UserPromptSubmit', () => ({}))
+  await $.classic.UserPromptSubmit({ prompt: 'x', permission_mode: 'dontAsk' } as never)
+  expect((await $.tool.check(call)).decision).toBe('ask')
+})
+
+// Records posted to the collector, by event name, with the attributes as a map.
+function collector(on: Parameters<Parameters<typeof test>[1]>[1], env: Record<string, string>) {
+  on('env.get', (_$, e) => ({ value: env[e.name] }))
+  const posted: Record<string, string>[] = []
+  on('http.fetch', (_$, e) => {
+    const rec = JSON.parse(String(e.init?.body)).resourceLogs[0].scopeLogs[0].logRecords[0]
+    posted.push(Object.fromEntries(rec.attributes.map((a: { key: string; value: { stringValue: string } }) => [a.key, a.value.stringValue])))
+    return { value: { status: 200, ok: true, headers: {}, text: '' } }
+  })
+  return posted
+}
+const settle = async () => {
+  for (let i = 0; i < 20; i++) await Promise.resolve()
+}
+
+test('every ask outcome is reported as guard.ask_result', async ($, on) => {
+  const clock = mock.clock(on)
+  const posted = collector(on, { OTEL_EXPORTER_OTLP_ENDPOINT: 'http://collector' })
+  on('tool.check', ask)
+  answer(on, 'Allow')
+  await $.tool.check(call)
+  await clock.advance(1)
+  await settle()
+  expect(posted.map((p) => [p['event.name'], p.result, p.tool, p.harness])).toEqual([['guard.ask_result', 'allow', 'Bash', 'claude']])
+  expect(posted[0]?.wait_ms).toBeDefined()
+})
+
+test('a timeout is reported as guard.ask_result timeout', async ($, on) => {
+  const clock = mock.clock(on)
+  const posted = collector(on, { OTEL_EXPORTER_OTLP_ENDPOINT: 'http://collector' })
+  on('tool.check', ask)
+  on('tool.call', { tool: 'AskUserQuestion' }, () => new Promise(() => {}))
+  const pending = $.tool.check(call)
+  await clock.advance(60_000)
+  await pending
+  await settle()
+  expect(posted.map((p) => p.result)).toEqual(['timeout'])
+})
+
+test('the mod falls back to the GUARD_-prefixed endpoint, and GUARD_OTEL=off sends nothing', async ($, on) => {
+  on('session.usage', () => usage(95))
+  on('agent.spawn', () => ({ model: 'haiku', agentId: 'a1' }))
+  const env: Record<string, string> = { GUARD_OTEL_EXPORTER_OTLP_ENDPOINT: 'http://guard-collector' }
+  const posted = collector(on, env)
+  await $.agent.spawn({ prompt: 'x' })
+  expect(posted.map((p) => p['event.name'])).toEqual(['guard.throttle'])
+  env.GUARD_OTEL = 'off'
+  await $.agent.spawn({ prompt: 'x' })
+  expect(posted.length).toBe(1)
 })
 
 test('GUARD_ASK_TIMEOUT_MS sets the timeout', async ($, on) => {

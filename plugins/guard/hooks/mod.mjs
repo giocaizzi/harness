@@ -1,28 +1,39 @@
 // Claude Code mod (hooks.json `modules`; Copilot ignores the key): the usage throttle and the ask timeout.
 // The command guards run as command hooks for both harnesses; this holds only what needs the mods API.
 import { evaluateSpawn } from '../core/engine.mjs'
-import { logRequest } from '../core/otel.mjs'
+import { logRequest, otelOff } from '../core/otel.mjs'
 import { rules } from '../core/rules.mjs'
 
 // The window closest to its limit (a gateway spend limit is not a plan window).
 const worstWindow = (limits) => limits.filter((r) => r.kind !== 'spend_limit').sort((a, b) => b.percentUsed - a.percentUsed)[0]
 
-// The throttle denial as a log record for the OTel collector, when the session exports to one; never fails the denial.
-async function emitThrottle($, w) {
-  try {
-    const req = logRequest(
-      { endpoint: await $.env.get('OTEL_EXPORTER_OTLP_ENDPOINT'), headers: await $.env.get('OTEL_EXPORTER_OTLP_HEADERS'), resource: await $.env.get('OTEL_RESOURCE_ATTRIBUTES') },
-      'guard.throttle',
-      { action: 'deny', rule: 'usage-throttle', window: w?.kind, percent: w?.percentUsed, harness: 'claude' },
-    )
-    if (req) await $.http.fetch(req.url, { method: 'POST', headers: req.headers, body: req.body })
-  } catch {
-    // collector unreachable: the denial stands
+// The OTel export settings: each OTEL_* variable, else its GUARD_-prefixed copy, as for the command hooks
+// (core/otel.mjs); null when GUARD_OTEL=off.
+async function otelConfig($) {
+  if (otelOff({ GUARD_OTEL: await $.env.get('GUARD_OTEL') })) return null
+  return {
+    endpoint: (await $.env.get('OTEL_EXPORTER_OTLP_ENDPOINT')) || (await $.env.get('GUARD_OTEL_EXPORTER_OTLP_ENDPOINT')),
+    headers: (await $.env.get('OTEL_EXPORTER_OTLP_HEADERS')) || (await $.env.get('GUARD_OTEL_EXPORTER_OTLP_HEADERS')),
+    resource: (await $.env.get('OTEL_RESOURCE_ATTRIBUTES')) || (await $.env.get('GUARD_OTEL_RESOURCE_ATTRIBUTES')),
   }
 }
 
-// Permission asks deny after this long without an answer, so an unattended session never waits forever.
-// GUARD_ASK_TIMEOUT_MS overrides it; 0 turns it off (the engine's dialog waits for an answer).
+// One guard record to the OTel collector, when the session exports to one; never fails the caller.
+async function emitRecord($, event, attrs) {
+  try {
+    const config = await otelConfig($)
+    const req = config && logRequest(config, event, { ...attrs, harness: 'claude' })
+    if (req) await $.http.fetch(req.url, { method: 'POST', headers: req.headers, body: req.body })
+  } catch {
+    // collector unreachable: the decision stands
+  }
+}
+
+const emitThrottle = ($, w) => emitRecord($, 'guard.throttle', { action: 'deny', rule: 'usage-throttle', window: w?.kind, percent: w?.percentUsed })
+
+// Permission asks are parked (denied, with "no answer, carry on") after this long without an answer, in every mode:
+// the user may be working elsewhere, so a session never waits on a dialog. GUARD_ASK_TIMEOUT_MS overrides it; 0 turns
+// it off (the engine's dialog waits for an answer).
 export const ASK_TIMEOUT_MS = 60_000
 // Tools whose own dialog is the question (askUserQuestionTimeout covers AskUserQuestion); left to the engine.
 const PERSON_TOOLS = new Set(['AskUserQuestion', 'ExitPlanMode'])
@@ -47,17 +58,29 @@ async function askTimeoutMs($) {
   }
 }
 
-// Puts the ask in the plugin's own dialog and denies when nobody answers within `ms`.
+// What the agent is told when nobody answered: the user may be busy elsewhere, so the call is parked, not refused.
+const noAnswer = (tool, why) =>
+  `No answer: ${why}, so ${tool} was not run. This is not a refusal. Carry on with the rest of the task without it, or park it: say in your report that it is waiting for the user's approval.`
+
+// Puts the ask in the plugin's own dialog and denies when nobody answers within `ms`. Every outcome is reported as
+// guard.ask_result (allow, deny, timeout, unavailable) with how long it waited.
 async function askWithTimeout($, e, reason, ms) {
+  const started = await $.clock.now().catch(() => NaN)
   let expire
   const timedOut = new Promise((resolve) => (expire = resolve))
   const timer = $.clock.after(ms, () => expire('timeout'))
-  const asked = $.ui.ask(`Allow ${e.tool}? ${summary(e.input)}\n${reason ?? ''}\nDenied after ${ms / 1000} s without an answer.`, ['Allow', 'Deny']).catch(() => 'Deny')
+  // A dialog that cannot show (headless, a host without one) or is dismissed rejects: nobody answered.
+  const asked = $.ui.ask(`Allow ${e.tool}? ${summary(e.input)}\n${reason ?? ''}\nParked after ${ms / 1000} s without an answer.`, ['Allow', 'Deny']).catch(() => 'unavailable')
   const answer = await Promise.race([asked, timedOut])
   timer.cancel()
-  if (answer === 'Allow') return { decision: 'allow', reason: 'allowed in the guard dialog' }
-  if (answer === 'timeout') return { decision: 'deny', reason: `The user isn't there: nobody answered the permission prompt in ${ms / 1000} seconds, so ${e.tool} was not run. Carry on without it, or leave it for the user.` }
-  return { decision: 'deny', reason: `The user denied this ${e.tool} call.` }
+  const result = answer === 'Allow' ? 'allow' : answer === 'Deny' ? 'deny' : answer
+  const waited = (await $.clock.now().catch(() => NaN)) - started
+  // Not awaited: a slow collector never delays the decision.
+  void emitRecord($, 'guard.ask_result', { result, wait_ms: Number.isFinite(waited) ? waited : undefined, tool: e.tool, tool_use_id: e.tool_use_id })
+  if (result === 'allow') return { decision: 'allow', reason: 'allowed in the guard dialog' }
+  if (result === 'timeout') return { decision: 'deny', reason: noAnswer(e.tool, `nobody answered the permission prompt within ${ms / 1000} seconds`) }
+  if (result === 'unavailable') return { decision: 'deny', reason: noAnswer(e.tool, 'the permission prompt could not be shown or was dismissed') }
+  return { decision: 'deny', reason: `The user denied this ${e.tool} call. Do not retry it or a respelling of it; ask the user what they want instead.` }
 }
 
 export function register(on) {
@@ -70,6 +93,8 @@ export function register(on) {
     const r = await next(e)
     if (r.decision !== 'ask' || !e.tool_use_id || r.decider || PERSON_TOOLS.has(e.tool)) return r
     if (mode === 'auto' && !r.hook) return r
+    // dontAsk denies anything not pre-approved itself; there is no one to ask.
+    if (mode === 'dontAsk') return r
     const ms = await askTimeoutMs($)
     return ms ? askWithTimeout($, e, r.reason, ms) : r
   }).catch(($, e, next) => next(e))
