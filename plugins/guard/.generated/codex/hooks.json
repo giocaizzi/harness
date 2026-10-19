@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/awake.mjs\"",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/awake.mjs\" --harness=codex",
             "timeout": 15
           }
         ]
@@ -18,7 +18,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/guard.mjs\" PreToolUse --no-ask",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/guard.mjs\" PreToolUse --no-ask --harness=codex",
             "timeout": 30
           }
         ]
@@ -30,7 +30,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/lint.mjs\"",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/lint.mjs\" --harness=codex",
             "timeout": 60
           }
         ]
@@ -41,7 +41,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/guard.mjs\" UserPromptSubmit --no-ask",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/guard.mjs\" UserPromptSubmit --no-ask --harness=codex",
             "timeout": 10
           }
         ]
@@ -52,7 +52,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/stop.mjs\"",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/stop.mjs\" --harness=codex",
             "timeout": 1800
           }
         ]
@@ -63,7 +63,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/guard.mjs\" SessionEnd --no-ask",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/guard.mjs\" SessionEnd --no-ask --harness=codex",
             "timeout": 10
           }
         ]
