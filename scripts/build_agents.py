@@ -19,7 +19,9 @@ For every plugin in plugins/<plugin>/ with .claude-plugin/plugin.json the script
   plugins/<plugin>/.codex-plugin/plugin.json        Codex manifest; with hooks, it points Codex at
   plugins/<plugin>/.generated/codex/hooks.json      hooks.json without the Claude `modules` key (Codex rejects
                                                     the file otherwise), the guard run with `--no-ask` (Codex
-                                                    has no ask), plus the Codex-only hooks of hooks/codex-only.json.
+                                                    has no ask), every script with `--harness=codex` (its
+                                                    telemetry label), plus the Codex-only hooks of
+                                                    hooks/codex-only.json.
 
 Everything generated lives in a dot-folder, so every visible file under plugins/<plugin>/ is authored.
 Copilot files stay out of agents/: Claude loads any *.md there, including *.agent.md.
@@ -153,6 +155,9 @@ def _build_codex(plugin_dir: Path, *, check: bool) -> bool:
                 for hook in group.get("hooks", []):
                     if "/hooks/guard.mjs" in hook.get("command", ""):
                         hook["command"] += " --no-ask"
+                    # The scripts cannot tell Codex from Claude Code by environment (both set CLAUDE_PLUGIN_*).
+                    if hook.get("command", "").startswith("node "):
+                        hook["command"] += " --harness=codex"
         codex_only = plugin_dir / "hooks" / "codex-only.json"
         if codex_only.exists():
             for event, groups in json.loads(codex_only.read_text(encoding="utf-8"))["hooks"].items():
