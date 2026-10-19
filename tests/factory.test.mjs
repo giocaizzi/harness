@@ -21,6 +21,12 @@ test('result.json template: valid JSON whose keys are exactly the documented con
   assert.equal(result.schema, 1)
 })
 
+test('ticket-run names exactly the documented result keys', () => {
+  const line = read('plugins/factory/skills/ticket-run/references/done.md').split('\n').find((l) => l.includes('Keys: `schema`'))
+  const named = [...line.split('; their meaning')[0].replace(/\([^)]*\)/g, '').matchAll(/`([a-z_]+)`/g)].map((m) => m[1])
+  assert.deepEqual(named.sort(), tableKeys('Result contract').sort())
+})
+
 test('config.yaml template: top-level keys are exactly the documented ones', () => {
   const keys = read('plugins/factory/template/config.yaml').split('\n').filter((l) => /^[a-z_]+:/.test(l)).map((l) => l.split(':')[0])
   assert.deepEqual(keys.sort(), tableKeys('Config: `.factory/config.yaml`').sort())
