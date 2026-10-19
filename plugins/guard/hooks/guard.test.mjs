@@ -264,3 +264,23 @@ test('Codex has no read tool, so a shell read gets no hint there', async () => {
   assert.equal(decision(await setup({ readTool: false })(pre('Bash', 'cat a.txt'))), undefined)
   assert.match(decision(await setup()(pre('Bash', 'cat a.txt'))).additionalContext, /read tool/)
 })
+
+test('telemetry: the logged action is the effective one, with via, a command hash and never the command', async () => {
+  const events = []
+  const emit = async (event, attrs) => events.push(attrs)
+  await setup({ emit, env: { GUARD_UNATTENDED: '1' } })(pre('Bash', 'rm -rf build'))
+  await setup({ emit, noAsk: true, nativeAsk: async () => false })(pre('Bash', 'rm -rf build'))
+  await setup({ emit, noAsk: true, nativeAsk: async () => true })(pre('Bash', 'rm -rf build'))
+  await setup({ emit })(pre('Bash', 'rm -rf build'))
+  assert.deepEqual(events.map((e) => [e.action, e.via]), [['deny', 'unattended'], ['deny', 'no-ask'], ['ask', 'native-ask'], ['ask', undefined]])
+  for (const e of events) {
+    assert.match(e.cmd_hash, /^[0-9a-f]{12}$/)
+    assert.ok(!Object.values(e).includes('rm -rf build'))
+  }
+})
+
+test('telemetry: a host deny carries the host facts it was judged on', async () => {
+  const events = []
+  await setup({ emit: async (event, attrs) => events.push(attrs), hostFacts: async () => ({ load1: 45, freeGb: 100 }) })(pre('Bash', 'make test'))
+  assert.deepEqual([events[0].rule, events[0].load1, events[0].free_gb], ['host', 45, 100])
+})

@@ -15,6 +15,7 @@ import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { emit } from '../core/otel.mjs'
 import { rules } from '../core/rules.mjs'
+import { failedTarget, harnessName, recordAttrs, scrub } from './telemetry.mjs'
 
 const DEFAULT_TIMEOUT_MS = 1_750_000 // under the 1800 s hook limit in hooks.json
 const sha = (s) => createHash('sha256').update(s).digest('hex')
@@ -115,21 +116,22 @@ export function stopCheck(input, run = spawnSync, { strain = hostStrain, report 
     done('timeout')
     return { systemMessage: `make ${target} did not finish within ${Math.round(timeout / 1000)} s; not blocking. Raise GUARD_STOP_TIMEOUT_MS or run it by hand.` }
   }
-  done('fail')
-  const out = `${r.stdout ?? ''}${r.stderr ?? ''}`.trimEnd().split('\n').slice(-40).join('\n')
+  const all = `${r.stdout ?? ''}${r.stderr ?? ''}`.trimEnd()
+  // What failed, for telemetry: the innermost make target and the last output line, scrubbed of secrets.
+  report({ result: 'fail', target, duration_ms: Date.now() - started, failed_target: failedTarget(all), last_line: scrub(all.split('\n').at(-1)) })
+  const out = all.split('\n').slice(-40).join('\n')
   const reason = `make ${target} failed; fix before finishing:\n${out || r.error?.message || `exit ${r.status}`}`
   // Claude and Copilot CLI read the top-level decision; VS Code reads it from hookSpecificOutput.
   return { decision: 'block', reason, hookSpecificOutput: { hookEventName: 'Stop', decision: 'block', reason } }
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
-  const harness = process.env.CLAUDE_PLUGIN_DATA ? 'claude' : process.env.COPILOT_PLUGIN_DATA ? 'copilot' : 'other'
   try {
     const input = JSON.parse(readFileSync(0, 'utf8') || '{}')
     let event = null
     const out = stopCheck(input, spawnSync, { report: (attrs) => (event = attrs) })
     if (out) process.stdout.write(JSON.stringify(out))
-    if (event) await emit(process.env, 'guard.stop', { ...event, session_id: input.session_id, harness })
+    if (event) await emit(process.env, 'guard.stop', recordAttrs({ ...event, session_id: input.session_id }, input.cwd || process.cwd(), harnessName()))
   } catch {
     // unreadable payload: let the agent stop
   }
