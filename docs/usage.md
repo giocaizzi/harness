@@ -114,7 +114,8 @@ Settings are env vars, set in the shell that starts the harness (or the `env` bl
 | `GUARD_UNATTENDED=1` | off | Every risky ask becomes a deny. Use for overnight and headless runs (`unattended-runs` skill). |
 | `GUARD_STOP_CHECK=off` | on | Turns off `make check` on stop. |
 | `GUARD_STOP_TIMEOUT_MS` | `1750000` | Time limit for that check; a timeout is reported, not blocked. |
-| `GUARD_ASK_TIMEOUT_MS` | `60000` | Claude Code: an unanswered permission prompt is denied after this; `0` turns it off. |
+| `GUARD_ASK_TIMEOUT_MS` | `60000` | Claude Code: an unanswered permission prompt is parked after this (the agent is told nobody answered and to carry on, not that you denied it); `0` turns it off. |
+| `GUARD_OTEL=off` | on | Sends no guard telemetry, whatever the OTel endpoint (`make test` sets it). |
 | `GUARD_OTEL_EXPORTER_OTLP_ENDPOINT`, `GUARD_OTEL_EXPORTER_OTLP_HEADERS` | unset | Send each deny and ask to Grafana as logs ([guard.md](guard.md#grafana)). |
 
 A repo with a slow suite defines a `check-fast` make target; the stop hook runs that instead of `check`.
