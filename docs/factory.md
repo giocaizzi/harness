@@ -50,6 +50,12 @@ Anything found during the work is in scope when an acceptance check needs it, wh
 
 An in-scope item that is not a must-have is folded in by the agent alone only if it stays in the ticket's component, grows the ticket by at most one size step, does not raise the risk tier, and needs no owner or product decision. Otherwise the agent asks. Items that are not in scope are separate work: the agent searches for an existing issue and comments there, or opens one new backlog issue grouping related findings, never with the approval label. There is no numeric cap; flooding is watched through how many agent-filed issues end as duplicates or not planned.
 
+## Verification
+
+Before the PR ships, a fresh-context `verifier` agent that did not write the change checks four things: every changed hunk traces to an acceptance check or a decision-log row; every side effect is in the diff; each acceptance check has evidence that could have failed; and the PR carries the whole scope and `Closes #N`. It reports only what blocks the merge.
+
+Its effort is `high` by default, the one preset above `medium` in `subagent-orchestration`, because it is the last gate before a ticket ships. Trivial changes (XS, docs-only, config-only) are verified at `medium`, or `low` when a deterministic check fully covers them; nothing goes above `high`. Where a harness runs no subagent, the verifier runs as a separate session given the same brief (on pi, the `subagent` tool already starts one).
+
 ## Definition of done
 
 The whole scope is merged in one PR that closes the ticket (no partial PRs, no `Refs`-only PR); the component's deploy finished and its live checks passed, where it has a deploy; the evidence and the result are posted on the ticket.
