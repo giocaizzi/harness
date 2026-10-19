@@ -10,7 +10,7 @@ import { readFileSync } from 'node:fs'
 import { branchFacts, evaluateCommand, regenFacts, worktreeFacts } from './engine.mjs'
 import { rules } from './rules.mjs'
 
-const OPEN = new Set(['G01', 'G04', 'G07', 'G08', 'G09', 'G10', 'G11', 'G12', 'G13', 'G14', 'G15', 'G16', 'G17', 'G18', 'G19', 'G22'])
+const OPEN = new Set(['G07', 'G09', 'G10', 'G11', 'G12', 'G13', 'G14', 'G15', 'G16', 'G17', 'G18', 'G19', 'G22'])
 
 const corpus = JSON.parse(readFileSync(new URL('./corpus.json', import.meta.url), 'utf8'))
 const env = { TMPDIR: '/var/folders/ab/xyz/T/', HOME: '/Users/me' }
@@ -26,7 +26,7 @@ const run = async (argv) => {
 }
 
 const decide = async (command, { python = null, hints = false } = {}) => {
-  const [worktrees, branches, regenerable] = await Promise.all([worktreeFacts(command, env, rules, run), branchFacts(command, rules, run), regenFacts(command, env, rules, run)])
+  const [worktrees, branches, regenerable] = await Promise.all([worktreeFacts(command, env, rules, run), branchFacts(command, rules, run, env), regenFacts(command, env, rules, run)])
   const state = { reminded: new Set(hints ? [] : ['read', 'edit']) }
   const d = evaluateCommand({ command, loadedSkills, state, env, worktrees, branches, regenerable, python, rules })
   return d.action + (d.rule && !(d.action === 'allow' && !d.remind) ? `:${d.rule}` : '')
