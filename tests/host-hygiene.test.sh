@@ -121,4 +121,21 @@ check "--apply removes it" "$([ -d "$tmp/wt-old" ] && echo kept)$(git -C "$repo"
 check "sweep never touches the current worktree" "$(cd "$tmp/wt-recent" && "$sweep" | grep -c 'wt-recent: current')" 1
 { kill "$busy"; wait "$busy"; } 2>/dev/null
 
+# sweep-stale.sh --branches
+git init -q --bare -b main "$tmp/origin.git"
+br=$tmp/brrepo
+git init -q -b main "$br" && git -C "$br" -c user.name=t -c user.email=t@t commit -q --allow-empty -m init
+git -C "$br" remote add origin "$tmp/origin.git" && git -C "$br" push -q origin main
+for n in orphan open gone; do git -C "$br" branch "$n"; git -C "$br" push -q -u origin "$n" 2>/dev/null; done
+git -C "$tmp/origin.git" branch -q -D gone
+export SWEEP_OPEN_BRANCHES=open
+out=$(cd "$br" && "$sweep" --branches)
+check "branch sweep reports orphan remote and gone local only" \
+  "$(echo "$out" | grep -c '^would delete')$(echo "$out" | grep -c -e 'would delete origin/orphan' -e 'would delete gone: upstream gone')" 22
+check "branch dry run deletes nothing" "$(git -C "$tmp/origin.git" branch | wc -l | tr -d ' ')" 3
+(cd "$br" && "$sweep" --branches --apply >/dev/null 2>&1)
+check "branch --apply deletes them, keeps open and default" \
+  "$(git -C "$tmp/origin.git" branch | tr -d ' *' | sort | tr '\n' ' ')$(git -C "$br" branch | tr -d ' *' | sort | tr '\n' ' ')" "main open main open "
+unset SWEEP_OPEN_BRANCHES
+
 exit "$fails"

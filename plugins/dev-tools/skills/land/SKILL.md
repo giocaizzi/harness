@@ -11,6 +11,7 @@ Take an open PR (GitLab: MR) to merged and clean. Argument: a PR number; default
 2. **Merge only when every check passed.** Never merge on a failing or missing check, even if branch protection would not stop you; a red check on `main` is fixed first, in its own PR.
 3. **Merge without bypassing** through the forge's auto-merge (`gh pr merge --auto --squash`, `glab mr merge --auto-merge --squash`, `az repos pr update --auto-complete true --squash true`), or enqueue when a merge queue exists. Never use `--admin`, `--bypass-policy` or disable a rule.
 4. **Keep stacked children alive:** if other PRs are based on this branch, do not delete it (`gh pr list --base <branch>`, `glab mr list --target-branch <branch>`, `az repos pr list --target-branch <branch>`); a forge may close PRs whose base disappears. Retarget them first.
+   A PR closed without merging keeps its branch (GitHub deletes only on merge): delete it (`git push origin --delete <branch>`) once no child is based on it.
 5. **Wait until merged**, then `git pull --ff-only` on the default branch.
 6. **Clean up:** `git worktree remove <path>` for this task's worktree, never `--force`; if it refuses, report what is left in the worktree (`git -C <path> status --short`) and stop. Then delete the local branch and `git worktree prune`.
 7. **Verify where it lands.** Merged is not working: wait for whatever the merge triggers, then prove the change took effect with one check that reads the real target, not the repo. For example:
