@@ -1,6 +1,6 @@
 ---
 name: land
-description: Wait for CI on a PR, fix trivial failures, merge it through auto-merge or the merge queue, then sync main, remove the branch and worktree, and verify the change works where it lands. Use when the user asks to merge, land or verify a PR, or types /land or /verify (optionally a PR number).
+description: Wait for CI on a PR, fix trivial failures, merge it through auto-merge or the merge queue (a direct squash merge once every check passed where auto-merge is unavailable), then sync main, remove the branch and worktree, and verify the change works where it lands. Use when the user asks to merge, land or verify a PR, or types /land or /verify (optionally a PR number).
 ---
 
 # Land
@@ -10,6 +10,7 @@ Take an open PR (GitLab: MR) to merged and clean. Argument: a PR number; default
 1. **Watch CI** (GitHub `gh pr checks --watch`, GitLab `glab ci status --live`, Azure DevOps `az repos pr policy list`). On failure, fix lint or format problems with a new commit and push; for anything else, stop and report the failing job and its log.
 2. **Merge only when every check passed.** Never merge on a failing or missing check, even if branch protection would not stop you; a red check on `main` is fixed first, in its own PR.
 3. **Merge without bypassing** through the forge's auto-merge (`gh pr merge --auto --squash`, `glab mr merge --auto-merge --squash`, `az repos pr update --auto-complete true --squash true`), or enqueue when a merge queue exists. Never use `--admin`, `--bypass-policy` or disable a rule.
+   **Auto-merge unavailable** (GitHub only; for example a private repo on the Free plan): when the forge reports it (`gh repo view --json autoMergeAllowed` is `false`, or arming fails with `Auto merge is not allowed for this repository`) and the repo has no merge queue (a queue gives the same error; enqueue instead), merge directly once `gh pr checks <n> --watch` exits 0 with every check passed: `gh pr merge <n> --squash --match-head-commit <sha>`, with the head SHA the checks ran on. Never enable the repo setting or add `--admin` to get there; if the plain merge is refused, stop and report why.
 4. **Keep stacked children alive:** if other PRs are based on this branch, do not delete it (`gh pr list --base <branch>`, `glab mr list --target-branch <branch>`, `az repos pr list --target-branch <branch>`); a forge may close PRs whose base disappears. Retarget them first.
    A PR closed without merging keeps its branch (GitHub deletes only on merge): delete it (`git push origin --delete <branch>`) once no child is based on it.
 5. **Wait until merged**, then `git pull --ff-only` on the default branch.
