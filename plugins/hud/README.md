@@ -19,6 +19,7 @@ Heads-up display for Claude Code (a mod), a status line for Claude Code and Copi
 | `/refresh-refs` | mod `command.run`; pi command | Claude, pi | Forgets the looked-up states, files and commits so replies ask again (states also refresh by themselves after 5 minutes). |
 | pi footer | pi extension (`hooks/pi.mjs`) | pi | Context weather, model, PR with checks, unpushed and uncommitted work, after each run. |
 | Status line | `statusLine.command` | Claude, Copilot | Claude: `┌[ user@host] [ branch *] [ gcp] [ session]` and `└[ path] [ model] [ 55%] [ 5h 62% 2h15m] [ 7d 5% 3d4h] [ 1.84]`. Copilot: `[ 9%] [ 50%] [ 3 req]`. |
+| Agent-panel rows | `subagentStatusLine.command` | Claude | The default subagent row with the subagent's model and effort before the time: `ticket-103  Ticket-run #103  Sonnet 5.5 · high · 3m 49s · ↓ 286.1k tokens`. |
 
 ## Install
 

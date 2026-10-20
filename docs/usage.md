@@ -141,6 +141,7 @@ Claude Code shows everything; Copilot CLI and pi a subset ([compatibility.md](co
 | Part | Where | Shows |
 |---|---|---|
 | Status line | bottom two lines | user@host, branch and dirty mark, GCP project, session; path, model, context %, 5h and 7d limits with reset time, cost |
+| Agent-panel rows | under the prompt, one per subagent | the default row (name, task, time, tokens) with the subagent's model and effort |
 | Band | above the prompt | cache hit %, prompt-cache countdown, context sparkline; the branch's PR with CI (click to open); unpushed and uncommitted work; a forecast when a limit will fill before it resets; running subagents |
 | Spinner | while a tool runs | the tool's verb |
 | Turn footer | under a turn | duration, tokens in and out, cache hit %, cost |
