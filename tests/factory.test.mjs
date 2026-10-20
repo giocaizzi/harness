@@ -243,7 +243,8 @@ test('guard: every factory skill command that names the approval label is one pl
 
 test('guard: every gh command in the factory skills passes the factory-run guard', () => {
   const run = (command) => evaluateCommand({ command, state: { reminded: new Set(), loaded: new Set(), hinted: new Set() }, host: {}, factory: { approval: 'agent-ok' }, rules })
-  const files = ['plugins/factory/skills/ticket-run/SKILL.md', 'plugins/factory/skills/ticket-run/references/comments.md', 'plugins/factory/skills/ticket-run/references/done.md', 'plugins/factory/skills/factory-status/SKILL.md']
+  const files = spawnSync('git', ['ls-files', 'plugins/factory/skills/**/*.md'], { cwd: repo, encoding: 'utf8' }).stdout.trim().split('\n')
+  assert.ok(files.includes('plugins/factory/skills/ticket-run/references/fold-in-test.md'), files.join('\n'))
   const commands = files.flatMap((f) => {
     const text = read(f)
     const blocks = text.split('```bash').slice(1).flatMap((b) => b.split('```')[0].split('\n').map((l) => l.replace(/\s+#\s.*$/, '').trim()))

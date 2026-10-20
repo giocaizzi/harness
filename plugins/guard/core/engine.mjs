@@ -813,9 +813,10 @@ function ghAction(args) {
 const GH_SUBCOMMANDS = new Set(['issue', 'pr', 'repo', 'run', 'workflow', 'search', 'release', 'project', 'auth', 'label', 'browse', 'status']);
 
 // A line that is not one plain `gh` command but runs `gh` with `api` or a subcommand the guard cannot read literally
-// (`gh $'a'pi`, `gh "$X"`). Read with quotes and backslashes removed, as the shell joins them; `-R`/`--repo` may come first.
+// (`gh $'a'pi`, `gh "$X"`, `gh>/dev/null api`, zsh `=gh`). Read with quotes and backslashes removed, as the shell joins
+// them; `-R`/`--repo` may come first.
 function opaqueGh(flat) {
-  for (const m of flat.matchAll(/(?:^|[\s;&|(){}`!])(?:[^\s;&|(){}`!]*\/)?gh(?:\.exe)?(?=[\s;&|()`]|$)/g)) {
+  for (const m of flat.matchAll(/(?:^|[\s;&|(){}`!=])(?:[^\s;&|(){}`!=]*\/)?gh(?:\.exe)?(?=[\s;&|()`<>]|$)/g)) {
     const words = flat.slice(m.index + m[0].length).split(/[\s;&|()<>`]+/).filter(Boolean);
     let i = 0;
     while (words[i] === '-R' || words[i] === '--repo' || /^--repo=/.test(words[i] ?? '')) i += words[i].includes('=') ? 1 : 2;
@@ -838,7 +839,8 @@ export function touchesApprovalLabel(command, label) {
   const action = args && ghAction(args);
   // A glued short flag is read without its flag (`-lagent-ok`).
   if (named.test(command) || flat.split(/\s+/).some((w) => named.test(w) || named.test(w.replace(/^-[A-Za-z]=?/, '')))) return action !== 'read';
-  if (!args && opaqueGh(flat)) return true;
+  // A Windows path to gh (`C:\…\gh.exe`) loses its backslashes in `flat`: deny it outright.
+  if (!args && (opaqueGh(flat) || /\\gh(?:\.exe)?(?![\w-])/i.test(command))) return true;
   if (/\bgh\b/.test(flat) && /--input\b|=@/.test(flat)) {
     if (!action || action === 'read') return action !== 'read';
     const path = action.write.split('?')[0].replace(/\/+$/, '');

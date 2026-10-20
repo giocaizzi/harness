@@ -1053,6 +1053,12 @@ test('factory run: a command naming the approval label is denied unless it only 
     'cat b.json | gh api repos/o/r/issues/7/labels --input -',
     'git push && gh -R o/r api repos/o/r/issues/7/labels -X POST -F labels[]=@l.txt',
     'gh api repos/{owner,x}/r/issues/7/labels/agent-ok',
+    // Round 7: a redirection glued to gh, zsh `=gh`, a Windows path to gh.exe.
+    "gh>/dev/null api repos/o/r/issues/7/labels --in$'p'ut b.json",
+    "gh</dev/null api repos/o/r/issues/7/labels --in$'p'ut b.json",
+    "gh>&2 api repos/o/r/issues/7/labels -F labels[]=$'@'l.txt",
+    "=gh api repos/o/r/issues/7/labels --in$'p'ut b.json",
+    '& "C:\\Program Files\\GitHub CLI\\gh.exe" api repos/o/r/issues/7/labels --input b.json',
     'EDIT=$(gh api graphql -F n=7 -F owner=o -F name=r --jq .data -f query=\'query{viewer{login}}\')',
     'gh api -X POST repos/o/r/issues/7/labels --input body.json',
     'gh api -X PATCH repos/o/r/issues/7 --input body.json',
