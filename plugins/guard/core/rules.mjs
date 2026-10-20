@@ -69,6 +69,24 @@ export const rules = {
         "python-testing"
       ],
       "why": "tests follow the house pytest conventions"
+    },
+    {
+      "id": "go-test",
+      "remind": true,
+      "match": "\\bgo\\s+test\\b",
+      "skills": [
+        "go-testing"
+      ],
+      "why": "tests follow the house Go test conventions"
+    },
+    {
+      "id": "go-lint",
+      "remind": true,
+      "match": "\\bgo\\s+(vet|build)\\b|\\bgolangci-lint\\b",
+      "skills": [
+        "go-development"
+      ],
+      "why": "build and lint follow the house Go conventions"
     }
   ],
   // Edits whose path matches: a once-per-session hint toward the skill.
