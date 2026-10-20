@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { tmpdir, userInfo } from 'node:os'
@@ -248,6 +248,27 @@ test('telemetry: a deny and an ask emit a decision record, an allow does not', a
   assert.deepEqual(sent, [['guard.decision', 'deny']])
   await run({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'ls' } })
   assert.equal(sent.length, 1)
+})
+
+test('FACTORY_EVENTS_FILE: one JSON line per deny or ask with ts, decision, rule and cmd_hash, never the command', async () => {
+  const file = join(mkdtempSync(join(tmpdir(), 'guard-events-')), 'events.jsonl')
+  const run = setup({ env: { FACTORY_EVENTS_FILE: file } })
+  await run(pre('Bash', 'git commit -m "bad title"'))
+  await run(pre('Bash', 'ls'))
+  const lines = readFileSync(file, 'utf8').trim().split('\n').map((l) => JSON.parse(l))
+  assert.equal(lines.length, 1)
+  assert.deepEqual(Object.keys(lines[0]), ['ts', 'decision', 'rule', 'cmd_hash'])
+  assert.equal(lines[0].decision, 'deny')
+  assert.match(lines[0].cmd_hash, /^[0-9a-f]{12}$/)
+  assert.ok(!Number.isNaN(Date.parse(lines[0].ts)))
+  assert.doesNotMatch(readFileSync(file, 'utf8'), /bad title|git commit/)
+})
+
+test('FACTORY_EVENTS_FILE: unset writes nothing, an unwritable path leaves the decision standing', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'guard-events-'))
+  assert.equal(decision(await setup({ env: { FACTORY_EVENTS_FILE: join(dir, 'missing', 'events.jsonl') } })(pre('Bash', 'git commit -m "bad"'))).permissionDecision, 'deny')
+  assert.equal(decision(await setup()(pre('Bash', 'git commit -m "bad"'))).permissionDecision, 'deny')
+  assert.deepEqual(readdirSync(dir), [])
 })
 
 test('telemetry: guard.skill once per loaded skill (typed /name only for marketplace skills), guard.reminder per hint', async () => {

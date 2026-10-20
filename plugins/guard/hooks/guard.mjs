@@ -13,7 +13,7 @@ import { cpuPercentFrom } from '../core/host.mjs'
 import { emit } from '../core/otel.mjs'
 import { rules } from '../core/rules.mjs'
 import { pluginDataDir } from './data.mjs'
-import { commandHash, harnessName, recordAttrs } from './telemetry.mjs'
+import { appendDecision, commandHash, harnessName, recordAttrs } from './telemetry.mjs'
 
 // Claude Bash/PowerShell, Copilot bash/powershell, VS Code run_in_terminal. VS Code ignores matchers, so every
 // tool call reaches this script and anything else passes untouched.
@@ -175,8 +175,10 @@ async function onShell(input, state, deps) {
     state.reminded = [...reminded]
     // Logged after the harness-specific transforms, so `action` is what happened: an ask that became a deny is a deny,
     // with `via` saying why (unattended, no-ask) or how the ask was made (native-ask: the harness's own prompt).
-    const report = (action, via) =>
-      deps.emit?.('guard.decision', { rule: d.rule, action, via, tool: String(input.tool_name ?? ''), session_id: input.session_id, tool_use_id: input.tool_use_id, cmd_hash: commandHash(command), ...(d.rule === 'host' ? hostAttrs(host) : {}) }, input.cwd)
+    const report = (action, via) => {
+      appendDecision(deps.env, { decision: action, rule: d.rule, cmd_hash: commandHash(command) })
+      return deps.emit?.('guard.decision', { rule: d.rule, action, via, tool: String(input.tool_name ?? ''), session_id: input.session_id, tool_use_id: input.tool_use_id, cmd_hash: commandHash(command), ...(d.rule === 'host' ? hostAttrs(host) : {}) }, input.cwd)
+    }
     if (d.remind) await deps.emit?.('guard.reminder', { rule: d.rule, tool: String(input.tool_name ?? ''), session_id: input.session_id, tool_use_id: input.tool_use_id }, input.cwd)
     if (d.action === 'deny') {
       await report('deny', d.split ? 'split' : undefined)
@@ -205,7 +207,10 @@ async function onShell(input, state, deps) {
     return d.context ? note(d.context) : {}
   } catch (err) {
     // Fail open for reminders, closed for risky commands.
-    if (isRisky(command, rules)) await deps.emit?.('guard.decision', { rule: 'guard-error', action: 'deny', tool: String(input.tool_name ?? ''), session_id: input.session_id, tool_use_id: input.tool_use_id, cmd_hash: commandHash(command) }, input.cwd)
+    if (isRisky(command, rules)) {
+      appendDecision(deps.env, { decision: 'deny', rule: 'guard-error', cmd_hash: commandHash(command) })
+      await deps.emit?.('guard.decision', { rule: 'guard-error', action: 'deny', tool: String(input.tool_name ?? ''), session_id: input.session_id, tool_use_id: input.tool_use_id, cmd_hash: commandHash(command) }, input.cwd)
+    }
     return isRisky(command, rules) ? preToolUse('deny', `The command guard failed, so this risky command was not run: ${err?.message ?? err}`) : {}
   }
 }

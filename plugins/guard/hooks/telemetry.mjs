@@ -2,7 +2,7 @@
 // a command is reported as a short hash of its normalised form, enough to count repeats without its content.
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { readFileSync } from 'node:fs'
+import { appendFileSync, readFileSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { otelEnabled } from '../core/otel.mjs'
@@ -67,3 +67,15 @@ export function failedTarget(output) {
 
 // 12 hex chars of the sha256 of the command with runs of whitespace collapsed.
 export const commandHash = (command) => createHash('sha256').update(String(command).trim().replace(/\s+/g, ' ')).digest('hex').slice(0, 12)
+
+// One JSON line per decision to $FACTORY_EVENTS_FILE, when a factory runtime sets it: the runtime's guard deny-rate
+// breaker reads it. Only the hash of the command, never its text; a failed write is dropped and the decision stands.
+export function appendDecision(env, { decision, rule, cmd_hash }, now = new Date(), append = appendFileSync) {
+  const file = env?.FACTORY_EVENTS_FILE
+  if (!file) return
+  try {
+    append(file, `${JSON.stringify({ ts: now.toISOString(), decision, rule, cmd_hash })}\n`)
+  } catch {
+    // unwritable path: telemetry never blocks a decision
+  }
+}

@@ -123,6 +123,8 @@ Every record carries `harness` (`claude`, `copilot`, `vscode`, `codex` from the 
 
 The resource carries `service.name=guard` plus `OTEL_RESOURCE_ATTRIBUTES` (`service.namespace`, `host.name`). In Loki: stream labels `service_name`, `host_name`, `service_namespace`; structured metadata `rule`, `action`, `via`, `result`, `tool`, `harness`, `guard_version`, `repo`, `window`, `percent`.
 
+**Factory events file.** When `FACTORY_EVENTS_FILE` is set (a factory runtime sets it for the runs it starts, [factory.md](factory.md)), each `guard.decision` is also appended to that file as one JSON line `{"ts", "decision", "rule", "cmd_hash"}`: `ts` ISO 8601, `decision` the effective action (`deny` or `ask`, as above), never the command text. It works in every harness, with or without an OTLP endpoint and whatever `GUARD_OTEL` says; a write that fails is dropped and the decision stands. The runtime's guard deny-rate breaker reads it.
+
 Verify: after a denied command, `{service_name="guard"}` in Grafana Explore shows the record; `sum by (rule) (count_over_time({service_name="guard"} | rule != "" [1h]))` counts denials per rule.
 
 `GUARD_OTEL=off` (also `0`, `false`) sends nothing, whatever the endpoint. `make test` sets it, and so must any probe that spawns `hooks/guard.mjs` or imports the engine from a shell that exports the collector: fake sessions otherwise land in the real telemetry.
