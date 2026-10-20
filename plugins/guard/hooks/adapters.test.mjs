@@ -95,6 +95,14 @@ test('opencode: a failing make check on idle is sent back once', async () => {
   assert.match(sent[0].body.parts[0].text, /make check failed/)
 })
 
+test("opencode: a subagent's idle session (it has a parent) runs no check", async () => {
+  const sent = []
+  const client = { session: { get: async () => ({ data: { parentID: 'p' } }), prompt: async (p) => sent.push(p) } }
+  const hooks = await GuardPlugin({ client, directory: dir({ Makefile: 'check:\n\t@false\n' }) }, deps())
+  await hooks.event({ event: { type: 'session.idle', properties: { sessionID: 'child' } } })
+  assert.equal(sent.length, 0)
+})
+
 const fakePi = () => {
   const handlers = {}
   const sent = []

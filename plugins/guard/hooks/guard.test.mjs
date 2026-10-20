@@ -5,7 +5,7 @@ import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { tmpdir, userInfo } from 'node:os'
 import { join } from 'node:path'
-import { CODEX_RULES, codexAsks, handle, pythonManager, sessionStore } from './guard.mjs'
+import { CODEX_RULES, codexAsks, codexReviewer, handle, pythonManager, sessionStore, tail } from './guard.mjs'
 import { fallbackDataDir } from './data.mjs'
 import { codexRules } from '../core/engine.mjs'
 import { rules } from '../core/rules.mjs'
@@ -43,7 +43,7 @@ test('Codex, pi and opencode ways of loading a skill count as loaded', async () 
     { hook_event_name: 'UserPromptSubmit', prompt: '$ship now' },
     { hook_event_name: 'UserPromptSubmit', prompt: '/skill:ship' },
     pre('Bash', 'sed -n 1,200p /x/plugins/cache/h/dev-tools/1.0.0/skills/ship/SKILL.md'),
-    { hook_event_name: 'PreToolUse', tool_name: 'read', tool_input: { path: 'C:\\h\\skills\\ship\\SKILL.md' } },
+    { hook_event_name: 'PreToolUse', tool_name: 'read', tool_input: { path: 'C:\\Users\\me\\.pi\\agent\\git\\harness\\plugins\\dev-tools\\skills\\ship\\SKILL.md' } },
     { hook_event_name: 'PreToolUse', tool_name: 'skill', tool_input: { name: 'ship' } },
   ]) {
     const h = setup()
@@ -373,4 +373,64 @@ test('without a session id nothing is kept, and the fallback data dir is per use
   await handle({ hook_event_name: 'PreToolUse', tool_name: 'Skill', tool_input: { skill: 'ship' } }, { dataDir, env: {}, hostFacts: calm, run: async () => null })
   assert.equal(existsSync(join(dataDir, 'sessions')), false)
   assert.match(fallbackDataDir(), new RegExp(`guard-plugin-${process.getuid?.() ?? userInfo().username}$`))
+})
+
+test('lookups that outrun the budget are dropped: the risky command still gets a decision, an ask', async () => {
+  const h = setup({ run: () => new Promise(() => {}), factsMs: 100, previewMs: 100 })
+  const started = Date.now()
+  const d = decision(await h(pre('Bash', 'rm -rf node_modules')))
+  assert.ok(Date.now() - started < 2000)
+  assert.equal(d.permissionDecision, 'ask')
+  assert.match(d.permissionDecisionReason, /Checks unfinished/)
+})
+
+test('a decision does not wait for telemetry', async () => {
+  const h = setup({ emit: () => new Promise(() => {}) })
+  assert.equal(decision(await h(pre('Bash', 'rm -rf build'))).permissionDecision, 'ask')
+})
+
+test("Codex's reviewer is read from the rollout's last 256 KB only", () => {
+  const dir = mkdtempSync(join(tmpdir(), 'guard-test-'))
+  const ctx = (reviewer) => JSON.stringify({ type: 'turn_context', payload: { approvals_reviewer: reviewer } })
+  const filler = `${JSON.stringify({ type: 'event', payload: 'x'.repeat(1000) })}\n`.repeat(400)
+  writeFileSync(join(dir, 'recent.jsonl'), `${ctx('agent')}\n${filler}${ctx('user')}\n`)
+  writeFileSync(join(dir, 'old.jsonl'), `${ctx('user')}\n${filler}`)
+  assert.equal(codexReviewer(tail(join(dir, 'recent.jsonl'))), 'user')
+  assert.equal(codexReviewer(tail(join(dir, 'old.jsonl'))), undefined, 'older than the tail: unknown, so denied')
+})
+
+test('a SKILL.md counts as loaded only when read under a skill root, never when written', async () => {
+  const committed = async (load) => {
+    const h = setup()
+    await h(load)
+    return decision(await h(pre('Bash', 'git commit')))?.permissionDecision
+  }
+  const cached = '/Users/me/.claude/plugins/cache/giocaizzi-harness/dev-tools/1.24.0/skills/ship/SKILL.md'
+  assert.equal(await committed({ hook_event_name: 'PreToolUse', tool_name: 'Write', tool_input: { file_path: cached, content: 'x' } }), 'deny')
+  assert.equal(await committed(pre('Bash', `sed -i s/a/b/ ${cached}`)), 'deny')
+  assert.equal(await committed({ hook_event_name: 'PreToolUse', tool_name: 'Read', tool_input: { file_path: '/tmp/scratch/skills/ship/SKILL.md' } }), 'deny')
+  assert.equal(await committed(pre('Bash', 'echo skills/ship/SKILL.md')), 'deny')
+  assert.equal(await committed({ hook_event_name: 'PreToolUse', tool_name: 'Read', tool_input: { file_path: cached } }), undefined)
+  assert.equal(await committed(pre('Bash', 'cat plugins/dev-tools/skills/ship/SKILL.md')), undefined)
+})
+
+test('a skill loaded by its namespaced and its bare name is one guard.skill', async () => {
+  const events = []
+  const h = setup({ emit: (event, attrs) => events.push([event, attrs]), knownSkills: new Set(['ship']) })
+  await h({ hook_event_name: 'PreToolUse', tool_name: 'Skill', tool_input: { skill: 'dev-tools:ship' } })
+  await h({ hook_event_name: 'UserPromptSubmit', prompt: '/ship' })
+  assert.deepEqual(events.filter(([e]) => e === 'guard.skill').map(([, a]) => a.skill), ['ship'])
+})
+
+test('VS Code task tools are judged by the command they run', async () => {
+  const h = setup()
+  const ws = mkdtempSync(join(tmpdir(), 'guard-test-'))
+  mkdirSync(join(ws, '.vscode'))
+  writeFileSync(join(ws, '.vscode', 'tasks.json'), '{\n  // build tasks\n  "version": "2.0.0",\n  "tasks": [\n    { "label": "wipe", "type": "shell", "command": "rm", "args": ["-rf", "src"], },\n  ],\n}\n')
+  const task = (tool_name, tool_input) => h({ hook_event_name: 'PreToolUse', tool_name, tool_input })
+  assert.equal(decision(await task('create_and_run_task', { workspaceFolder: ws, task: { label: 'x', type: 'shell', command: 'rm', args: ['-rf', 'src'] } })).permissionDecision, 'ask')
+  assert.equal(decision(await task('run_task', { id: 'shell: wipe', workspaceFolder: ws })).permissionDecision, 'ask')
+  assert.equal(decision(await task('run_task', { id: 'wipe', workspaceFolder: ws })).permissionDecision, 'ask')
+  assert.equal(decision(await task('create_and_run_task', { workspaceFolder: ws, task: { label: 'b', type: 'shell', command: 'npm', args: ['run', 'build'] } })), undefined)
+  assert.match(decision(await task('run_task', { id: 'shell: missing', workspaceFolder: ws })).additionalContext, /could not read the command/)
 })

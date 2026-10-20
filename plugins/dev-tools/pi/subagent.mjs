@@ -37,9 +37,13 @@ export function piArgs(agent, task, promptFile, model) {
 // How to start pi again: the running entry point under the same node, else `pi` on PATH.
 const piCommand = () => (process.argv[1] && existsSync(process.argv[1]) ? [process.execPath, process.argv[1]] : ['pi'])
 
+// The child's environment: the guard's stop check is off there, since the parent's own stop runs it once the
+// subagent's work is part of its turn.
+export const childEnv = (env = process.env) => ({ ...env, GUARD_STOP_CHECK: 'off' })
+
 function run(argv, cwd, signal) {
   return new Promise((resolve) => {
-    const child = spawn(argv[0], argv.slice(1), { cwd, signal, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true })
+    const child = spawn(argv[0], argv.slice(1), { cwd, signal, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, env: childEnv() })
     let out = ''
     let err = ''
     child.stdout.on('data', (d) => (out += d))

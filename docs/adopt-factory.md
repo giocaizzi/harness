@@ -5,12 +5,14 @@
 
 ## Steps
 
-1. Create the labels (skip one that exists; to use other names, set them under `labels` in step 3):
+1. Create the labels (skip one that exists; to use other names, set them under `labels` in step 3). A repo adopted before contract schema 2 needs only the last two, which a runtime uses:
    ```bash
    gh label create agent-ok --color 0E8A16 --description "Approved for an agent run (owner only)"
    gh label create factory-claimed --color 1D76DB --description "A factory run holds this ticket"
    gh label create needs-owner --color D93F0B --description "An agent question waits on the owner"
    gh label create needs-grooming --color FBCA04 --description "Parked three times: refine before the next run"
+   gh label create factory-quarantine --color 5319E7 --description "Runs kept failing: the runtime skips this ticket"
+   gh label create factory-halt --color B60205 --description "Open issue with this label: the runtime starts no run"
    ```
 2. Add the config template and ignore run results:
    ```bash
@@ -34,7 +36,7 @@
 
 ## Verify
 
-- `gh label list` shows `agent-ok`, `factory-claimed`, `needs-owner` and `needs-grooming`.
+- `gh label list` shows `agent-ok`, `factory-claimed`, `needs-owner`, `needs-grooming`, `factory-quarantine` and `factory-halt`.
 - the placeholder search prints nothing, and `git check-ignore .factory/runs/x` prints the path.
 - On an open test issue with the approval label applied by you, `factory-status` lists it, and `ticket-run <number>` passes the gate and posts a plan comment.
 

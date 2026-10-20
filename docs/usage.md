@@ -87,7 +87,7 @@ For a repo adopted per [adopt-factory.md](adopt-factory.md): you approve a ticke
 | Skill | Argument | What it does |
 |---|---|---|
 | `ticket-run` | issue number | Checks you applied the approval label, posts a plan, works the ticket in its own worktree deciding scope with the fold-in test, asks questions on the ticket and parks until you answer there, runs the `verifier`, ships one PR that closes the ticket, merges by risk tier, deploys and live-verifies, and records the result. Run it again on a parked ticket after you answer. |
-| `factory-status` | days of done tickets (default 7) | One screen from GitHub labels and the marked comments: tickets that need you with their open question, in progress with PR and checks, parked for grooming, approved and not started, recently done. Read-only. |
+| `factory-status` | days of done tickets (default 7) | One screen from GitHub labels and the marked comments: halted and quarantined tickets, tickets that need you with their open question, in progress with PR and checks, parked for grooming, approved and not started, recently done. Read-only. |
 
 ## Agents
 
@@ -125,7 +125,7 @@ Settings are env vars, set in the shell that starts the harness (or the `env` bl
 |---|---|---|
 | `GUARD_UNATTENDED=1` | off | Every risky ask becomes a deny. Use for overnight and headless runs (`unattended-runs` skill). |
 | `GUARD_STOP_CHECK=off` | on | Turns off `make check` on stop. |
-| `GUARD_STOP_TIMEOUT_MS` | `1750000` | Time limit for that check; a timeout is reported, not blocked. |
+| `GUARD_STOP_TIMEOUT_MS` | `300000` | Time limit for that check; a timeout defers it to the next stop, never blocks. |
 | `GUARD_ASK_TIMEOUT_MS` | `60000` | Claude Code: an unanswered permission prompt is parked after this (the agent is told nobody answered and to carry on, not that you denied it); `0` turns it off. |
 | `GUARD_OTEL=off` | on | Sends no guard telemetry, whatever the OTel endpoint (`make test` sets it). |
 | `GUARD_OTEL_EXPORTER_OTLP_ENDPOINT`, `GUARD_OTEL_EXPORTER_OTLP_HEADERS` | unset | Send each deny and ask to Grafana as logs ([guard.md](guard.md#grafana)). |
