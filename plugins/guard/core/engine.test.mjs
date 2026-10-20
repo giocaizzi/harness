@@ -946,3 +946,24 @@ test('F4 cmdClass: a rule maps to its family, a command to its program family; n
   for (const c of ['constructor x', 'toString', '__proto__ a', 'hasOwnProperty']) assert.equal(cmdClass(null, c), 'other', c);
   assert.equal(cmdClass('constructor', ''), 'other');
 });
+
+test('factory run: adding the approval label is denied in every spelling, other labels and reads pass', () => {
+  const run = (command, factory = { approval: 'agent-ok' }) => evaluateCommand({ command, state: fresh(), host: calm, factory, rules });
+  for (const c of [
+    'gh issue edit 7 --add-label agent-ok',
+    'gh issue edit 7 --add-label "needs-owner, Agent-OK"',
+    'gh pr edit 3 --add-label=agent-ok',
+    'gh issue create -t x -l agent-ok',
+    'gh api repos/o/r/issues/7/labels -f "labels[]=agent-ok"',
+    'gh api -X POST repos/o/r/issues/7/labels --input body.json',
+  ]) {
+    const d = run(c);
+    assert.equal(d.action, 'deny', c);
+    assert.equal(d.rule, 'factory-approval', c);
+  }
+  for (const c of ['gh issue edit 7 --add-label needs-owner', 'gh issue edit 7 --add-label agent-ok-not', 'gh issue list --label agent-ok', 'gh api repos/o/r/issues/7/labels', 'gh api -X GET repos/o/r/issues/7/labels -f x=agent-ok']) {
+    assert.equal(run(c).action, 'allow', c);
+  }
+  assert.equal(run('gh issue edit 7 --add-label ready', { approval: 'ready' }).action, 'deny', 'a configured label');
+  assert.equal(run('gh issue edit 7 --add-label agent-ok', null).action, 'allow', 'no factory run: allowed');
+});

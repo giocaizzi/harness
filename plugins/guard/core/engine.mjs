@@ -757,9 +757,34 @@ export function pureRead(command) {
 
 const hint = (rule) => `Skill hint (${rule.why}): load ${rule.skills.map((s) => `\`${s}\``).join(' or ')} if this task is that work.`;
 
+// A command that adds the factory approval label: `gh issue|pr edit --add-label` or `create --label` naming it, or a
+// `gh api` write that names it (or a `--input` body sent to a labels endpoint). Labels match ignoring case, like GitHub's.
+// A value built in the shell (`$L`) is out of sight; the runtime's own check of who applied the label is the backstop.
+export function addsApprovalLabel(command, label) {
+  const want = String(label).trim().toLowerCase();
+  if (!want) return false;
+  const text = command.replace(/\\\r?\n/g, ' ');
+  if (/\bgh\b[^;|&\n]*?\b(?:issue|pr)\s+(?:edit|create)\b/.test(text)) {
+    for (const m of text.matchAll(/(?:--add-label|--label|(?<![\w-])-l)(?:=|\s+)("[^"]*"|'[^']*'|[^\s;|&]+)/g)) {
+      if (m[1].replace(/^["']|["']$/g, '').split(',').some((l) => l.trim().toLowerCase() === want)) return true;
+    }
+  }
+  for (const seg of text.split(/[;|&\n]+/)) {
+    if (!/\bgh\s+api\b/.test(seg) || /(?:-X|--method)[\s=]*GET\b/i.test(seg)) continue;
+    const esc = want.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const named = new RegExp(`(?<![\\w-])${esc}(?![\\w-])`, 'i').test(seg);
+    const writes = /(?:\s(?:-f|-F|--field|--raw-field)\b|\s(?:-X|--method)[\s=]*(?:POST|PUT|PATCH)\b)/i.test(seg);
+    if (named && writes) return true;
+    if (/\s--input\b/.test(seg) && /\/labels\b/.test(seg)) return true;
+  }
+  return false;
+}
+
 // `readTool`: the harness has a file-read tool (all but Codex), so a shell read gets a once-per-session hint.
 // `worktrees`, `branches`, `regenerable`: facts the adapters gather (worktreeFacts, branchFacts, regenFacts).
-export function evaluateCommand({ command, loadedSkills = new Set(), state, host = {}, env = {}, worktrees = {}, branches = {}, regenerable = {}, refs = {}, tags = {}, python = null, readTool = false, rules }) {
+export function evaluateCommand({ command, loadedSkills = new Set(), state, host = {}, env = {}, worktrees = {}, branches = {}, regenerable = {}, refs = {}, tags = {}, python = null, readTool = false, factory = null, rules }) {
+  // While a factory run is active the agent never applies the approval label: with an owner token it would count as the owner's.
+  if (factory && addsApprovalLabel(command, factory.approval)) return { action: 'deny', rule: 'factory-approval', reason: `${rules.factory.why} The \`${factory.approval}\` label is the owner's to apply; ask on the ticket instead.` }
   // Hard denies come first and fire every time, like the title guard. A `when` rule denies only in a repo
   // that adopted that manager; elsewhere it lets the command through with a once-per-session note.
   const denied = deniedBy(command, rules)

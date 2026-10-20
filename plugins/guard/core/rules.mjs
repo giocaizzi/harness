@@ -325,6 +325,11 @@ export const rules = {
       "why": "runs a command the guard cannot read (encoded, decoded at run time, or nested too deep)"
     }
   ],
+  // The factory approval label (config `labels.approval`, default below) is never applied while FACTORY_RUN_ID is set.
+  "factory": {
+    "approval": "agent-ok",
+    "why": "A factory run must not apply the approval label: with an owner token the runtime would read it as the owner's approval."
+  },
   "titles": {
     "types": ["feat", "fix", "perf", "refactor", "revert", "docs", "style", "test", "build", "ci", "chore"],
     "why": "squash merge makes the PR title the commit on main, and release automation reads it"

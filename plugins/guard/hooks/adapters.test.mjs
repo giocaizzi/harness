@@ -163,3 +163,16 @@ test('usage: opencode and pi report each assistant message once, as their own se
     ['api_request', 'claude-sonnet-5-5', 7, 1, 0.0001, 'p1'],
   ])
 })
+
+test('opencode and pi: the approval label is denied while FACTORY_RUN_ID is set, allowed without', async () => {
+  const command = 'gh issue edit 70 --add-label agent-ok'
+  const oc = await GuardPlugin({ client: {}, directory: dir() }, { ...deps(), env: { FACTORY_RUN_ID: 'r1' } })
+  await assert.rejects(oc['tool.execute.before']({ tool: 'bash', sessionID: 's', callID: 'c' }, { args: { command } }), /approval label/)
+  const free = await GuardPlugin({ client: {}, directory: dir() }, { ...deps(), env: {} })
+  await free['tool.execute.before']({ tool: 'bash', sessionID: 's', callID: 'c' }, { args: { command } })
+  const { handlers, api } = fakePi()
+  guardExtension(api, { ...deps(), env: { FACTORY_RUN_ID: 'r1' } })
+  const blocked = await handlers.tool_call({ toolName: 'bash', toolCallId: 'c', input: { command } }, { cwd: dir(), sessionManager: { getSessionId: () => 'p1' } })
+  assert.equal(blocked?.block, true)
+  assert.match(blocked.reason, /approval label/)
+})
