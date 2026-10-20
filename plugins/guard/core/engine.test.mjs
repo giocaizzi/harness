@@ -1015,7 +1015,34 @@ test('factory run: a command naming the approval label is denied unless it only 
     'gh api repos/o/r/issues/7/comments -f body="please re-apply agent-ok"',
     'git commit -m "docs: gh issue edit --add-label agent-ok is denied"',
     'gh issue create --label bug --title "support agent-ok"',
+    // Anything but one plain gh read fails closed, even a read: piped, chained, substituted, wrapped, escaped.
+    'L=$(gh issue list --label agent-ok)',
+    'gh issue list --label agent-ok | jq length',
+    'gh issue list --label agent-ok > out.json',
+    'gh issue list --label agent-ok && gh issue edit 7 --add-label agent-ok',
+    'grep -rn agent-ok .factory/config.yaml',
+    'gh issue view 7 --web --json labels -q \'.labels[] | select(.name == "agent-ok")\'',
+    'gh pr view 3 -cw -q \'"agent-ok"\'',
+    'GH_BROWSER=x gh issue view 7 --json labels -q \'"agent-ok"\'',
+    'gh api repos/o/r/issues/7/labels * --jq \'"agent-ok"\'',
+    'gh issue view 7 --json labels -q \'"agent-ok"\' *',
+    'gh issue list --label agent-ok --search "$(gh issue edit 7 --add-label agent-ok)"',
+    'gh api repos/o/r/issues/7/labels --jq "agent-ok" --slurpx',
+    'gh api repos/o/r/issues/7/labels -z --jq \'"agent-ok"\'',
+    'gh issue list --label agent-ok\ngh issue edit 7 --add-label agent-ok',
+    'gh issue list --label agent-ok # \' ; gh issue edit 7 --add-label agent-ok',
+    // Round 5: escapes, ANSI-C quotes, comments, prefixes, exec flags.
+    'echo "a \\"b\\"" && gh issue edit 7 --add-label agent-ok',
+    'echo "\\"" ; gh issue edit 7 --add-label agent-ok ; echo "\\""',
+    'echo $\'\\\'\' ; gh issue edit 7 --add-label agent-ok ; echo $\'\\\'\'',
+    'echo x #"\ngh issue edit 7 --add-label agent-ok\n#"',
+    'gh issue view "\'$" ; gh issue edit 7 --add-label agent-ok ; echo \'\'',
+    'GH_BROWSER=\'sh -c "gh issue edit 7 --add-label agent-ok" x\' gh issue view 7 --web',
+    'd=$; y="a[${d}(gh issue edit 7 --add-label agent-ok)]"; [[ 1 -eq y ]]',
+    'printf \'gh issue edit 7 --add-label agent-ok\' > s; rg --pre sh -e x s',
     // A body the guard cannot read, sent to labels or issues, with no label in sight.
+    'echo "\\"" ; gh api repos/o/r/issues/7/labels --input b.json ; echo "\\""',
+    'gh api repos/o/r/issues/7/labels --in"put" b.json',
     'gh api -X POST repos/o/r/issues/7/labels --input body.json',
     'gh api -X PATCH repos/o/r/issues/7 --input body.json',
     'gh api repos/o/r/issues/7/labels -F labels[]=@l.txt',
@@ -1039,27 +1066,25 @@ test('factory run: a command naming the approval label is denied unless it only 
     'gh issue list --label agent-ok',
     'gh issue list --state open --label agent-ok --json number,title,url,labels',
     'gh issue list --state closed --label agent-ok --search "closed:>=2026-10-01" --json number,title,url,closedAt',
-    'L=$(gh issue list --label agent-ok)',
-    'N="$(gh issue list --label agent-ok -q .[0].number --json number)"',
-    'gh issue view 7 --json state,labels,body | jq \'.labels[].name == "agent-ok"\'',
-    'gh api "repos/o/r/issues/7/timeline" --paginate --jq \'.[] | select(.event == "labeled" and .label.name == "agent-ok") | .actor.login\'',
-    'gh api repos/o/r/issues/7/timeline --paginate | jq -r \'.[] | select(.label.name=="agent-ok")\' | tail -1',
-    'gh -R o/r api -X GET repos/o/r/issues/7/labels --jq \'.[].name\' | grep -qx agent-ok 2>&1',
+    'gh issue view 7 --json labels --jq \'.labels[].name == "agent-ok"\'',
+    'gh -R o/r issue list --label Agent-OK',
+    'gh pr view 3 --json labels -q \'.labels[] | select(.name == "agent-ok")\'',
+    'gh api repos/o/r/labels/agent-ok',
     'gh api --method=get repos/o/r/labels/agent-ok',
-    'gh pr view 3 --json labels --jq \'.labels[].name\' | grep agent-ok',
+    'gh api -XGET repos/o/r/issues/7/labels --jq \'.[] | select(.name == "agent-ok")\'',
+    'gh api "repos/{owner}/{repo}/issues/7/timeline" --paginate --jq \'.[] | select(.label.name == "agent-ok") | "\\(.event) \\(.actor.login)"\'',
     'gh pr status',
-    // ticket-run's gate, verbatim.
-    'gh api "repos/{owner}/{repo}/issues/7/timeline" --paginate \\\n  --jq \'.[] | select((.event == "labeled" or .event == "unlabeled") and .label.name == "agent-ok") | "\\(.event) \\(.actor.login)"\'',
-    'grep -rn agent-ok .factory/config.yaml',
     // No label named, and not an unreadable body to labels or issues.
     'gh issue edit 7 --add-label needs-grooming',
     'gh issue edit 7 --add-label needs-owner',
     'gh issue edit 7 --add-label agent-ok-not',
     'gh issue edit 7 --add-label not-agent-ok',
     'gh issue edit 7 --add-label agent-oks',
+    'grep -rn agent-okay .factory/config.yaml',
     'gh issue comment 7 --body-file c.md',
     'gh api -X PATCH "repos/{owner}/{repo}/issues/comments/123" -F body=@c.md',
-    'gh api graphql -F n=7 -F owner=o -F name=r --jq .data -f query=\'query{viewer{login}}\'',
+    'gh api -X PUT repos/o/r/contents/a.md --input body.json',
+    'EDIT=$(gh api graphql -F n=7 -F owner=o -F name=r --jq .data -f query=\'query{viewer{login}}\')',
     'gh api user --jq .login',
     'gh api repos/o/r/issues/7/labels',
   ]) {
@@ -1070,15 +1095,22 @@ test('factory run: a command naming the approval label is denied unless it only 
 });
 
 test('factory run: the label check never throws and fails fast on a hang', () => {
-  // In a child with a timeout, so a parser that loops forever fails here in seconds instead of hanging the suite.
+  // In a child with a timeout, so a check that loops forever fails here in seconds instead of hanging the suite.
   const script = `
     import { touchesApprovalLabel } from ${JSON.stringify(new URL('./engine.mjs', import.meta.url).href)};
-    const parts = ['gh', 'api', 'issue', 'edit', '-f', '-F=', '-fx=@', '--input', 'labels', 'agent-ok', '$(', '\`', '(', ')', '"', "'", '\\\\', ';', '&&', '|', '\\n', '2>&1', '=', 'X=', 'bash', '-c', ' ', 'jq'];
+    const parts = ['gh', 'api', 'issue', 'edit', 'view', '-f', '-F=', '-fx=@', '-XPOST', '--input', '--jq', 'labels', 'agent-ok', '$(', '$\\'', '\`', '(', ')', '"', "'", '\\\\', '\\\\"', ';', '&&', '|', '#', '\\n', '\\0', '*', '=', 'X=', 'bash', '-c', ' ', 'jq'];
     let seed = 7;
-    const next = () => (seed = (seed * 1103515245 + 12345) % 2147483648);
-    for (let n = 0; n < 5000; n++) touchesApprovalLabel(Array.from({ length: next() % 40 }, () => parts[next() % parts.length]).join(next() % 2 ? ' ' : ''), 'agent-ok');
-    touchesApprovalLabel('$( '.repeat(20000) + 'gh agent-ok' + ' )'.repeat(20000), 'agent-ok');
-    touchesApprovalLabel('"$('.repeat(2000) + 'gh agent-ok' + ')"'.repeat(2000), 'agent-ok');
+    const next = () => (seed = (seed * 48271) % 2147483647);
+    const seen = new Set(), lengths = new Set();
+    for (let n = 0; n < 20000; n++) {
+      const length = next() % 40;
+      lengths.add(length);
+      const command = Array.from({ length }, () => { const p = parts[next() % parts.length]; seen.add(p); return p; }).join(next() % 2 ? ' ' : '');
+      touchesApprovalLabel(command, 'agent-ok');
+    }
+    if (lengths.size !== 40) throw new Error('the generator skipped lengths: ' + lengths.size);
+    if (seen.size !== parts.length) throw new Error('the generator skipped parts: ' + parts.filter((p) => !seen.has(p)).join(' '));
+    for (const odd of ['gh "x', "gh 'x", 'gh issue view "agent-ok', "gh api '", 'gh \\\\', '"'.repeat(100000) + 'agent-ok', "'".repeat(100001) + 'agent-ok', '$(gh '.repeat(20000) + 'agent-ok']) touchesApprovalLabel(odd, 'agent-ok');
   `;
   const r = spawnSync(process.execPath, ['--input-type=module', '-e', script], { timeout: 10000, encoding: 'utf8' });
   assert.equal(r.signal, null, 'timed out');
