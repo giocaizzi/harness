@@ -1,9 +1,10 @@
 {
-  "schema": 1,
+  "schema": 2,
   "ticket": "<owner>/<repo>#<number>",
-  "run_id": "<main session id, or <host>-<number>-<UTC timestamp>>",
+  "run_id": "<FACTORY_RUN_ID, else main session id, else <host>-<number>-<UTC timestamp>>",
   "end_state": "done",
   "reason": "",
+  "reason_code": null,
   "pr": "https://github.com/<owner>/<repo>/pull/<number>",
   "decisions": [
     { "item": "<what was found>", "test": "R2", "decision": "folded", "where": "<commit sha>" }
@@ -16,6 +17,10 @@
   "posts": [
     { "kind": "result", "url": "<comment URL>", "state": "posted" }
   ],
+  "phases": [
+    { "name": "plan", "started_at": "<ISO 8601 timestamp>", "ended_at": "<ISO 8601 timestamp>" }
+  ],
+  "verifier": { "verdict": "pass", "rounds": 1 },
   "cost_usd": null,
   "tokens": null,
   "turns": null,
