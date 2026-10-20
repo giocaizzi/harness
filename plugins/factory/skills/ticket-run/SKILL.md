@@ -1,26 +1,28 @@
 ---
 name: ticket-run
-description: Work one owner-approved GitHub issue end to end, attended - check the approval, post a plan, decide scope with the fold-in test and log it on the ticket, ask questions on the ticket, verify with a fresh-context verifier, ship, deploy, live-verify and record the result. Use when the user asks to work, run, pick up, finish or resume a ticket or issue, or types /ticket-run (with an issue number), in a repo that has a .factory/config.yaml.
+description: Work one owner-approved GitHub issue end to end, attended - check the approval, post a plan, decide scope with the fold-in test and log it on the ticket, ask questions on the ticket, verify with a fresh-context verifier, ship, deploy, live-verify and record the result. Use when the user says "work ticket 12", "pick up #12", "take this issue to done", "resume the parked ticket" or types /ticket-run (with an issue number), in a repo that has a .factory/config.yaml.
 ---
 
 # Ticket run
 
 One ticket, from approval to merged, deployed and verified work. The owner chose *which* ticket; you own *everything it needs to be done*, and nothing else. The argument is the issue number or URL; it is the text after the skill name, repeated here when the harness fills it in: $ARGUMENTS
 
-The repo's `.factory/config.yaml` holds what is particular to it: approvers, label names, the marker, components with their checks and deploys, risk tiers. Without one, stop and point to `docs/adopt-factory.md` in giocaizzi/harness; `docs/factory.md` there explains the protocol.
+The repo's `.factory/config.yaml` holds what is particular to it: forge, approvers, labels, the marker, components with their checks and deploys, risk tiers. If it is missing or unreadable, stop and point to `docs/adopt-factory.md` in giocaizzi/harness; never fall back to defaults for a config you could not read. `docs/factory.md` there explains the protocol.
 
-**Done means** the whole scope is merged in one PR that closes the ticket, the deploy and live checks passed where the component deploys, and the evidence and result are on the ticket. **Stop and ask on the ticket** only when you cannot continue without the owner, or before anything destructive.
+**Done means** the whole scope is merged in one PR that closes the ticket, the deploy and live checks passed where the component deploys, and the evidence and result are on the ticket. When a step doesn't need the owner, keep going; stop and ask on the ticket only when you can't continue, or before anything destructive or outside the repo.
 
 ## The run
 
-1. **Gate:** open, approval label on, applied by an approver per the issue timeline ([comments.md](references/comments.md#gate)).
+One ticket, one session, one worktree.
+
+1. **Gate and claim:** approved by an approver, ready (acceptance criteria and a proof command), not claimed by another run; then claim it ([comments.md](references/comments.md#gate)).
 2. **Resume** a parked ticket only on an approver's answer ([comments.md](references/comments.md#answers)).
 3. **Plan comment** first. XS and S start right after it; M and larger wait for the owner's OK.
-4. **Work** in a worktree (`wt`). Decide what belongs to the ticket with the [fold-in test](references/fold-in-test.md), and log every call.
+4. **Work** in a worktree (`wt`), committing as you go and keeping the run's checklist current ([done.md](references/done.md#checklist)). Decide what belongs to the ticket with the [fold-in test](references/fold-in-test.md), and log every call.
 5. **Questions** go on the ticket and park it ([comments.md](references/comments.md#questions-and-parking)).
 6. **Finish:** verifier, ship, land, deploy, record ([done.md](references/done.md)).
 
-Models, effort and cost per phase, for anything you spawn: [routing.md](references/routing.md).
+Models, effort, escalation and cost for anything you spawn: [routing.md](references/routing.md).
 
 ## Firm rules
 
@@ -29,11 +31,17 @@ Models, effort and cost per phase, for anything you spawn: [routing.md](referenc
 - No partial PRs: one PR with the whole scope, never a `Refs`-only PR for the ticket.
 - Every comment and issue you write starts with the marker, or it reads as the owner's.
 
+## Gotchas
+
+None yet. Add one line per real failure, and prune a line once a model change makes it obsolete.
+
 ## Output
 
 Every run ends with the result comment and `result.json` ([done.md](references/done.md#record)), then this report:
 
-- **End state:** `done`, `parked` or `failed`, with the ticket and PR links.
+- **End state:** `done`, `parked`, `failed` or `budget_reached`, with the ticket and PR links.
 - **Blocked on me:** the open question or owner action, or "nothing".
 - **Changed:** what merged, deployed and was verified.
-- **Found:** decision-log rows other than plain fold-ins, and follow-up issues.
+- **Found:** decision-log rows other than plain fold-ins, follow-up issues, and problems outside the scope, which you never edit.
+
+Mark anything you could not confirm as unconfirmed, and say where you looked.
