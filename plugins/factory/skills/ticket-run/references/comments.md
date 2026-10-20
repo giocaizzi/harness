@@ -19,9 +19,10 @@ Then pick the kind by its tag in `body`. Every read below (claims, the plan, que
 
 ```bash
 gh issue view N --json state,labels,body
-gh api "repos/{owner}/{repo}/issues/N/timeline" --paginate \
-  --jq '.[] | select((.event == "labeled" or .event == "unlabeled") and .label.name == "agent-ok") | "\(.event) \(.actor.login)"'
+gh api "repos/{owner}/{repo}/issues/N/timeline" --paginate --jq '.[] | select((.event == "labeled" or .event == "unlabeled") and .label.name == "agent-ok") | "\(.event) \(.actor.login)"'
 ```
+
+A command that names the approval label stays one plain `gh` read, filtered with its own `--jq`: in a runtime run the guard denies any other command that names it (piped, chained, substituted, or a local `jq`).
 
 - **Approved:** open, the approval label is on, and the last timeline line is `labeled` by a login in `approvers`. Otherwise stop and say which part failed.
 - **Not edited since:** the approval covers the ticket as the approver saw it, so a title or body changed afterwards by a non-approver voids it ([below](#edited-after-approval)). Stop and say who edited.
@@ -32,12 +33,11 @@ gh api "repos/{owner}/{repo}/issues/N/timeline" --paginate \
 
 ## Edited after approval
 
-The REST timeline records a title rename but not a body edit, so read the body's last edit over GraphQL and the renames from the timeline. `A` is the approvers as a JSON array, `L` the approval label, `N` the issue number. GraphQL reports an App editor without its `[bot]` suffix, so such an editor is not an approver and the check fails closed.
+The REST timeline records a title rename but not a body edit, so read the body's last edit over GraphQL, then judge it with the renames and label events of the timeline in one `gh` read. Write into the timeline filter, replacing the placeholders: `<A>` the approvers as a JSON array, `<EDIT>` the GraphQL output as printed (`null` when it printed nothing), `<L>` the approval label; `N` is the issue number. The filter stays single-quoted and the command stays one plain `gh` read, since it names the label ([Gate](#gate)). One page holds the whole timeline: 100 events or more refuse, rather than judge a partial history. GraphQL reports an App editor without its `[bot]` suffix, so such an editor is not an approver and the check fails closed.
 
 ```bash
-EDIT=$(gh api graphql -F n=N -F owner=':owner' -F name=':repo' --jq .data.repository.issue -f query='query($owner:String!,$name:String!,$n:Int!){repository(owner:$owner,name:$name){issue(number:$n){lastEditedAt editor{login}}}}')
-gh api "repos/{owner}/{repo}/issues/N/timeline" --paginate --jq '.[]' \
-  | jq -rs --argjson a "$A" --argjson e "$EDIT" --arg l "$L" 'def lc: ascii_downcase; def apr($u): $u != null and ($a | map(lc) | index($u | lc)) != null; [.[] | select((.event == "labeled" or .event == "unlabeled") and (.label.name | lc) == ($l | lc))] as $labels | ($labels | last) as $approval | if ($approval == null or $approval.event != "labeled" or (apr($approval.actor.login) | not)) then "refuse: not approved by an approver" elif ($e | type) != "object" or ($e | has("lastEditedAt") | not) then "refuse: the last edit of the body could not be read" else $approval.created_at as $at | ([.[] | select(.event == "renamed" and .created_at >= $at)] | last) as $rename | if $e.lastEditedAt != null and $e.lastEditedAt >= $at and (apr($e.editor.login // null) | not) then "refuse: body edited after approval by " + ($e.editor.login // "an unknown editor") elif $rename != null and (apr($rename.actor.login) | not) then "refuse: title renamed after approval by " + ($rename.actor.login // "an unknown actor") else "ok" end end'
+gh api graphql -F n=N -F owner=':owner' -F name=':repo' --jq .data.repository.issue -f query='query($owner:String!,$name:String!,$n:Int!){repository(owner:$owner,name:$name){issue(number:$n){lastEditedAt editor{login}}}}'
+gh api "repos/{owner}/{repo}/issues/N/timeline?per_page=100" --jq 'def lc: ascii_downcase; <A> as $a | <EDIT> as $e | "<L>" as $l | def apr($u): $u != null and ($a | map(lc) | index($u | lc)) != null; if length >= 100 then "refuse: the timeline has 100 or more events, more than one read covers" else [.[] | select((.event == "labeled" or .event == "unlabeled") and (.label.name | lc) == ($l | lc))] as $labels | ($labels | last) as $approval | if ($approval == null or $approval.event != "labeled" or (apr($approval.actor.login) | not)) then "refuse: not approved by an approver" elif ($e | type) != "object" or ($e | has("lastEditedAt") | not) then "refuse: the last edit of the body could not be read" else $approval.created_at as $at | ([.[] | select(.event == "renamed" and .created_at >= $at)] | last) as $rename | if $e.lastEditedAt != null and $e.lastEditedAt >= $at and (apr($e.editor.login // null) | not) then "refuse: body edited after approval by " + ($e.editor.login // "an unknown editor") elif $rename != null and (apr($rename.actor.login) | not) then "refuse: title renamed after approval by " + ($rename.actor.login // "an unknown actor") else "ok" end end end'
 ```
 
 Anything but `ok` means stop: the ticket is not approved as it now reads. The editor cannot be determined (a missing editor, a query that errored or returned anything but the issue's `lastEditedAt` and `editor`) counts as a non-approver. An approver's own edit, or an approver applying the label again after the edit, makes the ticket eligible again; ask on the ticket for that, never apply the label yourself.
