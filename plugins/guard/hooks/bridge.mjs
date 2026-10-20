@@ -63,10 +63,10 @@ export function createGuard({ harness, noAsk = false, dataDir = DATA_DIR, deps =
       }
     },
     // The reason to keep going (make check failed), or null. `active` is true when the last stop was already blocked.
-    // ponytail: synchronous, so the harness's UI waits for make check like a command hook would; async spawn if it hurts.
-    stop({ cwd, active }) {
+    // Async: make runs detached, so the harness's event loop keeps going meanwhile.
+    async stop({ cwd, active }) {
       try {
-        const out = stopCheck({ cwd, stop_hook_active: active }, d.spawnSync, { report: (attrs) => void d.emit('guard.stop', attrs, cwd) })
+        const out = await stopCheck({ cwd, stop_hook_active: active }, d.spawnSync, { report: (attrs) => void d.emit('guard.stop', attrs, cwd) })
         return out?.decision === 'block' ? out.reason : null
       } catch {
         return null

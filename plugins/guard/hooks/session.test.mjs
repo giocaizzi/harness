@@ -1,9 +1,10 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { stopCheck } from './stop.mjs'
+import { fingerprint, runDetached, stopCheck, takeLock } from './stop.mjs'
 import { lintFile } from './lint.mjs'
 import { harnessPid, keepAwake, keeperArgv } from './awake.mjs'
 
@@ -20,10 +21,10 @@ const stopRun = (calls, make, git = { status: 0, stdout: 'x' }, targets = ['chec
   return make
 }
 
-test('stop: blocks once with the output tail when make check fails', () => {
+test('stop: blocks once with the output tail when make check fails', async () => {
   const calls = []
   const make = { status: 2, stdout: 'ok\n'.repeat(50) + 'FAIL x\n', stderr: '' }
-  const out = stopCheck({ cwd: '/r' }, stopRun(calls, make, { status: 2 }))
+  const out = await stopCheck({ cwd: '/r' }, stopRun(calls, make, { status: 2 }))
   assert.equal(out.decision, 'block')
   assert.match(out.reason, /make check failed[\s\S]*FAIL x$/)
   assert.deepEqual(out.hookSpecificOutput, { hookEventName: 'Stop', decision: 'block', reason: out.reason }) // VS Code
@@ -31,70 +32,70 @@ test('stop: blocks once with the output tail when make check fails', () => {
   assert.deepEqual(calls.filter((c) => c.startsWith('make')), ['make -n check-fast', 'make -n check', 'make check'])
 })
 
-test('stop: a failure is reported with the failing target and its last line, scrubbed', () => {
+test('stop: a failure is reported with the failing target and its last line, scrubbed', async () => {
   const events = []
   const make = { status: 2, stdout: 'ok\n', stderr: 'make[1]: *** [Makefile:3: test] Error 1\nAPI_TOKEN=supersecret leaked' }
-  stopCheck({ cwd: '/r' }, stopRun([], make, { status: 2 }), { strain: () => null, report: (e) => events.push(e) })
+  await stopCheck({ cwd: '/r' }, stopRun([], make, { status: 2 }), { strain: () => null, report: (e) => events.push(e) })
   assert.equal(events[0].result, 'fail')
   assert.equal(events[0].failed_target, 'test')
   assert.equal(events[0].last_line, 'API_TOKEN=*** leaked')
 })
 
-test('stop: prefers make check-fast when the Makefile defines it', () => {
+test('stop: prefers make check-fast when the Makefile defines it', async () => {
   const calls = []
   const make = { status: 2, stdout: 'FAIL y\n', stderr: '' }
-  const out = stopCheck({ cwd: '/r' }, stopRun(calls, make, { status: 2 }, ['check-fast', 'check']))
+  const out = await stopCheck({ cwd: '/r' }, stopRun(calls, make, { status: 2 }, ['check-fast', 'check']))
   assert.match(out.reason, /^make check-fast failed/)
   assert.deepEqual(calls.filter((c) => c.startsWith('make')), ['make -n check-fast', 'make check-fast'])
 })
 
-test('stop: passes when stop_hook_active, no check target, no make, or green', () => {
+test('stop: passes when stop_hook_active, no check target, no make, or green', async () => {
   // Own data dir: under the guard's own stop hook, the real one holds this repo's lock and the check would defer.
   process.env.CLAUDE_PLUGIN_DATA = tmp()
   try {
     const never = () => assert.fail('must not run')
-    assert.equal(stopCheck({ stop_hook_active: true }, never), null)
-    assert.equal(stopCheck({}, () => ({ status: 2 })), null)
-    assert.equal(stopCheck({}, () => ({ status: null, error: new Error('ENOENT') })), null)
-    assert.equal(stopCheck({}, () => ({ status: 0 })), null)
+    assert.equal(await stopCheck({ stop_hook_active: true }, never), null)
+    assert.equal(await stopCheck({}, () => ({ status: 2 })), null)
+    assert.equal(await stopCheck({}, () => ({ status: null, error: new Error('ENOENT') })), null)
+    assert.equal(await stopCheck({}, () => ({ status: 0 })), null)
   } finally {
     delete process.env.CLAUDE_PLUGIN_DATA
   }
 })
 
-test('stop: skips make check when the repo is unchanged since the last green run', () => {
+test('stop: skips make check when the repo is unchanged since the last green run', async () => {
   const dir = tmp()
   process.env.CLAUDE_PLUGIN_DATA = dir
   try {
     const calls = []
     const run = stopRun(calls, { status: 0 })
-    assert.equal(stopCheck({ cwd: '/r' }, run), null)
+    assert.equal(await stopCheck({ cwd: '/r' }, run), null)
     assert.equal(calls.filter((c) => c === 'make check').length, 1)
-    assert.equal(stopCheck({ cwd: '/r' }, run), null) // same fingerprint: skipped
+    assert.equal(await stopCheck({ cwd: '/r' }, run), null) // same fingerprint: skipped
     assert.equal(calls.filter((c) => c === 'make check').length, 1)
     const changed = stopRun(calls, { status: 0 }, { status: 0, stdout: 'y' })
-    assert.equal(stopCheck({ cwd: '/r' }, changed), null) // changed tree: runs again
+    assert.equal(await stopCheck({ cwd: '/r' }, changed), null) // changed tree: runs again
     assert.equal(calls.filter((c) => c === 'make check').length, 2)
   } finally {
     delete process.env.CLAUDE_PLUGIN_DATA
   }
 })
 
-test('stop: a strained host or a check already running in the repo defers it, and the next stop runs it', () => {
+test('stop: a strained host or a check already running in the repo defers it, and the next stop runs it', async () => {
   const dir = tmp()
   process.env.CLAUDE_PLUGIN_DATA = dir
   try {
     const calls = []
     const events = []
     const report = (e) => events.push(e)
-    const out = stopCheck({ cwd: '/r' }, stopRun(calls, { status: 0 }), { strain: () => 'load 45', report })
+    const out = await stopCheck({ cwd: '/r' }, stopRun(calls, { status: 0 }), { strain: () => 'load 45', report })
     assert.match(out.systemMessage, /make check deferred \(host strained: load 45\)/)
     assert.equal(calls.filter((c) => c === 'make check').length, 0)
-    const busy = (cmd, args) => {
-      if (cmd === 'make' && args[0] !== '-n') assert.match(stopCheck({ cwd: '/r' }, stopRun(calls, { status: 0 }), { strain: () => null, report }).systemMessage, /another stop check/)
+    const busy = async (cmd, args) => {
+      assert.match((await stopCheck({ cwd: '/r' }, stopRun(calls, { status: 0 }), { strain: () => null, report })).systemMessage, /another stop check/)
       return stopRun(calls, { status: 0 })(cmd, args)
     }
-    assert.equal(stopCheck({ cwd: '/r' }, busy, { strain: () => null, report }), null)
+    assert.equal(await stopCheck({ cwd: '/r' }, stopRun(calls, { status: 0 }), { exec: busy, strain: () => null, report }), null)
     assert.deepEqual(events.map((e) => e.result), ['deferred', 'deferred', 'pass'])
     assert.equal(typeof events[2].duration_ms, 'number')
   } finally {
@@ -102,17 +103,17 @@ test('stop: a strained host or a check already running in the repo defers it, an
   }
 })
 
-test('stop: a timeout is reported, not blocked, and never marks green', () => {
+test('stop: a timeout is deferred, not blocked, and never marks green', async () => {
   const dir = tmp()
   process.env.CLAUDE_PLUGIN_DATA = dir
   process.env.GUARD_STOP_TIMEOUT_MS = '5000'
   try {
     const calls = []
     const make = { status: null, error: Object.assign(new Error('spawnSync make ETIMEDOUT'), { code: 'ETIMEDOUT' }) }
-    const out = stopCheck({ cwd: '/r' }, stopRun(calls, make))
+    const out = await stopCheck({ cwd: '/r' }, stopRun(calls, make))
     assert.equal(out.decision, undefined)
-    assert.match(out.systemMessage, /did not finish within 5 s/)
-    stopCheck({ cwd: '/r' }, stopRun(calls, { status: 0 }))
+    assert.match(out.systemMessage, /make check deferred \(did not finish within 5 s\)/)
+    await stopCheck({ cwd: '/r' }, stopRun(calls, { status: 0 }))
     assert.equal(calls.filter((c) => c === 'make check').length, 2) // not skipped
   } finally {
     delete process.env.CLAUDE_PLUGIN_DATA
@@ -120,10 +121,10 @@ test('stop: a timeout is reported, not blocked, and never marks green', () => {
   }
 })
 
-test('stop: GUARD_STOP_CHECK=off disables it', () => {
+test('stop: GUARD_STOP_CHECK=off disables it', async () => {
   process.env.GUARD_STOP_CHECK = 'off'
   try {
-    assert.equal(stopCheck({}, () => assert.fail('must not run')), null)
+    assert.equal(await stopCheck({}, () => assert.fail('must not run')), null)
   } finally {
     delete process.env.GUARD_STOP_CHECK
   }
@@ -207,4 +208,44 @@ test('awake: a live keeper is reused across session starts; a dead one is replac
   assert.equal(keepAwake({ ...base, isAlive: () => true }), null)
   assert.equal(keepAwake({ ...base, isAlive: () => false }).keeper, 1002)
   assert.equal(keepAwake({ ...base, launch: () => undefined, isAlive: () => false }), null)
+})
+
+test('stop: make runs without a terminal, so a recipe reading /dev/tty fails at once', { skip: process.platform === 'win32' }, async () => {
+  const started = Date.now()
+  const r = await runDetached('sh', ['-c', 'read x < /dev/tty'], { cwd: tmp(), timeout: 20_000 })
+  assert.notEqual(r.status, 0)
+  assert.equal(r.timedOut, false)
+  assert.ok(Date.now() - started < 10_000)
+})
+
+test('stop: a timeout kills the whole process group, grandchildren included', { skip: process.platform === 'win32' }, async () => {
+  const dir = tmp()
+  const r = await runDetached('sh', ['-c', 'sleep 60 & echo $! > pid; wait'], { cwd: dir, timeout: 500 })
+  assert.equal(r.timedOut, true)
+  const pid = Number(readFileSync(join(dir, 'pid'), 'utf8'))
+  await new Promise((resolve) => setTimeout(resolve, 200))
+  assert.throws(() => process.kill(pid, 0))
+})
+
+test('stop: the fingerprint changes when an untracked file changes', () => {
+  const dir = tmp()
+  const git = (...args) => execFileSync('git', args, { cwd: dir, stdio: 'ignore' })
+  git('init', '-q')
+  git('-c', 'user.email=a@b', '-c', 'user.name=a', 'commit', '-q', '--allow-empty', '-m', 'init')
+  writeFileSync(join(dir, 'new.py'), 'a = 1\n')
+  const before = fingerprint(dir)
+  writeFileSync(join(dir, 'new.py'), 'a = 2\n')
+  assert.ok(before)
+  assert.notEqual(fingerprint(dir), before)
+})
+
+test("stop: of two stops taking over a dead holder's lock, only one wins", () => {
+  const file = join(tmp(), 'x.lock')
+  writeFileSync(file, '999999999')
+  const first = takeLock(file)
+  const second = takeLock(file)
+  assert.equal(typeof first, 'function')
+  assert.equal(second, null)
+  first()
+  assert.equal(existsSync(file), false)
 })
