@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "ticket": "<owner>/<repo>#<number>",
+  "end_state": "done",
+  "reason": "",
+  "pr": "https://github.com/<owner>/<repo>/pull/<number>",
+  "decisions": [
+    {
+      "item": "<what was found>",
+      "test": "R2",
+      "decision": "folded",
+      "where": "<commit sha>"
+    }
+  ],
+  "evidence": [
+    "https://github.com/<owner>/<repo>/issues/<number>#issuecomment-<id>"
+  ],
+  "follow_ups": [
+    "https://github.com/<owner>/<repo>/issues/<number>"
+  ],
+  "cost_usd": null,
+  "harness": "<claude-code|copilot-cli|vscode|codex|opencode|pi>",
+  "model": "<model id as the harness reports it>",
+  "finished_at": "<ISO 8601 timestamp>"
+}
