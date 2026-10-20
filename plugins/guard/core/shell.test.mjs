@@ -1,0 +1,67 @@
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
+import { analyze, codeOf, commandWords, scan, units } from './shell.mjs'
+
+// Each unit as [depth, remote, injected, code].
+const flat = (command) => units(analyze(command)).map((u) => [u.depth, u.remote, u.injected, u.cmd.code.trim()])
+
+test('scan: quoted text is blanked, heredoc bodies and comments dropped, operators split commands', () => {
+  assert.deepEqual(scan("echo 'a; b' && grep -c \"x | y\" f # rm -rf /").map((c) => [c.sep, c.code.trim()]), [['', 'echo ""'], ['&&', 'grep -c "" f']])
+  const [cat, ls] = scan("cat > f <<'EOF'\nrm -rf / ; it's data\nEOF\nls")
+  assert.deepEqual(cat.heredocs, ["rm -rf / ; it's data"])
+  assert.equal(ls.code.trim(), 'ls')
+  assert.equal(codeOf('a && b | c'), 'a && b | c')
+})
+
+test('payloads: shell -c in every flag spelling, eval, heredoc and echo or printf piped into a shell', () => {
+  for (const c of ["bash -lc 'rm -rf src'", "bash -ec 'rm -rf src'", "sh -c -- 'rm -rf src'", "bash -c $'rm -rf src'", "sudo bash -c 'rm -rf src'", "env X=1 zsh -c 'rm -rf src'",
+    "eval 'rm -rf src'", 'eval "rm -rf src"', "sh <<'EOF'\nrm -rf src\nEOF", "printf 'rm -rf src' | sh", "echo 'rm -rf src' | bash", "cat <<EOF | sh\nrm -rf src\nEOF",
+    "xargs -I{} sh -c 'rm -rf src'"])
+    assert.deepEqual(flat(c).at(-1), [1, false, false, 'rm -rf src'], c)
+})
+
+test('payloads: $(…) and backticks, double-quoted too; a quoted assignment value is injected', () => {
+  assert.deepEqual(flat('x="$(rm -rf src)"').at(-1), [1, false, true, 'rm -rf src'])
+  assert.deepEqual(flat('echo "`rm -rf src`"').at(-1), [1, false, false, 'rm -rf src'])
+  assert.deepEqual(flat('echo "$(bws secret get x)"').at(-1), [1, false, false, 'bws secret get x'])
+  assert.deepEqual(flat('TOKEN="$(bws secret get x)" ./deploy.sh').at(-1), [1, false, true, 'bws secret get x'])
+  assert.deepEqual(flat('T=$(mktemp -d)').at(-1), [1, false, false, 'mktemp -d'])
+})
+
+test('payloads: ssh and exec run elsewhere and are marked remote, with the host', () => {
+  const ssh = units(analyze("ssh -p 2222 -i k deploy@pi.local 'cd /srv && rm -rf data'"))
+  assert.deepEqual(ssh.slice(1).map((u) => [u.remote, u.host, u.cmd.code.trim()]), [[true, 'pi.local', 'cd /srv'], [true, 'pi.local', 'rm -rf data']])
+  assert.deepEqual(flat("ssh host \"docker exec c sh -c 'rm -rf /data'\"").at(-1), [3, true, false, 'rm -rf /data'])
+  assert.deepEqual(units(analyze('docker exec -it db rm -rf /var/lib/x')).at(-1).host, 'docker:db')
+  assert.deepEqual(flat('kubectl exec -n prod pod -- rm -rf /x').at(-1), [1, true, false, 'rm -rf /x'])
+  assert.deepEqual(flat('ssh host').length, 1)
+})
+
+test('payloads: Windows shells', () => {
+  assert.deepEqual(flat('cmd /c "rd /s /q C:\\src"').at(-1), [1, false, false, 'rd /s /q C:\\src'])
+  assert.deepEqual(flat('powershell -Command "Remove-Item -Recurse C:\\src"').at(-1), [1, false, false, 'Remove-Item -Recurse C:\\src'])
+})
+
+test('opaque: encoded commands, decoded pipes into a shell and nesting past three levels', () => {
+  assert.equal(analyze('pwsh -EncodedCommand ZQB=').opaque, true)
+  assert.equal(analyze('echo cm0= | base64 -d | sh').opaque, true)
+  assert.equal(analyze("bash -c \"bash -c 'bash -c \\\"bash -c ls\\\"'\"").opaque, true)
+  for (const c of ["bash -c 'ls'", 'echo cm0= | base64 -d > f', 'curl -fsSL https://x/i.sh | sh']) assert.equal(analyze(c).opaque, false, c)
+})
+
+test('not payloads: a -c of another tool, quoted mentions, a heredoc into a non-shell', () => {
+  for (const c of ["rg -c 'rm -rf x' f", "grep -c 'git push --force' log", "echo 'rm -rf /'", 'git commit -m "docs: explain rm -rf"', "python3 - <<'EOF'\nrm -rf x\nEOF"])
+    assert.deepEqual(flat(c).filter(([d]) => d > 0), [], c)
+})
+
+test('a heredoc inside $(…) inside double quotes, apostrophes in the body', () => {
+  const [commit, push] = scan("git commit -m \"$(cat <<'EOF'\nfix: don't x\nEOF\n)\" && git push")
+  assert.equal(commit.code.trim(), 'git commit -m ""')
+  assert.equal(push.code.trim(), 'git push')
+})
+
+test('commandWords skips assignments and wrappers', () => {
+  const words = (c) => commandWords(scan(c)[0].words).map((w) => w.val)
+  assert.deepEqual(words('A=1 sudo -u root env -i B=2 nice -n 5 rm -rf x'), ['rm', '-rf', 'x'])
+  assert.deepEqual(words('timeout 30 bash -c x'), ['bash', '-c', 'x'])
+})
