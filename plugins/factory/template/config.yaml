@@ -10,6 +10,13 @@ forge: github
 approvers:
   - <github-login>
 
+# Optional: GitHub logins whose marked comments (claims, plans, questions, results, notices) are trusted;
+# the marker alone proves nothing. Default: approvers. The login a session posts as always counts.
+# Set it to add a runtime's bot or App login; it replaces the default, so list the approvers too. Delete it otherwise.
+writers:
+  - <github-login>
+  - <bot-login>
+
 labels:
   approval: agent-ok
   claimed: factory-claimed

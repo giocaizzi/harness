@@ -49,13 +49,15 @@ Every comment the agent posts starts with two hidden lines: the marker (config `
 
 Posting is idempotent: before posting, the agent looks for its own comment of the same kind and edits it instead; a write counts only once the forge's API confirms it, and an unconfirmed one is recorded as `maybe_posted` and checked by its marker before any retry. Statuses in a comment are read from their live source just before posting, and links are copied from the API's URL fields.
 
+**Authors.** A marked comment counts only when a writer wrote it: a login in `writers` (config), or in `approvers` when `writers` is unset, or the login the reading session itself posts as. Every other marked comment is ignored as if absent, wherever one is read (the skills, the `verifier`, `factory-status`, a runtime): it claims nothing, asks or answers nothing, records no plan, log or result, and is never edited in place. The marker alone proves nothing, since anyone who can comment on the repo can type it. A runtime that posts under its own login (a bot or GitHub App) must be listed in `writers`, or a session under the owner's login ignores its claims and notices.
+
 **Answers.** The answer to an open question is the newest comment after it that an approver wrote and that does not carry the marker (so a `factory:notify` mention never counts). Comments by any other account are ignored. A run resumes only on such an answer; with none, the ticket stays parked.
 
 **Parks.** A question sets `needs-owner` (and the board's blocked status) and ends the run. After the third question on one ticket, the agent sets `needs-grooming`, removes the approval label and stops.
 
 ## Claims
 
-A claim is visible on the forge, never only a local lock, so runs on different hosts never take the same ticket. A run claims a ticket by adding the claim label and posting a `factory:claim` comment with its host and run id (a run a runtime started finds both already there, under the run id in `FACTORY_RUN_ID`, and edits that comment instead of posting a second), and releases it by removing the label when it ends, in any end state. A run that finds the label with another run's claim stops. A claim left by a run that died is cleared by the owner, by removing the label. A runtime on several hosts uses the same protocol; the race between two claims at the same moment is its to settle (for example by re-reading the newest claim comment after posting).
+A claim is visible on the forge, never only a local lock, so runs on different hosts never take the same ticket. A run claims a ticket by adding the claim label and posting a `factory:claim` comment with its host and run id (a run a runtime started finds both already there, under the run id in `FACTORY_RUN_ID`, and edits that comment instead of posting a second), and releases it by removing the label when it ends, in any end state. A run that finds the label with another run's claim stops; only a claim comment by a writer (see [Authors](#comments)) is a claim. A claim left by a run that died is cleared by the owner, by removing the label. A runtime on several hosts uses the same protocol; the race between two claims at the same moment is its to settle (for example by re-reading the newest claim comment after posting).
 
 ## Readiness
 
@@ -125,6 +127,7 @@ Template with placeholders: [`plugins/factory/template/config.yaml`](../plugins/
 | `version` | yes | Config format, `1`. |
 | `forge` | yes | `github`, the only forge implemented. The skills express each operation as an intent (read the timeline, label, comment, search issues, open a PR) mapped to the forge's CLI, so GitLab or Azure DevOps can be added the way `repo-standard` maps them. |
 | `approvers` | yes | GitHub logins whose label and comments count as the owner's. |
+| `writers` | no | GitHub logins whose marked comments are trusted (see [Comments](#comments)). Default: `approvers`. The login the session itself posts as always counts. Set it to add a runtime's bot or App login; it replaces the default, so list the approvers too. Optional, so the config format stays `1`. |
 | `labels` | no | `approval`, `claimed`, `needs_owner`, `needs_grooming`, `quarantine`, `halt`; defaults as in [Labels](#labels). |
 | `marker` | no | Hidden first line of every agent comment; default `<!-- factory -->`. |
 | `size_label_prefix` | no | Label prefix that carries the ticket's size (`XS`, `S`, `M`, `L`, `XL`). Without it, the plan estimates the size. |

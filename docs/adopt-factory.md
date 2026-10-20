@@ -26,7 +26,7 @@
    gh api repos/giocaizzi/harness/contents/plugins/factory/template/config.yaml -H "Accept: application/vnd.github.raw" | Set-Content -Encoding utf8 .factory/config.yaml
    Add-Content .gitignore "`n# factory run results (docs/factory.md in giocaizzi/harness)`n.factory/runs/"
    ```
-3. Edit `.factory/config.yaml`: replace every `<placeholder>`, list the repo's components with their checks and deploy commands, and set the risk tiers; delete the optional blocks you do not use (`board`, `notify`, `telemetry`, `secrets`). Keys: [factory.md](factory.md#config-factoryconfigyaml). Check nothing is left:
+3. Edit `.factory/config.yaml`: replace every `<placeholder>`, list the repo's components with their checks and deploy commands, and set the risk tiers; delete the optional blocks you do not use (`writers`, `board`, `notify`, `telemetry`, `secrets`). Keys: [factory.md](factory.md#config-factoryconfigyaml). Check nothing is left:
    ```bash
    grep -n '<' .factory/config.yaml
    ```
