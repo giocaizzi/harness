@@ -12,7 +12,7 @@ gh api "repos/{owner}/{repo}/issues/N/timeline" --paginate \
 
 - **Approved:** open, the approval label is on, and the last timeline line is `labeled` by a login in `approvers`. Otherwise stop and say which part failed.
 - **Ready:** the body has acceptance criteria and a proof command (a command or observation that shows the ticket done). Without them, ask on the ticket, proposing both, instead of starting.
-- **Not claimed:** no claim label, or the newest `factory:claim` comment is this run's own: its run id is `FACTORY_RUN_ID` (a runtime claimed the ticket for this run), or a resume on the same host. A claim by another run means stop: two runs never take one ticket. A stale claim is the owner's to clear.
+- **Not claimed:** no claim label, or the newest `factory:claim` comment is this run's own: a `runtime` claim only when its run id equals `FACTORY_RUN_ID` (the runtime claimed the ticket for this run); an `attended` claim from this host (a resume). Any other claim, including a runtime's on this host, is another run's. A claim by another run means stop: two runs never take one ticket. A stale claim is the owner's to clear.
 - **Claim:** add the claim label, then post `factory:claim` with the host name and run id. When `FACTORY_RUN_ID` is set, the runtime already did both: edit its claim comment (the newest one with that run id) instead of posting a second, and use that id as the run id. Release it (remove the label) when the run ends, whatever the end state.
 
 ## Comments

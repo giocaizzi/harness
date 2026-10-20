@@ -85,7 +85,7 @@ The whole scope is merged in one PR that closes the ticket (no partial PRs, no `
 
 Each run writes `.factory/runs/<number>/result.json` in the repo's main checkout (not in the worktree, so it outlives it; `.factory/runs/` is git-ignored). It is overwritten by each run on the same ticket. Template: [`plugins/factory/template/result.json`](../plugins/factory/template/result.json).
 
-**Schema versions.** Schema 2 is schema 1 plus the keys `reason_code`, `phases` and `verifier` and the `end_state` value `halted`, which only a runtime writes; nothing in schema 1 changed meaning. The skills write schema 2. Every schema-1 key keeps its meaning, so a schema-1 consumer upgrades by accepting `schema: 2` and ignoring the added keys. A consumer refuses a schema newer than it supports rather than guess.
+**Schema versions.** Schema 2 adds the keys `reason_code`, `phases` and `verifier`, the `end_state` value `halted` (written only by a runtime), and one new source for `run_id`: in a run a runtime started, it is the runtime's `FACTORY_RUN_ID`. No other key changed. The skills write schema 2, and a consumer refuses a schema newer than it supports rather than guess, so a schema-1 consumer must be updated to read it: accept `schema: 2` and `end_state: halted`, and ignore or read the added keys.
 
 | Key | Type | Meaning |
 |---|---|---|
@@ -94,7 +94,7 @@ Each run writes `.factory/runs/<number>/result.json` in the repo's main checkout
 | `run_id` | string | `FACTORY_RUN_ID` when a runtime started the run (it sets that variable and claims under it); else the main session's id where the harness exposes one, else `<host>-<number>-<UTC timestamp>`. Also in the claim comment. |
 | `end_state` | `done` \| `parked` \| `failed` \| `budget_reached` \| `halted` | `done`: merged, deployed and verified per the definition of done. `parked`: waiting on the owner (a question, the M+ plan, a merge, or three parks). `failed`: could not be finished for a reason the owner must look at. `budget_reached`: a budget cap stopped the run; a pause, not a failure. `halted`: a runtime stopped the run on a halt (kill switch or circuit breaker); written only by the runtime, never by the skills. |
 | `reason` | string | Why the run parked or failed; empty when done. |
-| `reason_code` | string \| null | Optional machine-readable `reason`: `question`, `plan_gate`, `merge_gate`, `grooming`, `verify_rounds`, `live_verify_failed`, `env_blocked`, `budget` or `auth`; `null` when done or none fits. |
+| `reason_code` | string \| null | Nullable machine-readable `reason` (the specific cause wins over `question` when a park also asks one): `question`, `plan_gate`, `merge_gate`, `grooming`, `verify_rounds`, `live_verify_failed`, `env_blocked`, `budget` or `auth`; `null` when done or none fits. |
 | `phases` | array | `{name, started_at, ended_at}` per run step, in order: `gate`, `plan`, `work`, `verify`, `ship`, `deploy`, `record`, only those the run reached. ISO 8601 timestamps; `ended_at` is `null` for a step the run stopped in. |
 | `verifier` | object \| null | `{verdict, rounds}`: the verifier's last verdict (`pass` or `fail`) and how many review rounds ran; `null` when the run stopped before verification. |
 | `pr` | string \| null | The PR URL, if one exists. |
@@ -143,4 +143,4 @@ The factory has three layers:
 - **Contract:** the ticket, its labels, the marked comments and `result.json`.
 - **Runtime:** the execution layer that hosts runs on one or more hosts: polling and scheduling, claims, supervision, harness adapters, identity and tokens, permission and sandbox profiles, budgets, telemetry tagging, notifications and self-healing. Unattended overnight work ("drain") is one runtime policy.
 
-This slice ships the skills and the contract; the runtime is not part of it, and is built only when attended runs show it is needed. Nothing here assumes a host: paths are relative to the repo or worktree, commands are the forge's CLI and `git`, and the contract records which host and runner made each run.
+This slice ships the skills and the contract; no runtime ships here. The contract defines how one plugs in (`FACTORY_RUN_ID` and its claim, the quarantine and halt labels, `factory:notify`, `end_state: halted`), so a runtime can drive the same skills unchanged. Nothing here assumes a host: paths are relative to the repo or worktree, commands are the forge's CLI and `git`, and the contract records which host and runner made each run.

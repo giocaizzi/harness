@@ -1,6 +1,6 @@
 ---
 name: factory-status
-description: Terse read-only list of the factory's tickets in a repo - which need the owner (with their open questions), which are claimed and in progress, parked for grooming, approved and not started, and recently done - read from GitHub labels and the factory's marked comments. Use when the user asks "what are the agents working on", "what's waiting on me", "which tickets are parked or blocked", "factory status", or types /factory-status (optionally a number of days).
+description: Terse read-only list of the factory's tickets in a repo - whether the factory is halted, which tickets are quarantined, which need the owner (with their open questions), which are claimed and in progress, parked for grooming, approved and not started, and recently done - read from GitHub labels and the factory's marked comments. Use when the user asks "what are the agents working on", "what's waiting on me", "is the factory halted", "which tickets are parked or blocked", "factory status", or types /factory-status (optionally a number of days).
 ---
 
 # Factory status
@@ -14,7 +14,7 @@ Label names and the marker come from `.factory/config.yaml` (defaults `agent-ok`
 This is lookup work: when you delegate it, a scout-tier subagent (Haiku or Sonnet, `low`) is enough. Fetch in one pass and batch the per-ticket reads.
 
 ```bash
-gh issue list --state open --label factory-halt --json number,title,url,createdAt
+gh issue list --state open --label factory-halt --json number,title,url
 gh issue list --state open --label factory-quarantine --json number,title,url
 gh issue list --state open --label needs-owner --json number,title,url,updatedAt
 gh issue list --state open --label needs-grooming --json number,title,url
@@ -33,7 +33,7 @@ Sections in this order, one line per ticket with its link; leave a section out w
 
 | Section | Ticket | Line |
 |---|---|---|
-| Halted | halt label | `#N title · halted since <date>` |
+| Halted | halt label | `#N title · halted` |
 | Needs you | `needs-owner` | `#N title · Q<n>: <the question, one line> · since <date>` |
 | In progress | claim label | `#N title · <host> · PR #<pr> <checks green/red/pending>` or `no PR yet` |
 | Paused | last result `budget_reached` | `#N title · budget reached` |

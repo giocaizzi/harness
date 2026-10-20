@@ -35,7 +35,7 @@ Every run ends with both, and releases its claim:
 Record what the harness reports, not what you asked for: a model or effort that differs from the requested one is how a silent downgrade shows. Fields the harness does not expose are `null`. `end_state` is `budget_reached` when a budget cap stopped the run, which is not a failure; never write `halted`, which only a runtime writes.
 
 - **`run_id`:** `FACTORY_RUN_ID` when it is set, so the result matches the runtime's claim.
-- **`reason_code`:** the park or failure as one code, `null` when done or none fits: a question `question`, the M+ plan waiting for the OK `plan_gate`, an owner merge `merge_gate`, the third park `grooming`, the verifier still failing after three rounds `verify_rounds`, a failed live check `live_verify_failed`, missing access or a broken environment `env_blocked`, a budget cap `budget`, a credential or token failure `auth`.
+- **`reason_code`:** the park or failure as one code, `null` when done or none fits; the specific cause wins over `question` when a park also asks one: a question `question`, the M+ plan waiting for the OK `plan_gate`, an owner merge `merge_gate`, the third park `grooming`, the verifier still failing after three rounds `verify_rounds`, a failed live check `live_verify_failed`, missing access or a broken environment `env_blocked`, a budget cap `budget`, a credential or token failure `auth`.
 - **`phases`:** one entry per step reached, in order (`gate`, `plan`, `work`, `verify`, `ship`, `deploy`, `record`), with the time you entered and left it; `ended_at` is `null` for the step the run stopped in. Note the times in the checklist as you go.
 - **`verifier`:** its last verdict and the number of rounds; `null` when the run stopped before the verifier.
 

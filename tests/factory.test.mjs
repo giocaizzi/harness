@@ -40,9 +40,9 @@ test('config.yaml template: placeholders only, no real logins, projects or hosts
 
 test('reason_code: ticket-run maps every documented code, and only those', () => {
   const row = doc.split('\n').find((l) => l.startsWith('| `reason_code`'))
-  const documented = [...row.split('machine-readable `reason`:')[1].split(';')[0].matchAll(/`([a-z_]+)`/g)].map((m) => m[1])
+  const documented = [...row.split('asks one):')[1].split(';')[0].matchAll(/`([a-z_]+)`/g)].map((m) => m[1])
   const line = read('plugins/factory/skills/ticket-run/references/done.md').split('\n').find((l) => l.startsWith('- **`reason_code`:**'))
-  const mapped = [...line.split(': ').slice(1).join(': ').matchAll(/`([a-z_]+)`/g)].map((m) => m[1]).filter((c) => c !== 'null')
+  const mapped = [...new Set([...line.split('asks one:')[1].matchAll(/`([a-z_]+)`/g)].map((m) => m[1]))]
   assert.deepEqual(mapped.sort(), documented.sort())
 })
 
@@ -57,4 +57,14 @@ test('labels: the config template carries every documented label with its defaul
 test('comment kinds: ticket-run knows every documented kind tag', () => {
   const kinds = (text) => [...text.matchAll(/^\| `<!-- factory:([a-z]+)/gm)].map((m) => m[1])
   assert.deepEqual(kinds(read('plugins/factory/skills/ticket-run/references/comments.md')).sort(), kinds(doc).sort())
+})
+
+test('label defaults: factory-status and the adoption runbook name every documented label', () => {
+  const defaults = [...doc.split('## Labels')[1].split('\n## ')[0].matchAll(/^\| `labels\.[a-z_]+` \| `([^`]+)`/gm)].map((m) => m[1])
+  const status = read('plugins/factory/skills/factory-status/SKILL.md').split('\n').find((l) => l.startsWith('Label names and the marker'))
+  const created = [...read('docs/adopt-factory.md').matchAll(/gh label create ([a-z-]+)/g)].map((m) => m[1])
+  for (const label of defaults) {
+    assert.ok(status.includes(`\`${label}\``), `factory-status lacks ${label}`)
+    assert.ok(created.includes(label), `adopt-factory.md does not create ${label}`)
+  }
 })
