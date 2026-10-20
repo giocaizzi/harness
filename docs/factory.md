@@ -6,7 +6,7 @@ The `factory` plugin works tickets from a GitHub issue board, one at a time and 
 
 - **The owner picks which tickets; the agent owns finishing them.** A ticket is worked only when an approver applied the approval label. Everything the ticket needs to be done is then in scope, and nothing else.
 - **The ticket is the shared record.** Plans, questions, scope decisions and evidence go on the issue as comments, so whoever runs the next step (a person, a subagent, a later headless process) starts from the same state.
-- **A contract, not code.** A run starts from a ticket and ends with a marked result comment on it and a `result.json`. Nothing else is assumed about what runs it; a launcher, a bot identity or notifications can come later without changing the skills.
+- **A contract, not code.** A run starts from a ticket and ends with a marked result comment on it and a `result.json`. Nothing else is assumed about what runs it, so a runtime can come later without changing the skills.
 - **Never a decision by silence.** A question parks the ticket until an approver answers on it. The agent never closes, re-scopes or marks an issue not planned; only its own PR's `Closes #N` closes the ticket.
 
 ## Attended flow
@@ -39,7 +39,7 @@ Every comment the agent posts starts with two hidden lines: the marker (config `
 
 | Kind tag | Posted | Body |
 |---|---|---|
-| `<!-- factory:claim -->` | when a run claims the ticket | Host, run id, runner (`attended`, `headless`, `launcher`). |
+| `<!-- factory:claim -->` | when a run claims the ticket | Host, run id, runner (`attended`, `headless`, `runtime`). |
 | `<!-- factory:plan -->` | once at the start, edited in place | Goal, acceptance checks, side effects in scope, planned fold-ins, size, risk tier. M and larger end by asking for the owner's OK. |
 | `<!-- factory:question Q<n> -->` | per question | One question, the options, a recommendation with its reason, and what is done so far. |
 | `<!-- factory:log -->` | once, edited in place | The decision log: one row per item found and the call made on it. Mirrored as `## Scope` in the PR. |
@@ -53,7 +53,7 @@ Posting is idempotent: before posting, the agent looks for its own comment of th
 
 ## Claims
 
-A claim is visible on the forge, never only a local lock, so runs on different hosts never take the same ticket. A run claims a ticket by adding the claim label and posting a `factory:claim` comment with its host and run id, and releases it by removing the label when it ends, in any end state. A run that finds the label with another run's claim stops. A claim left by a run that died is cleared by the owner, by removing the label. A future launcher on several hosts uses the same protocol; the race between two claims at the same moment is its to settle (for example by re-reading the newest claim comment after posting).
+A claim is visible on the forge, never only a local lock, so runs on different hosts never take the same ticket. A run claims a ticket by adding the claim label and posting a `factory:claim` comment with its host and run id, and releases it by removing the label when it ends, in any end state. A run that finds the label with another run's claim stops. A claim left by a run that died is cleared by the owner, by removing the label. A runtime on several hosts uses the same protocol; the race between two claims at the same moment is its to settle (for example by re-reading the newest claim comment after posting).
 
 ## Readiness
 
@@ -104,10 +104,10 @@ Each run writes `.factory/runs/<number>/result.json` in the repo's main checkout
 | `effort` | string \| null | The session's effort level (`low` to `max`), or `null` when the harness has none. |
 | `sessions` | array | `{role, id, model, effort}` per harness session in the run (`main`, `verifier`, other subagents), as the harness reports them rather than as requested, so a silent downgrade shows. The id joins the run to its telemetry's `session.id`. |
 | `plugin_versions` | object | Plugin name to installed version for the harness plugins the run used (`factory`, `dev-tools`, ...). |
-| `host` | object | `{name, os, runner}`: host name, `darwin`, `linux` or `windows`, and `attended`, `headless` or `launcher`, so runs from several machines can be told apart. |
+| `host` | object | `{name, os, runner}`: host name, `darwin`, `linux` or `windows`, and `attended`, `headless` or `runtime`, so runs from several machines can be told apart. |
 | `finished_at` | string | ISO 8601 timestamp. |
 
-**Telemetry.** `sessions` and `plugin_versions` let a run be joined to the harness's OpenTelemetry data by `session.id` and compared across plugin versions. A future launcher may also tag a run's telemetry through `OTEL_RESOURCE_ATTRIBUTES` (for example `factory.run_id`, `factory.ticket`, `factory.role`, `factory.phase`); the skills emit nothing themselves.
+**Telemetry.** `sessions` and `plugin_versions` let a run be joined to the harness's OpenTelemetry data by `session.id` and compared across plugin versions. A runtime may also tag a run's telemetry through `OTEL_RESOURCE_ATTRIBUTES` (for example `factory.run_id`, `factory.ticket`, `factory.role`, `factory.phase`); the skills emit nothing themselves.
 
 ## Config: `.factory/config.yaml`
 
@@ -123,11 +123,17 @@ Template with placeholders: [`plugins/factory/template/config.yaml`](../plugins/
 | `size_label_prefix` | no | Label prefix that carries the ticket's size (`XS`, `S`, `M`, `L`, `XL`). Without it, the plan estimates the size. |
 | `board` | no | `owner`, `project` (number), `status_field` and the `status` option names for `in_progress`, `blocked` and `backlog`. Omit when there is no board. |
 | `components` | yes | Per component: `paths` (globs), `checks` (commands that prove a change), and optional `deploy` with `wait`, `verify` (commands; `$SHA` is the merge commit) and `rollback`. |
-| `notify` | no | How a launcher tells the owner a question waits: `command` (reads the message on stdin) or `url`. Unused by attended runs. |
-| `telemetry` | no | `resource_attributes` a launcher sets on a run's telemetry. The OTLP endpoint comes from the environment (`OTEL_EXPORTER_OTLP_ENDPOINT`), never from this file. |
+| `notify` | no | How a runtime tells the owner a question waits: `command` (reads the message on stdin) or `url`. Unused by attended runs. |
+| `telemetry` | no | `resource_attributes` a runtime sets on a run's telemetry. The OTLP endpoint comes from the environment (`OTEL_EXPORTER_OTLP_ENDPOINT`), never from this file. |
 | `secrets` | no | Name to `{provider, ref}`: secrets the deploy and verify commands need, by reference through the `secrets-handling` providers, never values. |
 | `risk` | yes | Tiers lowest first, each with `tier`, `paths` (globs) and `merge` (`auto` or `owner`). A change takes the highest tier any path matches; unmatched paths are `medium`. |
 
-## Not built yet
+## Layers and what is not built yet
 
-Nothing here assumes a host: paths are relative to the repo or worktree, commands are the forge's CLI and `git`, and the contract records which host and runner made each run. Unattended runs (a poller or launcher, a bot identity, push notifications, sessions kept for attaching, batching, self-healing, drain mode) are out of scope until attended runs show they are needed. The comment protocol and the result contract are what those would build on.
+The factory has three layers:
+
+- **Skills:** the method (`ticket-run`, `factory-status`, the `verifier`), portable across harnesses.
+- **Contract:** the ticket, its labels, the marked comments and `result.json`.
+- **Runtime:** the execution layer that hosts runs on one or more hosts: polling and scheduling, claims, supervision, harness adapters, identity and tokens, permission and sandbox profiles, budgets, telemetry tagging, notifications and self-healing. Unattended overnight work ("drain") is one runtime policy.
+
+This slice ships the skills and the contract; the runtime is not part of it, and is built only when attended runs show it is needed. Nothing here assumes a host: paths are relative to the repo or worktree, commands are the forge's CLI and `git`, and the contract records which host and runner made each run.

@@ -64,7 +64,7 @@ risk:
       - "<infra-dir>/**"
     merge: owner
 
-# Optional backends a launcher would use; the attended skills ignore them. Delete what you do not use.
+# Optional backends a runtime would use; the attended skills ignore them. Delete what you do not use.
 # How to tell the owner a question is waiting: a command that reads the message on stdin, or a URL to POST it to.
 notify:
   command: "<command reading the message on stdin>"

@@ -21,7 +21,7 @@ Each comment is the marker line, a kind tag line, then the fields as short label
 
 | Kind tag | When | Fields |
 |---|---|---|
-| `<!-- factory:claim -->` | at claim | host, run id, runner (`attended`, `headless`, `launcher`) |
+| `<!-- factory:claim -->` | at claim | host, run id, runner (`attended`, `headless`, `runtime`) |
 | `<!-- factory:plan -->` | first; edited in place | goal (one user-observable sentence); acceptance checks `AC<n>`, each with its proof command and how it fails before the change; side effects in scope; planned fold-ins; size `XS\|S\|M\|L\|XL`; risk tier. M and larger: a closing line asking for the owner's OK. |
 | `<!-- factory:question Q<n> -->` | per question; `n` counts up across the ticket | the question; whether it blocks shipping; context with `path:line`; options `A) B) …`; recommendation and why; done so far (what is pushed). |
 | `<!-- factory:log -->` | once; edited in place | the decision log table: `#`, item, found at, test, decision, where ([fold-in-test.md](fold-in-test.md#decision-log)). |
