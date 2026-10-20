@@ -502,7 +502,7 @@ export async function tagFacts(command, rules, run, env = {}) {
 // Never with a push or a release in the same command: `git tag -f foo && git push origin foo` publishes it.
 const localTagsOnly = (command, rules, tags, env) => {
   const targets = tagTargets(command, rules, env);
-  if (segments(command, env).some(({ seg }) => /\bgit\b[^|;&]*\bpush\b|\bgh\s+release\b/.test(seg))) return false;
+  if (segments(command, env).some(({ seg }) => /\bgit\b[^|;&]*\bpush\b|\bgh\s+release\b|\bgh\s+api\b[^|;&]*refs\/tags/.test(seg))) return false;
   return targets.length > 0 && targets.every((t) => tags[branchKey(t)]?.local === true);
 };
 
@@ -731,13 +731,13 @@ export function shellEdit(command, env = {}) {
 // A whole command that only prints files (`cat f`, `head -n 5 f`, `sed -n 1,20p f`): the harness's read tool does it better.
 const SHELL_READ = /^\s*(?:(?:cat|head|tail|less|more)(?:\s+-[\w-]+(?:\s+\d+)?)*|sed\s+-n\s+\S+)(?:\s+[^\s|;&<>()`$]+)+\s*$/;
 // A command that only prints project files: `cat`, `head`, `tail`, `less`, `more` or `sed -n <range>p` of plain relative
-// paths (no leading `/` or `~`, no `..`, no empty or `.` segment), optionally after one `cd <dir> &&` of the same form.
+// paths (no leading `/` or `~`, no `:` or `\` (a Windows drive, a PowerShell `env:`), no `..`, no empty or `.` segment), optionally after one `cd <dir> &&` of the same form.
 // No quotes, variables, globs, redirections or pipes, no sed script but a line range, and no path that looks like a
 // secret (`.env*`, keys, tokens, `.git/config`, Terraform state, ...). The guard allows these outright, so a harness
 // prompt never stalls a read; anything outside the working tree goes through the harness's own permission flow.
 const PLAIN_TOKEN = /^[\w./@%+=:,~-]+$/;
 const SED_RANGE = /^(?:\d+|\$)(?:,(?:\d+|\$))?p$/;
-const RELATIVE_PATH = (p) => !/^[/~]/.test(p) && p.split('/').every((x, i, all) => (x !== '' || i === all.length - 1) && x !== '.' && x !== '..');
+const RELATIVE_PATH = (p) => !/^[/~]|[:\\]/.test(p) && p.split('/').every((x, i, all) => (x !== '' || i === all.length - 1) && x !== '.' && x !== '..');
 const SECRET_PATH = /(?:^|\/)(?:\.git\/config|[^/]*\.tf(?:state|vars)(?:\.[\w.-]+)?|[^/]*\.env|auth\.json|[^/]*history|\.env(?:rc)?(?:\.[\w.-]+)?|\.netrc|\.npmrc|\.pypirc|\.pgpass|\.git-credentials|id_[\w-]+|[^/]*(?:secret|token|credential|passw|private)[^/]*|[^/]*\.(?:pem|key|p12|pfx|kdbx|keychain(?:-db)?|jks|asc|gpg)|kubeconfig|[^/]*\.kubeconfig)$|(?:^|\/)\.(?:ssh|gnupg|aws|azure|kube|docker|password-store|config\/gh|config\/gcloud)(?:\/|$)|^\/(?:dev|proc|sys)\//i;
 export function pureRead(command) {
   const m = /^\s*(?:cd\s+(\S+)\s*&&\s*)?(\S+)((?:[ \t]+\S+)+)\s*$/.exec(command);
@@ -751,7 +751,8 @@ export function pureRead(command) {
   } else if (/^(?:cat|head|tail|less|more)$/.test(tool)) {
     paths = words.filter((w, i) => !w.startsWith('-') && !(/^\d+$/.test(w) && /^-[nc]$/.test(words[i - 1] ?? '')));
   } else return false;
-  return paths.length > 0 && paths.every((p) => !p.startsWith('-') && RELATIVE_PATH(p) && !SECRET_PATH.test(p.replace(/\/+$/, '')));
+  // Judged joined to the `cd` dir, so `cd .config && cat gh/hosts.yml` is `.config/gh/hosts.yml`.
+  return paths.length > 0 && paths.every((p) => !p.startsWith('-') && RELATIVE_PATH(p) && !SECRET_PATH.test((m[1] ? `${m[1].replace(/\/+$/, '')}/${p}` : p).replace(/\/+$/, '')));
 }
 
 const hint = (rule) => `Skill hint (${rule.why}): load ${rule.skills.map((s) => `\`${s}\``).join(' or ')} if this task is that work.`;

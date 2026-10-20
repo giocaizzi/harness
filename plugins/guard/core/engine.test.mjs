@@ -907,7 +907,7 @@ test('git tag -f or -d of a tag no remote has is not a release; anything else st
     assert.equal((await decideWith(c)).action, 'allow', c);
   assert.ok(calls.includes('git -C . ls-remote --tags upstream refs/tags/m4-old-a'), 'every remote is asked');
   for (const c of ['git tag -f shared', 'git tag -d flaky', 'git tag -f v1.2.0', 'git tag -d 1.0.0', 'git tag scratch', 'git tag -a -f x -m y', 'git tag -f m4 && npm version patch', "ssh h 'git tag -d x'", 'git tag -f $T',
-    'git tag -f m4-old-a && git push origin m4-old-a', 'git tag -f m4-old-a && git push --tags', 'git tag -d m4-old-a && gh release create m4-old-a'])
+    'git tag -f m4-old-a && git push origin m4-old-a', 'git tag -f m4-old-a && git push --tags', 'git tag -d m4-old-a && gh release create m4-old-a', 'git tag -f m4-old-a && gh api -X POST repos/o/r/git/refs -f ref=refs/tags/m4-old-a'])
     assert.equal((await decideWith(c)).rule, 'release', c);
 });
 
@@ -927,6 +927,8 @@ test('pureRead: plain reads of non-secret files only (G24)', () => {
     'head ~/.ssh/known_hosts', 'cat k.pem', 'cat my-secrets.txt', 'cat token.go', 'cat /dev/zero', 'cd ~/.ssh && cat config', 'cd a; cat f', 'cd a && cd b && cat f', 'grep x f', 'cat a && rm b',
     // Review of #207: outside the working tree goes to the harness's own prompt, and more secret names.
     'cd /r && cat f', 'cat /etc/hosts', 'cat ~/.config//gh/hosts.yml', 'cd ~/.config/ && cat gh/hosts.yml', 'cat //proc/self/environ', 'cd / && cat proc/self/environ',
-    'cat a/../b', 'cat a//b', 'cat ~/.codex/auth.json', 'cat terraform.tfstate', 'cat prod.tfvars', 'cat prod.env', 'cat .git/config', 'cat .zsh_history'])
+    'cat a/../b', 'cat a//b', 'cat ~/.codex/auth.json', 'cat terraform.tfstate', 'cat prod.tfvars', 'cat prod.env', 'cat .git/config', 'cat .zsh_history',
+    // Round 2: Windows drives and PowerShell's env: drive, and the cd dir joined to the path.
+    'cat C:/Users/me/.config/glab-cli/config.yml', 'more C:/Users/me/AppData/Roaming/gh/hosts.yml', 'cd C:/Users/me && cat .claude.json', 'cat env:ANTHROPIC_API_KEY', 'cat a\\b', 'cd .config && cat gh/hosts.yml'])
     assert.equal(pureRead(c), false, c);
 });
