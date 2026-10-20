@@ -8,8 +8,9 @@ import { statfs } from 'node:fs/promises'
 import { cpus, homedir, loadavg, platform } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { branchFacts, codexRules, deniedBy, deniedDir, evaluateCommand, evaluateEdit, isHeavy, isRisky, nativeAsk, previewCommand, regenFacts, withPreview, worktreeFacts } from '../core/engine.mjs'
+import { analysis, branchFacts, codexRules, deniedBy, deniedDir, evaluateCommand, evaluateEdit, isHeavy, isRisky, nativeAsk, previewCommand, regenFacts, withPreview, worktreeFacts } from '../core/engine.mjs'
 import { cpuPercentFrom } from '../core/host.mjs'
+import { commandWords, units } from '../core/shell.mjs'
 import { emit } from '../core/otel.mjs'
 import { rules } from '../core/rules.mjs'
 import { pluginDataDir } from './data.mjs'
@@ -19,6 +20,23 @@ import { commandHash, harnessName, recordAttrs } from './telemetry.mjs'
 // tool call reaches this script and anything else passes untouched.
 const SHELLS = new Set(['bash', 'powershell', 'run_in_terminal'])
 // Edit and write tools across harnesses (Claude, Copilot CLI, VS Code, opencode, pi), for the `files` skill hints.
+// Read tools: Claude Code `Read`, Copilot CLI `view`, VS Code `read_file`, opencode and pi `read`.
+const READS = new Set(['read', 'view', 'read_file'])
+// Shell commands that only print a file.
+const READERS = new Set(['cat', 'head', 'tail', 'less', 'more', 'bat', 'sed', 'get-content', 'gc', 'type'])
+// Where installed or checked-out skills live: a plugin cache or install (Claude Code, Codex, Copilot CLI), user skill
+// dirs (Claude Code, opencode, `.agents`), pi's packages, and a checkout's `plugins/<name>/skills`.
+const SKILL_ROOT = /(?:[\\/]\.(?:claude|codex|copilot|pi)[\\/]|[\\/]\.config[\\/]opencode[\\/]|[\\/]\.agents[\\/]skills[\\/]|(?:^|[\\/])plugins[\\/](?:cache[\\/][\w.-]+[\\/])?[\w-]+[\\/](?:[\w.-]+[\\/])?skills[\\/])/
+const bareSkill = (s) => String(s).split(':').pop()
+// The skills whose SKILL.md is among `paths`, under a skill root.
+const skillsRead = (paths) => paths.flatMap((p) => (SKILL_ROOT.test(p) ? [.../(?:^|[\\/])skills[\\/]([\w-]+)[\\/]SKILL\.md$/.exec(p)?.slice(1) ?? []] : []))
+// The arguments of every reader in a shell command (`cat f`, `sed -n 1,200p f`; not `sed -i`), payloads included.
+const readerArgs = (command) =>
+  units(analysis(command)).flatMap(({ cmd }) => {
+    const [name, ...args] = commandWords(cmd.words).map((w) => w.val)
+    const reader = READERS.has(String(name ?? '').replace(/^.*[\\/]/, '').toLowerCase()) && !args.some((a) => /^(?:-i|-[a-zA-Z]*i\b|--in-place)/.test(a))
+    return reader ? args : []
+  })
 const EDITS = new Set(['edit', 'write', 'multiedit', 'create', 'create_file', 'replace_string_in_file', 'insert_edit_into_file'])
 const WEEK_MS = 7 * 24 * 3600 * 1000
 
@@ -269,14 +287,18 @@ export async function handle(input, deps) {
   } else if (event === 'PreToolUse') {
     const tool = String(input.tool_name ?? '').toLowerCase()
     const t = input.tool_input ?? {}
-    // Codex and pi have no skill tool: the agent reads SKILL.md with a shell or read tool, which counts too.
-    for (const m of `${t.command ?? ''} ${t.file_path ?? t.path ?? t.filePath ?? ''}`.matchAll(/skills[\\/]([\w-]+)[\\/]SKILL\.md/g)) state.loaded.push(m[1])
+    // Codex and pi have no skill tool: the agent reads SKILL.md with a read tool or a shell reader, which counts too
+    // (owner decision D8), only under a skill root; writing one never counts.
+    if (READS.has(tool)) state.loaded.push(...skillsRead([t.file_path ?? t.path ?? t.filePath ?? '']))
+    else if (SHELLS.has(tool)) state.loaded.push(...skillsRead(readerArgs(String(t.command ?? ''))))
     if (tool === 'skill' && (t.skill || t.name)) state.loaded.push(String(t.skill || t.name))
     else if (SHELLS.has(tool)) out = await onShell(input, state, deps)
     else if (EDITS.has(tool)) out = await onEdit(input, state, deps)
   }
-  // One guard.skill per skill and session, in every harness: the same skill-usage figure everywhere.
-  const before = new Set(loadedBefore)
+  // One guard.skill per skill and session, in every harness: the same skill-usage figure everywhere. Names are kept
+  // bare (`dev-tools:ship` is `ship`), so a skill loaded both ways counts once.
+  state.loaded = state.loaded.map(bareSkill)
+  const before = new Set(loadedBefore.map(bareSkill))
   const known = deps.knownSkills ?? knownSkills()
   for (const skill of new Set(state.loaded)) {
     const name = skill.split(':').pop()

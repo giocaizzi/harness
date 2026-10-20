@@ -43,7 +43,7 @@ test('Codex, pi and opencode ways of loading a skill count as loaded', async () 
     { hook_event_name: 'UserPromptSubmit', prompt: '$ship now' },
     { hook_event_name: 'UserPromptSubmit', prompt: '/skill:ship' },
     pre('Bash', 'sed -n 1,200p /x/plugins/cache/h/dev-tools/1.0.0/skills/ship/SKILL.md'),
-    { hook_event_name: 'PreToolUse', tool_name: 'read', tool_input: { path: 'C:\\h\\skills\\ship\\SKILL.md' } },
+    { hook_event_name: 'PreToolUse', tool_name: 'read', tool_input: { path: 'C:\\Users\\me\\.pi\\agent\\git\\harness\\plugins\\dev-tools\\skills\\ship\\SKILL.md' } },
     { hook_event_name: 'PreToolUse', tool_name: 'skill', tool_input: { name: 'ship' } },
   ]) {
     const h = setup()
@@ -368,4 +368,27 @@ test("Codex's reviewer is read from the rollout's last 256 KB only", () => {
   writeFileSync(join(dir, 'old.jsonl'), `${ctx('user')}\n${filler}`)
   assert.equal(codexReviewer(tail(join(dir, 'recent.jsonl'))), 'user')
   assert.equal(codexReviewer(tail(join(dir, 'old.jsonl'))), undefined, 'older than the tail: unknown, so denied')
+})
+
+test('a SKILL.md counts as loaded only when read under a skill root, never when written', async () => {
+  const committed = async (load) => {
+    const h = setup()
+    await h(load)
+    return decision(await h(pre('Bash', 'git commit')))?.permissionDecision
+  }
+  const cached = '/Users/me/.claude/plugins/cache/giocaizzi-harness/dev-tools/1.24.0/skills/ship/SKILL.md'
+  assert.equal(await committed({ hook_event_name: 'PreToolUse', tool_name: 'Write', tool_input: { file_path: cached, content: 'x' } }), 'deny')
+  assert.equal(await committed(pre('Bash', `sed -i s/a/b/ ${cached}`)), 'deny')
+  assert.equal(await committed({ hook_event_name: 'PreToolUse', tool_name: 'Read', tool_input: { file_path: '/tmp/scratch/skills/ship/SKILL.md' } }), 'deny')
+  assert.equal(await committed(pre('Bash', 'echo skills/ship/SKILL.md')), 'deny')
+  assert.equal(await committed({ hook_event_name: 'PreToolUse', tool_name: 'Read', tool_input: { file_path: cached } }), undefined)
+  assert.equal(await committed(pre('Bash', 'cat plugins/dev-tools/skills/ship/SKILL.md')), undefined)
+})
+
+test('a skill loaded by its namespaced and its bare name is one guard.skill', async () => {
+  const events = []
+  const h = setup({ emit: (event, attrs) => events.push([event, attrs]), knownSkills: new Set(['ship']) })
+  await h({ hook_event_name: 'PreToolUse', tool_name: 'Skill', tool_input: { skill: 'dev-tools:ship' } })
+  await h({ hook_event_name: 'UserPromptSubmit', prompt: '/ship' })
+  assert.deepEqual(events.filter(([e]) => e === 'guard.skill').map(([, a]) => a.skill), ['ship'])
 })
