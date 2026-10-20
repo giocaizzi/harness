@@ -5,7 +5,7 @@ import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { tmpdir, userInfo } from 'node:os'
 import { join } from 'node:path'
-import { CODEX_RULES, codexAsks, handle, pythonManager, sessionStore } from './guard.mjs'
+import { CODEX_RULES, codexAsks, codexReviewer, handle, pythonManager, sessionStore, tail } from './guard.mjs'
 import { fallbackDataDir } from './data.mjs'
 import { codexRules } from '../core/engine.mjs'
 import { rules } from '../core/rules.mjs'
@@ -344,4 +344,28 @@ test('without a session id nothing is kept, and the fallback data dir is per use
   await handle({ hook_event_name: 'PreToolUse', tool_name: 'Skill', tool_input: { skill: 'ship' } }, { dataDir, env: {}, hostFacts: calm, run: async () => null })
   assert.equal(existsSync(join(dataDir, 'sessions')), false)
   assert.match(fallbackDataDir(), new RegExp(`guard-plugin-${process.getuid?.() ?? userInfo().username}$`))
+})
+
+test('lookups that outrun the budget are dropped: the risky command still gets a decision, an ask', async () => {
+  const h = setup({ run: () => new Promise(() => {}), factsMs: 100, previewMs: 100 })
+  const started = Date.now()
+  const d = decision(await h(pre('Bash', 'rm -rf node_modules')))
+  assert.ok(Date.now() - started < 2000)
+  assert.equal(d.permissionDecision, 'ask')
+  assert.match(d.permissionDecisionReason, /Checks unfinished/)
+})
+
+test('a decision does not wait for telemetry', async () => {
+  const h = setup({ emit: () => new Promise(() => {}) })
+  assert.equal(decision(await h(pre('Bash', 'rm -rf build'))).permissionDecision, 'ask')
+})
+
+test("Codex's reviewer is read from the rollout's last 256 KB only", () => {
+  const dir = mkdtempSync(join(tmpdir(), 'guard-test-'))
+  const ctx = (reviewer) => JSON.stringify({ type: 'turn_context', payload: { approvals_reviewer: reviewer } })
+  const filler = `${JSON.stringify({ type: 'event', payload: 'x'.repeat(1000) })}\n`.repeat(400)
+  writeFileSync(join(dir, 'recent.jsonl'), `${ctx('agent')}\n${filler}${ctx('user')}\n`)
+  writeFileSync(join(dir, 'old.jsonl'), `${ctx('user')}\n${filler}`)
+  assert.equal(codexReviewer(tail(join(dir, 'recent.jsonl'))), 'user')
+  assert.equal(codexReviewer(tail(join(dir, 'old.jsonl'))), undefined, 'older than the tail: unknown, so denied')
 })
