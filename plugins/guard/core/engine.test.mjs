@@ -906,21 +906,27 @@ test('git tag -f or -d of a tag no remote has is not a release; anything else st
   for (const c of ['git tag -f m4-old-a d4759d4', 'git tag -d m4-old-a m4-old-b', 'git status --short | head -3; git tag -f m4-old-a d4759d4 >/dev/null', 'git -C /r tag --delete scratch'])
     assert.equal((await decideWith(c)).action, 'allow', c);
   assert.ok(calls.includes('git -C . ls-remote --tags upstream refs/tags/m4-old-a'), 'every remote is asked');
-  for (const c of ['git tag -f shared', 'git tag -d flaky', 'git tag -f v1.2.0', 'git tag -d 1.0.0', 'git tag scratch', 'git tag -a -f x -m y', 'git tag -f m4 && npm version patch', "ssh h 'git tag -d x'", 'git tag -f $T'])
+  for (const c of ['git tag -f shared', 'git tag -d flaky', 'git tag -f v1.2.0', 'git tag -d 1.0.0', 'git tag scratch', 'git tag -a -f x -m y', 'git tag -f m4 && npm version patch', "ssh h 'git tag -d x'", 'git tag -f $T',
+    'git tag -f m4-old-a && git push origin m4-old-a', 'git tag -f m4-old-a && git push --tags', 'git tag -d m4-old-a && gh release create m4-old-a'])
     assert.equal((await decideWith(c)).rule, 'release', c);
 });
 
 test('a secret tool asked only for its usage is not a secret read (G24)', () => {
   for (const c of ['command -v bws op secret-tool; bws secret get --help 2>&1 | head -30', 'bws secret get -h', 'bw help get', 'op help read', 'gh auth token --help', 'printenv --help'])
     assert.equal(outcome(c, { state: { reminded: new Set(['read']) } }), 'allow', c);
-  for (const c of ['bws secret get x', 'bws secret get x | grep --help', 'bws secret list && echo --help', 'grep -h TOKEN .env', 'bws secret get x; bws --help', 'env | sort'])
+  for (const c of ['bws secret get x', 'bws secret get x | grep --help', 'bws secret list && echo --help', 'grep -h TOKEN .env', 'bws secret get x; bws --help', 'env | sort',
+    // Review of #207: a file reader prints the file whatever `--help` says, and a flag's value is no help request.
+    'cat .env --help', 'head .env --help', 'cat ~/.ssh/id_rsa --help', 'cat .netrc --help', 'source .env --help', 'gh auth token --hostname --help'])
     assert.equal(outcome(c), 'ask:secrets', c);
 });
 
 test('pureRead: plain reads of non-secret files only (G24)', () => {
-  for (const c of ['sed -n 36,56p a/b.md', 'sed -n 5p f', 'cat a b', 'head -n 5 f', 'tail -20 f', 'cd /r && cat f', 'less docs/x.md'])
+  for (const c of ['sed -n 36,56p a/b.md', 'sed -n 5p f', 'cat a b', 'head -n 5 f', 'tail -20 f', 'cd r && cat f', 'less docs/x.md'])
     assert.equal(pureRead(c), true, c);
   for (const c of ["sed -n 's/a/b/w o' f", 'sed -n 1,5p', 'sed 1p f', 'cat', 'cat -', 'cat a > b', 'cat a | sh', 'cat "a b"', 'cat $F', 'cat *.md', 'cat .env', 'cat .env.local', 'cat ~/.netrc',
-    'head ~/.ssh/known_hosts', 'cat k.pem', 'cat my-secrets.txt', 'cat token.go', 'cat /dev/zero', 'cd ~/.ssh && cat config', 'cd a; cat f', 'cd a && cd b && cat f', 'grep x f', 'cat a && rm b'])
+    'head ~/.ssh/known_hosts', 'cat k.pem', 'cat my-secrets.txt', 'cat token.go', 'cat /dev/zero', 'cd ~/.ssh && cat config', 'cd a; cat f', 'cd a && cd b && cat f', 'grep x f', 'cat a && rm b',
+    // Review of #207: outside the working tree goes to the harness's own prompt, and more secret names.
+    'cd /r && cat f', 'cat /etc/hosts', 'cat ~/.config//gh/hosts.yml', 'cd ~/.config/ && cat gh/hosts.yml', 'cat //proc/self/environ', 'cd / && cat proc/self/environ',
+    'cat a/../b', 'cat a//b', 'cat ~/.codex/auth.json', 'cat terraform.tfstate', 'cat prod.tfvars', 'cat prod.env', 'cat .git/config', 'cat .zsh_history'])
     assert.equal(pureRead(c), false, c);
 });
