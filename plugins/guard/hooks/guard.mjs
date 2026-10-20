@@ -147,7 +147,7 @@ async function onShell(input, state, deps) {
       deps.emit?.('guard.decision', { rule: d.rule, action, via, tool: String(input.tool_name ?? ''), session_id: input.session_id, tool_use_id: input.tool_use_id, cmd_hash: commandHash(command), ...(d.rule === 'host' ? hostAttrs(host) : {}) }, input.cwd)
     if (d.remind) await deps.emit?.('guard.reminder', { rule: d.rule, tool: String(input.tool_name ?? ''), session_id: input.session_id, tool_use_id: input.tool_use_id }, input.cwd)
     if (d.action === 'deny') {
-      await report('deny')
+      await report('deny', d.split ? 'split' : undefined)
       return preToolUse('deny', d.reason)
     }
     // Unattended run (GUARD_UNATTENDED=1): nobody can answer an ask, so it becomes a deny and the agent picks another way.
