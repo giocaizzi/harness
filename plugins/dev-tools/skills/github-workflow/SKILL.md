@@ -12,7 +12,7 @@ This skill is the GitHub mechanics. The repo checklist (aggregate `check`, title
 ## Landing a change
 
 1. **Small PRs, stacked when layered.** One logical change per PR. If work has more than one reviewable layer (schema → API → UI), stack them instead of one large PR.
-2. **Auto-merge, not manual merge.** Open the PR, then `gh pr merge <n> --auto --squash --delete-branch`. It merges when required checks pass. Do not poll and merge by hand.
+2. **Auto-merge, not manual merge.** Open the PR, then `gh pr merge <n> --auto --squash --delete-branch`. It merges when required checks pass. Do not poll and merge by hand, except where auto-merge is unavailable (private repos on the Free plan): then `land` merges directly once every check passed, never with `--admin`.
 3. **Merge queue when the repo has one.** With a queue, the same command enqueues the PR; do not pass a merge method the queue overrides.
 4. **Never bypass.** No admin override, no `--admin`, no disabling a rule to get a PR through. A failing required check is fixed, or the check is corrected in its own PR.
 
