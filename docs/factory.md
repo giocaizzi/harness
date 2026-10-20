@@ -43,7 +43,7 @@ Every comment the agent posts starts with two hidden lines: the marker (config `
 | `<!-- factory:claim -->` | when a run claims the ticket | Host, run id, runner (`attended`, `headless`, `runtime`). |
 | `<!-- factory:plan -->` | once at the start, edited in place | Goal, acceptance checks, side effects in scope, planned fold-ins, size, risk tier. M and larger end by asking for the owner's OK. |
 | `<!-- factory:question Q<n> -->` | per question | One question, the options, a recommendation with its reason, and what is done so far. |
-| `<!-- factory:log -->` | once, edited in place | The decision log: one row per item found and the call made on it. Mirrored as `## Scope` in the PR. |
+| `<!-- factory:log -->` | once, edited in place | The decision log: one row per call the plan does not already cover. Mirrored as `## Scope` in the PR. |
 | `<!-- factory:result <end_state> -->` | at the end of each run | End state, PR, evidence links, follow-ups. The same facts as `result.json`. |
 | `<!-- factory:notify <kind> -->` | by a runtime only, when it must reach an approver | An @-mention of the approvers and one line on why, `<kind>` naming the event (for example `question`, `halt`, `quarantine`, `budget`). It carries the marker, so it is never read as an answer. |
 
@@ -65,11 +65,13 @@ A ticket is ready when its body has acceptance criteria and a proof command: a c
 
 Anything found during the work is in scope when an acceptance check needs it, when it is a side effect of the change (migrations, tests, docs and runbooks, generated types, config, deploy, live verification), or when it is entangled with the changed code so that fixing it later means reworking this change. Side effects are always in.
 
+The decision log holds only calls the approved plan does not already cover: fold-ins beyond the plan, questions, notes and follow-ups. Hunks that trace to an acceptance check and side effects the plan names get no row; changed existing test assertions get one `Existing tests changed: <test> (<old> → <new>, per AC<n>)` line in the PR's Verification section.
+
 An in-scope item that is not a must-have is folded in by the agent alone only if it stays in the ticket's component, grows the ticket by at most one size step, does not raise the risk tier, and needs no owner or product decision. Otherwise the agent asks. Items that are not in scope are separate work: the agent searches for an existing issue and comments there, or opens one new backlog issue grouping related findings, never with the approval label. There is no numeric cap; flooding is watched through how many agent-filed issues end as duplicates or not planned.
 
 ## Verification
 
-Before the PR ships, a fresh-context `verifier` agent that did not write the change checks four things: every changed hunk traces to an acceptance check or a decision-log row; every side effect is in the diff; each acceptance check has evidence that could have failed; and the PR carries the whole scope and `Closes #N`. It reports only what blocks the merge.
+Before the PR ships, a fresh-context `verifier` agent that did not write the change checks four things: every changed hunk traces to an acceptance check, a decision-log row or the PR's `Existing tests changed` line, and a changed assertion missing from that line is flagged; every side effect is in the diff; each acceptance check has evidence that could have failed; and the PR carries the whole scope and `Closes #N`. It reports only what blocks the merge.
 
 Its definition pins the model and effort, since a subagent with neither inherits the session's model and price: Opus at `high`, the one preset above `medium` in `subagent-orchestration`, because it is the last gate before a ticket ships. Trivial changes (XS, docs-only, config-only) are verified on Sonnet at `medium`, or `low` when a deterministic check fully covers them, set on the spawn; nothing goes above `high`. A verifier finding counts only when it blocks the merge and says how to show the failure, and a check that is syntax-only or failed to start is not evidence. Where a harness runs no subagent, the verifier runs as a separate session given the same brief (on pi, the `subagent` tool already starts one).
 

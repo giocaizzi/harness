@@ -25,7 +25,7 @@ Otherwise ask on the ticket.
 
 | Step 1 | Step 2 | Do |
 |---|---|---|
-| R1 or R2 | | fold in, log it |
+| R1 or R2 | | fold in; log it only if the plan does not already cover it (see Decision log) |
 | R3 | L1-L4 hold | fold in, log it |
 | R3 | any fails | ask on the ticket, logging which `L` failed |
 | separate | | don't touch it; handle as separate work |
@@ -34,7 +34,12 @@ Never in the diff: "while I'm here" refactors, style changes outside the lines y
 
 ## Decision log
 
-One row per item: what, where you found it, which test (`R1`, `R2`, `R3`, `separate`; add the failing `L` when you asked), the decision (`folded`, `asked`, `noted`, `filed`, `commented`) and where it landed (commit, question, issue or comment). The verifier traces every changed hunk to an acceptance check or a row, so an unlogged change fails the gate.
+Log only calls the approved plan does not already cover. A row is for a fold-in (an R1 or R3 item beyond the plan), a question, a note, or a filed or commented follow-up. No row for:
+
+- a hunk that traces to an acceptance check in the plan: the verifier traces it to the `AC<n>`;
+- an R2 side effect the plan's "side effects in scope" already names.
+
+One row per item: what, where you found it, which test (`R1`, `R2`, `R3`, `separate`; add the failing `L` when you asked), the decision (`folded`, `asked`, `noted`, `filed`, `commented`) and where it landed (commit, question, issue or comment). The verifier traces every changed hunk to an acceptance check, a row, or the PR's "Existing tests changed" line ([done.md](done.md#ship-and-land)); a hunk that traces to none of them fails the gate.
 
 ## Separate work
 

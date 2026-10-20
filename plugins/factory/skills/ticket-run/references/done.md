@@ -14,7 +14,7 @@ A fresh-context `verifier` (this plugin's agent) gates the change; it must not b
 
 ## Ship and land
 
-`ship`, using the repo's PR template if it has one. Otherwise the body carries `## Scope` (the decision log), the acceptance evidence as the testing under `## Verification`, `## Risk` (tier and why) and `## How to revert`, with `Closes #N` among the footers. Then land by the change's risk tier (the highest `risk` tier any changed path matches; unmatched paths are medium):
+`ship`, using the repo's PR template if it has one. Otherwise the body carries `## Scope` (the decision log), the acceptance evidence as the testing under `## Verification`, `## Risk` (tier and why) and `## How to revert`, with `Closes #N` among the footers. List each existing test assertion the change altered as one line under `## Verification`: `Existing tests changed: <test> (<old> → <new>, per AC<n>)`; a flipped assertion stays visible without a decision row. Then land by the change's risk tier (the highest `risk` tier any changed path matches; unmatched paths are medium):
 
 - `merge: auto`: `land`.
 - `merge: owner`: ask on the ticket for the merge (`Ready to merge: #<pr>`, with the evidence) and park. The next run resumes once the PR is merged.
