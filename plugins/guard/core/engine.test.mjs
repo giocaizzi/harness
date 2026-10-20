@@ -478,6 +478,13 @@ test('remind rules hint once per session and never deny', () => {
   assert.equal(evaluateCommand({ command: 'gh run view 9 --log-failed', state, host: calm, rules }).context, undefined);
   assert.equal(evaluateCommand({ command: 'uv run pytest -q', loadedSkills: new Set(['python:python-testing']), state: fresh(), host: calm, rules }).remind, undefined);
   assert.equal(evaluateCommand({ command: 'uv run pytest -q', state: fresh(), host: calm, rules }).rule, 'pytest');
+  assert.equal(evaluateCommand({ command: 'go test -race ./...', state: fresh(), host: calm, rules }).rule, 'go-test');
+  assert.equal(evaluateCommand({ command: 'go test ./...', loadedSkills: new Set(['go:go-testing']), state: fresh(), host: calm, rules }).remind, undefined);
+  for (const c of ['go vet ./...', 'golangci-lint run', 'go build ./cmd/x']) {
+    assert.equal(evaluateCommand({ command: c, state: fresh(), host: calm, rules }).rule, 'go-lint', c);
+  }
+  assert.equal(evaluateCommand({ command: 'go build ./...', loadedSkills: new Set(['go:go-development']), state: fresh(), host: calm, rules }).remind, undefined);
+  assert.equal(evaluateCommand({ command: 'echo gotest', state: fresh(), host: calm, rules }).rule, undefined);
 });
 
 test('a shell-only file read hints at the read tool once, only where the harness has one', () => {
