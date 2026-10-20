@@ -25,6 +25,7 @@ gh api "repos/{owner}/{repo}/issues/N/timeline" --paginate \
 
 - **Approved:** open, the approval label is on, and the last timeline line is `labeled` by a login in `approvers`. Otherwise stop and say which part failed.
 - **Not edited since:** the approval covers the ticket as the approver saw it, so a title or body changed afterwards by a non-approver voids it ([below](#edited-after-approval)). Stop and say who edited.
+- **Not in grooming:** the grooming label is off. Otherwise stop: the owner removes it once the ticket is refined.
 - **Ready:** the body has acceptance criteria and a proof command (a command or observation that shows the ticket done). Without them, ask on the ticket, proposing both, instead of starting.
 - **Not claimed:** no claim label, or the newest trusted `factory:claim` comment is this run's own: a `runtime` claim only when its run id equals `FACTORY_RUN_ID` (the runtime claimed the ticket for this run); an `attended` claim from this host (a resume). Any other claim, including a runtime's on this host, is another run's. A claim by another run means stop: two runs never take one ticket. A stale claim is the owner's to clear.
 - **Claim:** add the claim label, then post `factory:claim` with the host name and run id. When `FACTORY_RUN_ID` is set, the runtime already did both: edit its claim comment (the newest trusted one with that run id) instead of posting a second, and use that id as the run id. Release it (remove the label) when the run ends, whatever the end state.
@@ -69,7 +70,7 @@ gh api -X PATCH "repos/{owner}/{repo}/issues/comments/<id>" -F body=@<file>
 
 A question parks the ticket: post it, `gh issue edit N --add-label needs-owner`, set the board status to blocked (config `board`, [below](#board-status)), release the claim, record the result as `parked`, and stop. In a session, tell the person the question is on the ticket; the answer goes there, so the record stays whole.
 
-The third question on a ticket means it is under-specified: post it, then `gh issue edit N --add-label needs-grooming --remove-label agent-ok` instead of `needs-owner`.
+The third question on a ticket means it is under-specified: post it, then `gh issue edit N --add-label needs-grooming` instead of `needs-owner`. Leave the approval label alone: adding or removing it is the owner's, and in a runtime run the guard denies any command that names it. `needs-grooming` alone keeps the ticket out of every run (see the gate).
 
 ## Answers
 

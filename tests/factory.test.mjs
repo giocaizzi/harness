@@ -185,6 +185,18 @@ test('merge gate: done.md resumes a parked ticket only when an approver merged t
   assert.match(read('plugins/factory/skills/ticket-run/SKILL.md'), /an approver's merge/)
 })
 
+test('grooming: the third park adds needs-grooming and never touches the approval label; the gate skips it', () => {
+  const comments = read(COMMENTS)
+  const step = comments.split('\n').find((l) => l.startsWith('The third question on a ticket'))
+  assert.match(step, /gh issue edit N --add-label needs-grooming`/)
+  assert.doesNotMatch(step, /remove-label|--add-label[^`]*agent-ok/)
+  assert.match(comments, /\*\*Not in grooming:\*\* the grooming label is off/)
+  for (const f of [COMMENTS, 'plugins/factory/skills/ticket-run/SKILL.md', 'plugins/factory/skills/ticket-run/references/done.md', 'docs/factory.md']) {
+    assert.doesNotMatch(read(f), /--remove-label agent-ok|removes the approval label and stops/, f)
+  }
+  assert.match(doc, /Removing `needs-grooming` re-admits the ticket/)
+})
+
 test('.factory/ rule: any change under it lands as merge: owner whatever its tier', () => {
   assert.match(read('plugins/factory/skills/ticket-run/references/done.md'), /Any change under `\.factory\/`.*is `merge: owner` whatever tier/)
 })

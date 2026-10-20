@@ -26,7 +26,7 @@ The `ticket-run` skill carries one ticket through these steps; call it with the 
 
 | Label (config key) | Default | Set by | Meaning |
 |---|---|---|---|
-| `labels.approval` | `agent-ok` | an approver, only | The ticket may be worked. The agent never adds it, and removes it only after three parks. |
+| `labels.approval` | `agent-ok` | an approver, only | The ticket may be worked. The agent never adds or removes it (in a runtime run the guard denies any command that names it). |
 | `labels.claimed` | `factory-claimed` | the agent | A run holds the ticket (see [Claims](#claims)). Removed when the run ends. |
 | `labels.needs_owner` | `needs-owner` | the agent | A question waits on the owner. Removed when the run resumes on an answer. |
 | `labels.needs_grooming` | `needs-grooming` | the agent | Three parks: the ticket is under-specified and goes back to the owner for refinement. |
@@ -55,7 +55,7 @@ Posting is idempotent: before posting, the agent looks for its own comment of th
 
 **Answers.** The answer to an open question is the newest comment after it that an approver wrote and that does not carry the marker (so a `factory:notify` mention never counts). Comments by any other account are ignored. Logins are compared ignoring case, as for writers, and an unset or empty `marker` means the default. A run resumes only on such an answer; with none, the ticket stays parked.
 
-**Parks.** A question sets `needs-owner` (and the board's blocked status) and ends the run. After the third question on one ticket, the agent sets `needs-grooming`, removes the approval label and stops.
+**Parks.** A question sets `needs-owner` (and the board's blocked status) and ends the run. After the third question on one ticket, the agent sets `needs-grooming` and stops; it leaves the approval label alone. A ticket with `needs-grooming` is not worked (the skill's gate and a runtime's poller both skip it). Removing `needs-grooming` re-admits the ticket; to re-approve it after grooming instead, the owner removes the approval label and applies it again.
 
 ## Claims
 
