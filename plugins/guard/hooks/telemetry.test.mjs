@@ -38,7 +38,11 @@ test('repoSlug: owner/name only, never host, user or token', () => {
   assert.equal(repoSlug('https://x-access-token:abc@github.com/acme/widgets'), 'acme/widgets')
   assert.equal(repoSlug('git@github.com:acme/widgets.git'), 'acme/widgets')
   assert.equal(repoSlug('ssh://git@host:22/acme/widgets/'), 'acme/widgets')
-  assert.equal(repoSlug('/srv/repos/widgets'), 'repos/widgets')
+  assert.equal(repoSlug('https://dev.azure.com/org/proj/_git/widgets'), 'proj/widgets')
+  assert.equal(repoSlug('https://gitlab.com/group/sub/widgets.git'), 'sub/widgets')
+  // Local or host-only remotes carry directory names, a host or a port, never an owner/name: null.
+  for (const url of ['/srv/repos/widgets', '/Users/alice/repo', 'file:///home/bob/work/client/app.git', '../sibling/repo', 'https://git.internal.example/proj.git', 'ssh://git@host.example:2222/proj.git', 'C:/Users/alice/repo', 'https://h/o/r/..'])
+    assert.equal(repoSlug(url), null, url)
   assert.equal(repoSlug(''), null)
   assert.equal(repoSlug(null), null)
 })

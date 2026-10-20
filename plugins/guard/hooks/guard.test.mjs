@@ -365,6 +365,23 @@ test('telemetry: a heavy command allowed on a calm host is always recorded, as r
   assert.deepEqual([events[0].action, events[0].rule, events[0].sample_rate, events[0].load1, events[0].free_gb], ['allow', 'host', 1, 1, 100])
 })
 
+test('telemetry: a heavy allow the host rule did not judge (wrapped, or after its deny) is only sampled', async () => {
+  const events = []
+  const run = setup({ emit: async (event, attrs) => events.push([attrs.action, attrs.rule, attrs.sample_rate]), random: () => 0.99, hostFacts: async () => ({ load1: 999, freeGb: 100 }) })
+  await run(pre('Bash', 'make test'))
+  await run(pre('Bash', 'make test'))
+  await run(pre('Bash', 'scripts/heavy.sh make test'))
+  assert.deepEqual(events, [['deny', 'host', undefined]])
+})
+
+test('telemetry: the allow sample keeps random() below 1/ALLOW_SAMPLE only', async () => {
+  for (const [roll, sent] of [[0.0999, 1], [0.1, 0]]) {
+    const events = []
+    await setup({ emit: async (event, attrs) => events.push(attrs), random: () => roll })(pre('Bash', 'ls'))
+    assert.equal(events.length, sent, String(roll))
+  }
+})
+
 test('telemetry: a host deny carries the host facts it was judged on', async () => {
   const events = []
   await setup({ emit: async (event, attrs) => events.push(attrs), hostFacts: async () => ({ load1: 45, freeGb: 100 }) })(pre('Bash', 'make test'))

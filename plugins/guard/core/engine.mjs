@@ -803,11 +803,9 @@ export function evaluateCommand({ command, loadedSkills = new Set(), state, host
     };
   }
 
-  const heavy = hit(rules.heavy, command, { remote: false });
-  const { loadCap, cpuPercentCap, freeFloorGb, wrapper } = rules.host;
+  const { loadCap, cpuPercentCap, freeFloorGb } = rules.host;
   const strained = (host.load1 ?? 0) > loadCap || (host.cpuPercent ?? 0) > cpuPercentCap || (host.freeGb ?? Infinity) < freeFloorGb;
-  // A command already run through the heavy wrapper waits for its slot and load on its own.
-  if (heavy && strained && !new RegExp(wrapper).test(command) && !state.reminded.has('host')) {
+  if (hostJudged(command, rules, state.reminded) && strained) {
     state.reminded.add('host');
     return {
       action: 'deny',
@@ -879,6 +877,11 @@ export function evaluateSpawn({ usagePercent, resetsAt, rules }) {
   };
 }
 
+// Whether the host rule judges this command: a heavy command, not already run through the heavy wrapper (which waits
+// for its slot and load on its own), and no host deny yet this session (`reminded`).
+export function hostJudged(command, rules, reminded) {
+  return hit(rules.heavy, command, { remote: false }) && !new RegExp(rules.host.wrapper).test(command) && !reminded.has('host');
+}
 // Adapters ask this before gathering host facts, so the (slow) uptime/df calls run only for heavy commands.
 export function isHeavy(command, rules) {
   return rules.heavy.some((r) => new RegExp(r.match, 'i').test(matchable(command, { remote: false })));
@@ -958,11 +961,11 @@ const PROGRAM_FAMILY = {
   claude: 'harness', codex: 'harness', copilot: 'harness', opencode: 'harness', pi: 'harness', chezmoi: 'dotfiles', bw: 'secrets', bws: 'secrets', op: 'secrets',
 };
 export function cmdClass(rule, command) {
-  if (rule) return RULE_FAMILY[rule] ?? 'other';
+  if (rule) return Object.hasOwn(RULE_FAMILY, rule) ? RULE_FAMILY[rule] : 'other';
   try {
     for (const { cmd } of units(analysis(String(command ?? '')))) {
       const name = commandWords(cmd.words)[0]?.val.replace(/^.*[\\/]/, '');
-      if (name && name !== 'cd') return PROGRAM_FAMILY[name] ?? 'other';
+      if (name && name !== 'cd') return Object.hasOwn(PROGRAM_FAMILY, name) ? PROGRAM_FAMILY[name] : 'other';
     }
   } catch {
     // unreadable: other

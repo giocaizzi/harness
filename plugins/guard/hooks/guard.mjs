@@ -8,7 +8,7 @@ import { statfs } from 'node:fs/promises'
 import { cpus, homedir, loadavg, platform } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { analysis, branchFacts, cdDirs, cmdClass, codexRules, deniedBy, deniedDir, evaluateCommand, evaluateEdit, isHeavy, isRisky, nativeAsk, previewCommand, pureRead, refFacts, tagFacts, tagTargets, regenFacts, unattendedSet, withPreview, worktreeFacts } from '../core/engine.mjs'
+import { analysis, branchFacts, cdDirs, cmdClass, codexRules, deniedBy, deniedDir, evaluateCommand, evaluateEdit, hostJudged, isHeavy, isRisky, nativeAsk, previewCommand, pureRead, refFacts, tagFacts, tagTargets, regenFacts, unattendedSet, withPreview, worktreeFacts } from '../core/engine.mjs'
 import { cpuPercentFrom } from '../core/host.mjs'
 import { commandWords, units } from '../core/shell.mjs'
 import { emit } from '../core/otel.mjs'
@@ -278,6 +278,7 @@ async function onShell(input, state, deps) {
     // contradict it: they are held back there, and still come once the session leaves auto mode.
     const held = input.permission_mode === 'auto' ? ['read', 'edit'].filter((r) => !state.reminded.includes(r)) : []
     const reminded = new Set([...state.reminded, ...held])
+    const judged = hostJudged(command, rules, reminded)
     const d = evaluateCommand({ command, loadedSkills: new Set(state.loaded), state: { reminded }, host, readTool: deps.readTool ?? true, ...facts, rules })
     state.reminded = [...reminded].filter((r) => !held.includes(r))
     if (unfinished && d.action !== 'allow') d.reason += '\nChecks unfinished: the worktree, branch and build-output lookups ran out of time, so a safe case could not be shown.'
@@ -288,13 +289,13 @@ async function onShell(input, state, deps) {
       fire(deps, 'guard.decision', { rule: d.rule, action, via, cmd_class: cmdClass(d.rule, command), tool: String(input.tool_name ?? ''), session_id: input.session_id, tool_use_id: input.tool_use_id, cmd_hash: commandHash(command), ...(d.rule === 'host' ? hostAttrs(host) : {}) }, input.cwd)
     }
     // Allows are sampled (one in ALLOW_SAMPLE, `sample_rate` on the record), so ask and deny rates have a denominator
-    // without a record per shell call. A heavy command's allow is always sent, as rule `host` with the host facts it
-    // passed on, so "the host rule ran and let it through" shows apart from "the host rule never ran". Never to
+    // without a record per shell call. An allow the host rule judged (hostJudged: heavy, not wrapped, no host deny yet
+    // this session) is always sent, as rule `host` with the host facts it passed on, so "the host rule ran and let it
+    // through" shows apart from "the host rule never ran"; other heavy allows are sampled like the rest. Never to
     // FACTORY_EVENTS_FILE, which counts denies and asks.
     const allowed = (via) => {
-      const heavy = host.load1 !== undefined || host.freeGb !== undefined
-      if (!heavy && (deps.random ?? Math.random)() * ALLOW_SAMPLE >= 1) return
-      const sampled = heavy ? { rule: 'host', sample_rate: 1, cmd_class: 'host', ...hostAttrs(host) } : { rule: d.rule, sample_rate: ALLOW_SAMPLE, cmd_class: cmdClass(null, command) }
+      if (!judged && (deps.random ?? Math.random)() * ALLOW_SAMPLE >= 1) return
+      const sampled = judged ? { rule: 'host', sample_rate: 1, cmd_class: 'host', ...hostAttrs(host) } : { rule: d.rule, sample_rate: ALLOW_SAMPLE, cmd_class: cmdClass(null, command) }
       fire(deps, 'guard.decision', { action: 'allow', via, ...sampled, tool: String(input.tool_name ?? ''), session_id: input.session_id, tool_use_id: input.tool_use_id, cmd_hash: commandHash(command) }, input.cwd)
     }
     if (d.remind) fire(deps, 'guard.reminder', { rule: d.rule, cmd_class: cmdClass(d.rule, command), tool: String(input.tool_name ?? ''), session_id: input.session_id, tool_use_id: input.tool_use_id }, input.cwd)
@@ -453,7 +454,7 @@ async function main() {
   // `--no-ask` comes from the Codex hooks file (.generated/codex/hooks.json), which build_agents.py generates.
   const noAsk = process.argv.includes('--no-ask')
   // Codex (`--no-ask`) is the one harness without a file-read tool.
-  const out = await handle(input, { dataDir, env: process.env, hostFacts, run, pythonManager, noAsk, readTool: !noAsk, nativeAsk: noAsk ? (command, rule) => codexAsks(process.env, input.transcript_path)?.(command, rule) ?? false : null, emit: (event, attrs, cwd) => emit(process.env, event, recordAttrs(attrs, cwd, noAsk ? 'codex' : harnessName())) }).catch(() => ({}))
+  const out = await handle(input, { dataDir, env: process.env, hostFacts, run, pythonManager, noAsk, readTool: !noAsk, nativeAsk: noAsk ? (command, rule) => codexAsks(process.env, input.transcript_path)?.(command, rule) ?? false : null, emit: (event, attrs, cwd) => new Promise((r) => setImmediate(r)).then(() => emit(process.env, event, recordAttrs(attrs, cwd, noAsk ? 'codex' : harnessName()))) }).catch(() => ({}))
   if (out.stdout) process.stdout.write(out.stdout)
   if (out.stderr) process.stderr.write(out.stderr)
 }

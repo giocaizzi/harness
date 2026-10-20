@@ -943,4 +943,6 @@ test('F4 cmdClass: a rule maps to its family, a command to its program family; n
   assert.equal(cmdClass(null, 'FOO=1 /usr/bin/make check'), 'build');
   assert.equal(cmdClass(null, 'some-private-tool --flag'), 'other');
   assert.equal(cmdClass(null, ''), 'other');
+  for (const c of ['constructor x', 'toString', '__proto__ a', 'hasOwnProperty']) assert.equal(cmdClass(null, c), 'other', c);
+  assert.equal(cmdClass('constructor', ''), 'other');
 });

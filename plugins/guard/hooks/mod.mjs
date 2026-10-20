@@ -18,16 +18,34 @@ async function otelConfig($) {
   }
 }
 
-// The installed guard's version and the session repo's `owner/name` (origin remote), as the command hooks send them;
-// read once per load, null where unreadable.
-let where
+// The installed guard's version (read once per load) and the session repo's `owner/name` (its `origin` remote, else the
+// first remote, as the command hooks read it; once per working directory), null where unreadable. Never throws.
+const attempt = async (f) => {
+  try {
+    return await f()
+  } catch {
+    return null
+  }
+}
+let version
+const repos = new Map()
 async function whereAttrs($) {
-  where ??= (async () => {
-    const version = await $.fs.read(`${$.plugin.root}/.claude-plugin/plugin.json`).then((t) => JSON.parse(t).version ?? null, () => null)
-    const url = await $.process.run(['git', 'remote', 'get-url', 'origin'], { timeoutMs: 2000 }).then((r) => (r.exitCode === 0 ? r.stdout : null), () => null)
-    return { guard_version: version, repo: repoSlug(url) }
-  })()
-  return where
+  version ??= attempt(async () => JSON.parse(await $.fs.read(`${$.plugin.root}/.claude-plugin/plugin.json`)).version ?? null)
+  const cwd = (await attempt(() => $.session.cwd())) ?? ''
+  if (!repos.has(cwd)) {
+    const git = async (...args) => {
+      const r = await $.process.run(['git', ...args], { timeoutMs: 2000, ...(cwd ? { cwd } : {}) })
+      return r.exitCode === 0 ? r.stdout.trim() : null
+    }
+    repos.set(cwd, attempt(async () => {
+      const first = async () => {
+        const name = (await git('remote'))?.split(/\r?\n/)[0]
+        return name ? git('remote', 'get-url', name) : null
+      }
+      return repoSlug((await git('remote', 'get-url', 'origin')) ?? (await first()))
+    }))
+  }
+  return { guard_version: await version, repo: await repos.get(cwd) }
 }
 
 // One guard record to the OTel collector, when the session exports to one; never fails the caller.

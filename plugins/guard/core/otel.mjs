@@ -25,11 +25,31 @@ export function parsePairs(str) {
   return out
 }
 
-// `owner/name` from a git remote URL (https, ssh or scp form): the last two path segments, `.git` dropped, never the
-// host, a user or a token. Null for anything else.
+// `owner/name` from a git remote URL, read by form: a `scheme://` URL's path (Azure's `<project>/_git/<repo>` gives
+// `project/repo`), or the path after the colon of the scp form `[user@]host:owner/name`. At least two path segments,
+// the last two taken, `.git` dropped; never a host, port, user or token. Null for a local path, `file://`, a relative
+// remote or anything else, since their segments are local directory names.
+const SLUG_SEGMENT = /^(?!\.+$)[\w.-]+$/
 export function repoSlug(url) {
-  const m = /[/:]([\w.-]+)\/([\w.-]+?)(?:\.git)?\/?$/.exec(String(url ?? '').trim())
-  return m && !/^\.+$/.test(m[1]) && !/^\.+$/.test(m[2]) ? `${m[1]}/${m[2]}` : null
+  const s = String(url ?? '').trim()
+  let path
+  if (/^[a-z][\w+.-]*:\/\//i.test(s)) {
+    if (/^file:/i.test(s)) return null
+    try {
+      path = new URL(s).pathname
+    } catch {
+      return null
+    }
+  } else {
+    const m = /^(?:[^@\s/:]+@)?([^\s/:]+):(?!\/)(\S+)$/.exec(s)
+    if (!m || /^[a-z]$/i.test(m[1])) return null
+    path = m[2]
+  }
+  let segs = path.replace(/\/+$/, '').replace(/\.git$/, '').split('/').filter(Boolean)
+  const azure = segs.indexOf('_git')
+  if (azure > 0) segs = [segs[azure - 1], segs[azure + 1]]
+  segs = segs.slice(-2)
+  return segs.length === 2 && segs.every((x) => SLUG_SEGMENT.test(x ?? '')) ? segs.join('/') : null
 }
 
 const attr = (key, value) => ({ key, value: { stringValue: String(value) } })
