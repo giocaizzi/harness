@@ -85,6 +85,7 @@ For a repo adopted per [adopt-factory.md](adopt-factory.md): you approve a ticke
 | Skill | Argument | What it does |
 |---|---|---|
 | `ticket-run` | issue number | Checks you applied the approval label, posts a plan, works the ticket in its own worktree deciding scope with the fold-in test, asks questions on the ticket and parks until you answer there, runs the `verifier`, ships one PR that closes the ticket, merges by risk tier, deploys and live-verifies, and records the result. Run it again on a parked ticket after you answer. |
+| `factory-status` | days of done tickets (default 7) | One screen from GitHub labels and the marked comments: tickets that need you with their open question, in progress with PR and checks, parked for grooming, approved and not started, recently done. Read-only. |
 
 ## Agents
 
