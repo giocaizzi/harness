@@ -757,9 +757,103 @@ export function pureRead(command) {
 
 const hint = (rule) => `Skill hint (${rule.why}): load ${rule.skills.map((s) => `\`${s}\``).join(' or ')} if this task is that work.`;
 
+// One plain `gh` command, read without a shell tokenizer: its words, or null for anything else. Single-quoted spans are
+// literal in POSIX shells, and so is a double-quoted one without `\`, `$` or a backtick, or `{name}`; each stays one word. Any
+// shell syntax left after that (a separator, redirection, substitution, glob, escape, comment, leftover quote, newline)
+// gives null, so a misread line is never taken for a plain command.
+function plainGh(command) {
+  if (command.includes('\0')) return null;
+  const spans = [];
+  const rest = command.replace(/'([^']*)'|"([^"\\$`]*)"/g, (_, s, d) => `\0${spans.push(s ?? d) - 1}\0`)
+    // `{owner}`: braces around one name, no `,` or `..`, are literal (gh fills them in), unlike `{a,b}`.
+    .replace(/\{[A-Za-z_]\w*\}/g, (b) => `\0${spans.push(b) - 1}\0`);
+  if (/[;&|<>(){}$`\\#\n\r'"*?[\]]/.test(rest)) return null;
+  const words = rest.trim().split(/[ \t]+/).map((w) => w.replace(/\0(\d+)\0/g, (_, i) => spans[i]));
+  return words[0] === 'gh' ? words.slice(1) : null;
+}
+
+const API_LONG = { '--hostname': true, '--cache': true, '--header': true, '--input': true, '--jq': true, '--method': true, '--preview': true, '--raw-field': true, '--field': true, '--template': true, '--include': false, '--paginate': false, '--silent': false, '--slurp': false, '--verbose': false };
+const API_SHORT = { X: '--method', H: '--header', f: '--raw-field', F: '--field', q: '--jq', t: '--template', p: '--preview' };
+
+// What a plain `gh` command does: 'read' (`issue|pr view|list|status` without `--web`; `gh api` with GET and no field,
+// `--input` or unknown flag), { write: <endpoint> } for another `gh api` call, else null.
+function ghAction(args) {
+  const positional = [];
+  for (let i = 0; i < args.length && positional.length < 2; i++) {
+    if (['-R', '--repo', '--hostname'].includes(args[i])) i++;
+    else if (!args[i].startsWith('-')) positional.push(args[i]);
+  }
+  if (['issue', 'pr'].includes(positional[0]) && ['view', 'list', 'status'].includes(positional[1])) {
+    return args.some((a) => /^--web(?:=|$)|^-[A-Za-z]*w/.test(a)) ? null : 'read';
+  }
+  if (positional[0] !== 'api') return null;
+  let method = 'GET', endpoint = null, body = false;
+  const take = (flag, value) => {
+    if (flag === '--method') method = value.toUpperCase();
+    else if (['--raw-field', '--field', '--input'].includes(flag)) body = true;
+  };
+  for (let i = args.indexOf('api') + 1; i < args.length; i++) {
+    const a = args[i];
+    if (a.startsWith('--')) {
+      const [flag, glued] = a.includes('=') ? [a.slice(0, a.indexOf('=')), a.slice(a.indexOf('=') + 1)] : [a, null];
+      if (!(flag in API_LONG)) return null;
+      if (API_LONG[flag]) take(flag, glued ?? args[++i] ?? '');
+    } else if (a.startsWith('-') && a.length > 1) {
+      // pflag shorthand: `-i` is the one boolean; the first value flag takes the rest (`-XPOST`, `-f=k=v`) or the next word.
+      const m = /^-i*([A-Za-z])=?(.*)$/.exec(a);
+      if (!m || !(m[1] in API_SHORT)) { if (!/^-i+$/.test(a)) return null; continue; }
+      take(API_SHORT[m[1]], m[2] !== '' || a.includes('=') ? m[2] : args[++i] ?? '');
+    } else if (endpoint === null) endpoint = a;
+    else return null;
+  }
+  return method === 'GET' && !body ? 'read' : { write: endpoint ?? '' };
+}
+
+// Subcommands that cannot send a body the guard cannot read to a labels or issues endpoint (`gh api` can).
+const GH_SUBCOMMANDS = new Set(['issue', 'pr', 'repo', 'run', 'workflow', 'search', 'release', 'project', 'auth', 'label', 'browse', 'status']);
+
+// A line that is not one plain `gh` command but runs `gh` with `api` or a subcommand the guard cannot read literally
+// (`gh $'a'pi`, `gh "$X"`, `gh>/dev/null api`, zsh `=gh`). Read with quotes and backslashes removed, as the shell joins
+// them; `-R`/`--repo` may come first.
+function opaqueGh(flat) {
+  for (const m of flat.matchAll(/(?:^|[\s;&|(){}`!=])(?:[^\s;&|(){}`!=]*\/)?gh(?:\.exe)?(?=[\s;&|()`<>]|$)/g)) {
+    const words = flat.slice(m.index + m[0].length).split(/[\s;&|()<>`]+/).filter(Boolean);
+    let i = 0;
+    while (words[i] === '-R' || words[i] === '--repo' || /^--repo=/.test(words[i] ?? '')) i += words[i].includes('=') ? 1 : 2;
+    if (!GH_SUBCOMMANDS.has(words[i])) return true;
+  }
+  return false;
+}
+
+// Fail closed while a factory run is active. A command that names the approval label (in any quoting or case, as GitHub
+// compares) is denied unless it is one plain `gh` read; adding and removing alike are the owner's. A `gh` command with a
+// body the guard cannot read (`--input`, a `key=@file` field) is denied unless it is one plain `gh api` call writing to
+// a `/comments` endpoint or a path outside `/labels` and `/issues`; so is any other line running `gh api` (opaqueGh). A label the shell builds (`$L`) stays out of sight
+// (docs/guard.md).
+export function touchesApprovalLabel(command, label) {
+  const want = String(label).trim().toLowerCase();
+  if (!want) return false;
+  const named = new RegExp(`(?<![\\w-])${want.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w-])`, 'i');
+  const flat = command.replace(/['"\\]/g, '');
+  const args = plainGh(command);
+  const action = args && ghAction(args);
+  // A glued short flag is read without its flag (`-lagent-ok`).
+  if (named.test(command) || flat.split(/\s+/).some((w) => named.test(w) || named.test(w.replace(/^-[A-Za-z]=?/, '')))) return action !== 'read';
+  // A Windows path to gh (`C:\…\gh.exe`) loses its backslashes in `flat`: deny it outright.
+  if (!args && (opaqueGh(flat) || /\\gh(?:\.exe)?(?![\w-])/i.test(command))) return true;
+  if (/\bgh\b/.test(flat) && /--input\b|=@/.test(flat)) {
+    if (!action || action === 'read') return action !== 'read';
+    const path = action.write.split('?')[0].replace(/\/+$/, '');
+    return !(/\/comments(?:\/\d+)?$/.test(path) || (path && !/(?:^|\/)(?:labels|issues)(?:\/|$)/.test(path)));
+  }
+  return false;
+}
+
 // `readTool`: the harness has a file-read tool (all but Codex), so a shell read gets a once-per-session hint.
 // `worktrees`, `branches`, `regenerable`: facts the adapters gather (worktreeFacts, branchFacts, regenFacts).
-export function evaluateCommand({ command, loadedSkills = new Set(), state, host = {}, env = {}, worktrees = {}, branches = {}, regenerable = {}, refs = {}, tags = {}, python = null, readTool = false, rules }) {
+export function evaluateCommand({ command, loadedSkills = new Set(), state, host = {}, env = {}, worktrees = {}, branches = {}, regenerable = {}, refs = {}, tags = {}, python = null, readTool = false, factory = null, rules }) {
+  // While a factory run is active the agent never touches the approval label: with an owner token it would count as the owner's.
+  if (factory && touchesApprovalLabel(command, factory.approval)) return { action: 'deny', rule: 'factory-approval', reason: `${rules.factory.why} The \`${factory.approval}\` label is the owner's to apply or remove; ask on the ticket instead.` }
   // Hard denies come first and fire every time, like the title guard. A `when` rule denies only in a repo
   // that adopted that manager; elsewhere it lets the command through with a once-per-session note.
   const denied = deniedBy(command, rules)
