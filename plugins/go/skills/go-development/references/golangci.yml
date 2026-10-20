@@ -27,13 +27,13 @@ linters:
     - nonamedreturns     # named results document multi-value returns; nakedret still bans bare returns
     # Needs a per-repo allow/deny list; add it back with rules once there is one.
     - depguard
-    # To-do comments become issues through the todo-issues workflow, so they are not lint errors.
+    # To-do comments are tracked (as issues, by CI), not lint errors.
     - godox
     # Dynamic errors with context (fmt.Errorf("open %s: %w", ...)) are the norm; sentinels only where callers branch.
     - err113
     # White-box tests in the same package are allowed; black-box (_test package) where the API is the subject.
     - testpackage
-    # Struct tags follow the external format (GitHub's snake_case JSON), not a house case.
+    # Struct tags follow the external format they map (an API's snake_case JSON), not a house case.
     - tagliatelle
     # Numbers in tests and table data are clearer inline; named constants where a value has meaning.
     - mnd

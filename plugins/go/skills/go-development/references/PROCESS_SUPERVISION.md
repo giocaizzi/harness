@@ -6,13 +6,19 @@ For code that starts child processes and must stop all of them: on timeout, on c
 
 1. **One tree per run.** The child leads a new process group (Unix) or is put in a job object (Windows), so one call reaches every descendant, including the ones the child forks after we start it.
 2. **Graceful, then forced.** Cancel sends SIGTERM (Ctrl+Break on Windows) to the tree; after a grace period the tree gets SIGKILL (the job is terminated). `exec.Cmd.WaitDelay` is the last resort that unblocks `Wait`.
-3. **Always reap.** After `Wait` returns, kill whatever is left of the tree, even after a clean exit. A supervisor that leaves daemonised grandchildren running leaks processes across runs.
+3. **Always reap.** After `Wait` returns, kill whatever is left of the tree, even after a clean exit. A supervisor that leaves daemonised grandchildren running leaks processes across runs. The grace period is the leader's: once it exits, descendants still shutting down are killed at once, so a child that needs its own children to stop cleanly must wait for them before exiting.
 4. **Output is streamed through `cmd.Stdout`/`cmd.Stderr` as `io.Writer`s**, never read from `StdoutPipe` before `Wait`.
 
 ## Run
 
 ```go
 func (r *Runner) Run(ctx context.Context, spec Spec, out chan<- Line) error {
+	if spec.Timeout <= 0 || spec.Grace <= 0 { // zero grace would mean WaitDelay 0: Wait reads pipes until EOF, forever
+		return fmt.Errorf("run %s: timeout and grace must be positive", spec.Path)
+	}
+	// Output keeps flowing after a timeout (the last lines are the diagnostics);
+	// only the caller's own cancellation lets the writers drop lines.
+	callerDone := ctx.Done()
 	ctx, cancel := context.WithTimeoutCause(ctx, spec.Timeout, ErrTimeout)
 	defer cancel()
 
@@ -22,8 +28,8 @@ func (r *Runner) Run(ctx context.Context, spec Spec, out chan<- Line) error {
 
 	// exec copies output in its own goroutines, so WaitDelay bounds them even when a
 	// descendant keeps the pipe open; reading StdoutPipe before Wait would never time out.
-	stdout := &lineWriter{stream: "stdout", out: out, done: ctx.Done()}
-	stderr := &lineWriter{stream: "stderr", out: out, done: ctx.Done()}
+	stdout := &lineWriter{stream: "stdout", out: out, done: callerDone}
+	stderr := &lineWriter{stream: "stderr", out: out, done: callerDone}
 	cmd.Stdout, cmd.Stderr = stdout, stderr
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("start %s: %w", spec.Path, err)
@@ -50,7 +56,7 @@ func (r *Runner) Run(ctx context.Context, spec Spec, out chan<- Line) error {
 }
 ```
 
-`lineWriter` buffers bytes, sends each complete line (and lines over 64 KiB in chunks) to `out` in a `select` with `done`, and `flush` sends the unterminated tail after `Wait`. It holds `ctx.Done()`, not the context (`containedctx`). The caller drains `out` until `Run` returns; a log sink, an SSE stream or a ring buffer for the persisted record all sit behind that channel.
+`lineWriter` buffers bytes, sends each complete line (and lines over 64 KiB in chunks) to `out` in a `select` with `done`, and `flush` sends the unterminated tail after `Wait`. `done` is the caller's `Done` channel, not the timeout context's: a `select` with two ready cases picks at random, so selecting on the timeout would drop about half the lines a child prints while shutting down (a test asserts they all arrive). It holds the channel, not the context (`containedctx`). The caller drains `out` until `Run` returns; a log sink, an SSE stream or a ring buffer for the persisted record all sit behind that channel.
 
 ## Unix: process group
 
@@ -202,8 +208,9 @@ func main() {
 ## Gotchas
 
 - **`WaitDelay` kills the leader only.** On expiry exec SIGKILLs `cmd.Process` and closes the pipes; grandchildren survive. Escalate on the group yourself (the timer above).
-- **Reading `StdoutPipe` before `Wait` hangs forever** when a grandchild inherits the pipe: `WaitDelay` only starts inside `Wait`. Seen in practice: a test that should take 300 ms took 60 s, the grandchild's `sleep 60`. Use `io.Writer` outputs.
+- **Reading `StdoutPipe` before `Wait` hangs forever** when a grandchild inherits the pipe: `WaitDelay` closes the pipes only from inside `Wait`, which the reader never reaches. Seen in practice: a test that should take 300 ms took 60 s, the grandchild's `sleep 60`. Use `io.Writer` outputs.
 - **`Setpgid` takes the child out of the terminal's foreground group**: Ctrl+C reaches the supervisor only, which must forward the stop. That is the point, but an interactive child (one that reads the TTY) needs `Foreground: true` and a `Ctty` instead.
+- **A clean exit with a descendant still holding the pipe** blocks `Wait` for `WaitDelay` and then returns `exec.ErrWaitDelay`, although the command succeeded. Expected for daemonising commands; treat `errors.Is(err, exec.ErrWaitDelay)` as success with a warning if those are legitimate.
 - **A descendant that calls `setsid` or `setpgid` leaves the group.** On Linux, put each run in its own cgroup v2 and write `1` to `cgroup.kill` for complete containment; macOS has no equivalent.
 - **`Pdeathsig` (Linux) fires when the *thread* that started the child exits**, not the process; Go moves goroutines between threads. Only use it with `runtime.LockOSThread` around `Start`, or rely on the job/cgroup instead.
 - **Pid reuse.** Signal by pid only while the leader is unreaped (before `Wait` returns) or for the group right after it; never store pids to signal later. `Process.WithHandle` (pidfd on Linux 5.4+, a handle on Windows) pins the process.

@@ -114,7 +114,7 @@ s, err := runstate.Open(t.TempDir(), fixedClock) // production passes time.Now
 ## Golden files
 
 ```go
-var update = flag.Bool("update", false, "rewrite golden files")
+var update = flag.Bool("update", false, "rewrite golden files") // test files are the exception to "no flag.CommandLine"
 
 func golden(t *testing.T, got []byte) {
 	t.Helper()

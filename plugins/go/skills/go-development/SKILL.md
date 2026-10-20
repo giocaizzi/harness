@@ -10,7 +10,7 @@ The floor is the oldest supported Go release (two are supported at a time; 1.26 
 ## Tooling
 
 - **Tools are module dependencies, not host installs.** Pin them in the repo and run them with `go tool`: `go get -tool golang.org/x/vuln/cmd/govulncheck`, then `go tool govulncheck ./...`. The host needs only `go` (and `goreleaser` for local snapshots). No `go install` of tools, no `tools.go`.
-- **golangci-lint lives in its own modfile** (`golangci-lint.mod`), because upstream warns its dependencies must never mix with yours or be updated by hand: `go get -tool -modfile=golangci-lint.mod github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.x`. It is the only linter and formatter entry point: `govet`, `staticcheck` (which absorbed gosimple and stylecheck in v2), `gofumpt` and `gci` all run inside it.
+- **golangci-lint lives in its own modfile** (`golangci-lint.mod`). This is a deliberate deviation: upstream recommends its prebuilt binary and does not recommend `go tool`, but documents this isolated modfile for those who use it anyway. We accept a locally built binary for one pin per repo and no host install; never let its dependencies mix with yours or update them by hand: `go get -tool -modfile=golangci-lint.mod github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.x`. It is the only linter and formatter entry point: `govet`, `staticcheck` (which absorbed gosimple and stylecheck in v2), `gofumpt` and `gci` all run inside it.
 - **Every linter on**, the way Python starts from ruff `ALL`: `linters.default: all`, then `disable` a linter only with the reason inline. Start from [references/golangci.yml](./references/golangci.yml). Silence one finding with `//nolint:<linter> // reason`; `nolintlint` rejects a bare one.
 - **Make is the command surface**: `help`, `fmt`, `lint`, `vuln`, `test`, `check` (= `lint` + `test`), `build`. `lint` runs golangci-lint once per target `GOOS`, because files behind `//go:build windows` are invisible to a Linux or macOS run. `vuln` needs the network, so it runs in CI as its own job, not inside `check`.
 - `go fix ./...` (the modernizers since 1.26) runs in `make fmt`: it rewrites code to current idioms (`for range n`, `min`/`max`, `slices`, `strings.Cut`, `wg.Go`). Accept its diff; the `modernize` linter flags what it would change.
@@ -25,7 +25,7 @@ Read [references/PROJECT_SETUP.md](./references/PROJECT_SETUP.md) when scaffoldi
 
 ## Design
 
-- **No global state.** No package-level `var` other than sentinel errors, no `init()`, no `flag.CommandLine`, no `slog.SetDefault` outside `main`. `main` builds the dependencies and calls `run(ctx, args, getenv, stdout, stderr) error`, which tests call directly. Configuration is flags on a `flag.FlagSet` with env fallbacks read through the injected `getenv`.
+- **No global state.** No package-level `var` other than sentinel errors, no `init()`, no `flag.CommandLine` (test-only flags like `-update` excepted), no `slog.SetDefault` outside `main`. `main` builds the dependencies and calls `run(ctx, args, getenv, stdout, stderr) error`, which tests call directly. Configuration is flags on a `flag.FlagSet` with env fallbacks read through the injected `getenv`.
 - **Interfaces are small and declared by the consumer**, next to the code that needs them; constructors return concrete types. Don't define an interface for a single implementation unless a test needs the seam.
 - **Generics remove real duplication** (containers, `iter.Seq` helpers, typed wrappers), not hypothetical future types. Generic methods (1.27) cannot satisfy interface methods.
 - Use the current standard library before a dependency: `slices`, `maps`, `iter` (return `iter.Seq`/`iter.Seq2` for streams instead of callbacks or full slices), `log/slog`, `uuid` (1.27), `encoding/json/v2` in modules on 1.27 (strict UTF-8, no duplicate names, `omitzero`), `os.Root` for every path that comes from outside, `errors.AsType` (1.26).
@@ -49,7 +49,7 @@ Read [references/PATTERNS.md](./references/PATTERNS.md) for the `main`/`run` ske
 ## Processes, builds, releases
 
 - Running and stopping child processes (process groups, job objects, signal escalation, output streaming): read [references/PROCESS_SUPERVISION.md](./references/PROCESS_SUPERVISION.md) before writing any `os/exec` code that outlives a single short command.
-- Shipped binaries are static: `CGO_ENABLED=0 go build -trimpath`, set per command, never exported globally (the race detector needs cgo). The version comes from the git tag that `go build` stamps since 1.24 (`debug.ReadBuildInfo().Main.Version`), not `-ldflags -X` into a global.
+- Shipped binaries are static: `CGO_ENABLED=0 go build -trimpath`, set per command, never exported globally (the race detector needs cgo on Linux and Windows). The version comes from the git tag that `go build` stamps since 1.24 (`debug.ReadBuildInfo().Main.Version`), not `-ldflags -X` into a global.
 - Releases: release-please owns the version, tag and notes; goreleaser builds, archives, checksums, SBOMs and the Homebrew cask from that tag, and the workflow attests the artifacts. Read [references/RELEASE.md](./references/RELEASE.md) when setting it up.
 
 ## Gotchas

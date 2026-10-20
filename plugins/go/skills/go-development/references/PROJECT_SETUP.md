@@ -88,7 +88,7 @@ tools: ## Upgrade the pinned tools
 ```
 
 - `golangci-lint run` also reports unformatted files (the `formatters` section), so `lint` needs no separate format check; `fmt` rewrites them.
-- `-race` needs cgo and a C compiler (Xcode CLT on macOS, gcc on Linux and on GitHub's Windows runners). Never export `CGO_ENABLED=0` in the shell or CI env; set it on the build command.
+- `-race` needs cgo and a C compiler on Linux and Windows (gcc; GitHub's Windows runners ship it); on macOS it has not needed cgo since Go 1.20. Never export `CGO_ENABLED=0` in the shell or CI env; set it on the build command.
 - `.gitignore`: `bin/`, `dist/`, `coverage.out`.
 
 ## CI
@@ -110,7 +110,7 @@ One `ci.yml`, jobs aggregated by `check` (org standard). Tests run on every OS t
       - if: runner.os != 'Windows'
         run: make check
       - if: runner.os == 'Windows'
-        run: go test -race -shuffle=on ./...   # `make test`; Windows runners have no make (they do have gcc for -race)
+        run: go test -race -shuffle=on ./...   # `make test`; exception to "CI calls the runner": Windows runners have no make
 
   vuln:
     runs-on: ubuntu-latest
@@ -122,7 +122,7 @@ One `ci.yml`, jobs aggregated by `check` (org standard). Tests run on every OS t
       - run: make vuln
 ```
 
-Add `test` and `vuln` (and the gitleaks job) to `check.needs`. Run `vuln` on a weekly `schedule` too: a new advisory fails it without any code change.
+Add `test` and `vuln` (and the gitleaks job) to `check.needs`. That is a choice: a new advisory then blocks every merge until the dependency is bumped, which is the point for a binary we ship. Run `vuln` on a weekly `schedule` too, so the advisory surfaces before an unrelated PR hits it.
 
 ## Dependabot
 
@@ -139,4 +139,4 @@ Add `test` and `vuln` (and the gitleaks job) to `check.needs`. Run `vuln` on a w
       security: {applies-to: security-updates, patterns: ["*"]}
 ```
 
-It updates `go.mod`, tool requirements included. It does not read `golangci-lint.mod` (not named `go.mod`), which is what upstream wants: bump golangci-lint as a whole with `make tools`, in its own PR, and fix the new findings there.
+It updates `go.mod`, tool requirements included. It does not read `golangci-lint.mod` (not named `go.mod`), which matches upstream's rule that its dependencies are never updated one by one: bump golangci-lint as a whole with `make tools`, in its own PR, and fix the new findings there.

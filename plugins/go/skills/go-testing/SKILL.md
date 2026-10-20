@@ -26,7 +26,7 @@ Use `testing` with `if got != want { t.Errorf(...) }`, and `github.com/google/go
 
 ## Time and concurrency
 
-- **`testing/synctest`** (stable since 1.25) for anything with timeouts, tickers, backoff or goroutines that must finish: inside `synctest.Test(t, func(t *testing.T) {...})` time is fake and jumps when every goroutine in the bubble is blocked, `synctest.Wait()` waits for them to settle and `synctest.Sleep(d)` (1.27) does both. A goroutine still running when the function returns fails the test, so leaks show up for free.
+- **`testing/synctest`** (stable since 1.25) for anything with timeouts, tickers, backoff or goroutines that must finish: inside `synctest.Test(t, func(t *testing.T) {...})` time is fake and jumps when every goroutine in the bubble is blocked, `synctest.Wait()` waits for them to settle and `synctest.Sleep(d)` (1.27) does both. `Test` waits for every goroutine in the bubble, and one blocked forever fails it as a deadlock, so leaks surface (a goroutine stuck on real I/O hangs the test instead).
 - **Inject a clock** (`now func() time.Time`, `time.Now` in production) where a timestamp is part of the output (records, logs, golden files): a fixed `now` makes the bytes stable, which synctest's moving clock does not.
 - Never `time.Sleep` to wait for something to happen. Wait on a channel, `synctest.Wait()`, or poll with a deadline as a last resort for real processes.
 
@@ -42,7 +42,7 @@ Read [references/PATTERNS.md](./references/PATTERNS.md) for a golden helper, fak
 ## Gotchas
 
 - `go test` caches passing results; `-count=1` forces a rerun when a test reads files or env the cache can't see.
-- `-race` needs `CGO_ENABLED=1` and a C compiler; a test job with `CGO_ENABLED=0` fails with "-race requires cgo".
+- On Linux and Windows `-race` needs `CGO_ENABLED=1` and a C compiler; a test job with `CGO_ENABLED=0` fails with "-race requires cgo" there (macOS does not need cgo for it).
 - The default `-timeout` is 10 minutes and its panic dumps every goroutine: read that dump for the blocked one before raising the limit.
 - Coverage (`-coverprofile`) is reported, never gated (org standard). `-coverpkg=./...` counts code exercised by other packages' tests.
 - Inside a synctest bubble, real I/O (sockets, pipes to processes, files) does not count as blocked, so time does not advance while a goroutine waits on it; use `net.Pipe` or `httptest.NewTestServer` (1.27, in-memory network) there.
