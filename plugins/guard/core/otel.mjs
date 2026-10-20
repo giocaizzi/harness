@@ -25,6 +25,13 @@ export function parsePairs(str) {
   return out
 }
 
+// `owner/name` from a git remote URL (https, ssh or scp form): the last two path segments, `.git` dropped, never the
+// host, a user or a token. Null for anything else.
+export function repoSlug(url) {
+  const m = /[/:]([\w.-]+)\/([\w.-]+?)(?:\.git)?\/?$/.exec(String(url ?? '').trim())
+  return m && !/^\.+$/.test(m[1]) && !/^\.+$/.test(m[2]) ? `${m[1]}/${m[2]}` : null
+}
+
 const attr = (key, value) => ({ key, value: { stringValue: String(value) } })
 
 // `config` is the raw env values: { endpoint, headers, resource }. `service` other than guard is a harness the

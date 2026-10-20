@@ -283,13 +283,19 @@ test('VS Code ignores matchers: a non-shell tool with a command passes untouched
   assert.equal(decision(await h(pre('run_in_terminal', 'git commit'))).permissionDecision, 'deny')
 })
 
-test('telemetry: a deny and an ask emit a decision record, an allow does not', async () => {
+test('telemetry: a deny emits a decision record with its class; an allow only when sampled', async () => {
   const sent = []
-  const run = setup({ emit: async (event, attrs) => sent.push([event, attrs.action]) })
-  await run({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'git commit -m "bad title"' } })
-  assert.deepEqual(sent, [['guard.decision', 'deny']])
-  await run({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'ls' } })
+  let roll = 0.5
+  const run = setup({ emit: async (event, attrs) => sent.push([event, attrs]), random: () => roll })
+  await run(pre('Bash', 'git commit -m "bad title"'))
+  assert.deepEqual(sent.map(([e, a]) => [e, a.action, a.cmd_class]), [['guard.decision', 'deny', 'title']])
+  await run(pre('Bash', 'ls'))
   assert.equal(sent.length, 1)
+  roll = 0.05
+  await run(pre('Bash', 'ls -la'))
+  const [event, attrs] = sent[1]
+  assert.deepEqual([event, attrs.action, attrs.via, attrs.sample_rate, attrs.cmd_class], ['guard.decision', 'allow', undefined, 10, 'list'])
+  assert.ok(!JSON.stringify(sent).includes('ls -la'))
 })
 
 test('FACTORY_EVENTS_FILE: one JSON line per deny or ask with ts, decision, rule and cmd_hash, never the command', async () => {
@@ -351,6 +357,12 @@ test('telemetry: the logged action is the effective one, with via, a command has
     assert.match(e.cmd_hash, /^[0-9a-f]{12}$/)
     assert.ok(!Object.values(e).includes('rm -rf build'))
   }
+})
+
+test('telemetry: a heavy command allowed on a calm host is always recorded, as rule host with its facts', async () => {
+  const events = []
+  await setup({ emit: async (event, attrs) => events.push(attrs), random: () => 0.99, hostFacts: async () => ({ load1: 1, freeGb: 100 }) })(pre('Bash', 'make test'))
+  assert.deepEqual([events[0].action, events[0].rule, events[0].sample_rate, events[0].load1, events[0].free_gb], ['allow', 'host', 1, 1, 100])
 })
 
 test('telemetry: a host deny carries the host facts it was judged on', async () => {

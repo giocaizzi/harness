@@ -8,7 +8,7 @@ import { statfs } from 'node:fs/promises'
 import { cpus, homedir, loadavg, platform } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { analysis, branchFacts, cdDirs, codexRules, deniedBy, deniedDir, evaluateCommand, evaluateEdit, isHeavy, isRisky, nativeAsk, previewCommand, pureRead, refFacts, tagFacts, tagTargets, regenFacts, unattendedSet, withPreview, worktreeFacts } from '../core/engine.mjs'
+import { analysis, branchFacts, cdDirs, cmdClass, codexRules, deniedBy, deniedDir, evaluateCommand, evaluateEdit, isHeavy, isRisky, nativeAsk, previewCommand, pureRead, refFacts, tagFacts, tagTargets, regenFacts, unattendedSet, withPreview, worktreeFacts } from '../core/engine.mjs'
 import { cpuPercentFrom } from '../core/host.mjs'
 import { commandWords, units } from '../core/shell.mjs'
 import { emit } from '../core/otel.mjs'
@@ -219,6 +219,7 @@ const within = (promise, ms, fallback) =>
 // PRs, ignored build output) get FACTS_MS, the blast-radius preview PREVIEW_MS. A lookup that runs out is dropped,
 // the fast rules still apply, and a risky command whose safe case could not be shown asks.
 const FACTS_MS = 20_000
+const ALLOW_SAMPLE = 10
 const PREVIEW_MS = 3_000
 
 // Unattended: GUARD_UNATTENDED in the environment the harness was launched with, or set by a command in this session
@@ -284,9 +285,19 @@ async function onShell(input, state, deps) {
     // with `via` saying why (unattended, no-ask) or how the ask was made (native-ask: the harness's own prompt).
     const report = (action, via) => {
       appendDecision(deps.env, { decision: action, rule: d.rule, cmd_hash: commandHash(command) })
-      fire(deps, 'guard.decision', { rule: d.rule, action, via, tool: String(input.tool_name ?? ''), session_id: input.session_id, tool_use_id: input.tool_use_id, cmd_hash: commandHash(command), ...(d.rule === 'host' ? hostAttrs(host) : {}) }, input.cwd)
+      fire(deps, 'guard.decision', { rule: d.rule, action, via, cmd_class: cmdClass(d.rule, command), tool: String(input.tool_name ?? ''), session_id: input.session_id, tool_use_id: input.tool_use_id, cmd_hash: commandHash(command), ...(d.rule === 'host' ? hostAttrs(host) : {}) }, input.cwd)
     }
-    if (d.remind) fire(deps, 'guard.reminder', { rule: d.rule, tool: String(input.tool_name ?? ''), session_id: input.session_id, tool_use_id: input.tool_use_id }, input.cwd)
+    // Allows are sampled (one in ALLOW_SAMPLE, `sample_rate` on the record), so ask and deny rates have a denominator
+    // without a record per shell call. A heavy command's allow is always sent, as rule `host` with the host facts it
+    // passed on, so "the host rule ran and let it through" shows apart from "the host rule never ran". Never to
+    // FACTORY_EVENTS_FILE, which counts denies and asks.
+    const allowed = (via) => {
+      const heavy = host.load1 !== undefined || host.freeGb !== undefined
+      if (!heavy && (deps.random ?? Math.random)() * ALLOW_SAMPLE >= 1) return
+      const sampled = heavy ? { rule: 'host', sample_rate: 1, cmd_class: 'host', ...hostAttrs(host) } : { rule: d.rule, sample_rate: ALLOW_SAMPLE, cmd_class: cmdClass(null, command) }
+      fire(deps, 'guard.decision', { action: 'allow', via, ...sampled, tool: String(input.tool_name ?? ''), session_id: input.session_id, tool_use_id: input.tool_use_id, cmd_hash: commandHash(command) }, input.cwd)
+    }
+    if (d.remind) fire(deps, 'guard.reminder', { rule: d.rule, cmd_class: cmdClass(d.rule, command), tool: String(input.tool_name ?? ''), session_id: input.session_id, tool_use_id: input.tool_use_id }, input.cwd)
     if (d.action === 'deny') {
       report('deny', d.split ? 'split' : undefined)
       return preToolUse('deny', d.reason)
@@ -316,14 +327,16 @@ async function onShell(input, state, deps) {
     // A plain read of non-secret files never waits on the harness's prompt (Claude Code, Copilot CLI, VS Code; Codex
     // and the in-process harnesses do not prompt for it).
     if (!deps.noAsk && pureRead(command)) {
+      allowed('read')
       return { stdout: JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow', permissionDecisionReason: 'guard: a plain read of non-secret files', ...(d.context ? { additionalContext: d.context } : {}) } }) }
     }
+    allowed()
     return d.context ? note(d.context) : {}
   } catch (err) {
     // Fail open for reminders, closed for risky commands.
     if (isRisky(command, rules)) {
       appendDecision(deps.env, { decision: 'deny', rule: 'guard-error', cmd_hash: commandHash(command) })
-      fire(deps, 'guard.decision', { rule: 'guard-error', action: 'deny', tool: String(input.tool_name ?? ''), session_id: input.session_id, tool_use_id: input.tool_use_id, cmd_hash: commandHash(command) }, input.cwd)
+      fire(deps, 'guard.decision', { rule: 'guard-error', action: 'deny', cmd_class: 'guard-error', tool: String(input.tool_name ?? ''), session_id: input.session_id, tool_use_id: input.tool_use_id, cmd_hash: commandHash(command) }, input.cwd)
     }
     return isRisky(command, rules) ? preToolUse('deny', `The command guard failed, so this risky command was not run: ${err?.message ?? err}`) : {}
   }
@@ -335,7 +348,7 @@ async function onEdit(input, state, deps) {
   const d = evaluateEdit({ path: t.file_path ?? t.path ?? t.filePath, loadedSkills: new Set(state.loaded), state: { reminded }, rules })
   state.reminded = [...reminded]
   if (!d.remind) return {}
-  fire(deps, 'guard.reminder', { rule: d.rule, tool: String(input.tool_name ?? ''), session_id: input.session_id, tool_use_id: input.tool_use_id }, input.cwd)
+  fire(deps, 'guard.reminder', { rule: d.rule, cmd_class: 'hint', tool: String(input.tool_name ?? ''), session_id: input.session_id, tool_use_id: input.tool_use_id }, input.cwd)
   return note(d.context)
 }
 
@@ -378,7 +391,7 @@ export async function handle(input, deps) {
   const known = deps.knownSkills ?? knownSkills()
   for (const skill of new Set(state.loaded)) {
     const name = skill.split(':').pop()
-    if (!before.has(skill) && (event !== 'UserPromptSubmit' || known.has(name))) fire(deps, 'guard.skill', { skill: name, via: event === 'UserPromptSubmit' ? 'prompt' : 'tool', session_id: input.session_id }, input.cwd)
+    if (!before.has(skill) && (event !== 'UserPromptSubmit' || known.has(name))) fire(deps, 'guard.skill', { skill: name, cmd_class: 'skill', via: event === 'UserPromptSubmit' ? 'prompt' : 'tool', session_id: input.session_id }, input.cwd)
   }
   state.loaded = [...new Set(state.loaded)]
   try {

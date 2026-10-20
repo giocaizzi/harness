@@ -937,3 +937,36 @@ export function withPreview(reason, output) {
   const more = lines.length > 12 ? `\n… ${lines.length - 12} more` : '';
   return `${reason}\nWould affect:\n${lines.slice(0, 12).join('\n')}${more}`;
 }
+
+// The class of a command for telemetry, never its text: the family of the rule that fired, else the family of the
+// first program it runs, from a fixed list (anything else is `other`), so no path, argument or secret leaks.
+const RULE_FAMILY = {
+  rm: 'delete', find: 'delete', 'worktree-rm': 'delete',
+  reset: 'git-discard', clean: 'git-discard', discard: 'git-discard', stash: 'git-discard', 'git-rm': 'git-discard',
+  'branch-delete': 'git-history', 'push-delete': 'git-history', force: 'git-history', rewrite: 'git-history',
+  docker: 'infra', k8s: 'infra', 'cloud-delete': 'infra', terraform: 'infra', disk: 'infra', 'gh-delete': 'infra', merge: 'infra',
+  secrets: 'secrets', 'secrets-env': 'secrets', opaque: 'opaque', title: 'title', host: 'host', pip: 'python', poetry: 'python',
+  commit: 'skill', pr: 'skill', ruleset: 'skill', worktree: 'skill', release: 'skill',
+  'pr-fix': 'hint', pytest: 'hint', 'go-test': 'hint', 'go-lint': 'hint', read: 'hint', edit: 'hint', docs: 'hint', 'guard-error': 'guard-error',
+};
+const PROGRAM_FAMILY = {
+  git: 'git', gh: 'github', glab: 'gitlab', az: 'cloud', gcloud: 'cloud', make: 'build', npm: 'node', npx: 'node', node: 'node', pnpm: 'node', yarn: 'node', bun: 'node',
+  uv: 'python', uvx: 'python', python: 'python', python3: 'python', pip: 'python', pytest: 'python', go: 'go', cargo: 'rust', docker: 'container', podman: 'container',
+  kubectl: 'container', helm: 'container', terraform: 'infra', tofu: 'infra', ssh: 'remote', scp: 'remote', rsync: 'remote', curl: 'network', wget: 'network',
+  cat: 'read', head: 'read', tail: 'read', less: 'read', sed: 'text', awk: 'text', grep: 'search', rg: 'search', find: 'search', fd: 'search', ls: 'list', tree: 'list',
+  jq: 'text', wc: 'text', sort: 'text', echo: 'shell', printf: 'shell', cd: 'shell', mkdir: 'files', cp: 'files', mv: 'files', rm: 'files', touch: 'files', chmod: 'files',
+  claude: 'harness', codex: 'harness', copilot: 'harness', opencode: 'harness', pi: 'harness', chezmoi: 'dotfiles', bw: 'secrets', bws: 'secrets', op: 'secrets',
+};
+export function cmdClass(rule, command) {
+  if (rule) return RULE_FAMILY[rule] ?? 'other';
+  try {
+    for (const { cmd } of units(analysis(String(command ?? '')))) {
+      const name = commandWords(cmd.words)[0]?.val.replace(/^.*[\\/]/, '');
+      if (name && name !== 'cd') return PROGRAM_FAMILY[name] ?? 'other';
+    }
+  } catch {
+    // unreadable: other
+  }
+  return 'other';
+}
+

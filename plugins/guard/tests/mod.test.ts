@@ -131,6 +131,21 @@ test('every ask outcome is reported as guard.ask_result', async ($, on) => {
   expect(posted[0]?.wait_ms).toBeDefined()
 })
 
+test('an ask_result carries the guard version, the repo as owner/name and the command class, never the command', async ($, on) => {
+  const clock = mock.clock(on)
+  const posted = collector(on, { OTEL_EXPORTER_OTLP_ENDPOINT: 'http://collector' })
+  on('fs.read', (_$, e) => ({ value: e.path.endsWith('plugin.json') ? '{"version":"9.9.9"}' : '' }))
+  on('process.run', () => ({ value: { exitCode: 0, stdout: 'https://token@example.com/acme/widgets.git\n', stderr: '' } }))
+  on('tool.check', ask)
+  answer(on, 'Allow')
+  await $.tool.check(call)
+  await clock.advance(1)
+  await settle()
+  expect(posted.map((p) => [p.guard_version, p.repo, p.cmd_class])).toEqual([['9.9.9', 'acme/widgets', 'files']])
+  expect(JSON.stringify(posted)).not.toContain('rm -r')
+  expect(JSON.stringify(posted)).not.toContain('token')
+})
+
 test('a timeout is reported as guard.ask_result timeout', async ($, on) => {
   const clock = mock.clock(on)
   const posted = collector(on, { OTEL_EXPORTER_OTLP_ENDPOINT: 'http://collector' })

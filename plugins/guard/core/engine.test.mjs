@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { badTitle, branchFacts, branchTargets, codexRules, evaluateCommand, evaluateEdit, evaluateSpawn, nativeAsk, opencodeAsks, pureRead, refFacts, regenerableName, regenFacts, removalTargets, shellEdit, tagFacts, unattendedSet, usageLevel, worktreeFacts } from './engine.mjs';
+import { badTitle, branchFacts, cmdClass, branchTargets, codexRules, evaluateCommand, evaluateEdit, evaluateSpawn, nativeAsk, opencodeAsks, pureRead, refFacts, regenerableName, regenFacts, removalTargets, shellEdit, tagFacts, unattendedSet, usageLevel, worktreeFacts } from './engine.mjs';
 import { rules } from './rules.mjs';
 
 const fresh = () => ({ reminded: new Set() });
@@ -931,4 +931,16 @@ test('pureRead: plain reads of non-secret files only (G24)', () => {
     // Round 2: Windows drives and PowerShell's env: drive, and the cd dir joined to the path.
     'cat C:/Users/me/.config/glab-cli/config.yml', 'more C:/Users/me/AppData/Roaming/gh/hosts.yml', 'cd C:/Users/me && cat .claude.json', 'cat env:ANTHROPIC_API_KEY', 'cat a\\b', 'cd .config && cat gh/hosts.yml'])
     assert.equal(pureRead(c), false, c);
+});
+
+test('F4 cmdClass: a rule maps to its family, a command to its program family; never command text', () => {
+  for (const group of ['skills', 'files', 'deny', 'risky']) for (const r of rules[group]) assert.notEqual(cmdClass(r.id, ''), 'other', r.id);
+  assert.equal(cmdClass('host', ''), 'host');
+  assert.equal(cmdClass('rm', 'rm -rf x'), 'delete');
+  assert.equal(cmdClass('secrets', ''), 'secrets');
+  assert.equal(cmdClass('no-such-rule', ''), 'other');
+  assert.equal(cmdClass(null, 'cd /x && git status'), 'git');
+  assert.equal(cmdClass(null, 'FOO=1 /usr/bin/make check'), 'build');
+  assert.equal(cmdClass(null, 'some-private-tool --flag'), 'other');
+  assert.equal(cmdClass(null, ''), 'other');
 });
