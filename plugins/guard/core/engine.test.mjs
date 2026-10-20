@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { branchFacts, branchTargets, codexRules, evaluateCommand, evaluateEdit, evaluateSpawn, nativeAsk, opencodeAsks, regenerableName, regenFacts, removalTargets, shellEdit, usageLevel, worktreeFacts } from './engine.mjs';
+import { badTitle, branchFacts, branchTargets, codexRules, evaluateCommand, evaluateEdit, evaluateSpawn, nativeAsk, opencodeAsks, regenerableName, regenFacts, removalTargets, shellEdit, usageLevel, worktreeFacts } from './engine.mjs';
 import { rules } from './rules.mjs';
 
 const fresh = () => ({ reminded: new Set() });
@@ -8,19 +8,19 @@ const calm = { load1: 2, freeGb: 100 };
 
 test('commit without the skill: deny once, then allow', () => {
   const state = fresh();
-  const first = evaluateCommand({ command: 'git commit -m x', state, host: calm, rules });
+  const first = evaluateCommand({ command: 'git commit -m "feat: x"', state, host: calm, rules });
   assert.equal(first.action, 'deny');
   assert.match(first.reason, /conventional-commits/);
-  assert.equal(evaluateCommand({ command: 'git commit -m x', state, host: calm, rules }).action, 'allow');
+  assert.equal(evaluateCommand({ command: 'git commit -m "feat: x"', state, host: calm, rules }).action, 'allow');
 });
 
 test('a loaded skill (namespaced) satisfies the rule', () => {
-  const r = evaluateCommand({ command: 'git commit -m x', loadedSkills: new Set(['dev-tools:conventional-commits']), state: fresh(), host: calm, rules });
+  const r = evaluateCommand({ command: 'git commit -m "feat: x"', loadedSkills: new Set(['dev-tools:conventional-commits']), state: fresh(), host: calm, rules });
   assert.equal(r.action, 'allow');
 });
 
 test('any-of skills: /ship satisfies the commit rule', () => {
-  const r = evaluateCommand({ command: 'git commit -m x', loadedSkills: new Set(['ship']), state: fresh(), host: calm, rules });
+  const r = evaluateCommand({ command: 'git commit -m "feat: x"', loadedSkills: new Set(['ship']), state: fresh(), host: calm, rules });
   assert.equal(r.action, 'allow');
 });
 
@@ -222,9 +222,26 @@ test('commit messages and PR titles must be Conventional Commits', () => {
     assert.equal(r.rule, 'title', command);
     assert.equal(run(command).action, 'deny', 'every time, not once');
   }
-  for (const command of ['git commit -m "fix(core): handle empty title"', 'gh pr create --title "feat!: drop node 20" --body x', 'git commit -m "$(cat <<\'EOF\'\nwhatever\nEOF\n)"', 'git commit --amend --no-edit', 'gh pr create --fill']) {
+  for (const command of ['git commit -m "fix(core): handle empty title"', 'gh pr create --title "feat!: drop node 20" --body x', 'git commit -m "$(cat <<\'EOF\'\nfeat: x\n\nbody\nEOF\n)"', 'git commit --amend --no-edit', 'gh pr create --fill', 'git commit -m "$msg"', 'git commit -F msg.txt', 'echo git commit -m Bad', 'git merge x && git commit -m "Merge branch \'x\'"']) {
     assert.equal(run(command).action, 'allow', command);
   }
+});
+
+test('every title in a command is read: heredocs, -F -, chains, payloads, gh pr edit, the first -m only', () => {
+  const title = (command) => badTitle(command, rules);
+  assert.equal(title('git commit -m "$(cat <<\'EOF\'\nwhatever\nEOF\n)"'), 'whatever');
+  assert.equal(title("git commit -F - <<'EOF'\nBad\nEOF"), 'Bad');
+  assert.equal(title('git commit --file=- <<EOF\nBad\nEOF'), 'Bad');
+  assert.equal(title("git commit -F- <<'EOF'\nfix: ok\nEOF"), null);
+  assert.equal(title('git commit -m "feat: x" && gh pr create --title "Bad PR"'), 'Bad PR');
+  assert.equal(title('gh pr edit 3 --title=Bad'), 'Bad');
+  assert.equal(title("bash -c 'git commit -m Bad'"), 'Bad');
+  assert.equal(title('git commit -m "$msg" -m "Co-Authored-By: x"'), null);
+  assert.equal(title('git commit -m "Bad" -m "feat: x"'), 'Bad');
+  assert.equal(title('git commit -mBad'), 'Bad');
+  assert.equal(title('git commit -m "  feat: ok"'), '  feat: ok');
+  assert.equal(title('git commit -m "fix: 123"'), 'fix: 123', 'the org check wants a lowercase letter first');
+  assert.equal(title('git commit -m "feat(a,b): x"'), 'feat(a,b): x', 'and no comma in the scope');
 });
 
 const decide = (command, facts = {}) => evaluateCommand({ command, state: fresh(), host: calm, rules, ...facts });
