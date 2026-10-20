@@ -1,0 +1,10 @@
+schema_version: "1.0"
+name: wt-trigger
+description: The model loads wt when asked to start work on an issue.
+tags: [trigger]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  prompt: Let's start on issue 34, the CLI needs a --json flag.
+  max_turns: 15
+  allowed_tools: [Read, Glob, Grep, Edit, Write, Skill]

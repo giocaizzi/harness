@@ -8,7 +8,7 @@ import { statfs } from 'node:fs/promises'
 import { cpus, homedir, loadavg, platform } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { analysis, branchFacts, codexRules, deniedBy, deniedDir, evaluateCommand, evaluateEdit, isHeavy, isRisky, nativeAsk, previewCommand, regenFacts, withPreview, worktreeFacts } from '../core/engine.mjs'
+import { analysis, branchFacts, cdDirs, cmdClass, codexRules, deniedBy, deniedDir, evaluateCommand, evaluateEdit, hostJudged, isHeavy, isRisky, nativeAsk, previewCommand, pureRead, refFacts, tagFacts, tagTargets, regenFacts, unattendedSet, withPreview, worktreeFacts } from '../core/engine.mjs'
 import { cpuPercentFrom } from '../core/host.mjs'
 import { commandWords, units } from '../core/shell.mjs'
 import { emit } from '../core/otel.mjs'
@@ -84,18 +84,21 @@ export function knownSkills(here = dirname(fileURLToPath(import.meta.url))) {
   return names
 }
 
-// Per-session state: { reminded: string[], loaded: string[] }, kept as append-only facts in `sessions/<id>.jsonl`,
-// one JSON line each (`{"loaded":"ship"}`, `{"reminded":"edit","agent":"a1"}`). Parallel hooks each append their
-// own lines with one O_APPEND write, which the OS keeps whole, so none is lost and no lock is needed. Skill loads
-// count for the whole session, subagents included; reminders count per agent (`agent_id`, absent for the main
-// agent), so a subagent gets its own hints. Without a session id nothing is kept.
+// Per-session state: { reminded: string[], loaded: string[], unattended?: boolean }, kept as append-only facts in
+// `sessions/<id>.jsonl`, one JSON line each (`{"loaded":"ship"}`, `{"reminded":"edit","agent":"a1"}`,
+// `{"unattended":true}`). Parallel hooks each append their own lines with one O_APPEND write, which the OS keeps
+// whole, so none is lost and no lock is needed. Skill loads and the unattended switch (the latest wins) count for the
+// whole session, subagents included; reminders count per agent (`agent_id`, absent for the main agent), so a subagent
+// gets its own hints, except the read and edit hints, which say the same to every agent and so come once per session.
+// Without a session id nothing is kept.
+const SESSION_HINTS = new Set(['read', 'edit'])
 export function sessionStore(dir, sessionId, agentId) {
   const file = sessionId ? join(dir, 'sessions', `${String(sessionId).replace(/[^\w-]/g, '_')}.jsonl`) : null
   const agent = agentId ? String(agentId) : undefined
   let seen = { reminded: [], loaded: [] }
   return {
     load() {
-      seen = { reminded: [], loaded: [] }
+      seen = { reminded: [], loaded: [], unattended: undefined }
       if (!file) return { reminded: [], loaded: [] }
       let text = ''
       try {
@@ -111,9 +114,10 @@ export function sessionStore(dir, sessionId, agentId) {
           continue
         }
         if (typeof fact.loaded === 'string') seen.loaded.push(fact.loaded)
-        if (typeof fact.reminded === 'string' && fact.agent === agent) seen.reminded.push(fact.reminded)
+        if (typeof fact.reminded === 'string' && (fact.agent === agent || SESSION_HINTS.has(fact.reminded))) seen.reminded.push(fact.reminded)
+        if (typeof fact.unattended === 'boolean') seen.unattended = fact.unattended
       }
-      return { reminded: [...new Set(seen.reminded)], loaded: [...new Set(seen.loaded)] }
+      return { reminded: [...new Set(seen.reminded)], loaded: [...new Set(seen.loaded)], unattended: seen.unattended }
     },
     // Appends the facts `state` adds to what load() read.
     save(state) {
@@ -121,6 +125,7 @@ export function sessionStore(dir, sessionId, agentId) {
       const lines = [
         ...[...new Set(state.loaded)].filter((s) => !seen.loaded.includes(s)).map((s) => JSON.stringify({ loaded: s })),
         ...[...new Set(state.reminded)].filter((r) => !seen.reminded.includes(r)).map((r) => JSON.stringify({ reminded: r, agent })),
+        ...(typeof state.unattended === 'boolean' && state.unattended !== seen.unattended ? [JSON.stringify({ unattended: state.unattended })] : []),
       ]
       if (!lines.length) return
       mkdirSync(dirname(file), { recursive: true, mode: 0o700 })
@@ -214,50 +219,95 @@ const within = (promise, ms, fallback) =>
 // PRs, ignored build output) get FACTS_MS, the blast-radius preview PREVIEW_MS. A lookup that runs out is dropped,
 // the fast rules still apply, and a risky command whose safe case could not be shown asks.
 const FACTS_MS = 20_000
+const ALLOW_SAMPLE = 10
 const PREVIEW_MS = 3_000
+
+// Unattended: GUARD_UNATTENDED in the environment the harness was launched with, or set by a command in this session
+// (`export GUARD_UNATTENDED=1`), which a hook cannot otherwise see: each hook is its own process. The command's own
+// setting counts for itself; it is kept for the session only once the guard lets that command run.
+const ON = /^(1|true|on)$/i
+
+// The directories a command's `cd`s reach that exist, so a `cd x; rm -rf y` is followed only when `cd x` surely ran.
+export function existingDirs(command, env, cwd) {
+  const dirs = new Set()
+  for (const d of cdDirs(command, env)) {
+    if (!PLAIN_DIR.test(d)) continue
+    try {
+      if (statSync(resolve(cwd || '.', d)).isDirectory()) dirs.add(d)
+    } catch {
+      // missing: the cd may fail
+    }
+  }
+  return dirs
+}
+const PLAIN_DIR = /^[\w.@%+=:,\\/~-]+$/
 
 async function onShell(input, state, deps) {
   const command = String(input.tool_input?.command ?? '')
   if (!command) return {}
+  const set = unattendedSet(command)
+  const fromEnv = ON.test(deps.env?.GUARD_UNATTENDED ?? '')
+  const unattended = fromEnv || (set ?? state.unattended) === true
   try {
     const host = isHeavy(command, rules) ? await deps.hostFacts(input.cwd) : {}
     // HOME resolves `~` and `$HOME` in paths (USERPROFILE on Windows).
     let unfinished = false
     const facts = { env: { TMPDIR: deps.env.TMPDIR, TEMP: deps.env.TEMP, TMP: deps.env.TMP, HOME: deps.env.HOME || deps.env.USERPROFILE } }
+    facts.env.dirs = existingDirs(command, facts.env, input.cwd)
     if (isRisky(command, rules)) {
-      const inCwd = (argv, cwd) => deps.run(argv, cwd ?? input.cwd)
+      // A lookup's own directory (a `cd` the engine followed) is relative to the call's cwd.
+      const inCwd = (argv, cwd) => deps.run(argv, cwd == null ? input.cwd : resolve(input.cwd || '.', cwd))
       const gathered = await within(
-        Promise.all([worktreeFacts(command, facts.env, rules, inCwd), branchFacts(command, rules, inCwd, facts.env), regenFacts(command, facts.env, rules, inCwd)]),
+        Promise.all([worktreeFacts(command, facts.env, rules, inCwd), branchFacts(command, rules, inCwd, facts.env), regenFacts(command, facts.env, rules, inCwd), refFacts(command, rules, inCwd, facts.env)]),
         deps.factsMs ?? FACTS_MS,
         null,
       )
-      if (gathered) [facts.worktrees, facts.branches, facts.regenerable] = gathered
+      if (gathered) [facts.worktrees, facts.branches, facts.regenerable, facts.refs] = gathered
       else unfinished = true
+    }
+    // A `git tag -f`/`-d` of a tag no remote has is not a release (one `ls-remote` per remote, same budget).
+    if (tagTargets(command, rules, facts.env).some((t) => !t.name.startsWith('<'))) {
+      facts.tags = (await within(tagFacts(command, rules, (argv) => deps.run(argv, input.cwd), facts.env), deps.factsMs ?? FACTS_MS, null)) ?? {}
     }
     // The manager of the repo the denied command runs in (`cd <repo> && pip install x`), not just the cwd's.
     if (deniedBy(command, rules)?.when) {
       const dir = deniedDir(command, rules, facts.env)
       facts.python = deps.pythonManager(dir ? resolve(input.cwd || '.', dir) : input.cwd)
     }
-    const reminded = new Set(state.reminded)
+    // Auto mode tells the agent to read and make small edits through the shell, so the read and edit hints would
+    // contradict it: they are held back there, and still come once the session leaves auto mode.
+    const held = input.permission_mode === 'auto' ? ['read', 'edit'].filter((r) => !state.reminded.includes(r)) : []
+    const reminded = new Set([...state.reminded, ...held])
+    const judged = hostJudged(command, rules, reminded)
     const d = evaluateCommand({ command, loadedSkills: new Set(state.loaded), state: { reminded }, host, readTool: deps.readTool ?? true, ...facts, rules })
-    state.reminded = [...reminded]
+    state.reminded = [...reminded].filter((r) => !held.includes(r))
     if (unfinished && d.action !== 'allow') d.reason += '\nChecks unfinished: the worktree, branch and build-output lookups ran out of time, so a safe case could not be shown.'
     // Logged after the harness-specific transforms, so `action` is what happened: an ask that became a deny is a deny,
     // with `via` saying why (unattended, no-ask) or how the ask was made (native-ask: the harness's own prompt).
     const report = (action, via) => {
       appendDecision(deps.env, { decision: action, rule: d.rule, cmd_hash: commandHash(command) })
-      fire(deps, 'guard.decision', { rule: d.rule, action, via, tool: String(input.tool_name ?? ''), session_id: input.session_id, tool_use_id: input.tool_use_id, cmd_hash: commandHash(command), ...(d.rule === 'host' ? hostAttrs(host) : {}) }, input.cwd)
+      fire(deps, 'guard.decision', { rule: d.rule, action, via, cmd_class: cmdClass(d.rule, command), tool: String(input.tool_name ?? ''), session_id: input.session_id, tool_use_id: input.tool_use_id, cmd_hash: commandHash(command), ...(d.rule === 'host' ? hostAttrs(host) : {}) }, input.cwd)
     }
-    if (d.remind) fire(deps, 'guard.reminder', { rule: d.rule, tool: String(input.tool_name ?? ''), session_id: input.session_id, tool_use_id: input.tool_use_id }, input.cwd)
+    // Allows are sampled (one in ALLOW_SAMPLE, `sample_rate` on the record), so ask and deny rates have a denominator
+    // without a record per shell call. An allow the host rule judged (hostJudged: heavy, not wrapped, no host deny yet
+    // this session) is always sent, as rule `host` with the host facts it passed on, so "the host rule ran and let it
+    // through" shows apart from "the host rule never ran"; other heavy allows are sampled like the rest. Never to
+    // FACTORY_EVENTS_FILE, which counts denies and asks.
+    const allowed = (via) => {
+      if (!judged && (deps.random ?? Math.random)() * ALLOW_SAMPLE >= 1) return
+      const sampled = judged ? { rule: 'host', sample_rate: 1, cmd_class: 'host', ...hostAttrs(host) } : { rule: d.rule, sample_rate: ALLOW_SAMPLE, cmd_class: cmdClass(null, command) }
+      fire(deps, 'guard.decision', { action: 'allow', via, ...sampled, tool: String(input.tool_name ?? ''), session_id: input.session_id, tool_use_id: input.tool_use_id, cmd_hash: commandHash(command) }, input.cwd)
+    }
+    if (d.remind) fire(deps, 'guard.reminder', { rule: d.rule, cmd_class: cmdClass(d.rule, command), tool: String(input.tool_name ?? ''), session_id: input.session_id, tool_use_id: input.tool_use_id }, input.cwd)
     if (d.action === 'deny') {
       report('deny', d.split ? 'split' : undefined)
       return preToolUse('deny', d.reason)
     }
     // Unattended run (GUARD_UNATTENDED=1): nobody can answer an ask, so it becomes a deny and the agent picks another way.
-    if (d.action === 'ask' && /^(1|true|on)$/i.test(deps.env?.GUARD_UNATTENDED ?? '')) {
+    if (d.action === 'ask' && unattended) {
       report('deny', 'unattended')
-      return preToolUse('deny', `${d.reason}\nUnattended run (GUARD_UNATTENDED): nobody can confirm this, so the command was not run. Pick another approach, or leave it for the user.`)
+      const source = fromEnv ? '' : ' It was switched on by a command in this session; `export GUARD_UNATTENDED=0` turns it off.'
+      return preToolUse('deny', `${d.reason}\nUnattended run (GUARD_UNATTENDED): nobody can confirm this, so the command was not run. Pick another approach, or leave it for the user.${source}`)
     }
     // Codex and opencode hooks cannot ask: the harness's own prompt rule asks for the plain forms (`deps.nativeAsk`),
     // anything else is denied and the user runs it.
@@ -274,12 +324,20 @@ async function onShell(input, state, deps) {
       const argv = previewCommand(d.rule, command, rules, facts.env)
       return preToolUse('ask', argv ? withPreview(d.reason, await within(Promise.resolve(deps.run(argv, input.cwd)), deps.previewMs ?? PREVIEW_MS, '')) : d.reason)
     }
+    if (set !== null) state.unattended = set
+    // A plain read of non-secret files never waits on the harness's prompt (Claude Code, Copilot CLI, VS Code; Codex
+    // and the in-process harnesses do not prompt for it).
+    if (!deps.noAsk && pureRead(command)) {
+      allowed('read')
+      return { stdout: JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow', permissionDecisionReason: 'guard: a plain read of non-secret files', ...(d.context ? { additionalContext: d.context } : {}) } }) }
+    }
+    allowed()
     return d.context ? note(d.context) : {}
   } catch (err) {
     // Fail open for reminders, closed for risky commands.
     if (isRisky(command, rules)) {
       appendDecision(deps.env, { decision: 'deny', rule: 'guard-error', cmd_hash: commandHash(command) })
-      fire(deps, 'guard.decision', { rule: 'guard-error', action: 'deny', tool: String(input.tool_name ?? ''), session_id: input.session_id, tool_use_id: input.tool_use_id, cmd_hash: commandHash(command) }, input.cwd)
+      fire(deps, 'guard.decision', { rule: 'guard-error', action: 'deny', cmd_class: 'guard-error', tool: String(input.tool_name ?? ''), session_id: input.session_id, tool_use_id: input.tool_use_id, cmd_hash: commandHash(command) }, input.cwd)
     }
     return isRisky(command, rules) ? preToolUse('deny', `The command guard failed, so this risky command was not run: ${err?.message ?? err}`) : {}
   }
@@ -291,7 +349,7 @@ async function onEdit(input, state, deps) {
   const d = evaluateEdit({ path: t.file_path ?? t.path ?? t.filePath, loadedSkills: new Set(state.loaded), state: { reminded }, rules })
   state.reminded = [...reminded]
   if (!d.remind) return {}
-  fire(deps, 'guard.reminder', { rule: d.rule, tool: String(input.tool_name ?? ''), session_id: input.session_id, tool_use_id: input.tool_use_id }, input.cwd)
+  fire(deps, 'guard.reminder', { rule: d.rule, cmd_class: 'hint', tool: String(input.tool_name ?? ''), session_id: input.session_id, tool_use_id: input.tool_use_id }, input.cwd)
   return note(d.context)
 }
 
@@ -334,7 +392,7 @@ export async function handle(input, deps) {
   const known = deps.knownSkills ?? knownSkills()
   for (const skill of new Set(state.loaded)) {
     const name = skill.split(':').pop()
-    if (!before.has(skill) && (event !== 'UserPromptSubmit' || known.has(name))) fire(deps, 'guard.skill', { skill: name, via: event === 'UserPromptSubmit' ? 'prompt' : 'tool', session_id: input.session_id }, input.cwd)
+    if (!before.has(skill) && (event !== 'UserPromptSubmit' || known.has(name))) fire(deps, 'guard.skill', { skill: name, cmd_class: 'skill', via: event === 'UserPromptSubmit' ? 'prompt' : 'tool', session_id: input.session_id }, input.cwd)
   }
   state.loaded = [...new Set(state.loaded)]
   try {
@@ -396,7 +454,7 @@ async function main() {
   // `--no-ask` comes from the Codex hooks file (.generated/codex/hooks.json), which build_agents.py generates.
   const noAsk = process.argv.includes('--no-ask')
   // Codex (`--no-ask`) is the one harness without a file-read tool.
-  const out = await handle(input, { dataDir, env: process.env, hostFacts, run, pythonManager, noAsk, readTool: !noAsk, nativeAsk: noAsk ? (command, rule) => codexAsks(process.env, input.transcript_path)?.(command, rule) ?? false : null, emit: (event, attrs, cwd) => emit(process.env, event, recordAttrs(attrs, cwd, noAsk ? 'codex' : harnessName())) }).catch(() => ({}))
+  const out = await handle(input, { dataDir, env: process.env, hostFacts, run, pythonManager, noAsk, readTool: !noAsk, nativeAsk: noAsk ? (command, rule) => codexAsks(process.env, input.transcript_path)?.(command, rule) ?? false : null, emit: (event, attrs, cwd) => new Promise((r) => setImmediate(r)).then(() => emit(process.env, event, recordAttrs(attrs, cwd, noAsk ? 'codex' : harnessName()))) }).catch(() => ({}))
   if (out.stdout) process.stdout.write(out.stdout)
   if (out.stderr) process.stderr.write(out.stderr)
 }

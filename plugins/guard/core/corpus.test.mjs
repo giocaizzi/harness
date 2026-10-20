@@ -3,17 +3,19 @@
 // the PR that fixes a bug drops its id from OPEN. Every new false ask or missed command found in telemetry or
 // transcripts becomes a row here.
 // Row: [command, expected ('allow' | 'allow:<hint>' | 'ask:<rule>' | 'deny:<rule>'), bug id, source, options?]
-// options: { python: 'uv' } the repo's Python manager; { hints: true } the read and edit hints not yet shown.
+// options: { python: 'uv' } the repo's Python manager; { hints: true } the read and edit hints not yet shown;
+// { read: false } the command must not get the plain-read allow (`pureRead`), so the harness's own prompt decides.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { branchFacts, evaluateCommand, regenFacts, worktreeFacts } from './engine.mjs'
+import { branchFacts, evaluateCommand, pureRead, refFacts, regenFacts, worktreeFacts } from './engine.mjs'
 import { rules } from './rules.mjs'
 
 const OPEN = new Set([])
 
 const corpus = JSON.parse(readFileSync(new URL('./corpus.json', import.meta.url), 'utf8'))
-const env = { TMPDIR: '/var/folders/ab/xyz/T/', HOME: '/Users/me' }
+// Every directory a `cd` names exists.
+const env = { TMPDIR: '/var/folders/ab/xyz/T/', HOME: '/Users/me', dirs: { has: () => true } }
 const loadedSkills = new Set(['conventional-commits', 'github-workflow', 'wt', 'release-please', 'docs-sync', 'python-testing', 'pr-fix'])
 
 // Facts the guard gathers come back favourable, so a row asks only when the guard cannot reach or read them:
@@ -22,19 +24,22 @@ const run = async (argv) => {
   if (argv.includes('rev-list')) return '0\n'
   if (argv.includes('check-ignore')) return ''
   if (argv.includes('--show-toplevel') && !argv.includes('--git-dir')) return '/Users/me/repo\n'
+  // gh: a merged PR whose head is the branch's current tip
+  if (argv[0] === 'gh') return 'abc123\n'
   return null
 }
 
 const decide = async (command, { python = null, hints = false } = {}) => {
-  const [worktrees, branches, regenerable] = await Promise.all([worktreeFacts(command, env, rules, run), branchFacts(command, rules, run, env), regenFacts(command, env, rules, run)])
+  const [worktrees, branches, regenerable, refs] = await Promise.all([worktreeFacts(command, env, rules, run), branchFacts(command, rules, run, env), regenFacts(command, env, rules, run), refFacts(command, rules, run, env)])
   const state = { reminded: new Set(hints ? [] : ['read', 'edit']) }
-  const d = evaluateCommand({ command, loadedSkills, state, env, worktrees, branches, regenerable, python, rules })
+  const d = evaluateCommand({ command, loadedSkills, state, env, worktrees, branches, regenerable, refs, python, rules })
   return d.action + (d.rule && !(d.action === 'allow' && !d.remind) ? `:${d.rule}` : '')
 }
 
 for (const [command, expected, bug, source, options] of corpus) {
   test(`${bug} ${JSON.stringify(command)} -> ${expected} (${source})`, { todo: OPEN.has(bug) && !/^(control|probe)/.test(source) }, async () => {
     assert.equal(await decide(command, options), expected)
+    if (options?.read !== undefined) assert.equal(pureRead(command), options.read, 'plain-read allow')
   })
 }
 

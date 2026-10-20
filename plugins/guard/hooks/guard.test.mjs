@@ -132,6 +132,48 @@ test('GUARD_UNATTENDED turns a risky ask into a deny, with or without a native a
   assert.equal(decision(await setup({ env: { GUARD_UNATTENDED: '0' } })(pre('Bash', 'rm -rf ~/x'))).permissionDecision, 'ask')
 })
 
+test('GUARD_UNATTENDED set once by a command holds for the rest of the session, subagents included (G23)', async () => {
+  const dataDir = mkdtempSync(join(tmpdir(), 'guard-test-'))
+  const h = (input, env = {}) => handle({ session_id: 's1', cwd: '/', ...input }, { dataDir, env, hostFacts: calm, run: async () => null, pythonManager })
+  assert.equal(decision(await h(pre('Bash', 'rm -rf ~/x'))).permissionDecision, 'ask')
+  await h(pre('Bash', 'GUARD_UNATTENDED=1 git rebase origin/main'))
+  for (const input of [pre('Bash', 'rm -rf ~/x'), { ...pre('Bash', 'git branch -D x'), agent_id: 'a1' }]) {
+    const d = decision(await h(input))
+    assert.equal(d.permissionDecision, 'deny', input.tool_input.command)
+    assert.match(d.permissionDecisionReason, /Unattended run/)
+  }
+  assert.equal(decision(await h({ ...pre('Bash', 'rm -rf ~/x'), session_id: 's2' })).permissionDecision, 'ask', 'another session is not affected')
+  await h(pre('Bash', 'export GUARD_UNATTENDED=0'))
+  assert.equal(decision(await h(pre('Bash', 'rm -rf ~/x'))).permissionDecision, 'ask')
+  assert.equal(decision(await h(pre('Bash', 'rm -rf ~/x'), { GUARD_UNATTENDED: '1' })).permissionDecision, 'deny', 'the launcher environment wins')
+  assert.equal(decision(await h(pre('Bash', 'export GUARD_UNATTENDED=1; rm -rf ~/x'))).permissionDecision, 'deny', 'set in the same command')
+  assert.equal(decision(await h(pre('Bash', 'rm -rf ~/x'))).permissionDecision, 'ask', 'a denied command does not switch the session')
+  await h(pre('Bash', 'export GUARD_UNATTENDED=1'))
+  assert.match(decision(await h(pre('Bash', 'rm -rf ~/x'))).permissionDecisionReason, /switched on by a command in this session/)
+  await h(pre('Bash', 'unset GUARD_UNATTENDED'))
+  assert.equal(decision(await h(pre('Bash', 'rm -rf ~/x'))).permissionDecision, 'ask')
+})
+
+test('a cd followed across ; only when its directory exists (G23 review)', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'guard-cd-'))
+  const h = setup({ env: { TMPDIR: '/var/folders/ab/T/' } })
+  assert.equal(decision(await h({ ...pre('Bash', 'cd sub; rm -rf /tmp/x/build'), cwd: dir })), undefined)
+  mkdirSync(join(dir, 'sub'))
+  const run = async (argv) => (argv.includes('rev-list') ? '0\n' : null)
+  const h2 = setup({ run })
+  assert.equal(decision(await h2({ ...pre('Bash', 'cd sub; git branch -D feat/x'), cwd: dir })), undefined, 'existing dir: followed')
+  assert.equal(decision(await h2({ ...pre('Bash', 'cd gone; git branch -D feat/x'), cwd: dir })).permissionDecision, 'ask', 'missing dir: not followed')
+})
+
+test('a branch ref deleted through gh api passes once a merged PR holds its tip, looked up where the command cds (G23)', async () => {
+  const calls = []
+  const run = async (argv, cwd) => (calls.push([argv[1], cwd]), argv[0] === 'gh' ? 'abc\n' : null)
+  const h = setup({ run })
+  assert.equal(decision(await h({ ...pre('Bash', 'cd sub && gh api -X DELETE repos/{owner}/{repo}/git/refs/heads/feat/x'), cwd: '/r' })), undefined)
+  assert.deepEqual(calls, [['pr', '/r/sub'], ['api', '/r/sub']])
+  assert.equal(decision(await h(pre('Bash', 'gh api -X DELETE repos/o/r/git/refs/tags/v1'))).permissionDecision, 'ask')
+})
+
 test('heavy command on a strained host is denied once', async () => {
   const h = setup({ hostFacts: async () => ({ load1: 50, freeGb: 100 }) })
   assert.equal(decision(await h(pre('Bash', 'npm run build'))).permissionDecision, 'deny')
@@ -241,13 +283,19 @@ test('VS Code ignores matchers: a non-shell tool with a command passes untouched
   assert.equal(decision(await h(pre('run_in_terminal', 'git commit'))).permissionDecision, 'deny')
 })
 
-test('telemetry: a deny and an ask emit a decision record, an allow does not', async () => {
+test('telemetry: a deny emits a decision record with its class; an allow only when sampled', async () => {
   const sent = []
-  const run = setup({ emit: async (event, attrs) => sent.push([event, attrs.action]) })
-  await run({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'git commit -m "bad title"' } })
-  assert.deepEqual(sent, [['guard.decision', 'deny']])
-  await run({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'ls' } })
+  let roll = 0.5
+  const run = setup({ emit: async (event, attrs) => sent.push([event, attrs]), random: () => roll })
+  await run(pre('Bash', 'git commit -m "bad title"'))
+  assert.deepEqual(sent.map(([e, a]) => [e, a.action, a.cmd_class]), [['guard.decision', 'deny', 'title']])
+  await run(pre('Bash', 'ls'))
   assert.equal(sent.length, 1)
+  roll = 0.05
+  await run(pre('Bash', 'ls -la'))
+  const [event, attrs] = sent[1]
+  assert.deepEqual([event, attrs.action, attrs.via, attrs.sample_rate, attrs.cmd_class], ['guard.decision', 'allow', undefined, 10, 'list'])
+  assert.ok(!JSON.stringify(sent).includes('ls -la'))
 })
 
 test('FACTORY_EVENTS_FILE: one JSON line per deny or ask with ts, decision, rule and cmd_hash, never the command', async () => {
@@ -293,7 +341,7 @@ test('telemetry: guard.skill once per loaded skill (typed /name only for marketp
 })
 
 test('Codex has no read tool, so a shell read gets no hint there', async () => {
-  assert.equal(decision(await setup({ readTool: false })(pre('Bash', 'cat a.txt'))), undefined)
+  assert.equal(decision(await setup({ readTool: false, noAsk: true })(pre('Bash', 'cat a.txt'))), undefined)
   assert.match(decision(await setup()(pre('Bash', 'cat a.txt'))).additionalContext, /read tool/)
 })
 
@@ -308,6 +356,29 @@ test('telemetry: the logged action is the effective one, with via, a command has
   for (const e of events) {
     assert.match(e.cmd_hash, /^[0-9a-f]{12}$/)
     assert.ok(!Object.values(e).includes('rm -rf build'))
+  }
+})
+
+test('telemetry: a heavy command allowed on a calm host is always recorded, as rule host with its facts', async () => {
+  const events = []
+  await setup({ emit: async (event, attrs) => events.push(attrs), random: () => 0.99, hostFacts: async () => ({ load1: 1, freeGb: 100 }) })(pre('Bash', 'make test'))
+  assert.deepEqual([events[0].action, events[0].rule, events[0].sample_rate, events[0].load1, events[0].free_gb], ['allow', 'host', 1, 1, 100])
+})
+
+test('telemetry: a heavy allow the host rule did not judge (wrapped, or after its deny) is only sampled', async () => {
+  const events = []
+  const run = setup({ emit: async (event, attrs) => events.push([attrs.action, attrs.rule, attrs.sample_rate]), random: () => 0.99, hostFacts: async () => ({ load1: 999, freeGb: 100 }) })
+  await run(pre('Bash', 'make test'))
+  await run(pre('Bash', 'make test'))
+  await run(pre('Bash', 'scripts/heavy.sh make test'))
+  assert.deepEqual(events, [['deny', 'host', undefined]])
+})
+
+test('telemetry: the allow sample keeps random() below 1/ALLOW_SAMPLE only', async () => {
+  for (const [roll, sent] of [[0.0999, 1], [0.1, 0]]) {
+    const events = []
+    await setup({ emit: async (event, attrs) => events.push(attrs), random: () => roll })(pre('Bash', 'ls'))
+    assert.equal(events.length, sent, String(roll))
   }
 })
 
@@ -358,14 +429,39 @@ test('parallel hook processes keep every loaded skill', async () => {
   assert.deepEqual(sessionStore(dataDir, 'q').load().loaded.sort(), names.sort())
 })
 
-test('skills count for the whole session, reminders per agent', async () => {
+test('skills count for the whole session, reminders per agent; the read and edit hints once per session (G24)', async () => {
   const h = setup()
   await h({ hook_event_name: 'PreToolUse', tool_name: 'Skill', tool_input: { skill: 'ship' }, agent_id: 'a1' })
   assert.equal(decision(await h(pre('Bash', 'git commit -m "fix: x"'))), undefined, "a subagent's skill load covers the main agent")
-  const hinted = async (agent_id) => Boolean(decision(await h({ ...pre('Bash', 'cat README.md'), agent_id }))?.additionalContext)
-  assert.equal(await hinted('a1'), true)
-  assert.equal(await hinted('a1'), false, 'once per agent')
-  assert.equal(await hinted(undefined), true, 'the main agent gets its own')
+  const hinted = async (command, agent_id) => Boolean(decision(await h({ ...pre('Bash', command), agent_id }))?.additionalContext)
+  assert.equal(await hinted('pytest -q', 'a1'), true)
+  assert.equal(await hinted('pytest -q', 'a1'), false, 'once per agent')
+  assert.equal(await hinted('pytest -q', undefined), true, 'the main agent gets its own')
+  for (const command of ['cat README.md', 'echo x > notes.txt']) {
+    assert.equal(await hinted(command, 'a1'), true, command)
+    assert.equal(await hinted(command, 'a2'), false, `${command}: once per session`)
+    assert.equal(await hinted(command, undefined), false, `${command}: once per session`)
+  }
+})
+
+test('auto mode, which tells the agent to read and edit through the shell, gets no read or edit hint (G24)', async () => {
+  const h = setup()
+  const ctx = async (command, permission_mode) => decision(await h({ ...pre('Bash', command), permission_mode }))?.additionalContext
+  assert.equal(await ctx('cat README.md', 'auto'), undefined)
+  assert.equal(await ctx("sed -i 's/a/b/' f.txt", 'auto'), undefined)
+  assert.match(await ctx('cat README.md', 'default'), /read tool/, 'held back, not spent')
+  assert.match(await ctx("sed -i 's/a/b/' f.txt", 'acceptEdits'), /edit tool/)
+})
+
+test('a plain read of non-secret files is allowed outright, so no harness prompt stalls it (G24)', async () => {
+  const h = setup()
+  for (const c of ['sed -n 36,56p internal/contract/testdata/harness/factory.md', 'cd sub && sed -n 36,56p internal/contract/x.md', 'head -n 20 README.md', 'cat a.txt b.txt', 'tail -50 log/app.log']) {
+    const d = decision(await h(pre('Bash', c)))
+    assert.equal(d?.permissionDecision, 'allow', c)
+  }
+  for (const c of ['cat .env', 'cat ~/.ssh/config', 'head internal/token/token.go', 'cat secrets.yaml', 'cat a.txt > b.txt', 'cat $F', "sed -n '1w out' f", 'sed -n 1,5p f | sh', 'cat a; rm -rf b', 'cat /dev/stdin', 'less ~/.aws/config', 'cat id_ed25519', 'cd /r/.claude/worktrees/m4 && sed -n 36,56p x.md', 'cat /etc/hosts', 'cat env:GH_PAT', 'cat C:/Users/me/AppData/Roaming/gh/hosts.yml'])
+    assert.notEqual(decision(await h(pre('Bash', c)))?.permissionDecision, 'allow', c)
+  assert.equal(decision(await setup({ noAsk: true })(pre('Bash', 'cat a.txt')))?.permissionDecision, undefined, 'Codex: no allow, it has no prompt for this')
 })
 
 test('without a session id nothing is kept, and the fallback data dir is per user', async () => {

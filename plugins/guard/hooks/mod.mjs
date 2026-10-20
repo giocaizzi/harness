@@ -1,7 +1,7 @@
 // Claude Code mod (hooks.json `modules`; Copilot ignores the key): the usage throttle and the ask timeout.
 // The command guards run as command hooks for both harnesses; this holds only what needs the mods API.
-import { evaluateSpawn } from '../core/engine.mjs'
-import { logRequest, otelOff } from '../core/otel.mjs'
+import { cmdClass, evaluateSpawn } from '../core/engine.mjs'
+import { logRequest, otelOff, repoSlug } from '../core/otel.mjs'
 import { rules } from '../core/rules.mjs'
 
 // The window closest to its limit (a gateway spend limit is not a plan window).
@@ -18,18 +18,50 @@ async function otelConfig($) {
   }
 }
 
+// The installed guard's version (read once per load) and the session repo's `owner/name` (its `origin` remote, else the
+// first remote, as the command hooks read it; once per working directory), null where unreadable. Never throws.
+const attempt = async (f) => {
+  try {
+    return await f()
+  } catch {
+    return null
+  }
+}
+let version
+const repos = new Map()
+async function whereAttrs($) {
+  version ??= attempt(async () => JSON.parse(await $.fs.read(`${$.plugin.root}/.claude-plugin/plugin.json`)).version ?? null)
+  const cwd = (await attempt(() => $.session.cwd())) ?? ''
+  if (!repos.has(cwd)) {
+    const git = async (...args) => {
+      const r = await $.process.run(['git', ...args], { timeoutMs: 2000, ...(cwd ? { cwd } : {}) })
+      return r.exitCode === 0 ? r.stdout.trim() : null
+    }
+    repos.set(cwd, attempt(async () => {
+      const first = async () => {
+        const name = (await git('remote'))?.split(/\r?\n/)[0]
+        return name ? git('remote', 'get-url', name) : null
+      }
+      return repoSlug((await git('remote', 'get-url', 'origin')) ?? (await first()))
+    }))
+  }
+  return { guard_version: await version, repo: await repos.get(cwd) }
+}
+
 // One guard record to the OTel collector, when the session exports to one; never fails the caller.
 async function emitRecord($, event, attrs) {
   try {
     const config = await otelConfig($)
-    const req = config && logRequest(config, event, { ...attrs, harness: 'claude' })
+    const req = config && logRequest(config, event, { ...attrs, harness: 'claude', ...(await whereAttrs($)) })
     if (req) await $.http.fetch(req.url, { method: 'POST', headers: req.headers, body: req.body })
   } catch {
     // collector unreachable: the decision stands
   }
 }
 
-const emitThrottle = ($, w) => emitRecord($, 'guard.throttle', { action: 'deny', rule: 'usage-throttle', window: w?.kind, percent: w?.percentUsed })
+const emitThrottle = ($, w) => emitRecord($, 'guard.throttle', { action: 'deny', rule: 'usage-throttle', cmd_class: 'spawn', window: w?.kind, percent: w?.percentUsed })
+// The class of an asked call: its shell command's, else `tool`.
+const askClass = (e) => (typeof e.input?.command === 'string' ? cmdClass(null, e.input.command) : 'tool')
 
 // Permission asks are parked (denied, with "no answer, carry on") after this long without an answer, in every mode:
 // the user may be working elsewhere, so a session never waits on a dialog. GUARD_ASK_TIMEOUT_MS overrides it; 0 turns
@@ -58,6 +90,16 @@ async function askTimeoutMs($) {
   }
 }
 
+// GUARD_UNATTENDED in the environment Claude Code was launched with: nobody is there to answer, so an ask is parked at
+// once instead of after the timeout. Only the environment: a switch a command set lives in the command hooks' state.
+async function unattendedEnv($) {
+  try {
+    return /^(1|true|on)$/i.test((await $.env.get('GUARD_UNATTENDED')) ?? '')
+  } catch {
+    return false
+  }
+}
+
 // What the agent is told when nobody answered: the user may be busy elsewhere, so the call is parked, not refused.
 const noAnswer = (tool, why) =>
   `No answer: ${why}, so ${tool} was not run. This is not a refusal. Carry on with the rest of the task without it, or park it: say in your report that it is waiting for the user's approval.`
@@ -76,7 +118,7 @@ async function askWithTimeout($, e, reason, ms) {
   const result = answer === 'Allow' ? 'allow' : answer === 'Deny' ? 'deny' : answer
   const waited = (await $.clock.now().catch(() => NaN)) - started
   // Not awaited: a slow collector never delays the decision.
-  void emitRecord($, 'guard.ask_result', { result, wait_ms: Number.isFinite(waited) ? waited : undefined, tool: e.tool, tool_use_id: e.tool_use_id })
+  void emitRecord($, 'guard.ask_result', { result, wait_ms: Number.isFinite(waited) ? waited : undefined, tool: e.tool, cmd_class: askClass(e), tool_use_id: e.tool_use_id })
   if (result === 'allow') return { decision: 'allow', reason: 'allowed in the guard dialog' }
   if (result === 'timeout') return { decision: 'deny', reason: noAnswer(e.tool, `nobody answered the permission prompt within ${ms / 1000} seconds`) }
   if (result === 'unavailable') return { decision: 'deny', reason: noAnswer(e.tool, 'the permission prompt could not be shown or was dismissed') }
@@ -95,6 +137,10 @@ export function register(on) {
     if (mode === 'auto' && !r.hook) return r
     // dontAsk denies anything not pre-approved itself; there is no one to ask.
     if (mode === 'dontAsk') return r
+    if (await unattendedEnv($)) {
+      void emitRecord($, 'guard.ask_result', { result: 'unavailable', via: 'unattended', wait_ms: 0, tool: e.tool, cmd_class: askClass(e), tool_use_id: e.tool_use_id })
+      return { decision: 'deny', reason: noAnswer(e.tool, 'this is an unattended run (GUARD_UNATTENDED), so nobody can answer the permission prompt') }
+    }
     const ms = await askTimeoutMs($)
     return ms ? askWithTimeout($, e, r.reason, ms) : r
   }).catch(($, e, next) => next(e))

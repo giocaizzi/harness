@@ -1,0 +1,10 @@
+schema_version: "1.0"
+name: subagent-orchestration-trigger
+description: The model loads subagent-orchestration when asked to fan independent work out to several agents.
+tags: [trigger]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  prompt: I need the deprecated logging calls replaced in all five services under services/. They are independent, so fan it out to a few agents in parallel and pick the right model for each.
+  max_turns: 15
+  allowed_tools: [Read, Glob, Grep, Edit, Write, Skill]

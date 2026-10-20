@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { badTitle, branchFacts, branchTargets, codexRules, evaluateCommand, evaluateEdit, evaluateSpawn, nativeAsk, opencodeAsks, regenerableName, regenFacts, removalTargets, shellEdit, usageLevel, worktreeFacts } from './engine.mjs';
+import { badTitle, branchFacts, cmdClass, branchTargets, codexRules, evaluateCommand, evaluateEdit, evaluateSpawn, nativeAsk, opencodeAsks, pureRead, refFacts, regenerableName, regenFacts, removalTargets, shellEdit, tagFacts, unattendedSet, usageLevel, worktreeFacts } from './engine.mjs';
 import { rules } from './rules.mjs';
 
 const fresh = () => ({ reminded: new Set() });
@@ -751,4 +751,198 @@ test('the new risky rules reach Codex and opencode as prompt prefixes (D3)', () 
   assert.equal(opencodeAsks(rules)['docker volume rm *'], 'ask');
   assert.equal(nativeAsk('docker volume rm firefly_db', 'docker', rules), true);
   assert.equal(nativeAsk('gcloud projects delete p', 'cloud-delete', rules), false);
+});
+
+test('cd is followed up to the first branch, subshell or ||, and $PWD is the dir it reached (G23)', () => {
+  const env = { HOME: '/Users/me', TMPDIR: '/var/folders/ab/xyz/T/' };
+  const S = '/private/tmp/claude-501/p/s1/scratchpad';
+  assert.deepEqual(removalTargets(`mkdir -p ${S}/r && cd ${S}/r && rm -rf repo && git clone -q x repo; cd repo && (make test | tail -15)`, rules, env), [`${S}/r/repo`]);
+  assert.deepEqual(removalTargets(`cd ${S}/p && D=$PWD/data && rm -rf $D && for i in 1 2; do echo $i & done; wait`, rules, env), [`${S}/p/data`]);
+  assert.deepEqual(removalTargets(`cd ${S} && rm -rf "$PWD/a" \${PWD}/b`, rules, env), [`${S}/a`, `${S}/b`]);
+  for (const c of [`cd ${S}/p && D=$PWD/data && rm -rf $D`, `cd ${S}; rm -rf a; (make test)`])
+    assert.equal(decide(c, { env: { ...env, dirs: new Set([S, `${S}/p`]) } }).action, 'allow', c);
+  for (const c of [
+    `cd ${S} || true; rm -rf build`,
+    `cd ${S} || exit 1; rm -rf build`,
+    `cd ${S} && if true; then :; fi; rm -rf build`,
+    `(cd ${S}); rm -rf build`,
+    `true || cd ${S}; rm -rf build`,
+    `pushd ${S} && rm -rf build`,
+    `cd ${S} && pushd /r && rm -rf build`,
+    'D=$PWD/x; rm -rf $D',
+    'cd ~/r && rm -rf $PWD',
+    `cd ${S} && cd "$X" && rm -rf $PWD/a`,
+  ])
+    assert.notEqual(decide(c, { env }).action, 'allow', c);
+});
+
+// Fake gh for branch ref deletes: `pr` the merged PR head of a branch, `tip` the ref's current sha.
+const fakeRefs = (refs, calls = []) => async (argv, cwd) => {
+  calls.push([argv, cwd]);
+  if (argv[0] !== 'gh') return null;
+  if (argv[1] === 'pr') return refs[argv[argv.indexOf('--head') + 1]]?.pr ?? (refs.fail ? null : '');
+  const name = /git\/ref\/heads\/(.+)$/.exec(argv[2])?.[1];
+  return refs[name]?.tip == null ? null : `${refs[name].tip}\n`;
+};
+
+test('gh api DELETE of a branch ref passes when the ref is the head of a merged PR; anything else asks (G23)', async () => {
+  const run = fakeRefs({ 'feat/x': { pr: 'abc\n', tip: 'abc' }, after: { pr: 'abc\n', tip: 'def' }, open: { pr: '', tip: 'abc' }, gone: { pr: 'abc\n' } });
+  const decideWith = async (c) => decide(c, { refs: await refFacts(c, rules, run) });
+  for (const c of [
+    'gh api -X DELETE repos/o/r/git/refs/heads/feat/x',
+    'gh api --method DELETE /repos/o/r/git/refs/heads/feat/x',
+    'gh api -X=DELETE "repos/o/r/git/refs/heads/feat/x" --silent',
+    "gh api repos/o/r/git/refs/heads/feat/x -X DELETE",
+    'gh api -X DELETE repos/{owner}/{repo}/git/refs/heads/feat/x',
+  ])
+    assert.equal((await decideWith(c)).action, 'allow', c);
+  assert.match((await decideWith('gh api -X DELETE repos/o/r/git/refs/heads/after')).reason, /Ref after: its tip is not the head of the merged PR/);
+  assert.match((await decideWith('gh api -X DELETE repos/o/r/git/refs/heads/open')).reason, /Ref open: no merged PR/);
+  for (const c of [
+    'gh api -X DELETE repos/o/r/git/refs/heads/gone',
+    'gh api -X DELETE repos/o/r/git/refs/heads/main',
+    'gh api -X DELETE repos/o/r/git/refs/heads/master',
+    'gh api -X DELETE repos/o/r/git/refs/tags/v1.0.0',
+    'gh api -X DELETE repos/o/r/git/refs/heads/$B',
+    'gh api -X DELETE repos/o/r',
+    'gh api -X DELETE repos/o/r/git/refs/heads/feat/x && gh repo delete o/other --yes',
+    "ssh h 'gh api -X DELETE repos/o/r/git/refs/heads/feat/x'",
+    'gh api -X DELETE repos/o/r --template repos/o/r/git/refs/heads/feat/x',
+    'gh api -X DELETE repos/o/r/git/refs/tags/v1.0.0 -t repos/o/r/git/refs/heads/feat/x',
+    'gh api -X DELETE repos/o/r/releases/1 --jq repos/o/r/git/refs/heads/feat/x',
+    'GH_REPO=o/other gh api -X DELETE repos/{owner}/{repo}/git/refs/heads/feat/x',
+    'export GH_REPO=o/other; gh api -X DELETE repos/{owner}/{repo}/git/refs/heads/feat/x',
+    'env GH_HOST=ghe.corp gh api -X DELETE repos/o/r/git/refs/heads/feat/x',
+    'GH_HOST=ghe.corp gh api -X DELETE repos/o/r/git/refs/heads/feat/x',
+    'gh api --hostname ghe.corp -X DELETE repos/o/r/git/refs/heads/feat/x',
+    'gh api --hostname=ghe.corp -X DELETE repos/o/r/git/refs/heads/feat/x',
+  ])
+    assert.equal((await decideWith(c)).action, 'ask', c);
+  for (const c of ['gh api -X DELETE -H "Accept: application/vnd.github+json" repos/o/r/git/refs/heads/feat/x', 'gh api --silent -XDELETE -- repos/o/r/git/refs/heads/feat/x'])
+    assert.equal((await decideWith(c)).action, 'allow', c);
+  assert.equal((await decide('gh api -X DELETE repos/o/r/git/refs/heads/feat/x', { refs: await refFacts('gh api -X DELETE repos/o/r/git/refs/heads/feat/x', rules, fakeRefs({ fail: true })) })).action, 'ask');
+  const calls = [];
+  await refFacts('cd /r && gh api -X DELETE repos/{owner}/{repo}/git/refs/heads/feat/x', rules, fakeRefs({}, calls));
+  assert.deepEqual(calls.map(([argv, cwd]) => [argv.slice(0, 3).join(' '), cwd]), [['gh pr list', '/r'], ['gh api repos/{owner}/{repo}/git/ref/heads/feat/x', '/r']]);
+  calls.length = 0;
+  await refFacts('gh api -X DELETE repos/o/r/git/refs/heads/feat/x', rules, fakeRefs({}, calls));
+  assert.ok(calls[0][0].includes('-R') && calls[0][0].includes('o/r'), 'a literal repo is passed to gh pr list');
+});
+
+test('unattendedSet reads GUARD_UNATTENDED set by any command spelling, never from quoted text (G23)', () => {
+  for (const c of ['export GUARD_UNATTENDED=1', 'GUARD_UNATTENDED=1 git rebase main', 'GUARD_UNATTENDED=true', 'export GUARD_UNATTENDED="on"; make test', 'cd x && GUARD_UNATTENDED=1 make'])
+    assert.equal(unattendedSet(c), true, c);
+  for (const c of ['export GUARD_UNATTENDED=0', 'GUARD_UNATTENDED= make', 'export GUARD_UNATTENDED=1; export GUARD_UNATTENDED=off', 'unset GUARD_UNATTENDED'])
+    assert.equal(unattendedSet(c), false, c);
+  for (const c of ['git commit -m "set GUARD_UNATTENDED=1"', 'echo GUARD_UNATTENDED', "ssh h 'GUARD_UNATTENDED=1 x'", 'cat <<EOF\nGUARD_UNATTENDED=1\nEOF', 'make test'])
+    assert.equal(unattendedSet(c), null, c);
+});
+
+test('a cd piped or sent to the background is not followed (G23)', () => {
+  for (const c of ['cd /tmp/a & rm -rf build', 'cd /tmp/a | cat; rm -rf build', 'x | cd /tmp/a; rm -rf build', 'case x in a) cd /tmp/a;; esac; rm -rf build'])
+    assert.equal(decide(c, { env: {} }).action, 'ask', c);
+});
+
+test('a branch delete on another host never rides on a safe local one (G23)', async () => {
+  const run = async (argv) => (argv.includes('rev-list') ? '0\n' : null);
+  const c = "git branch -D a; ssh h 'git branch -D x'";
+  const d = decide(c, { branches: await branchFacts(c, rules, run) });
+  assert.equal(d.action, 'ask');
+  assert.match(d.reason, /x \(on another host\)/);
+});
+
+test('a cd that may not have run holds only within its && chain; payloads the outer shell expands use its values (G23 review)', () => {
+  const env = { HOME: '/Users/me', TMPDIR: '/var/folders/ab/xyz/T/', dirs: new Set(['/tmp/x', '/Users/me/repo']) };
+  for (const c of [
+    'cd /tmp/x; rm -rf src',
+    'cd /tmp/x\nrm -rf src',
+    'cd /tmp/nope && rm -rf src',
+    'cd /tmp/x; rmdir /tmp/x/a; rm -rf src',
+  ])
+    assert.equal(decide(c, { env }).action, 'allow', c);
+  for (const c of [
+    'cd /tmp/nope; rm -rf src',
+    'cd /tmp/nope; rm -rf src; (make test)',
+    '[ -d /tmp/x ] && cd /tmp/x; rm -rf src',
+    'false && cd /tmp/x; rm -rf build',
+    'cd /tmp/nope && cd /tmp/x; rm -rf src',
+    'cd /tmp/x &\nrm -rf src',
+    'cd /tmp/x & # bg\nrm -rf src',
+    'cd /tmp/x |\nrm -rf src',
+    'true ||\ncd /tmp/x\nrm -rf src',
+    'cd /tmp/x && make & rm -rf src',
+    'bash -c "cd /tmp/x && rm -rf $PWD"',
+    'sh -c "cd /tmp/x; rm -rf $PWD/src"',
+    'bash <<EOF\ncd /tmp/x && rm -rf $PWD\nEOF',
+    'echo "cd /tmp/x && rm -rf $PWD" | sh',
+    'ssh h "cd /tmp/x && rm -rf $PWD"',
+    'D=/Users/me/repo; bash -c "D=/tmp/x; rm -rf $D"',
+    'PWD=/tmp/y; cd /Users/me/repo && rm -rf $PWD/src',
+    // Round 2: something ran before the cd (it may have removed its directory), or the payload escapes `\$` for itself.
+    'cd /Users/me/repo && git pull; cd /tmp/x; rm -rf src',
+    'rm -rf /tmp/x; cd /tmp/x; rm -rf src',
+    'mv /tmp/x /tmp/y; cd /tmp/x; rm -rf src',
+    "rm -rf /tmp/x; bash -c 'cd /tmp/x; rm -rf src'",
+    'cd /tmp/x && bash -c "cd /Users/me/repo && rm -rf \\$PWD"',
+    'D=/tmp/x; bash -c "D=/Users/me/repo; rm -rf \\$D"',
+    'cd /tmp/x && eval "cd /Users/me/repo; rm -rf \\$PWD/src"',
+    'D=/tmp/x; echo "rm -rf \\$D/src" | bash',
+  ])
+    assert.notEqual(decide(c, { env }).action, 'allow', c);
+  // The shell runs these in the directory or with the value the guard resolves.
+  for (const c of ["bash -c 'cd /tmp/x && rm -rf $PWD/a'", "ssh h 'cd /tmp/x && rm -rf $PWD/a'", 'D=/tmp/x; ssh h "rm -rf $D/a"', '$(cd /tmp/x && rm -rf $PWD/a)'])
+    assert.equal(decide(c, { env }).action, 'allow', c);
+});
+
+test('git tag -f or -d of a tag no remote has is not a release; anything else still is (G24)', async () => {
+  const calls = [];
+  const run = async (argv) => {
+    calls.push(argv.join(' '));
+    if (argv[3] === 'remote') return 'origin\nupstream\n';
+    if (argv[3] === 'ls-remote') return argv.at(-1) === 'refs/tags/shared' ? 'abc\trefs/tags/shared\n' : argv.at(-1) === 'refs/tags/flaky' ? null : '';
+    return null;
+  };
+  const decideWith = async (c) => evaluateCommand({ command: c, state: fresh(), host: calm, rules, tags: await tagFacts(c, rules, run) });
+  for (const c of ['git tag -f m4-old-a d4759d4', 'git tag -d m4-old-a m4-old-b', 'git status --short | head -3; git tag -f m4-old-a d4759d4 >/dev/null', 'git -C /r tag --delete scratch'])
+    assert.equal((await decideWith(c)).action, 'allow', c);
+  assert.ok(calls.includes('git -C . ls-remote --tags upstream refs/tags/m4-old-a'), 'every remote is asked');
+  for (const c of ['git tag -f shared', 'git tag -d flaky', 'git tag -f v1.2.0', 'git tag -d 1.0.0', 'git tag scratch', 'git tag -a -f x -m y', 'git tag -f m4 && npm version patch', "ssh h 'git tag -d x'", 'git tag -f $T',
+    'git tag -f m4-old-a && git push origin m4-old-a', 'git tag -f m4-old-a && git push --tags', 'git tag -d m4-old-a && gh release create m4-old-a', 'git tag -f m4-old-a && gh api -X POST repos/o/r/git/refs -f ref=refs/tags/m4-old-a'])
+    assert.equal((await decideWith(c)).rule, 'release', c);
+});
+
+test('a secret tool asked only for its usage is not a secret read (G24)', () => {
+  for (const c of ['command -v bws op secret-tool; bws secret get --help 2>&1 | head -30', 'bws secret get -h', 'bw help get', 'op help read', 'gh auth token --help', 'printenv --help'])
+    assert.equal(outcome(c, { state: { reminded: new Set(['read']) } }), 'allow', c);
+  for (const c of ['bws secret get x', 'bws secret get x | grep --help', 'bws secret list && echo --help', 'grep -h TOKEN .env', 'bws secret get x; bws --help', 'env | sort',
+    // Review of #207: a file reader prints the file whatever `--help` says, and a flag's value is no help request.
+    'cat .env --help', 'head .env --help', 'cat ~/.ssh/id_rsa --help', 'cat .netrc --help', 'source .env --help', 'gh auth token --hostname --help'])
+    assert.equal(outcome(c), 'ask:secrets', c);
+});
+
+test('pureRead: plain reads of non-secret files only (G24)', () => {
+  for (const c of ['sed -n 36,56p a/b.md', 'sed -n 5p f', 'cat a b', 'head -n 5 f', 'tail -20 f', 'cd r && cat f', 'less docs/x.md'])
+    assert.equal(pureRead(c), true, c);
+  for (const c of ["sed -n 's/a/b/w o' f", 'sed -n 1,5p', 'sed 1p f', 'cat', 'cat -', 'cat a > b', 'cat a | sh', 'cat "a b"', 'cat $F', 'cat *.md', 'cat .env', 'cat .env.local', 'cat ~/.netrc',
+    'head ~/.ssh/known_hosts', 'cat k.pem', 'cat my-secrets.txt', 'cat token.go', 'cat /dev/zero', 'cd ~/.ssh && cat config', 'cd a; cat f', 'cd a && cd b && cat f', 'grep x f', 'cat a && rm b',
+    // Review of #207: outside the working tree goes to the harness's own prompt, and more secret names.
+    'cd /r && cat f', 'cat /etc/hosts', 'cat ~/.config//gh/hosts.yml', 'cd ~/.config/ && cat gh/hosts.yml', 'cat //proc/self/environ', 'cd / && cat proc/self/environ',
+    'cat a/../b', 'cat a//b', 'cat ~/.codex/auth.json', 'cat terraform.tfstate', 'cat prod.tfvars', 'cat prod.env', 'cat .git/config', 'cat .zsh_history',
+    // Round 2: Windows drives and PowerShell's env: drive, and the cd dir joined to the path.
+    'cat C:/Users/me/.config/glab-cli/config.yml', 'more C:/Users/me/AppData/Roaming/gh/hosts.yml', 'cd C:/Users/me && cat .claude.json', 'cat env:ANTHROPIC_API_KEY', 'cat a\\b', 'cd .config && cat gh/hosts.yml'])
+    assert.equal(pureRead(c), false, c);
+});
+
+test('F4 cmdClass: a rule maps to its family, a command to its program family; never command text', () => {
+  for (const group of ['skills', 'files', 'deny', 'risky']) for (const r of rules[group]) assert.notEqual(cmdClass(r.id, ''), 'other', r.id);
+  assert.equal(cmdClass('host', ''), 'host');
+  assert.equal(cmdClass('rm', 'rm -rf x'), 'delete');
+  assert.equal(cmdClass('secrets', ''), 'secrets');
+  assert.equal(cmdClass('no-such-rule', ''), 'other');
+  assert.equal(cmdClass(null, 'cd /x && git status'), 'git');
+  assert.equal(cmdClass(null, 'FOO=1 /usr/bin/make check'), 'build');
+  assert.equal(cmdClass(null, 'some-private-tool --flag'), 'other');
+  assert.equal(cmdClass(null, ''), 'other');
+  for (const c of ['constructor x', 'toString', '__proto__ a', 'hasOwnProperty']) assert.equal(cmdClass(null, c), 'other', c);
+  assert.equal(cmdClass('constructor', ''), 'other');
 });

@@ -121,17 +121,17 @@ test('pi: deny blocks, ask confirms through the UI and blocks without one', asyn
   assert.equal((await call('rm -rf ~/x', ctx())).block, true)
 })
 
-test('pi: every ask outcome is logged as guard.ask_result; no UI is unavailable via no-ui', async () => {
+test('pi: every ask outcome is logged as guard.ask_result with its class; no UI is unavailable via no-ui', async () => {
   const { handlers, api } = fakePi()
   const events = []
-  guardExtension(api, { ...deps(), emit: async (event, attrs) => events.push([event, attrs.result, attrs.via]) })
+  guardExtension(api, { ...deps(), emit: async (event, attrs) => events.push([event, attrs.result, attrs.via, attrs.cmd_class]) })
   const cwd = dir()
   const ctx = (confirm) => ({ cwd, hasUI: confirm !== undefined, ui: { confirm: async () => confirm }, sessionManager: { getSessionId: () => 's' } })
   const call = (c) => handlers.tool_call({ toolName: 'bash', toolCallId: 't', input: { command: 'rm -rf ~/x' } }, c)
   await call(ctx(true))
   assert.match((await call(ctx(false))).reason, /The user denied this command/)
   assert.match((await call(ctx())).reason, /No UI to confirm/)
-  assert.deepEqual(events.filter(([e]) => e === 'guard.ask_result'), [['guard.ask_result', 'allow', undefined], ['guard.ask_result', 'deny', undefined], ['guard.ask_result', 'unavailable', 'no-ui']])
+  assert.deepEqual(events.filter(([e]) => e === 'guard.ask_result'), [['guard.ask_result', 'allow', undefined, 'files'], ['guard.ask_result', 'deny', undefined, 'files'], ['guard.ask_result', 'unavailable', 'no-ui', 'files']])
 })
 
 test('pi: a failing make check on settle is sent back once, an aborted run is left alone', async () => {

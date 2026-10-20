@@ -115,8 +115,10 @@ export function scan(src) {
     const op = !src.startsWith('&>', i) && OPS.find((o) => src.startsWith(o, i))
     if (op && !(op === '(' && cur && /[=@?*+!]$/.test(cur.code))) {
       if (cur) cur.end = i
+      // A newline right after `&&`, `||`, a pipe or `&` continues the line: the operator stays the separator.
+      const continued = op === '\n' && !cur && ['&&', '||', '|', '|&', '&'].includes(sep)
       finish()
-      sep = op
+      if (!continued) sep = op
       i += op.length
       if (op === '\n' && pending.length) i = readHeredocs(src, i, pending)
       continue
@@ -288,8 +290,17 @@ export function commandWords(words) {
 // Re-quotes argv words as one command line: a word with anything a shell would split or expand is single-quoted.
 const requote = (words) => words.map((w) => (/^[\w./@%+=:,~-]+$/.test(w) ? w : `'${w.replace(/'/g, `'\\''`)}'`)).join(' ')
 
-// The payloads of one simple command (see the header), each { kind, text, remote?, host?, injected? }, plus
+// The payloads of one simple command (see the header), each { kind, text, remote?, host?, injected?, expanded? }, plus
 // `opaque` when it runs code the guard cannot read. `prev` is the command before it in the same pipeline.
+// `expanded`: this shell expands variables in the text before it runs (`bash -c "…$X…"`, an ssh command line, a
+// heredoc or echo piped into a shell), so `$X` there is this level's value, not one the payload sets. Only a
+// single-quoted `-c`, eval or ssh word, or a `$(…)` (which runs in a subshell), is not. `'escaped'` when the text also
+// holds an escaped `\$` or backtick, which the payload's own shell expands: then neither level's values are known.
+const escapes = (text) => (/\\[$`]/.test(text) ? 'escaped' : true)
+const expands = (ws) => {
+  const outside = ws.map((w) => w.raw.replace(/'[^']*'/g, '')).join(' ')
+  return /[$`]/.test(outside) && escapes(outside)
+}
 function payloadsOf(cmd, prev) {
   const out = []
   let opaque = false
@@ -315,34 +326,34 @@ function payloadsOf(cmd, prev) {
       if (/^-[a-zA-Z]*c[a-zA-Z]*$/.test(a)) c = true
       if (/^[-+]o$|^[-+]O$|^--(?:rcfile|init-file)$/.test(a)) k++
     }
-    if (c && args[k]) out.push({ kind: 'shell', text: args[k].val })
+    if (c && args[k]) out.push({ kind: 'shell', text: args[k].val, expanded: expands([args[k]]) })
     else if (!c && !args.slice(k).length) {
-      for (const body of cmd.heredocs) out.push({ kind: 'shell', text: body })
+      for (const body of cmd.heredocs) out.push({ kind: 'shell', text: body, expanded: escapes(body) })
       if (prev) {
         const from = commandWords(prev.words)
         const fromName = from[0] ? basename(from[0].val) : ''
         if (prev.decoder) opaque = true
-        else if (fromName === 'echo') out.push({ kind: 'shell', text: from.slice(1).filter((w) => !/^-[neE]+$/.test(w.val)).map((w) => w.val).join(' ') })
-        else if (fromName === 'printf') out.push({ kind: 'shell', text: ansiC(from[1]?.val ?? '') })
-        else if (fromName === 'cat' && prev.heredocs.length) for (const body of prev.heredocs) out.push({ kind: 'shell', text: body })
+        else if (fromName === 'echo') out.push({ kind: 'shell', text: from.slice(1).filter((w) => !/^-[neE]+$/.test(w.val)).map((w) => w.val).join(' '), expanded: escapes(from.map((w) => w.raw).join(' ')) })
+        else if (fromName === 'printf') out.push({ kind: 'shell', text: ansiC(from[1]?.val ?? ''), expanded: escapes(from[1]?.raw ?? '') })
+        else if (fromName === 'cat' && prev.heredocs.length) for (const body of prev.heredocs) out.push({ kind: 'shell', text: body, expanded: escapes(body) })
       }
     }
   } else if (name === 'eval') {
-    out.push({ kind: 'shell', text: args.map((w) => w.val).join(' ') })
+    out.push({ kind: 'shell', text: args.map((w) => w.val).join(' '), expanded: expands(args) })
   } else if (POWERSHELLS.has(name)) {
     const k = args.findIndex((w) => /^-(?:c|command)$/i.test(w.val))
     if (args.some((w) => /^-(?:e|ec|enc|encodedcommand)$/i.test(w.val))) opaque = true
-    else if (k >= 0) out.push({ kind: 'shell', text: args.slice(k + 1).map((w) => w.val).join(' ') })
+    else if (k >= 0) out.push({ kind: 'shell', text: args.slice(k + 1).map((w) => w.val).join(' '), expanded: true })
   } else if (name === 'cmd' || name === 'cmd.exe') {
     const k = args.findIndex((w) => /^\/[ck]$/i.test(w.val))
-    if (k >= 0) out.push({ kind: 'shell', text: args.slice(k + 1).map((w) => w.val).join(' ') })
+    if (k >= 0) out.push({ kind: 'shell', text: args.slice(k + 1).map((w) => w.val).join(' '), expanded: true })
   } else if (name === 'ssh') {
     let k = 0
     while (k < args.length && args[k].val.startsWith('-')) k += SSH_VALUE.has(args[k].val) ? 2 : 1
     const host = args[k]?.val
     const rest = args.slice(k + 1).map((w) => w.val).join(' ')
-    if (host && rest) out.push({ kind: 'ssh', text: rest, remote: true, host: host.replace(/^.*@/, '') })
-    else if (host) for (const body of cmd.heredocs) out.push({ kind: 'ssh', text: body, remote: true, host: host.replace(/^.*@/, '') })
+    if (host && rest) out.push({ kind: 'ssh', text: rest, remote: true, host: host.replace(/^.*@/, ''), expanded: expands(args.slice(k + 1)) })
+    else if (host) for (const body of cmd.heredocs) out.push({ kind: 'ssh', text: body, remote: true, host: host.replace(/^.*@/, ''), expanded: escapes(body) })
   } else if (['docker', 'podman', 'nerdctl', 'kubectl', 'oc'].includes(name)) {
     let k = args.findIndex((w) => w.val === 'exec')
     if (k >= 0) {
@@ -355,7 +366,7 @@ function payloadsOf(cmd, prev) {
       }
       // The container's files are not this machine's: judged like a remote host.
       const container = name === 'kubectl' || name === 'oc' ? args.slice(args.findIndex((w) => w.val === 'exec') + 1).find((w) => !w.val.startsWith('-'))?.val : args[k]?.val
-      if (k >= 0 && args[k + 1]) out.push({ kind: 'exec', text: requote(args.slice(k + 1).map((w) => w.val)), remote: true, host: `${name}:${container}` })
+      if (k >= 0 && args[k + 1]) out.push({ kind: 'exec', text: requote(args.slice(k + 1).map((w) => w.val)), remote: true, host: `${name}:${container}`, expanded: expands(args.slice(k + 1)) })
     }
   }
   return { payloads: out, opaque }

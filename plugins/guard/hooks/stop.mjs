@@ -176,7 +176,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
     // Codex rejects a Stop output with keys it does not know: it gets the top-level decision and reason only.
     const codex = harnessName() === 'codex'
     if (out) process.stdout.write(JSON.stringify(codex && out.decision ? { decision: out.decision, reason: out.reason } : out))
-    if (event) await emit(process.env, 'guard.stop', recordAttrs({ ...event, session_id: input.session_id }, input.cwd || process.cwd(), harnessName()))
+    if (event) await emit(process.env, 'guard.stop', recordAttrs({ ...event, cmd_class: 'stop', session_id: input.session_id }, input.cwd || process.cwd(), harnessName()))
   } catch {
     // unreadable payload: let the agent stop
   }
