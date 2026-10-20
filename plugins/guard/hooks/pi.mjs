@@ -51,7 +51,7 @@ export default function guardExtension(pi, deps) {
   // The Stop hook: when make check fails, send the failure back as a follow-up once; the next settle passes.
   pi.on('agent_settled', async (event, ctx) => {
     if (event.aborted) return
-    const reason = guard.stop({ cwd: ctx.cwd, active: blocked })
+    const reason = await guard.stop({ cwd: ctx.cwd, active: blocked })
     blocked = Boolean(reason)
     if (reason) await pi.sendUserMessage(reason)
   })
