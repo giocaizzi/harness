@@ -15,7 +15,7 @@ Tiers, effort levels and escalation are `subagent-orchestration`'s; this is the 
 | Verify security or safety paths | Opus | `high` |
 | Escalate | per `subagent-orchestration`, after the driver failed twice on the same problem | |
 
-**Security and safety paths** are any change to: input trust (who may trigger or approve), auth and credentials, secrets and redaction, a kill switch or halt, merge and release gates, protected paths. A repo may list its own in `.factory/config.yaml` (the `risk` tiers); a path in its highest tier counts too. A change that touches any of these is verified at `high`, whatever its size. Where the harness cannot set effort on a spawn, see [done.md](done.md#verify). Never above `high`.
+**Security and safety paths** are any change to: input trust (who may trigger or approve), auth and credentials, secrets and redaction, a kill switch or halt, merge and release gates, protected paths. A repo may list its own in `.factory/config.yaml` (the `risk` tiers); a path in its highest tier counts too. A change that touches any of these is verified at `high`, whatever its size. Where the harness fixes effort in the agent definition, see [done.md](done.md#verify). Never above `high`.
 
 ## Deviations
 

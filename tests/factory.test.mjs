@@ -129,3 +129,11 @@ test('routing.md: the policy table, the security-path list and the deviation rul
   for (const path of ['input trust', 'auth and credentials', 'secrets and redaction', 'kill switch', 'merge and release gates', 'protected paths']) assert.ok(text.includes(path), `routing.md lacks ${path}`)
   assert.match(text, /records each deviation with a reason/)
 })
+
+test('verifier: the definition grants exactly one write, its verdict file, as the last step', () => {
+  const text = read('plugins/factory/agents/verifier.md')
+  assert.match(text, /never edit the repo/)
+  assert.match(text, /write it to `\.factory\/runs\/<n>\/verdict-<round>\.md`/)
+  assert.match(text, /that is your last step/)
+  assert.match(text, /`Head: <full SHA/)
+})

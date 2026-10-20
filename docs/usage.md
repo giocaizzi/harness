@@ -96,7 +96,7 @@ For a repo adopted per [adopt-factory.md](adopt-factory.md): you approve a ticke
 | `scout` | `dev-tools` | you need something found or read: code, logs, test output. Read-only; answers with `file:line` evidence. | cheapest (Claude: Haiku, `low`) |
 | `escalate` | `dev-tools` | the normal model failed twice on the same bug or design question | strongest (Claude: Fable) |
 | `api-reviewer` | `api` | you want an API security review: vulnerabilities, RBAC leaks, compliance | driver (Claude: Opus, `medium`) |
-| `verifier` | `factory` | a ticket's change is ready to ship and needs a gate that did not write it ([factory.md](factory.md#verification)) | driver (Claude: Opus, `medium`; Sonnet `medium` for trivial changes, `high` for security or safety paths where the harness takes effort per spawn) |
+| `verifier` | `factory` | a ticket's change is ready to ship and needs a gate that did not write it ([factory.md](factory.md#verification)) | driver (Claude: Opus, `medium`; Sonnet `medium` for trivial changes, `high` for security or safety paths, set on the spawn in Claude Code) |
 
 How to call one: say it ("use scout to list every place we read `GUARD_` env vars"). Per harness: Claude Code `/agents` lists them; Copilot CLI `/agent` picks one; opencode `@scout`; Codex and pi by asking (pi runs them through its `subagent` tool). Models per harness: [compatibility.md](compatibility.md). In Claude Code with `CLAUDE_CODE_SUBAGENT_MODEL=sonnet` set, any subagent that names no model (a plain or general-purpose one) runs on Sonnet; ask for another model by name ("use an opus subagent to …") when the task needs judgement.
 
