@@ -5,7 +5,7 @@ import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { tmpdir, userInfo } from 'node:os'
 import { join } from 'node:path'
-import { CODEX_RULES, codexAsks, codexReviewer, handle, pythonManager, sessionStore, tail } from './guard.mjs'
+import { CODEX_RULES, codexAsks, codexReviewer, approvalLabel, handle, pythonManager, sessionStore, tail } from './guard.mjs'
 import { fallbackDataDir } from './data.mjs'
 import { codexRules } from '../core/engine.mjs'
 import { rules } from '../core/rules.mjs'
@@ -529,4 +529,26 @@ test('VS Code task tools are judged by the command they run', async () => {
   assert.equal(decision(await task('run_task', { id: 'wipe', workspaceFolder: ws })).permissionDecision, 'ask')
   assert.equal(decision(await task('create_and_run_task', { workspaceFolder: ws, task: { label: 'b', type: 'shell', command: 'npm', args: ['run', 'build'] } })), undefined)
   assert.match(decision(await task('run_task', { id: 'shell: missing', workspaceFolder: ws })).additionalContext, /could not read the command/)
+})
+
+test('FACTORY_RUN_ID set: the approval label (default or the repo\'s configured one) cannot be added; unset, it can', async () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'guard-factory-'))
+  const configured = mkdtempSync(join(tmpdir(), 'guard-factory-'))
+  mkdirSync(join(configured, '.factory'))
+  writeFileSync(join(configured, '.factory', 'config.yaml'), 'labels:\n  approval: go-ahead\n  claimed: x\n')
+  const crlf = mkdtempSync(join(tmpdir(), 'guard-factory-'))
+  mkdirSync(join(crlf, '.factory'))
+  writeFileSync(join(crlf, '.factory', 'config.yaml'), 'labels:\r\n  approval: "go ahead"\r\n  claimed: x\r\n')
+  assert.equal(approvalLabel(crlf), 'go ahead', 'CRLF and a quoted name with a space')
+  const inRun = setup({ env: { FACTORY_RUN_ID: 'r1' } })
+  const add = (label, dir) => ({ ...pre('Bash', `gh issue edit 70 --add-label ${label}`), cwd: dir })
+  const denied = decision(await inRun(add('agent-ok', cwd)))
+  assert.equal(denied.permissionDecision, 'deny')
+  assert.match(denied.permissionDecisionReason, /approval label/)
+  assert.equal(decision(await inRun({ ...pre('Bash', 'gh api repos/o/r/issues/70/labels -f labels[]=agent-ok'), cwd })).permissionDecision, 'deny')
+  assert.equal(decision(await inRun({ ...pre('Bash', 'gh pr edit 3 --add-label agent-ok'), cwd })).permissionDecision, 'deny')
+  assert.equal(decision(await inRun(add('go-ahead', configured))).permissionDecision, 'deny')
+  assert.equal(decision(await inRun(add('agent-ok', configured))), undefined, 'the configured name replaces the default')
+  assert.equal(decision(await inRun(add('needs-owner', cwd))), undefined)
+  assert.equal(decision(await setup({ env: {} })(add('agent-ok', cwd))), undefined, 'no run active: allowed')
 })

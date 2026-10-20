@@ -40,7 +40,7 @@ Sections in this order, one line per ticket with its link; leave a section out w
 | Paused | last result `budget_reached` | `#N title · budget reached` |
 | Grooming | `needs-grooming` | `#N title · parked three times` |
 | Quarantined | quarantine label | `#N title · quarantined` |
-| Approved, not started | approval label, no claim, no plan comment | `#N title` |
+| Approved, not started | approval label, no claim, no grooming label, no plan comment | `#N title` |
 | Done | closed in the window with a `done` result | `#N title · PR #<pr> merged` |
 
 No narration and no advice: the owner reads the questions and answers them on the tickets.

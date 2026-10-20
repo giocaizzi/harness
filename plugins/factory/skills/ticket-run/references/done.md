@@ -20,7 +20,8 @@ A fresh-context `verifier` (this plugin's agent) gates the change; it must not b
 `ship`, using the repo's PR template if it has one. Otherwise the body carries `## Scope` (the decision log), the acceptance evidence as the testing under `## Verification`, `## Risk` (tier and why) and `## How to revert`, with `Closes #N` among the footers. List each existing test assertion the change altered as one line under `## Verification`: `Existing tests changed: <test> (<old> → <new>, per AC<n>)`; a flipped assertion stays visible without a decision row. Then land by the change's risk tier (the highest `risk` tier any changed path matches; unmatched paths are medium):
 
 - `merge: auto`: `land`.
-- `merge: owner`: ask on the ticket for the merge (`Ready to merge: #<pr>`, with the evidence) and park. The next run resumes once the PR is merged.
+- `merge: owner`: ask on the ticket for the merge (`Ready to merge: #<pr>`, with the evidence) and park. The next run resumes once an approver merged the PR: read `merged_by.login` (`gh api repos/{owner}/{repo}/pulls/<pr> --jq .merged_by.login`) and compare it with `approvers`, ignoring case. A merge by anyone else (a writer who is not an approver, a bot) leaves the ticket parked: say who merged on the ticket and stop.
+- Any change under `.factory/` (the config, and with it the approvers) is `merge: owner` whatever tier its paths match, even when the repo maps them to `auto`.
 
 ## Deploy and live-verify
 
