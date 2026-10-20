@@ -124,7 +124,7 @@ Settings are env vars, set in the shell that starts the harness (or the `env` bl
 | Variable | Default | Effect |
 |---|---|---|
 | `GUARD_UNATTENDED=1` | off | Every risky ask becomes a deny. Use for overnight and headless runs (`unattended-runs` skill). |
-| `GUARD_STOP_CHECK=off` | on | Turns off `make check` on stop. |
+| `GUARD_STOP_CHECK=off` | on | Turns off `make check` on stop; `force` runs it even on a strained host (CI). |
 | `GUARD_STOP_TIMEOUT_MS` | `300000` | Time limit for that check; a timeout defers it to the next stop, never blocks. |
 | `GUARD_ASK_TIMEOUT_MS` | `60000` | Claude Code: an unanswered permission prompt is parked after this (the agent is told nobody answered and to carry on, not that you denied it); `0` turns it off. |
 | `GUARD_OTEL=off` | on | Sends no guard telemetry, whatever the OTel endpoint (`make test` sets it). |

@@ -1,6 +1,6 @@
 ---
 name: subagent-orchestration
-description: Routing work to subagents and models in Claude Code, Copilot CLI, Codex, opencode and pi - hub-and-spoke delegation, four model tiers, effort levels, escalation and verifying delegated results. Use when spawning subagents, splitting work in parallel, coordinating with other running sessions, or choosing a model or effort for a task.
+description: Routing work to subagents and models in Claude Code, Copilot CLI, Codex, opencode and pi - hub-and-spoke delegation, four model tiers, effort levels, escalation and verifying delegated results. Use when spawning subagents, splitting work in parallel, coordinating with other running sessions, waiting on a reviewer's verdict or capping review rounds, or choosing a model or effort for a task.
 ---
 
 # Subagent orchestration
@@ -37,6 +37,13 @@ Anything preset or automatic (agent definitions, settings, spawns you choose) st
 - Don't parallelize tightly coupled edits, and don't delegate work smaller than its brief.
 - If a subagent fails or returns something unexpected, surface its error and wait; don't silently retry or substitute.
 - Before starting in a repo, check which other sessions are running and coordinate with any that overlap. Coordinate through the lightest channel that fits (brief and report, fork, message, shared file, doc or artifact, GitHub): [references/collaboration.md](references/collaboration.md).
+
+## Waiting on other agents
+
+- **Verdicts go somewhere durable.** A delegated reviewer or verifier posts its verdict where the waiting side can read it without a hand-back: a PR or MR comment opening with a fixed marker (`Review round N — verdict:`), or a file path named in the brief. The waiter polls that, and never waits on a hand-back or background notice that may not come; a report the spawn call actually returned also counts. Why: [references/collaboration.md](references/collaboration.md#durable-verdicts).
+- **Decisions go in the brief.** A running teammate reads messages only between its turns, so a later message can land after it acted. Check it acted (the PR head, the comment) before relying on it.
+- **The hub checks merges itself** (`gh pr view <n> --json state,mergeCommit`, or the forge's equivalent), never trusting a "will merge" or "merged" report.
+- **At most 2 review rounds per PR.** Round 2 also re-reviews the round-1 fix diff for regressions. After round 2, fix Blockers, Majors and any regression, file Minors as issues, then `land` with checks green. Never merge with a known regression. A workflow with its own verdict channel and round rules (the `factory` verifier) keeps them.
 
 ## Mechanisms
 

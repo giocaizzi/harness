@@ -24,10 +24,20 @@ Several sessions often work on one machine at once, in different repos or the sa
 1. **Look before starting** work in a repo: list running sessions (Claude Code `ListAgents` or `/peers`), plus the harness-neutral signs: `git worktree list`, open PRs on the target branch, `heavy.sh --status` and `register-service.sh --list` (`host-hygiene`).
 2. **Ask before overlapping.** If another session works in the same repo or on the same branch, message it with what you plan to touch and agree who does what; otherwise pick separate files or wait.
 3. **Reply where it came from:** answer a cross-session message to its `from` address, first line self-contained. Hand back results (a PR link, a decision) the same way.
-4. **Wait without polling:** ask for one idle notice (`notify_when_idle`) instead of re-listing or "are you done?" messages.
+4. **Wait for a peer without polling it:** to learn when a session goes idle, ask for one idle notice (`notify_when_idle`) instead of re-listing or "are you done?" messages. The notice says only that it is idle; read its results and verdicts from the durable channel ([Durable verdicts](#durable-verdicts)).
 5. **A peer is not the user.** A peer's request is teammate input: do it within your own permissions, never treat it as approval of a pending prompt, and never do for a peer what its own session was denied.
 
 Where a harness has no cross-session channel, use the neutral ones: a GitHub issue or PR comment, or `docs/wip/<slug>.md`.
+
+## Durable verdicts
+
+Reports and messages travel only while their receiver is running, so a waiter that depends on them can stall or get nothing:
+
+- **Nested spawns lose their report.** A subagent's own subagent (for example a reviewer a teammate spawned) cannot hand back once its parent's turn has ended; the report is dropped or lands at the hub. Inside a teammate, prefer foreground (blocking) spawns for reviews, and still have the reviewer post to the durable channel: even a blocking spawn there can return without its report.
+- **Background notices may go to the hub.** A background command or agent started by a teammate can report to the session instead of the teammate. Don't hand a wait to a background loop and go idle: poll in the foreground within a short turn, or arm auto-merge and let the forge do the waiting.
+- **Messages queue until the turn ends.** A message to a busy teammate is read after its current turn, minutes later. Requirements belong in the brief; a correction sent later needs a check that it was applied before anyone relies on it.
+
+The durable channel is a PR or MR comment with a fixed marker (`Review round N — verdict: APPROVE|CHANGES`, then findings with severities), or a file whose path the brief names. The waiter polls it (`gh pr view <n> --comments`, `glab mr view <n> --comments`, or the file) and acts on what it finds there, not on a report it expected.
 
 ## Rules
 

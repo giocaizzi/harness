@@ -32,7 +32,8 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 22
-      - run: npm install -g @openai/codex opencode-ai @earendil-works/pi-coding-agent
+      # Exact versions: an unpinned upstream release must not break CI overnight. Bump them in a PR of their own.
+      - run: npm install -g @openai/codex@0.163.0 opencode-ai@1.19.3 @earendil-works/pi-coding-agent@1.3.0
       - run: node tests/e2e/run.mjs # `make e2e`; called directly because Windows runners have no make
         env:
           E2E_REQUIRE: 1
@@ -56,5 +57,5 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 22 # guard plugin tests: node --test
-      - run: npm install -g @anthropic-ai/claude-code # validate.py runs `claude plugin validate`
+      - run: npm install -g @anthropic-ai/claude-code@2.1.304 # validate.py runs `claude plugin validate`; pinned like the e2e CLIs
       - run: make check
