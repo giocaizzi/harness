@@ -3,8 +3,8 @@
 // Windows SetThreadExecutionState held by a PowerShell that waits on the pid. No tool for it: skip.
 import { spawn, spawnSync } from 'node:child_process'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { pluginDataDir } from './data.mjs'
 import { pathToFileURL } from 'node:url'
 
 // The hook's parent is often the shell the harness ran `command` in: skip shells up to the harness itself.
@@ -82,7 +82,7 @@ const launchDetached = (argv) => {
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
   try {
-    const dataDir = process.env.CLAUDE_PLUGIN_DATA || process.env.COPILOT_PLUGIN_DATA || join(tmpdir(), 'guard-plugin')
+    const dataDir = pluginDataDir()
     keepAwake({ dataDir, launch: launchDetached })
   } catch {
     // never block a session start

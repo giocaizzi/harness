@@ -3,15 +3,16 @@
 // and reads `hookSpecificOutput.permissionDecision`. A hook is a fresh process, so per-session facts
 // (loaded skills, rules already reminded) live in a JSON file under $CLAUDE_PLUGIN_DATA.
 import { execFile } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync, readdirSync, statSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, readdirSync, statSync } from 'node:fs'
 import { statfs } from 'node:fs/promises'
-import { cpus, homedir, loadavg, platform, tmpdir } from 'node:os'
+import { cpus, homedir, loadavg, platform } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { branchFacts, codexRules, deniedBy, deniedDir, evaluateCommand, evaluateEdit, isHeavy, isRisky, nativeAsk, previewCommand, regenFacts, withPreview, worktreeFacts } from '../core/engine.mjs'
 import { cpuPercentFrom } from '../core/host.mjs'
 import { emit } from '../core/otel.mjs'
 import { rules } from '../core/rules.mjs'
+import { pluginDataDir } from './data.mjs'
 import { commandHash, harnessName, recordAttrs } from './telemetry.mjs'
 
 // Claude Bash/PowerShell, Copilot bash/powershell, VS Code run_in_terminal. VS Code ignores matchers, so every
@@ -43,21 +44,47 @@ export function knownSkills(here = dirname(fileURLToPath(import.meta.url))) {
   return names
 }
 
-// Per-session state: { reminded: string[], loaded: string[] }.
-// ponytail: read-modify-write without a lock; parallel tool calls can lose a write (a reminder repeats once).
-export function sessionStore(dir, sessionId) {
-  const file = join(dir, 'sessions', `${String(sessionId || 'default').replace(/[^\w-]/g, '_')}.json`)
+// Per-session state: { reminded: string[], loaded: string[] }, kept as append-only facts in `sessions/<id>.jsonl`,
+// one JSON line each (`{"loaded":"ship"}`, `{"reminded":"edit","agent":"a1"}`). Parallel hooks each append their
+// own lines with one O_APPEND write, which the OS keeps whole, so none is lost and no lock is needed. Skill loads
+// count for the whole session, subagents included; reminders count per agent (`agent_id`, absent for the main
+// agent), so a subagent gets its own hints. Without a session id nothing is kept.
+export function sessionStore(dir, sessionId, agentId) {
+  const file = sessionId ? join(dir, 'sessions', `${String(sessionId).replace(/[^\w-]/g, '_')}.jsonl`) : null
+  const agent = agentId ? String(agentId) : undefined
+  let seen = { reminded: [], loaded: [] }
   return {
     load() {
+      seen = { reminded: [], loaded: [] }
+      if (!file) return { reminded: [], loaded: [] }
+      let text = ''
       try {
-        return JSON.parse(readFileSync(file, 'utf8'))
+        text = readFileSync(file, 'utf8')
       } catch {
-        return {}
+        // no facts yet
       }
+      for (const line of text.split('\n')) {
+        let fact
+        try {
+          fact = JSON.parse(line)
+        } catch {
+          continue
+        }
+        if (typeof fact.loaded === 'string') seen.loaded.push(fact.loaded)
+        if (typeof fact.reminded === 'string' && fact.agent === agent) seen.reminded.push(fact.reminded)
+      }
+      return { reminded: [...new Set(seen.reminded)], loaded: [...new Set(seen.loaded)] }
     },
+    // Appends the facts `state` adds to what load() read.
     save(state) {
-      mkdirSync(join(dir, 'sessions'), { recursive: true })
-      writeFileSync(file, JSON.stringify(state))
+      if (!file) return
+      const lines = [
+        ...[...new Set(state.loaded)].filter((s) => !seen.loaded.includes(s)).map((s) => JSON.stringify({ loaded: s })),
+        ...[...new Set(state.reminded)].filter((r) => !seen.reminded.includes(r)).map((r) => JSON.stringify({ reminded: r, agent })),
+      ]
+      if (!lines.length) return
+      mkdirSync(dirname(file), { recursive: true, mode: 0o700 })
+      appendFileSync(file, lines.join('\n') + '\n')
     },
     // Drop files of sessions idle for a week. Not this session's own: a resumed session keeps its id, and
     // forgetting its loaded skills denied every skill rule again after each resume.
@@ -195,7 +222,7 @@ async function onEdit(input, state, deps) {
 
 // One hook event in, { stdout?, stderr?, code? } out. `deps` is injected so tests run without a host.
 export async function handle(input, deps) {
-  const store = sessionStore(deps.dataDir, input.session_id)
+  const store = sessionStore(deps.dataDir, input.session_id, input.agent_id)
   const state = { reminded: [], loaded: [], ...store.load() }
   const loadedBefore = [...state.loaded]
   const event = input.hook_event_name
@@ -264,7 +291,7 @@ async function main() {
   }
   // argv[2] names the event when a harness leaves hook_event_name out.
   if (!input.hook_event_name && process.argv[2]) input.hook_event_name = process.argv[2]
-  const dataDir = process.env.CLAUDE_PLUGIN_DATA || process.env.COPILOT_PLUGIN_DATA || join(tmpdir(), 'guard-plugin')
+  const dataDir = pluginDataDir()
   // Never exit non-zero: Copilot denies a preToolUse whose hook fails. The risky path fails closed inside onShell.
   // `--no-ask` comes from the Codex hooks file (.generated/codex/hooks.json), which build_agents.py generates.
   const noAsk = process.argv.includes('--no-ask')

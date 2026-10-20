@@ -1,9 +1,12 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtempSync, existsSync, mkdirSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { spawn } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
+import { tmpdir, userInfo } from 'node:os'
 import { join } from 'node:path'
-import { CODEX_RULES, codexAsks, handle, pythonManager } from './guard.mjs'
+import { CODEX_RULES, codexAsks, handle, pythonManager, sessionStore } from './guard.mjs'
+import { fallbackDataDir } from './data.mjs'
 import { codexRules } from '../core/engine.mjs'
 import { rules } from '../core/rules.mjs'
 
@@ -160,7 +163,7 @@ test('SessionEnd keeps the session state, so a resumed session remembers its ski
   const deps = { dataDir, env: {}, hostFacts: calm, run: async () => null }
   await handle({ session_id: 'x', hook_event_name: 'UserPromptSubmit', prompt: '/ship' }, deps)
   await handle({ session_id: 'x', hook_event_name: 'SessionEnd' }, deps)
-  assert.ok(existsSync(join(dataDir, 'sessions', 'x.json')))
+  assert.ok(existsSync(join(dataDir, 'sessions', 'x.jsonl')))
   assert.equal(decision(await handle({ ...pre('Bash', 'git commit -m "fix: x"'), session_id: 'x' }, deps)), undefined)
 })
 
@@ -299,4 +302,46 @@ test('the pip deny judges the repo the command cds into, not the session cwd (G0
   const out = decision(await setup()({ ...pre('Bash', `cd ${uv} && pip install x`), cwd: mkdtempSync(join(tmpdir(), 'guard-plain-')) }))
   assert.equal(out.permissionDecision, 'deny')
   assert.match(out.permissionDecisionReason, /uses uv/)
+})
+
+test('parallel hooks keep every loaded skill: facts are appended, not rewritten', async () => {
+  const dataDir = mkdtempSync(join(tmpdir(), 'guard-test-'))
+  const deps = { dataDir, env: {}, hostFacts: calm, run: async () => null, knownSkills: new Set() }
+  const names = Array.from({ length: 30 }, (_, i) => `skill-${i}`)
+  await Promise.all(names.map((n) => handle({ session_id: 'p', hook_event_name: 'PreToolUse', tool_name: 'Skill', tool_input: { skill: n } }, deps)))
+  assert.deepEqual(sessionStore(dataDir, 'p').load().loaded.sort(), names.sort())
+})
+
+test('parallel hook processes keep every loaded skill', async () => {
+  const dataDir = mkdtempSync(join(tmpdir(), 'guard-test-'))
+  const script = fileURLToPath(new URL('./guard.mjs', import.meta.url))
+  const names = Array.from({ length: 20 }, (_, i) => `skill-${i}`)
+  await Promise.all(
+    names.map(
+      (n) =>
+        new Promise((resolve) => {
+          const child = spawn(process.execPath, [script], { env: { ...process.env, CLAUDE_PLUGIN_DATA: dataDir, GUARD_OTEL: 'off' }, stdio: ['pipe', 'ignore', 'ignore'] })
+          child.on('exit', resolve)
+          child.stdin.end(JSON.stringify({ session_id: 'q', cwd: dataDir, hook_event_name: 'PreToolUse', tool_name: 'Skill', tool_input: { skill: n } }))
+        }),
+    ),
+  )
+  assert.deepEqual(sessionStore(dataDir, 'q').load().loaded.sort(), names.sort())
+})
+
+test('skills count for the whole session, reminders per agent', async () => {
+  const h = setup()
+  await h({ hook_event_name: 'PreToolUse', tool_name: 'Skill', tool_input: { skill: 'ship' }, agent_id: 'a1' })
+  assert.equal(decision(await h(pre('Bash', 'git commit -m "fix: x"'))), undefined, "a subagent's skill load covers the main agent")
+  const hinted = async (agent_id) => Boolean(decision(await h({ ...pre('Bash', 'cat README.md'), agent_id }))?.additionalContext)
+  assert.equal(await hinted('a1'), true)
+  assert.equal(await hinted('a1'), false, 'once per agent')
+  assert.equal(await hinted(undefined), true, 'the main agent gets its own')
+})
+
+test('without a session id nothing is kept, and the fallback data dir is per user', async () => {
+  const dataDir = mkdtempSync(join(tmpdir(), 'guard-test-'))
+  await handle({ hook_event_name: 'PreToolUse', tool_name: 'Skill', tool_input: { skill: 'ship' } }, { dataDir, env: {}, hostFacts: calm, run: async () => null })
+  assert.equal(existsSync(join(dataDir, 'sessions')), false)
+  assert.match(fallbackDataDir(), new RegExp(`guard-plugin-${process.getuid?.() ?? userInfo().username}$`))
 })
