@@ -757,23 +757,73 @@ export function pureRead(command) {
 
 const hint = (rule) => `Skill hint (${rule.why}): load ${rule.skills.map((s) => `\`${s}\``).join(' or ')} if this task is that work.`;
 
-// A command that adds the factory approval label: `gh issue|pr edit|create` with an add-label flag and the label named, or a
-// `gh api` write that names it, or sends a `--input`/`@file` body to a labels or issue endpoint. Quotes and backslashes
-// are dropped first (`agent-o'k'`), and labels match ignoring case, like GitHub's. A value built by the shell (`$L`,
-// `$(echo …)` of a variable) stays out of sight; docs/guard.md lists the limits.
+// Words of a command, one array per simple command: split on `; | & newline` outside quotes, quotes and backslashes
+// removed from the words (`agent-o'k'` is `agent-ok`), a leading `$(`, `(` or backtick dropped from a word.
+function shellWords(command) {
+  const out = [[]];
+  let word = null;
+  const push = () => { if (word !== null) out.at(-1).push(word.replace(/^(?:\$\(|\(|`)+/, '')); word = null; };
+  for (let i = 0; i < command.length; i++) {
+    const c = command[i];
+    if (c === "'" || c === '"') {
+      const end = command.indexOf(c, i + 1);
+      word = (word ?? '') + command.slice(i + 1, end < 0 ? command.length : end);
+      i = end < 0 ? command.length : end;
+    } else if (c === '\\') {
+      if (command[i + 1] === '\n') i++;
+      else { word = (word ?? '') + (command[i + 1] ?? ''); i++; }
+    } else if (/\s/.test(c) && c !== '\n') push();
+    else if (/[;|&\n]/.test(c)) { push(); if (out.at(-1).length) out.push([]); }
+    else word = (word ?? '') + c;
+  }
+  push();
+  return out.filter((w) => w.length);
+}
+
+const API_VALUE_FLAGS = new Set(['-X', '--method', '-H', '--header', '-f', '--raw-field', '-F', '--field', '--input', '-q', '--jq', '-t', '--template', '--hostname', '--cache', '-p', '--preview']);
+
+// A command that adds the factory approval label, while a factory run is active: `gh issue|pr edit|create` whose
+// `--add-label`/`--label`/`-l` value names it, or a `gh api` write (anything but GET) that names it in a field, or
+// sends a body the guard cannot read (`--input`, `-F labels[]=@file`) to a labels, issues or issue endpoint.
+// Labels match ignoring case, like GitHub's. A value the shell builds from a variable (`$L`), a script, `curl` with
+// a token, a GraphQL mutation or a `gh` alias stay out of sight (docs/guard.md).
 export function addsApprovalLabel(command, label) {
   const want = String(label).trim().toLowerCase();
   if (!want) return false;
-  const text = command.replace(/\\\r?\n/g, ' ').replace(/['"\\]/g, '');
-  const esc = want.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const named = new RegExp(`(?<![\\w-])${esc}(?![\\w-])`, 'i');
-  for (const seg of text.split(/[;|&\n]+/)) {
-    if (/\bgh\b[^;|&\n]*?\b(?:issue|pr)\s+(?:edit|create)\b/.test(seg) && /(?:--add-label|--label|(?<![\w-])-l)(?:=|\s)/.test(seg) && named.test(seg)) return true;
-    if (!/\bgh\s+api\b/.test(seg) || /\/comments\b/.test(seg)) continue;
-    const writes = /\s(?:-f|-F|--field|--raw-field)\b|\s(?:-X|--method)[\s=]*(?:POST|PUT|PATCH)\b/i.test(seg);
-    if (named.test(seg) && writes) return true;
-    // A body the guard cannot read: sent to the labels endpoint, or to the issue itself (PATCH carries `labels`).
-    if (/\s--input\b|\s-F\s*labels(?:\[\])?=@/.test(seg) && /\/(?:labels|issues\/\d+)(?:\s|$)/.test(seg)) return true;
+  const named = new RegExp(`(?<![\\w-])${want.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w-])`, 'i');
+  for (const words of shellWords(command)) {
+    // A payload handed to another shell (`bash -c "…"`, `eval "…"`) is a word with spaces: read it again.
+    if (words.some((w) => /\s/.test(w) && /\bgh\b/.test(w) && addsApprovalLabel(w, label))) return true;
+    const at = words.findIndex((w) => w === 'gh' || /[\\/]gh(?:\.exe)?$/.test(w));
+    if (at < 0) continue;
+    const args = words.slice(at + 1);
+    const positional = [];
+    for (let i = 0; i < args.length && positional.length < 2; i++) {
+      if (['-R', '--repo', '--hostname'].includes(args[i])) i++;
+      else if (!args[i].startsWith('-')) positional.push(args[i]);
+    }
+    if ((positional[0] === 'issue' || positional[0] === 'pr') && (positional[1] === 'edit' || positional[1] === 'create')) {
+      for (let i = 0; i < args.length; i++) {
+        const m = /^(--add-label|--label|-l)(?:=(.*))?$/.exec(args[i]);
+        if (m && named.test(m[2] ?? args[i + 1] ?? '')) return true;
+      }
+    } else if (positional[0] === 'api') {
+      let method = null, endpoint = null, fields = false, unreadable = false;
+      const values = [];
+      for (let i = args.indexOf('api') + 1; i < args.length; i++) {
+        const [flag, glued] = args[i].startsWith('--') && args[i].includes('=') ? [args[i].slice(0, args[i].indexOf('=')), args[i].slice(args[i].indexOf('=') + 1)] : [args[i], null];
+        if (!API_VALUE_FLAGS.has(flag)) { if (!args[i].startsWith('-') && endpoint === null) endpoint = args[i]; continue; }
+        const value = glued ?? args[++i] ?? '';
+        if (flag === '-X' || flag === '--method') method = value.toUpperCase();
+        else if (flag === '--input') fields = unreadable = true;
+        else if (['-f', '--raw-field', '-F', '--field'].includes(flag)) { fields = true; values.push(value); if (/^[^=]*=@/.test(value)) unreadable = true; }
+      }
+      if ((method ?? (fields ? 'POST' : 'GET')) === 'GET') continue;
+      const path = (endpoint ?? '').split('?')[0].replace(/\/+$/, '');
+      if (/\/comments(?:\/\d+)?$/.test(path)) continue;
+      if (values.some((v) => named.test(v))) return true;
+      if (unreadable && /(?:^|\/)(?:labels|issues(?:\/\d+(?:\/labels)?)?)$/.test(path)) return true;
+    }
   }
   return false;
 }

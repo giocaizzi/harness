@@ -168,6 +168,7 @@ test('Gate edit check: a body or title a non-approver edited after the approval 
   assert.equal(editCheck(approved, { lastEditedAt: '2026-01-03T00:00:00Z', editor: { login: 'OWNER' } }), 'ok', 'an approver\'s edit')
   const relabeled = [...approved, labeled('owner', '2026-01-04T00:00:00Z', 'unlabeled'), labeled('owner', '2026-01-05T00:00:00Z')]
   assert.equal(editCheck(relabeled, { lastEditedAt: '2026-01-03T00:00:00Z', editor: { login: 'stranger' } }), 'ok', 're-applying the label after the edit')
+  assert.match(editCheck([...approved, { event: 'renamed', actor: { login: 'stranger' }, created_at: '2026-01-02T00:00:00Z' }], { lastEditedAt: null, editor: null }), /^refuse: title renamed/, 'rename in the same second')
   const renamed = (actor) => [...approved, { event: 'renamed', actor: actor && { login: actor }, created_at: '2026-01-03T00:00:00Z', rename: { from: 'a', to: 'b' } }]
   assert.match(editCheck(renamed('stranger'), { lastEditedAt: null, editor: null }), /^refuse: title renamed after approval by stranger/)
   assert.match(editCheck(renamed(null), { lastEditedAt: null, editor: null }), /^refuse: title renamed after approval by an unknown actor/)

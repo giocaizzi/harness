@@ -961,13 +961,23 @@ test('factory run: adding the approval label is denied in every spelling, other 
     'gh api repos/o/r/issues/7/labels -f labels[]=agent-ok -H "X: --method GET"',
     'gh api -X GET -X POST repos/o/r/issues/7/labels -f labels[]=agent-ok',
     "gh issue edit 7 --add-label agent-o'k'",
+    'gh issue edit 7 --body "a; b" --add-label agent-ok',
+    'gh issue edit 7 --title "x | y" --add-label agent-ok',
+    'gh issue -R o/r edit 7 --add-label agent-ok',
+    'bash -c "gh issue edit 7 --add-label agent-ok"',
+    'gh api repos/o/r/issues/7/labels -f labels[]=agent-ok -f note=/comments',
+    'gh api -X POST repos/o/r/issues/7/labels?x=1 --input body.json',
+    'gh api repos/o/r/issues/7/labels --field labels[]=@l.txt',
+    'gh api repos/o/r/issues --input body.json',
+    'gh api -X POST repos/o/r/issues -F labels[]=@l.txt -f title=x',
+    'gh api -X PATCH repos/o/r/issues/7 --input body.json -f x=/comments',
     'gh issue edit 7 --add-label "$(echo agent-ok)"',
   ]) {
     const d = run(c);
     assert.equal(d.action, 'deny', c);
     assert.equal(d.rule, 'factory-approval', c);
   }
-  for (const c of ['gh issue edit 7 --add-label needs-owner', 'gh issue edit 7 --add-label agent-ok-not', 'gh issue list --label agent-ok', 'gh api repos/o/r/issues/7/labels', 'gh api repos/o/r/issues/7/comments -f body="please re-apply agent-ok"']) {
+  for (const c of ['gh issue edit 7 --add-label needs-grooming --remove-label agent-ok', 'gh issue create --label bug --title "support agent-ok"', 'gh api -X GET search/issues -f q=label:agent-ok', 'gh issue edit 7 --add-label needs-owner', 'gh issue edit 7 --add-label agent-ok-not', 'gh issue list --label agent-ok', 'gh api repos/o/r/issues/7/labels', 'gh api repos/o/r/issues/7/comments -f body="please re-apply agent-ok"']) {
     assert.equal(run(c).action, 'allow', c);
   }
   assert.equal(run('gh issue edit 7 --add-label ready', { approval: 'ready' }).action, 'deny', 'a configured label');
