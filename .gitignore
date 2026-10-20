@@ -11,3 +11,6 @@ CLAUDE.local.md
 
 # `claude plugin eval` output: regenerated on every run
 plugins/*/evals/results/
+
+# factory run results (docs/factory.md)
+.factory/runs/

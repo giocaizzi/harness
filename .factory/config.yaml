@@ -1,0 +1,63 @@
+# .factory/config.yaml: what the factory skills (ticket-run, factory-status) read about this repo at run time.
+# Every key is documented in docs/factory.md.
+version: 1
+
+forge: github
+
+# GitHub logins whose actions count as the owner's: applying the approval label and answering questions.
+approvers:
+  - giocaizzi
+
+labels:
+  approval: agent-ok
+  claimed: factory-claimed
+  needs_owner: needs-owner
+  needs_grooming: needs-grooming
+  quarantine: factory-quarantine
+  halt: factory-halt
+
+marker: "<!-- factory -->"
+
+size_label_prefix: "size: "
+
+# One component: the marketplace. `make check` is what CI runs. Merging deploys nothing:
+# installs pick up a new plugin version from the marketplace.
+components:
+  harness:
+    paths:
+      - "**"
+    checks:
+      - "make check"
+
+# Risk tiers, lowest first. A change takes the highest tier any of its paths matches; unmatched paths are medium.
+# Only prose under docs/ and the README auto-merge; skills, agents and hooks change agent behaviour.
+risk:
+  - tier: low
+    paths:
+      - "docs/**"
+      - "README.md"
+    merge: auto
+  - tier: medium
+    paths:
+      - "plugins/**"
+      - "tests/**"
+    merge: owner
+  - tier: high
+    paths:
+      - ".github/**"
+      - ".factory/**"
+      - ".claude-plugin/**"
+      - "plugins/guard/**"
+      - "scripts/**"
+      - "Makefile"
+      - "package.json"
+      - "pyproject.toml"
+      - "AGENTS.md"
+    merge: owner
+
+telemetry:
+  resource_attributes:
+    - factory.run_id
+    - factory.ticket
+    - factory.role
+    - factory.phase

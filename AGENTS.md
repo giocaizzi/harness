@@ -128,6 +128,10 @@ If `make validate` fails, check the common drift points first:
 - Probe the guard (spawning `hooks/guard.mjs`, importing the engine) with `GUARD_OTEL=off`: the hook otherwise posts its decisions to the collector your shell exports, and fake sessions pollute the real telemetry. `make test` sets it, and empties `FACTORY_EVENTS_FILE` so a factory run's events file gets no fake decisions; do the same in a probe.
 - Every guard false ask or missed command found in telemetry or transcripts becomes a row in `plugins/guard/core/corpus.json` (the regression corpus, [docs/guard.md](docs/guard.md#regression-corpus)), with its bug id open in `corpus.test.mjs` until the fix lands.
 
+## Factory tickets
+
+Issues labelled `agent-ok` are worked with the `ticket-run` skill ([docs/factory.md](docs/factory.md)); this repo's config is `.factory/config.yaml`, with runtime limits in `.factory/runtime.yaml`.
+
 ---
 
 ## How agents work

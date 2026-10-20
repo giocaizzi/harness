@@ -1,0 +1,12 @@
+# Runtime overrides for this repo: they may only narrow the host config (factory-runtime docs/configuration.md).
+version: 1
+max_size: S
+per_ticket:
+  XS: { usd: 4, wall: 30m }
+  S: { usd: 8, wall: 60m }
+protected_paths:
+  - ".github/**"
+  - ".factory/**"
+  - ".claude-plugin/**"
+  - "plugins/guard/**"
+allowed_branch_pattern: "^(feat|fix|docs|chore|refactor|test|perf|ci|build|revert)/{{.Number}}-"
