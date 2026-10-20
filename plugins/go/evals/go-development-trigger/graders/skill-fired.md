@@ -1,0 +1,7 @@
+---
+type: tool_used
+tool: Skill
+input_match: '"skill"\s*:\s*"(?:[\w-]+:)?go-development"'
+---
+
+The model loads the go-development skill before changing Go process-management code.
