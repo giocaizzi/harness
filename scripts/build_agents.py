@@ -20,7 +20,7 @@ For every plugin in plugins/<plugin>/ with .claude-plugin/plugin.json the script
   plugins/<plugin>/.generated/codex/hooks.json      hooks.json without the Claude `modules` key (Codex rejects
                                                     the file otherwise), the guard run with `--no-ask` (Codex
                                                     has no ask), every script with `--harness=codex` (its
-                                                    telemetry label), plus the Codex-only hooks of
+                                                    telemetry label), SessionEnd at Codex's 3 s cap, plus the Codex-only hooks of
                                                     hooks/codex-only.json.
 
 Everything generated lives in a dot-folder, so every visible file under plugins/<plugin>/ is authored.
@@ -150,9 +150,12 @@ def _build_codex(plugin_dir: Path, *, check: bool) -> bool:
         hooks = json.loads(hooks_file.read_text(encoding="utf-8"))
         codex_hooks = {k: v for k, v in hooks.items() if k != "modules"}
         codex_hooks.setdefault("hooks", {})
-        for groups in codex_hooks["hooks"].values():
+        for event, groups in codex_hooks["hooks"].items():
             for group in groups:
                 for hook in group.get("hooks", []):
+                    # Codex clamps a SessionEnd hook to 3 s (and warns on every run); ask for what it gives.
+                    if event == "SessionEnd" and hook.get("timeout", 0) > 3:
+                        hook["timeout"] = 3
                     if "/hooks/guard.mjs" in hook.get("command", ""):
                         hook["command"] += " --no-ask"
                     # The scripts cannot tell Codex from Claude Code by environment (both set CLAUDE_PLUGIN_*).
