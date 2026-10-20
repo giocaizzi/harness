@@ -35,6 +35,14 @@ gh stack merge                           # merge up to a chosen PR, all-or-nothi
 - Rewrite a stack with `gh stack modify` / `rebase`, never by hand-rebasing individual branches.
 - Stacks need a linear history; avoid merge commits inside a stack.
 
+### Stacks without `gh stack`
+
+A child PR based on another PR's branch, merged one PR at a time with squash (the squash drops the merge commits below from `main`):
+
+1. **Retarget before the parent merges.** List the children (`gh pr list --base <parent-branch>`) and move each to the default branch (`gh pr edit <child> --base <default>`) before arming the parent's merge. Deleting the parent's branch on merge can close every child based on it; GitHub retargets children itself only in some cases, so don't rely on it. A retargeted child now shows the parent's commits too: keep its auto-merge off until the parent has merged.
+2. **Update each child after the squash.** The child still carries the parent's pre-squash commits. Merge the default branch into it (`git merge origin/<default>`; no rebase, no force push), resolve conflicts keeping the child's side, push, let checks re-run, then land it.
+3. **A child already closed this way:** recreate the base at the parent's last head on the server (`gh pr view <parent> --json headRefOid`, then `gh api repos/{owner}/{repo}/git/refs -f ref=refs/heads/<parent-branch> -f sha=<sha>`), reopen the child (`gh pr reopen <child>`), retarget it as in step 1, then delete the recreated branch.
+
 ## Rulesets on the default branch
 
 Prefer a **repository ruleset** over classic branch protection: it layers, can be evaluated before enforcing, and is the only place the merge-queue rule exists. Minimum for `main`:
