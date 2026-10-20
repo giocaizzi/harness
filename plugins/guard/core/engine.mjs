@@ -758,13 +758,15 @@ export function pureRead(command) {
 const hint = (rule) => `Skill hint (${rule.why}): load ${rule.skills.map((s) => `\`${s}\``).join(' or ')} if this task is that work.`;
 
 // One plain `gh` command, read without a shell tokenizer: its words, or null for anything else. Single-quoted spans are
-// literal in POSIX shells, and so is a double-quoted one without `\`, `$` or a backtick; both become one word each. Any
+// literal in POSIX shells, and so is a double-quoted one without `\`, `$` or a backtick, or `{name}`; each stays one word. Any
 // shell syntax left after that (a separator, redirection, substitution, glob, escape, comment, leftover quote, newline)
 // gives null, so a misread line is never taken for a plain command.
 function plainGh(command) {
   if (command.includes('\0')) return null;
   const spans = [];
-  const rest = command.replace(/'([^']*)'|"([^"\\$`]*)"/g, (_, s, d) => `\0${spans.push(s ?? d) - 1}\0`);
+  const rest = command.replace(/'([^']*)'|"([^"\\$`]*)"/g, (_, s, d) => `\0${spans.push(s ?? d) - 1}\0`)
+    // `{owner}`: braces around one name, no `,` or `..`, are literal (gh fills them in), unlike `{a,b}`.
+    .replace(/\{[A-Za-z_]\w*\}/g, (b) => `\0${spans.push(b) - 1}\0`);
   if (/[;&|<>(){}$`\\#\n\r'"*?[\]]/.test(rest)) return null;
   const words = rest.trim().split(/[ \t]+/).map((w) => w.replace(/\0(\d+)\0/g, (_, i) => spans[i]));
   return words[0] === 'gh' ? words.slice(1) : null;
@@ -807,10 +809,25 @@ function ghAction(args) {
   return method === 'GET' && !body ? 'read' : { write: endpoint ?? '' };
 }
 
+// Subcommands that cannot send a body the guard cannot read to a labels or issues endpoint (`gh api` can).
+const GH_SUBCOMMANDS = new Set(['issue', 'pr', 'repo', 'run', 'workflow', 'search', 'release', 'project', 'auth', 'label', 'browse', 'status']);
+
+// A line that is not one plain `gh` command but runs `gh` with `api` or a subcommand the guard cannot read literally
+// (`gh $'a'pi`, `gh "$X"`). Read with quotes and backslashes removed, as the shell joins them; `-R`/`--repo` may come first.
+function opaqueGh(flat) {
+  for (const m of flat.matchAll(/(?:^|[\s;&|(){}`!])(?:[^\s;&|(){}`!]*\/)?gh(?:\.exe)?(?=[\s;&|()`]|$)/g)) {
+    const words = flat.slice(m.index + m[0].length).split(/[\s;&|()<>`]+/).filter(Boolean);
+    let i = 0;
+    while (words[i] === '-R' || words[i] === '--repo' || /^--repo=/.test(words[i] ?? '')) i += words[i].includes('=') ? 1 : 2;
+    if (!GH_SUBCOMMANDS.has(words[i])) return true;
+  }
+  return false;
+}
+
 // Fail closed while a factory run is active. A command that names the approval label (in any quoting or case, as GitHub
 // compares) is denied unless it is one plain `gh` read; adding and removing alike are the owner's. A `gh` command with a
 // body the guard cannot read (`--input`, a `key=@file` field) is denied unless it is one plain `gh api` call writing to
-// a `/comments` endpoint or a path outside `/labels` and `/issues`. A label the shell builds (`$L`) stays out of sight
+// a `/comments` endpoint or a path outside `/labels` and `/issues`; so is any other line running `gh api` (opaqueGh). A label the shell builds (`$L`) stays out of sight
 // (docs/guard.md).
 export function touchesApprovalLabel(command, label) {
   const want = String(label).trim().toLowerCase();
@@ -821,6 +838,7 @@ export function touchesApprovalLabel(command, label) {
   const action = args && ghAction(args);
   // A glued short flag is read without its flag (`-lagent-ok`).
   if (named.test(command) || flat.split(/\s+/).some((w) => named.test(w) || named.test(w.replace(/^-[A-Za-z]=?/, '')))) return action !== 'read';
+  if (!args && opaqueGh(flat)) return true;
   if (/\bgh\b/.test(flat) && /--input\b|=@/.test(flat)) {
     if (!action || action === 'read') return action !== 'read';
     const path = action.write.split('?')[0].replace(/\/+$/, '');

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import { spawnSync } from 'node:child_process';
 import assert from 'node:assert/strict';
-import { badTitle, branchFacts, cmdClass, branchTargets, codexRules, evaluateCommand, evaluateEdit, evaluateSpawn, nativeAsk, opencodeAsks, pureRead, refFacts, regenerableName, regenFacts, removalTargets, shellEdit, tagFacts, unattendedSet, usageLevel, worktreeFacts } from './engine.mjs';
+import { touchesApprovalLabel, badTitle, branchFacts, cmdClass, branchTargets, codexRules, evaluateCommand, evaluateEdit, evaluateSpawn, nativeAsk, opencodeAsks, pureRead, refFacts, regenerableName, regenFacts, removalTargets, shellEdit, tagFacts, unattendedSet, usageLevel, worktreeFacts } from './engine.mjs';
 import { rules } from './rules.mjs';
 
 const fresh = () => ({ reminded: new Set() });
@@ -1043,6 +1043,17 @@ test('factory run: a command naming the approval label is denied unless it only 
     // A body the guard cannot read, sent to labels or issues, with no label in sight.
     'echo "\\"" ; gh api repos/o/r/issues/7/labels --input b.json ; echo "\\""',
     'gh api repos/o/r/issues/7/labels --in"put" b.json',
+    // Round 6: a flag the shell rebuilds by expansion; any `gh api` the guard cannot read as plain.
+    "gh api repos/o/r/issues/7/labels --in$'p'ut b.json",
+    'gh api repos/o/r/issues/7/labels --in${X}put b.json',
+    'gh api repos/o/r/issues/7/labels --in$(printf p)ut b.json',
+    "gh api repos/o/r/issues/7/labels -F labels[]=$'@'l.txt",
+    "gh $'a'pi repos/o/r/issues/7/labels --input b.json",
+    'gh "$X" repos/o/r/issues/7/labels',
+    'cat b.json | gh api repos/o/r/issues/7/labels --input -',
+    'git push && gh -R o/r api repos/o/r/issues/7/labels -X POST -F labels[]=@l.txt',
+    'gh api repos/{owner,x}/r/issues/7/labels/agent-ok',
+    'EDIT=$(gh api graphql -F n=7 -F owner=o -F name=r --jq .data -f query=\'query{viewer{login}}\')',
     'gh api -X POST repos/o/r/issues/7/labels --input body.json',
     'gh api -X PATCH repos/o/r/issues/7 --input body.json',
     'gh api repos/o/r/issues/7/labels -F labels[]=@l.txt',
@@ -1084,11 +1095,17 @@ test('factory run: a command naming the approval label is denied unless it only 
     'gh issue comment 7 --body-file c.md',
     'gh api -X PATCH "repos/{owner}/{repo}/issues/comments/123" -F body=@c.md',
     'gh api -X PUT repos/o/r/contents/a.md --input body.json',
-    'EDIT=$(gh api graphql -F n=7 -F owner=o -F name=r --jq .data -f query=\'query{viewer{login}}\')',
+    'gh api graphql -F n=7 -F owner=o -F name=r --jq .data -f query=\'query{viewer{login}}\'',
     'gh api user --jq .login',
     'gh api repos/o/r/issues/7/labels',
+    'gh api repos/{owner}/{repo}/labels/agent-ok',
   ]) {
     assert.equal(run(c).action, 'allow', c);
+  }
+  // Not plain, but no `gh api` and no label: ship and land shapes are not the factory rule's (other rules may still ask for a skill).
+  for (const c of ['git push && gh pr create -t "fix: x" -b y', 'gh pr create -t "fix: x" --body "$(cat f)"', 'URL=$(gh pr create -t "fix: x" -b y)', 'gh pr checks --watch; gh pr merge --auto --squash', 'gh -R o/r pr list | head -5']) {
+    assert.notEqual(run(c).rule, 'factory-approval', c);
+    assert.equal(touchesApprovalLabel(c, 'agent-ok'), false, c);
   }
   assert.equal(run('gh issue edit 7 --add-label ready', { approval: 'ready' }).action, 'deny', 'a configured label');
   assert.equal(run('gh issue edit 7 --add-label agent-ok', null).action, 'allow', 'no factory run: allowed');
