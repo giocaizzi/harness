@@ -329,7 +329,7 @@ test('FACTORY_EVENTS_FILE: unset writes nothing, an unwritable path leaves the d
 
 test('telemetry: guard.skill once per loaded skill (typed /name only for marketplace skills), guard.reminder per hint', async () => {
   const events = []
-  const h = setup({ emit: async (event, attrs) => events.push([event, attrs.skill ?? attrs.rule, attrs.via]), knownSkills: new Set(['ship', 'docs-sync']) })
+  const h = setup({ emit: async (event, attrs) => events.push([event, attrs.skill ?? attrs.rule, attrs.via]), knownSkills: new Set(['ship', 'docs-sync']), random: () => 0.99 })
   await h({ hook_event_name: 'UserPromptSubmit', prompt: '/model opus' })
   await h({ hook_event_name: 'UserPromptSubmit', prompt: '/ship' })
   await h({ hook_event_name: 'PreToolUse', tool_name: 'Skill', tool_input: { skill: 'dev-tools:land' } })
