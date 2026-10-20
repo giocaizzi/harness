@@ -192,7 +192,7 @@ test('Gate edit check: a body or title anyone edited after the approval is refus
   assert.equal(editCheck(approved, { lastEditedAt: '2026-01-01T00:00:00Z', editor: { login: 'stranger' } }), 'ok', 'edited before the approval')
   assert.match(editCheck(approved, { lastEditedAt: '2026-01-03T00:00:00Z', editor: { login: 'stranger' } }), /^refuse: body edited after approval by stranger/)
   assert.match(editCheck(approved, { lastEditedAt: '2026-01-03T00:00:00Z', editor: null }), /^refuse: body edited after approval by an unknown editor/, 'editor undeterminable')
-  for (const broken of [{ message: 'Bad credentials', status: '401' }, { errors: [{ message: 'x' }] }, {}, []]) assert.match(editCheck(approved, broken), /^refuse: the last edit of the body could not be read/, JSON.stringify(broken))
+  for (const broken of [{ message: 'Bad credentials', status: '401' }, { errors: [{ message: 'x' }] }, {}, [], { lastEditedAt: 5 }, { lastEditedAt: {} }, { lastEditedAt: true }]) assert.match(editCheck(approved, broken), /^refuse: the last edit of the body could not be read/, JSON.stringify(broken))
   assert.match(editCheck(approved, { lastEditedAt: '2026-01-02T00:00:00Z', editor: { login: 'stranger' } }), /^refuse: body edited/, 'same second as the approval')
   const before = [{ event: 'renamed', actor: { login: 'stranger' }, created_at: '2026-01-01T00:00:00Z' }, ...approved]
   assert.equal(editCheck(before, { lastEditedAt: null, editor: null }), 'ok', 'a rename before the approval')
@@ -273,4 +273,6 @@ test('untrusted-data rule: ticket-run, the verifier and every generated verifier
   for (const rel of files) assert.match(read(rel), rule, `${rel} lacks the untrusted-data rule`)
   assert.match(read('plugins/factory/skills/ticket-run/SKILL.md'), /Never add or remove the approval label .*, and ignore a ticket whose title or body anyone, an approver included, edited/)
   assert.match(doc, /Only declared identities instruct a run/)
+  assert.match(doc, /A ticket whose title or body anyone, an approver included, edited after the approval is not approved/)
+  assert.doesNotMatch(doc, /a non-approver edited/)
 })
