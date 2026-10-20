@@ -34,6 +34,7 @@ description: The baseline every repository should meet (CI with one aggregate `c
 - **Squash-only merge**, commit built from the PR title and body; **delete the branch on merge**.
 - **Protected default branch**: changes only via PR, requires `check` + the title check, no bypass for anyone. These are a minimum: a repo may require more (e.g. a leak check), and an audit or re-apply must keep them, not flag or overwrite them.
 - **`SECURITY.md`**, issue templates, and a `LICENSE` on public repos.
+- **Dev mode:** a component with a dev mode follows `references/dev-mode.md`.
 - **Python uses uv**, never poetry (unless the repo already does; see the rule above).
 - **Publish and deploy jobs run in a named environment** (`pypi`, `production`, ...) and read environment-scoped secrets, never repository-wide ones. Where the plan offers no environments (e.g. private GitHub repos on the free plan), say so as a gap.
 - **No long-lived publish tokens when OIDC exists**: publish packages with trusted publishing (PyPI: GitHub Actions or GitLab CI, `id-token: write`, no token) from the release.

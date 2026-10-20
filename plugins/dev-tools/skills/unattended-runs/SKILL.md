@@ -23,6 +23,8 @@ Guard denies, and does not allow, these commands unattended; plan the work so th
 - `terraform apply` / `destroy`, `gh pr merge --admin`
 - secret reads (`bw`/`bws get|list|run`, `security … -w`, `op read`, `pass show`, cloud secret managers, `printenv`/`env | grep TOKEN`, `cat .env`); inject a token with `VAR="$(<keyring read>)" <command>`, which passes
 
+Dev mode (`--dev`, `<APP>_DEV=1`) is refused when `GUARD_UNATTENDED=1`: a relaxed check has no one watching its warning (see `repo-standard` `references/dev-mode.md`).
+
 Leave anything that needs them in the final report for the human, with the exact command. Do not rewrite the command to dodge the pattern (`find -delete`, `git checkout -f`, a script that wraps it): the rule marks work that needs a person.
 
 ## Auto-approve modes do not disable guard
