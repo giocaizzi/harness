@@ -2,6 +2,14 @@
 
 Attended ticket runs on a GitHub issue board: an owner-approved ticket worked end to end, its scope decided by a fold-in test and logged on the ticket, questions asked on the ticket, and a result contract per run. Generic for any repo; the repo's own settings live in its `.factory/config.yaml`. Design, protocol and contract: [docs/factory.md](../../docs/factory.md); adoption runbook: [docs/adopt-factory.md](../../docs/adopt-factory.md).
 
+## Agents
+
+| Agent | Description |
+|---|---|
+| `verifier` | Fresh-context gate before a ticket ships: every change traces to the ticket or its decision log, side effects present, acceptance evidence that could fail. Preset at `high` effort, the one exception in `subagent-orchestration`. |
+
+On pi, the `dev-tools` `subagent` tool runs it in its own `pi -p` session.
+
 ## Template
 
 | File | Purpose |
