@@ -13,7 +13,7 @@ Heads-up display: what the session costs and where the work stands, drawn by a C
 | `hooks/links.mjs` | Pure parser and linker for work-item references (`linkify`, `repoOf`, `pickRemote`, `target`), used by `rewrite.mjs`; node tests in `links.test.mjs`. |
 | `hooks/pi.mjs`, `hooks/pi-entry.mjs` | pi extension: the footer and the reply rewrites. `pi-entry.mjs` is what `package.json` loads; it adds pi-tui's OSC 8 detection, which only a static import inside pi resolves, so node tests take `pi.mjs`. |
 | `hooks/weather.mjs` | Pure display logic (forecast, glyphs, sparkline cells, battery, activity labels, PR state), shared with `statusline.mjs`; node tests in `weather.test.mjs`. |
-| `hooks/statusline.mjs` | Status line for both CLIs (`statusLine.command`), from the status JSON piped on stdin: the `claude` argument draws Claude Code's two lines (user, host, git, GCP project, session; path, model, context, 5h and 7d battery with reset, cost); no argument draws Copilot CLI's token-weather line. |
+| `hooks/statusline.mjs` | Status line for both CLIs (`statusLine.command`), from the status JSON piped on stdin: the `claude` argument draws Claude Code's two lines (user, host, git, GCP project, session; path, model, context, 5h and 7d battery with reset, cost); the `subagent` argument draws Claude Code's agent-panel rows (`subagentStatusLine.command`): the default `name  label  time · ↓ tokens` with each subagent's model and effort put before the time (an unset effort shows the one it runs at: `CLAUDE_CODE_EFFORT_LEVEL` when set, else the session's, which the `claude` line saves per session in the temp directory); no argument draws Copilot CLI's token-weather line. |
 
 ## Decisions
 
@@ -126,6 +126,8 @@ copilot plugin install hud@giocaizzi-harness   # Copilot CLI (status line only)
 Claude Code status line, in `~/.claude/settings.json` (the marketplace clone has a stable path; the plugin cache path changes with every version):
 `"statusLine": { "type": "command", "command": "node ~/.claude/plugins/marketplaces/giocaizzi-harness/plugins/hud/hooks/statusline.mjs claude" }`
 
+Claude Code agent-panel rows, beside it: `"subagentStatusLine": { "type": "command", "command": "node ~/.claude/plugins/marketplaces/giocaizzi-harness/plugins/hud/hooks/statusline.mjs subagent" }`
+
 Copilot CLI status line, in `~/.copilot/settings.json` (Windows: `%USERPROFILE%\.copilot\settings.json`):
 `"statusLine": { "type": "command", "command": "node ~/.copilot/installed-plugins/giocaizzi-harness/hud/hooks/statusline.mjs" }`
 
@@ -136,6 +138,7 @@ Both need `node` 22+ on PATH and a Nerd Font in the terminal (icons show as boxe
 ```bash
 make check                          # node tests + `claude plugin test plugins/hud`
 echo '{"model":{"display_name":"M"},"context_window":{"used_percentage":40}}' | node plugins/hud/hooks/statusline.mjs claude
+echo '{"columns":80,"tasks":[{"id":"a","agentType":"Explore","status":"running","label":"L","startTime":0,"model":"claude-haiku-5-5","effort":"low","tokenCount":1200}]}' | node plugins/hud/hooks/statusline.mjs subagent
 ```
 
 Reply rewrites, live: in a repository with a GitHub, GitLab or Azure DevOps remote, ask the agent to "reply with exactly" the before text under [Reply rewrites](#reply-rewrites), with a path, a commit and an issue of that repository. Claude Code (with hud installed, or `claude --plugin-dir plugins/hud`) and pi (in a terminal that takes OSC 8 links, such as Ghostty, iTerm2, WezTerm or kitty; inside tmux only with the `hyperlinks` terminal feature on an attached client) draw the after text: each reference, commit, path and URL an OSC 8 link, the statuses and their counts, the masked key. pi needs no login for this: point a `models.json` at a scripted Chat Completions server, as `tests/e2e/mock-llm.mjs` does. Checked on 2026-10-14 through a pseudo-terminal: Claude Code 2.1.296 drew `#83` first in the issue colour, then purple with the merged glyph once `gh` answered, `vscode://file/…/mod.mjs:12:1` around `harness[agent-…] › plugins/hud/hooks/mod.mjs:12`, the commit link, the statuses in the theme's `success` and `error` colours, a drawn table and `AKIA••••••••`; pi 1.2.0 drew the same links (`vscode://` too), glyphs (the merged one included) and masks, without colour.
