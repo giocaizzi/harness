@@ -20,6 +20,28 @@ import { commandHash, harnessName, recordAttrs } from './telemetry.mjs'
 // tool call reaches this script and anything else passes untouched.
 const SHELLS = new Set(['bash', 'powershell', 'run_in_terminal'])
 // Edit and write tools across harnesses (Claude, Copilot CLI, VS Code, opencode, pi), for the `files` skill hints.
+// VS Code's task tools run a command as well: `create_and_run_task` carries it (`task.command`, `task.args`),
+// `run_task` names a task of `.vscode/tasks.json` by label (`id`, `type: label` or the label). Field names from VS
+// Code's source (chatAgentTools `runTaskTool.ts`, `createAndRunTaskTool.ts`).
+const TASKS = new Set(['run_task', 'create_and_run_task'])
+const quoteArg = (a) => (/^[\w./@%+=:,~-]+$/.test(a) ? a : `'${a.replace(/'/g, `'\\''`)}'`)
+const taskLine = (task) =>
+  task && typeof task.command === 'string' ? [task.command, ...(Array.isArray(task.args) ? task.args.map((a) => quoteArg(String(typeof a === 'string' ? a : (a?.value ?? '')))) : [])].join(' ') : null
+// The command a task tool runs, or null when it cannot be read.
+export function taskCommand(tool, t = {}, cwd = '.') {
+  if (tool === 'create_and_run_task') return taskLine(t.task)
+  try {
+    // tasks.json is JSONC: comments and trailing commas are dropped before parsing.
+    const text = readFileSync(join(t.workspaceFolder || cwd || '.', '.vscode', 'tasks.json'), 'utf8')
+    const json = JSON.parse(text.replace(/^\s*\/\/.*$|\/\*[\s\S]*?\*\//gm, '').replace(/,(\s*[}\]])/g, '$1'))
+    const id = String(t.id ?? '')
+    const label = id.indexOf(': ') > 0 ? id.slice(id.indexOf(': ') + 2) : id
+    return taskLine(json.tasks?.find((x) => x?.label === label || x?.label === id))
+  } catch {
+    return null
+  }
+}
+
 // Read tools: Claude Code `Read`, Copilot CLI `view`, VS Code `read_file`, opencode and pi `read`.
 const READS = new Set(['read', 'view', 'read_file'])
 // Shell commands that only print a file.
@@ -294,6 +316,11 @@ export async function handle(input, deps) {
     if (tool === 'skill' && (t.skill || t.name)) state.loaded.push(String(t.skill || t.name))
     else if (SHELLS.has(tool)) out = await onShell(input, state, deps)
     else if (EDITS.has(tool)) out = await onEdit(input, state, deps)
+    else if (TASKS.has(tool)) {
+      const command = taskCommand(tool, t, input.cwd)
+      if (command) out = await onShell({ ...input, tool_input: { command } }, state, deps)
+      else if (tool === 'run_task') out = note(`The guard could not read the command of task "${t.id ?? ''}" in .vscode/tasks.json, so it did not check it. If it deletes, force-pushes or reads secrets, confirm with the user first.`)
+    }
   }
   // One guard.skill per skill and session, in every harness: the same skill-usage figure everywhere. Names are kept
   // bare (`dev-tools:ship` is `ship`), so a skill loaded both ways counts once.

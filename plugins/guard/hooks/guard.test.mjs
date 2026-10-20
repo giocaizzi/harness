@@ -392,3 +392,16 @@ test('a skill loaded by its namespaced and its bare name is one guard.skill', as
   await h({ hook_event_name: 'UserPromptSubmit', prompt: '/ship' })
   assert.deepEqual(events.filter(([e]) => e === 'guard.skill').map(([, a]) => a.skill), ['ship'])
 })
+
+test('VS Code task tools are judged by the command they run', async () => {
+  const h = setup()
+  const ws = mkdtempSync(join(tmpdir(), 'guard-test-'))
+  mkdirSync(join(ws, '.vscode'))
+  writeFileSync(join(ws, '.vscode', 'tasks.json'), '{\n  // build tasks\n  "version": "2.0.0",\n  "tasks": [\n    { "label": "wipe", "type": "shell", "command": "rm", "args": ["-rf", "src"], },\n  ],\n}\n')
+  const task = (tool_name, tool_input) => h({ hook_event_name: 'PreToolUse', tool_name, tool_input })
+  assert.equal(decision(await task('create_and_run_task', { workspaceFolder: ws, task: { label: 'x', type: 'shell', command: 'rm', args: ['-rf', 'src'] } })).permissionDecision, 'ask')
+  assert.equal(decision(await task('run_task', { id: 'shell: wipe', workspaceFolder: ws })).permissionDecision, 'ask')
+  assert.equal(decision(await task('run_task', { id: 'wipe', workspaceFolder: ws })).permissionDecision, 'ask')
+  assert.equal(decision(await task('create_and_run_task', { workspaceFolder: ws, task: { label: 'b', type: 'shell', command: 'npm', args: ['run', 'build'] } })), undefined)
+  assert.match(decision(await task('run_task', { id: 'shell: missing', workspaceFolder: ws })).additionalContext, /could not read the command/)
+})
