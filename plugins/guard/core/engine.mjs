@@ -192,44 +192,54 @@ export function expandLoops(command) {
 
 // The simple commands of a command (after loop expansion, redirections dropped, git's global options removed), each
 // with the directory it runs in. A relative path after `cd DIR` is in DIR, and after `git -C DIR` in DIR too. `cd` is
-// followed only through plain `;`/`&&` chains with a plain DIR: after any other `cd`, or with a subshell, group, `||`,
-// pushd or conditional in the command, the directory is UNKNOWN_DIR, which no check accepts.
+// followed only through plain `;`/`&&` chains with a plain DIR, up to the first subshell, group, `||` or conditional:
+// a `cd` at or after one, or a `pushd`, makes the directory UNKNOWN_DIR, which no check accepts, and so does the first
+// of them once a `cd` was followed (the `cd` may not have run). What runs before it keeps its directory, so a
+// `(make test)` at the end of a cleanup chain no longer hides where an earlier delete ran.
 // Paths are resolved the way the shell would, by position (owner decision D5): a leading `~` or `$HOME` from the
-// environment, and `$NAME` from an assignment earlier in the same command (`NAME=/abs/path`, `NAME=$(mktemp -d)`,
-// `export NAME=…`), the latest one winning. A prefix assignment (`NAME=v cmd`) holds for that command only, so it is
-// never followed. An unset or external variable, `~user` or a value that is not a plain path stays as written and asks.
+// environment, `$PWD` from the directory a followed `cd` reached (an absolute one only), and `$NAME` from an
+// assignment earlier in the same command (`NAME=/abs/path`, `NAME=$(mktemp -d)`, `export NAME=…`), the latest one
+// winning. A prefix assignment (`NAME=v cmd`) holds for that command only, so it is never followed. An unset or
+// external variable, `~user` or a value that is not a plain path stays as written and asks.
 // A double-quoted word with no spaces or other expansions ("$TMPDIR/x", "$S") is that word: unquote it so the
 // temp check can resolve it instead of seeing the blanked string.
 const SIMPLE_QUOTED = /"((?:\$\{?\w+\}?)?[^"\s$`\\]*)"/g;
 const UNKNOWN_DIR = '<cd?>';
 const REMOTE_DIR = '<remote>';
 const NO_TARGET = '<none>';
-const CD = /(?:^|[\s({])(?:cd|chdir|set-location|sl)(?=\s|$)/i;
+const CD = /(?:^|[\s({])(?:cd|chdir|set-location|sl|pushd|popd|push-location|pop-location)(?=\s|$)/i;
 const PLAIN_CD = /^\s*(?:cd|chdir|set-location|sl)(?:\s+(\S+))?\s*$/i;
 const PLAIN_DIR = /^[\w.@%+=:,\\/~][\w.@%+=:,\\/~-]*$/;
-const BRANCHY = /[(){}]|\|\||(?:^|[\s;&|])(?:pushd|popd|push-location|pop-location|if|then|else|elif|fi|case|esac|for|while|until|do|done)(?=[\s;]|$)/i;
+// Where `cd` stops being followed: a separator that opens a subshell or a branch, or a group or keyword that starts one.
+const BRANCH_SEP = new Set(['(', ')', '||', ';;']);
+const BRANCH_CODE = /^\s*[{}]|(?:^|[\s;&|])(?:if|then|else|elif|fi|case|esac|for|while|until|select|do|done)(?=[\s;]|$)/i;
+// A `cd` piped or sent to the background runs in a subshell and changes nothing after it.
+const SUBSHELL_SEP = new Set(['|', '|&', '&']);
 const ABSOLUTE = /^(?:[\\/]|[a-z]:|~|\$|%)/i;
 const inDir = (dir, p) => (!dir || ABSOLUTE.test(p) ? p : `${dir}/${p}`);
 const MKTEMP = /^\$\(mktemp(\s+-[dqu]+)*(\s+(-t|--tmpdir(=\S+)?)(\s+[\w.-]+)?)?\)$/;
 const DECLARE = /^(?:export|declare|typeset|local|readonly)$/;
+// Words before an assignment that still make it one: `export A=1`, `env A=1 cmd`.
+const DECLARE_WORDS = /^(?:export|declare|typeset|local|readonly|env)$/;
 const VAR_REF = /^\$(?:\{(\w+)\}|(\w+))(?=[\\/]|$)/;
-// `word` with a leading `~`, `$HOME` or `$NAME` resolved from `vars` (assignments so far) and `env`; else as written.
-function expandPath(word, vars, env) {
+// `word` with a leading `~`, `$HOME`, `$PWD` or `$NAME` resolved from `vars` (assignments so far), `env` and `pwd`
+// (the absolute directory a followed `cd` reached); else as written.
+function expandPath(word, vars, env, pwd) {
   if (/^~(?=[\\/]|$)/.test(word)) return env.HOME ? env.HOME.replace(/[\\/]+$/, '') + word.slice(1) : word;
   const m = VAR_REF.exec(word);
   if (!m) return word;
   const name = m[1] ?? m[2];
-  const value = name in vars ? vars[name] : name === 'HOME' ? env.HOME?.replace(/[\\/]+$/, '') : undefined;
+  const value = name in vars ? vars[name] : name === 'HOME' ? env.HOME?.replace(/[\\/]+$/, '') : name === 'PWD' ? pwd : undefined;
   return value ? value + word.slice(m[0].length) : word;
 }
 // A command made only of assignments (`A=1 B=2`, `export A=1`): they persist, so later commands see them.
-function assign(cmd, vars, env) {
+function assign(cmd, vars, env, pwd) {
   const words = cmd.words.filter((w, i) => !(i === 0 && DECLARE.test(w.val)));
   if (!words.length || !words.every((w) => /^[A-Za-z_]\w*=/.test(w.val))) return false;
   for (const w of words) {
     const name = w.val.slice(0, w.val.indexOf('='));
     const raw = w.raw.slice(w.raw.indexOf('=') + 1).replace(/^"([\s\S]*)"$/, '$1');
-    const value = expandPath(w.val.slice(name.length + 1), vars, env);
+    const value = expandPath(w.val.slice(name.length + 1), vars, env, pwd);
     if (MKTEMP.test(raw)) vars[name] = '/tmp/mktemp.placeholder';
     else if (/^(?:[\\/]|[a-z]:[\\/])/i.test(value) && PLAIN_PATH.test(value)) vars[name] = value;
     else if (isTempPath(value, env)) vars[name] = value;
@@ -240,33 +250,75 @@ function assign(cmd, vars, env) {
 // One level of commands (the top level, or a payload), each with its directory; payloads follow their command, in
 // the directory it runs in (a remote payload starts in no known directory, without this machine's HOME). A command
 // that hands its words to another host or a container (`ssh host rm -rf x`) is judged only through its payload.
-// Each entry: { seg (redirections dropped), code, dir, remote, resolve(path) }.
-function levelSegments(a, baseDir, remote, env, outer = {}) {
-  const followCd = !BRANCHY.test(levelCode(a));
+// Each entry: { seg (redirections dropped), code, words, dir, remote, resolve(path) }.
+// A `cd` holds past the end of its chain (`;`, a newline, `&`) only when it surely ran: nothing but assignments and
+// other sure `cd`s ran before it in the whole command (`ran`, inherited by payloads), so nothing could have removed or
+// moved its directory first, and that directory exists (`env.dirs`, which the adapter gathers through `cdDirs`). Else
+// a failed `cd x; rm -rf y` (or `rm -rf x; cd x; rm -rf y`) would delete `./y`, so the directory becomes UNKNOWN_DIR
+// after the break. Within a chain
+// (`cd x && rm -rf y`) a failed `cd` stops what follows, so it always holds there.
+// A payload whose text the outer shell expands first (`bash -c "…$X…"`, an ssh command, a heredoc: `p.expanded`)
+// resolves `$NAME` and `$PWD` with the outer values (`frozen`), not with its own assignments and `cd`s; one that also
+// escapes a `\$` for its own shell (`bash -c "D=x; rm -rf \$D"`) resolves neither, so its variables ask.
+// `cds`, when given, collects every directory a `cd` reaches, each taken to exist (see cdDirs).
+const CHAIN_BREAK = new Set([';', '\n', '&']);
+const ABS_DIR = /^(?:\/|[a-z]:[\\/])/i;
+function levelSegments(a, baseDir, remote, env, outer = {}, frozen = null, cds = null, ranBefore = false) {
   const vars = { ...outer };
+  let ran = ranBefore;
   let dir = baseDir;
+  let followCd = true;
+  let sure = true;
+  let chainSure = !ranBefore;
   const out = [];
-  for (const cmd of a.commands) {
+  for (const [i, cmd] of a.commands.entries()) {
     const seg = cmd.code.replace(/\d*[<>]+(&\d+|\s*[^\s;&|]+)/g, ' ');
-    const snapshot = { ...vars };
-    const resolve = (p) => expandPath(p, snapshot, env);
-    if (assign(cmd, vars, env)) {
+    if (i > 0 && CHAIN_BREAK.has(cmd.sep)) {
+      if (dir !== baseDir && (!sure || cmd.sep === '&')) dir = UNKNOWN_DIR;
+      chainSure = !ran;
+    }
+    // The first subshell, group, `||` or conditional: a later `cd` is not followed, nor an earlier one past it.
+    if (followCd && (BRANCH_SEP.has(cmd.sep) || BRANCH_CODE.test(cmd.code))) {
+      followCd = false;
+      if (dir !== baseDir) dir = UNKNOWN_DIR;
+    }
+    const pwd = frozen ? frozen.pwd : ABS_DIR.test(dir) && PLAIN_PATH.test(dir) ? dir : undefined;
+    const snapshot = frozen ? frozen.vars : { ...vars };
+    const resolve = (p) => expandPath(p, snapshot, env, pwd);
+    const ranHere = ran;
+    if (assign(cmd, vars, env, pwd)) {
       // nothing runs
     } else if (CD.test(seg)) {
-      const m = followCd && PLAIN_CD.exec(seg);
+      const m = followCd && !SUBSHELL_SEP.has(cmd.sep) && !SUBSHELL_SEP.has(a.commands[i + 1]?.sep) && PLAIN_CD.exec(seg);
       const to = m && (m[1] === undefined ? env.HOME : resolve(m[1]));
       dir = to && PLAIN_DIR.test(to) && !/^~/.test(to) ? inDir(dir, to) : UNKNOWN_DIR;
-    } else if (!cmd.payloads.some((p) => p.remote && p.kind !== 'subst')) {
-      out.push({ seg: gitPlain(seg), code: cmd.code, dir: gitDirs(seg).map(resolve).reduce(inDir, dir), remote, resolve });
+      if (cds && dir !== UNKNOWN_DIR) cds.push(dir);
+      sure = chainSure = chainSure && dir !== UNKNOWN_DIR && (cds !== null || env.dirs?.has(dir) === true);
+      // bash resets $PWD and $OLDPWD on every cd.
+      delete vars.PWD;
+      delete vars.OLDPWD;
+    } else {
+      chainSure = false;
+      ran = true;
+      if (!cmd.payloads.some((p) => p.remote && p.kind !== 'subst')) out.push({ seg: gitPlain(seg), code: cmd.code, words: cmd.words, dir: gitDirs(seg).map(resolve).reduce(inDir, dir), remote, resolve });
     }
     for (const p of cmd.payloads) {
-      out.push(...(p.remote ? levelSegments(p.analysis, REMOTE_DIR, true, {}) : levelSegments(p.analysis, dir, remote, env, snapshot)));
+      const inner = p.expanded === 'escaped' ? { vars: {}, pwd: undefined } : p.expanded ? { vars: snapshot, pwd } : frozen;
+      out.push(...(p.remote ? levelSegments(p.analysis, REMOTE_DIR, true, {}, {}, inner) : levelSegments(p.analysis, dir, remote, env, snapshot, inner, cds, ranHere)));
     }
   }
   return out;
 }
+const prepared = (command) => analysis(expandLoops(command).replace(SIMPLE_QUOTED, '$1'));
 function segments(command, env = {}) {
-  return levelSegments(analysis(expandLoops(command).replace(SIMPLE_QUOTED, '$1')), '', false, env);
+  return levelSegments(prepared(command), '', false, env);
+}
+// Every directory a `cd` in the command reaches on this machine, as the engine names it (relative to the cwd when it
+// does not start with `/`): the adapter checks which exist and passes them back as `env.dirs`.
+export function cdDirs(command, env = {}) {
+  const cds = [];
+  levelSegments(prepared(command), '', false, env, {}, null, cds);
+  return [...new Set(cds)];
 }
 const plainArgs = (rest) => rest.split(/\s+/).filter((t) => t && !t.startsWith('-'));
 function findRoots(rest) {
@@ -300,14 +352,15 @@ export const removalTargets = (command, rules, env) => removalEntries(command, r
 // Targets on this machine: facts (git, gh) are never gathered for another host's or a container's paths.
 const localTargets = (command, rules, env) => removalEntries(command, rules, env).filter((e) => !e.remote).map((e) => e.target);
 
-// Branches every `git branch -D` in a command deletes: { dir, name }, `dir` from `cd`/`git -C` ('' for the cwd).
+// Branches every `git branch -D` in a command deletes: { dir, name }, `dir` from `cd`/`git -C` ('' for the cwd). One
+// on another host or in a container has dir REMOTE_DIR: no fact is gathered for it, so it never rides on a safe one.
 export function branchTargets(command, rules, env = {}) {
   const re = riskyRe(rules.risky.find((r) => r.id === 'branch-delete'));
   return segments(command, env)
-    .filter(({ seg, remote }) => re.test(seg) && !remote)
-    .flatMap(({ seg, dir }) => {
+    .filter(({ seg }) => re.test(seg))
+    .flatMap(({ seg, dir, remote }) => {
       const names = plainArgs(/\bbranch\b(.*)$/.exec(seg)?.[1] ?? '');
-      return (names.length ? names : [NO_TARGET]).map((name) => ({ dir, name }));
+      return (names.length ? names : [NO_TARGET]).map((name) => ({ dir: remote ? REMOTE_DIR : dir, name }));
     });
 }
 
@@ -399,6 +452,66 @@ export async function branchFact(dir, name, run) {
 }
 const branchKey = ({ dir, name }) => `${dir}|${name}`;
 
+// Branch refs every `gh api -X DELETE …/git/refs/heads/<b>` deletes: { dir, repo, name }, `repo` null for gh's
+// `{owner}/{repo}` placeholder, which gh fills from the repo in `dir`. The endpoint is gh's first operand, read from
+// the words with every option's value skipped (a `--jq` or `--template` value naming a ref is not the endpoint). Any
+// other GitHub delete (a repo, a tag, a release), another host's (`--hostname`, GH_HOST) or another repo's (GH_REPO
+// set in the command) has no name, so it never rides on a safe ref.
+const GH_API_VALUE = new Set(['-X', '--method', '-H', '--header', '-f', '--raw-field', '-F', '--field', '-q', '--jq', '-t', '--template', '--input', '-p', '--preview', '--cache', '--hostname']);
+const REF_ENDPOINT = /^\/?repos\/([\w.-]+\/[\w.-]+|\{owner\}\/\{repo\})\/git\/refs\/heads\/(\S+)$/;
+function refEndpoint(words) {
+  const vals = commandWords(words).map((w) => w.val);
+  if (vals[0] !== 'gh' || vals[1] !== 'api') return null;
+  let endpoint = null;
+  for (let k = 2; k < vals.length; k++) {
+    const v = vals[k];
+    if (v === '--') {
+      endpoint ??= vals[k + 1] ?? null;
+      break;
+    }
+    if (/^--hostname(?:=|$)/.test(v)) return null;
+    if (GH_API_VALUE.has(v)) k++;
+    else if (!v.startsWith('-')) endpoint ??= v;
+  }
+  return endpoint && REF_ENDPOINT.exec(endpoint);
+}
+// A variable a command sets anywhere (prefix, export, env, a plain assignment), at any level on this machine.
+const setsVariable = (command, re) =>
+  units(analysis(command)).some(({ cmd, remote }) => !remote && cmd.words.some((w, i, ws) => re.test(w.val) && ws.slice(0, i).every((x) => /^[A-Za-z_]\w*=/.test(x.val) || DECLARE_WORDS.test(x.val))));
+export function refTargets(command, rules, env = {}) {
+  const re = riskyRe(rules.risky.find((r) => r.id === 'gh-delete'));
+  const elsewhere = setsVariable(command, /^GH_(?:REPO|HOST)=/);
+  return segments(command, env)
+    .filter(({ seg }) => re.test(seg))
+    .map(({ words, dir, remote }) => {
+      const m = !remote && !elsewhere && refEndpoint(words);
+      return m ? { dir, repo: m[1].startsWith('{') ? null : m[1], name: m[2] } : { dir: remote ? REMOTE_DIR : dir, repo: null, name: NO_TARGET };
+    });
+}
+const refKey = ({ dir, repo, name }) => `${dir}|${repo ?? ''}|${name}`;
+
+// Facts for one branch ref a `gh api` DELETE removes on GitHub: safe when the ref's tip is the head of a merged PR of
+// that branch, so the merge holds every commit the ref has. The default branch never is.
+export async function refFact({ dir, repo, name }, run) {
+  if (!/^[\w./@+-]+$/.test(name) || name.startsWith('-')) return { safe: false, why: 'branch name not plain' };
+  if (/^(?:main|master)$/.test(name)) return { safe: false, why: 'the default branch' };
+  const sh = (argv) => Promise.resolve().then(() => run(argv, dir || undefined)).catch(() => null);
+  const [oid, tip] = await Promise.all([
+    sh(['gh', 'pr', 'list', ...(repo ? ['-R', repo] : []), '--head', name, '--state', 'merged', '--json', 'headRefOid', '--limit', '1', '--jq', '.[0].headRefOid // empty']),
+    sh(['gh', 'api', `repos/${repo ?? '{owner}/{repo}'}/git/ref/heads/${name}`, '--jq', '.object.sha']),
+  ]);
+  if (oid == null || tip == null) return { safe: false, why: 'gh check failed' };
+  if (!oid.trim()) return { safe: false, why: 'no merged PR' };
+  return oid.trim() === tip.trim() ? { safe: true, why: '' } : { safe: false, why: 'its tip is not the head of the merged PR' };
+}
+
+// Ref facts for every branch ref a command deletes through `gh api`, in parallel: { [dir|repo|name]: { safe, why } }.
+export async function refFacts(command, rules, run, env = {}) {
+  const targets = [...new Map(refTargets(command, rules, env).map((r) => [refKey(r), r])).values()].filter((r) => r.name !== NO_TARGET && PLAIN_PATH.test(r.dir || '.'));
+  const facts = await Promise.all(targets.map((r) => refFact(r, run)));
+  return Object.fromEntries(targets.map((r, i) => [refKey(r), facts[i]]));
+}
+
 // Branch facts for every `git branch -D` of a command, in parallel: { [dir|name]: { safe, why } }.
 export async function branchFacts(command, rules, run, env = {}) {
   const targets = [...new Map(branchTargets(command, rules, env).map((b) => [branchKey(b), b])).values()].filter((b) => b.name !== NO_TARGET && PLAIN_PATH.test(b.dir || '.'));
@@ -439,6 +552,24 @@ function safeRemoval(command, rules, env, worktrees, regenerable) {
   return entries.length > 0 && entries.every(({ target: t, remote }) => isTempPath(t, env) || (!remote && (worktrees[t]?.safe === true || regenerable[t] === true)));
 }
 
+// GUARD_UNATTENDED as a command sets it for this machine (`export GUARD_UNATTENDED=1`, a prefix
+// `GUARD_UNATTENDED=1 cmd`, `env GUARD_UNATTENDED=1 cmd`): true when on (1, true, on), false for any other value or
+// `unset GUARD_UNATTENDED`, null when the command does not set it. Only words in assignment position count, so a commit message or an echo
+// naming it does not; another host's or a container's setting is not this session's.
+export function unattendedSet(command) {
+  let set = null;
+  for (const { cmd, remote } of units(analysis(command))) {
+    if (remote) continue;
+    const words = cmd.words.map((w) => w.val);
+    if (words[0] === 'unset' && words.includes('GUARD_UNATTENDED')) set = false;
+    for (let k = DECLARE_WORDS.test(words[0] ?? '') ? 1 : 0; k < words.length && /^[A-Za-z_]\w*=/.test(words[k]); k++) {
+      const m = /^GUARD_UNATTENDED=([\s\S]*)$/.exec(words[k]);
+      if (m) set = /^(?:1|true|on)$/i.test(m[1]);
+    }
+  }
+  return set;
+}
+
 // The pipeline a risky rule fires on, at whatever level of the command it sits: { raw, depth, siblings, host, top }.
 // The whole command when no single pipeline matches (an opaque payload).
 function riskyStep(command, rule) {
@@ -457,7 +588,7 @@ function summary(command, rule, step, rules, env) {
     return `Deletes${targets.length > 1 ? ` ${targets.length} paths` : ''} recursively: ${list(targets.map(shown))}`;
   }
   if (rule.id === 'branch-delete') {
-    const names = branchTargets(command, rules, env).map((b) => (b.dir ? `${b.name} (in ${b.dir})` : b.name));
+    const names = branchTargets(command, rules, env).map((b) => (b.dir === REMOTE_DIR ? `${b.name} (on another host)` : b.dir ? `${b.name} (in ${b.dir})` : b.name));
     return `Deletes branch${names.length > 1 ? 'es' : ''} ${list(names.length ? names : ['(unread)'])}`;
   }
   if (rule.id === 'force') {
@@ -471,6 +602,12 @@ function summary(command, rule, step, rules, env) {
 function safeBranchDelete(command, rules, branches, env) {
   const targets = branchTargets(command, rules, env);
   return targets.length > 0 && targets.every((b) => branches[branchKey(b)]?.safe === true);
+}
+
+// A GitHub delete is exempt when every one in the command is a branch ref whose tip a merged PR holds.
+function safeRefDelete(command, rules, refs, env) {
+  const targets = refTargets(command, rules, env);
+  return targets.length > 0 && targets.every((r) => refs[refKey(r)]?.safe === true);
 }
 
 // Shell writes to a file the agent could make with its edit tool, which the post-edit lint and the docs and skill hints
@@ -543,19 +680,20 @@ const hint = (rule) => `Skill hint (${rule.why}): load ${rule.skills.map((s) => 
 
 // `readTool`: the harness has a file-read tool (all but Codex), so a shell read gets a once-per-session hint.
 // `worktrees`, `branches`, `regenerable`: facts the adapters gather (worktreeFacts, branchFacts, regenFacts).
-export function evaluateCommand({ command, loadedSkills = new Set(), state, host = {}, env = {}, worktrees = {}, branches = {}, regenerable = {}, python = null, readTool = false, rules }) {
+export function evaluateCommand({ command, loadedSkills = new Set(), state, host = {}, env = {}, worktrees = {}, branches = {}, regenerable = {}, refs = {}, python = null, readTool = false, rules }) {
   // Hard denies come first and fire every time, like the title guard. A `when` rule denies only in a repo
   // that adopted that manager; elsewhere it lets the command through with a once-per-session note.
   const denied = deniedBy(command, rules)
   if (denied && (!denied.when || denied.when === python)) return { action: 'deny', rule: denied.id, reason: denied.why }
   const note = denied && !state.reminded.has(denied.id) ? denied.id : null
 
-  const exempt = new Set([...(safeRemoval(command, rules, env, worktrees, regenerable) ? REMOVAL : []), ...(safeBranchDelete(command, rules, branches, env) ? ['branch-delete'] : [])]);
+  const exempt = new Set([...(safeRemoval(command, rules, env, worktrees, regenerable) ? REMOVAL : []), ...(safeBranchDelete(command, rules, branches, env) ? ['branch-delete'] : []), ...(safeRefDelete(command, rules, refs, env) ? ['gh-delete'] : [])]);
   const risky = rules.risky.find((r) => riskyMatch(r, command) && !exempt.has(r.id));
   if (risky) {
     const why = [
       ...Object.entries(worktrees).filter(([, f]) => !f.safe).map(([t, f]) => `\nWorktree ${t}: ${f.why}`),
       ...Object.entries(branches).filter(([, f]) => !f.safe).map(([k, f]) => `\nBranch ${k.slice(k.indexOf('|') + 1)}: ${f.why}`),
+      ...Object.entries(refs).filter(([, f]) => !f.safe).map(([k, f]) => `\nRef ${k.slice(k.lastIndexOf('|') + 1)}: ${f.why}`),
     ].join('');
     const step = riskyStep(command, risky);
     const what = summary(command, risky, step, rules, env);

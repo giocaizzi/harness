@@ -8,7 +8,7 @@ import { statfs } from 'node:fs/promises'
 import { cpus, homedir, loadavg, platform } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { analysis, branchFacts, codexRules, deniedBy, deniedDir, evaluateCommand, evaluateEdit, isHeavy, isRisky, nativeAsk, previewCommand, regenFacts, withPreview, worktreeFacts } from '../core/engine.mjs'
+import { analysis, branchFacts, cdDirs, codexRules, deniedBy, deniedDir, evaluateCommand, evaluateEdit, isHeavy, isRisky, nativeAsk, previewCommand, refFacts, regenFacts, unattendedSet, withPreview, worktreeFacts } from '../core/engine.mjs'
 import { cpuPercentFrom } from '../core/host.mjs'
 import { commandWords, units } from '../core/shell.mjs'
 import { emit } from '../core/otel.mjs'
@@ -84,18 +84,19 @@ export function knownSkills(here = dirname(fileURLToPath(import.meta.url))) {
   return names
 }
 
-// Per-session state: { reminded: string[], loaded: string[] }, kept as append-only facts in `sessions/<id>.jsonl`,
-// one JSON line each (`{"loaded":"ship"}`, `{"reminded":"edit","agent":"a1"}`). Parallel hooks each append their
-// own lines with one O_APPEND write, which the OS keeps whole, so none is lost and no lock is needed. Skill loads
-// count for the whole session, subagents included; reminders count per agent (`agent_id`, absent for the main
-// agent), so a subagent gets its own hints. Without a session id nothing is kept.
+// Per-session state: { reminded: string[], loaded: string[], unattended?: boolean }, kept as append-only facts in
+// `sessions/<id>.jsonl`, one JSON line each (`{"loaded":"ship"}`, `{"reminded":"edit","agent":"a1"}`,
+// `{"unattended":true}`). Parallel hooks each append their own lines with one O_APPEND write, which the OS keeps
+// whole, so none is lost and no lock is needed. Skill loads and the unattended switch (the latest wins) count for the
+// whole session, subagents included; reminders count per agent (`agent_id`, absent for the main agent), so a subagent
+// gets its own hints. Without a session id nothing is kept.
 export function sessionStore(dir, sessionId, agentId) {
   const file = sessionId ? join(dir, 'sessions', `${String(sessionId).replace(/[^\w-]/g, '_')}.jsonl`) : null
   const agent = agentId ? String(agentId) : undefined
   let seen = { reminded: [], loaded: [] }
   return {
     load() {
-      seen = { reminded: [], loaded: [] }
+      seen = { reminded: [], loaded: [], unattended: undefined }
       if (!file) return { reminded: [], loaded: [] }
       let text = ''
       try {
@@ -112,8 +113,9 @@ export function sessionStore(dir, sessionId, agentId) {
         }
         if (typeof fact.loaded === 'string') seen.loaded.push(fact.loaded)
         if (typeof fact.reminded === 'string' && fact.agent === agent) seen.reminded.push(fact.reminded)
+        if (typeof fact.unattended === 'boolean') seen.unattended = fact.unattended
       }
-      return { reminded: [...new Set(seen.reminded)], loaded: [...new Set(seen.loaded)] }
+      return { reminded: [...new Set(seen.reminded)], loaded: [...new Set(seen.loaded)], unattended: seen.unattended }
     },
     // Appends the facts `state` adds to what load() read.
     save(state) {
@@ -121,6 +123,7 @@ export function sessionStore(dir, sessionId, agentId) {
       const lines = [
         ...[...new Set(state.loaded)].filter((s) => !seen.loaded.includes(s)).map((s) => JSON.stringify({ loaded: s })),
         ...[...new Set(state.reminded)].filter((r) => !seen.reminded.includes(r)).map((r) => JSON.stringify({ reminded: r, agent })),
+        ...(typeof state.unattended === 'boolean' && state.unattended !== seen.unattended ? [JSON.stringify({ unattended: state.unattended })] : []),
       ]
       if (!lines.length) return
       mkdirSync(dirname(file), { recursive: true, mode: 0o700 })
@@ -216,22 +219,47 @@ const within = (promise, ms, fallback) =>
 const FACTS_MS = 20_000
 const PREVIEW_MS = 3_000
 
+// Unattended: GUARD_UNATTENDED in the environment the harness was launched with, or set by a command in this session
+// (`export GUARD_UNATTENDED=1`), which a hook cannot otherwise see: each hook is its own process. The command's own
+// setting counts for itself; it is kept for the session only once the guard lets that command run.
+const ON = /^(1|true|on)$/i
+
+// The directories a command's `cd`s reach that exist, so a `cd x; rm -rf y` is followed only when `cd x` surely ran.
+export function existingDirs(command, env, cwd) {
+  const dirs = new Set()
+  for (const d of cdDirs(command, env)) {
+    if (!PLAIN_DIR.test(d)) continue
+    try {
+      if (statSync(resolve(cwd || '.', d)).isDirectory()) dirs.add(d)
+    } catch {
+      // missing: the cd may fail
+    }
+  }
+  return dirs
+}
+const PLAIN_DIR = /^[\w.@%+=:,\\/~-]+$/
+
 async function onShell(input, state, deps) {
   const command = String(input.tool_input?.command ?? '')
   if (!command) return {}
+  const set = unattendedSet(command)
+  const fromEnv = ON.test(deps.env?.GUARD_UNATTENDED ?? '')
+  const unattended = fromEnv || (set ?? state.unattended) === true
   try {
     const host = isHeavy(command, rules) ? await deps.hostFacts(input.cwd) : {}
     // HOME resolves `~` and `$HOME` in paths (USERPROFILE on Windows).
     let unfinished = false
     const facts = { env: { TMPDIR: deps.env.TMPDIR, TEMP: deps.env.TEMP, TMP: deps.env.TMP, HOME: deps.env.HOME || deps.env.USERPROFILE } }
+    facts.env.dirs = existingDirs(command, facts.env, input.cwd)
     if (isRisky(command, rules)) {
-      const inCwd = (argv, cwd) => deps.run(argv, cwd ?? input.cwd)
+      // A lookup's own directory (a `cd` the engine followed) is relative to the call's cwd.
+      const inCwd = (argv, cwd) => deps.run(argv, cwd == null ? input.cwd : resolve(input.cwd || '.', cwd))
       const gathered = await within(
-        Promise.all([worktreeFacts(command, facts.env, rules, inCwd), branchFacts(command, rules, inCwd, facts.env), regenFacts(command, facts.env, rules, inCwd)]),
+        Promise.all([worktreeFacts(command, facts.env, rules, inCwd), branchFacts(command, rules, inCwd, facts.env), regenFacts(command, facts.env, rules, inCwd), refFacts(command, rules, inCwd, facts.env)]),
         deps.factsMs ?? FACTS_MS,
         null,
       )
-      if (gathered) [facts.worktrees, facts.branches, facts.regenerable] = gathered
+      if (gathered) [facts.worktrees, facts.branches, facts.regenerable, facts.refs] = gathered
       else unfinished = true
     }
     // The manager of the repo the denied command runs in (`cd <repo> && pip install x`), not just the cwd's.
@@ -255,9 +283,10 @@ async function onShell(input, state, deps) {
       return preToolUse('deny', d.reason)
     }
     // Unattended run (GUARD_UNATTENDED=1): nobody can answer an ask, so it becomes a deny and the agent picks another way.
-    if (d.action === 'ask' && /^(1|true|on)$/i.test(deps.env?.GUARD_UNATTENDED ?? '')) {
+    if (d.action === 'ask' && unattended) {
       report('deny', 'unattended')
-      return preToolUse('deny', `${d.reason}\nUnattended run (GUARD_UNATTENDED): nobody can confirm this, so the command was not run. Pick another approach, or leave it for the user.`)
+      const source = fromEnv ? '' : ' It was switched on by a command in this session; `export GUARD_UNATTENDED=0` turns it off.'
+      return preToolUse('deny', `${d.reason}\nUnattended run (GUARD_UNATTENDED): nobody can confirm this, so the command was not run. Pick another approach, or leave it for the user.${source}`)
     }
     // Codex and opencode hooks cannot ask: the harness's own prompt rule asks for the plain forms (`deps.nativeAsk`),
     // anything else is denied and the user runs it.
@@ -274,6 +303,7 @@ async function onShell(input, state, deps) {
       const argv = previewCommand(d.rule, command, rules, facts.env)
       return preToolUse('ask', argv ? withPreview(d.reason, await within(Promise.resolve(deps.run(argv, input.cwd)), deps.previewMs ?? PREVIEW_MS, '')) : d.reason)
     }
+    if (set !== null) state.unattended = set
     return d.context ? note(d.context) : {}
   } catch (err) {
     // Fail open for reminders, closed for risky commands.
