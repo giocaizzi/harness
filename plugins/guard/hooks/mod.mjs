@@ -58,6 +58,16 @@ async function askTimeoutMs($) {
   }
 }
 
+// GUARD_UNATTENDED in the environment Claude Code was launched with: nobody is there to answer, so an ask is parked at
+// once instead of after the timeout. Only the environment: a switch a command set lives in the command hooks' state.
+async function unattendedEnv($) {
+  try {
+    return /^(1|true|on)$/i.test((await $.env.get('GUARD_UNATTENDED')) ?? '')
+  } catch {
+    return false
+  }
+}
+
 // What the agent is told when nobody answered: the user may be busy elsewhere, so the call is parked, not refused.
 const noAnswer = (tool, why) =>
   `No answer: ${why}, so ${tool} was not run. This is not a refusal. Carry on with the rest of the task without it, or park it: say in your report that it is waiting for the user's approval.`
@@ -95,6 +105,10 @@ export function register(on) {
     if (mode === 'auto' && !r.hook) return r
     // dontAsk denies anything not pre-approved itself; there is no one to ask.
     if (mode === 'dontAsk') return r
+    if (await unattendedEnv($)) {
+      void emitRecord($, 'guard.ask_result', { result: 'unavailable', via: 'unattended', wait_ms: 0, tool: e.tool, tool_use_id: e.tool_use_id })
+      return { decision: 'deny', reason: noAnswer(e.tool, 'this is an unattended run (GUARD_UNATTENDED), so nobody can answer the permission prompt') }
+    }
     const ms = await askTimeoutMs($)
     return ms ? askWithTimeout($, e, r.reason, ms) : r
   }).catch(($, e, next) => next(e))

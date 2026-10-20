@@ -167,6 +167,22 @@ test('GUARD_ASK_TIMEOUT_MS sets the timeout', async ($, on) => {
   expect(r.reason).toContain('5 seconds')
 })
 
+test('GUARD_UNATTENDED parks an ask at once, without showing the dialog', async ($, on) => {
+  const clock = mock.clock(on)
+  const posted = collector(on, { GUARD_UNATTENDED: '1', OTEL_EXPORTER_OTLP_ENDPOINT: 'http://collector' })
+  on('tool.check', ask)
+  on('tool.call', { tool: 'AskUserQuestion' }, () => {
+    throw new Error('must not ask')
+  })
+  const r = await $.tool.check(call)
+  expect(r.decision).toBe('deny')
+  expect(r.reason).toContain('unattended run')
+  expect(r.reason).toContain('not a refusal')
+  await clock.advance(1)
+  await settle()
+  expect(posted.map((p) => [p.result, p.via])).toEqual([['unavailable', 'unattended']])
+})
+
 test('GUARD_ASK_TIMEOUT_MS=0 leaves the ask to the engine', async ($, on) => {
   on('env.get', (_$, e) => ({ value: e.name === 'GUARD_ASK_TIMEOUT_MS' ? '0' : undefined }))
   on('tool.check', ask)

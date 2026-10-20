@@ -132,6 +132,48 @@ test('GUARD_UNATTENDED turns a risky ask into a deny, with or without a native a
   assert.equal(decision(await setup({ env: { GUARD_UNATTENDED: '0' } })(pre('Bash', 'rm -rf ~/x'))).permissionDecision, 'ask')
 })
 
+test('GUARD_UNATTENDED set once by a command holds for the rest of the session, subagents included (G23)', async () => {
+  const dataDir = mkdtempSync(join(tmpdir(), 'guard-test-'))
+  const h = (input, env = {}) => handle({ session_id: 's1', cwd: '/', ...input }, { dataDir, env, hostFacts: calm, run: async () => null, pythonManager })
+  assert.equal(decision(await h(pre('Bash', 'rm -rf ~/x'))).permissionDecision, 'ask')
+  await h(pre('Bash', 'GUARD_UNATTENDED=1 git rebase origin/main'))
+  for (const input of [pre('Bash', 'rm -rf ~/x'), { ...pre('Bash', 'git branch -D x'), agent_id: 'a1' }]) {
+    const d = decision(await h(input))
+    assert.equal(d.permissionDecision, 'deny', input.tool_input.command)
+    assert.match(d.permissionDecisionReason, /Unattended run/)
+  }
+  assert.equal(decision(await h({ ...pre('Bash', 'rm -rf ~/x'), session_id: 's2' })).permissionDecision, 'ask', 'another session is not affected')
+  await h(pre('Bash', 'export GUARD_UNATTENDED=0'))
+  assert.equal(decision(await h(pre('Bash', 'rm -rf ~/x'))).permissionDecision, 'ask')
+  assert.equal(decision(await h(pre('Bash', 'rm -rf ~/x'), { GUARD_UNATTENDED: '1' })).permissionDecision, 'deny', 'the launcher environment wins')
+  assert.equal(decision(await h(pre('Bash', 'export GUARD_UNATTENDED=1; rm -rf ~/x'))).permissionDecision, 'deny', 'set in the same command')
+  assert.equal(decision(await h(pre('Bash', 'rm -rf ~/x'))).permissionDecision, 'ask', 'a denied command does not switch the session')
+  await h(pre('Bash', 'export GUARD_UNATTENDED=1'))
+  assert.match(decision(await h(pre('Bash', 'rm -rf ~/x'))).permissionDecisionReason, /switched on by a command in this session/)
+  await h(pre('Bash', 'unset GUARD_UNATTENDED'))
+  assert.equal(decision(await h(pre('Bash', 'rm -rf ~/x'))).permissionDecision, 'ask')
+})
+
+test('a cd followed across ; only when its directory exists (G23 review)', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'guard-cd-'))
+  const h = setup({ env: { TMPDIR: '/var/folders/ab/T/' } })
+  assert.equal(decision(await h({ ...pre('Bash', 'cd sub; rm -rf /tmp/x/build'), cwd: dir })), undefined)
+  mkdirSync(join(dir, 'sub'))
+  const run = async (argv) => (argv.includes('rev-list') ? '0\n' : null)
+  const h2 = setup({ run })
+  assert.equal(decision(await h2({ ...pre('Bash', 'cd sub; git branch -D feat/x'), cwd: dir })), undefined, 'existing dir: followed')
+  assert.equal(decision(await h2({ ...pre('Bash', 'cd gone; git branch -D feat/x'), cwd: dir })).permissionDecision, 'ask', 'missing dir: not followed')
+})
+
+test('a branch ref deleted through gh api passes once a merged PR holds its tip, looked up where the command cds (G23)', async () => {
+  const calls = []
+  const run = async (argv, cwd) => (calls.push([argv[1], cwd]), argv[0] === 'gh' ? 'abc\n' : null)
+  const h = setup({ run })
+  assert.equal(decision(await h({ ...pre('Bash', 'cd sub && gh api -X DELETE repos/{owner}/{repo}/git/refs/heads/feat/x'), cwd: '/r' })), undefined)
+  assert.deepEqual(calls, [['pr', '/r/sub'], ['api', '/r/sub']])
+  assert.equal(decision(await h(pre('Bash', 'gh api -X DELETE repos/o/r/git/refs/tags/v1'))).permissionDecision, 'ask')
+})
+
 test('heavy command on a strained host is denied once', async () => {
   const h = setup({ hostFacts: async () => ({ load1: 50, freeGb: 100 }) })
   assert.equal(decision(await h(pre('Bash', 'npm run build'))).permissionDecision, 'deny')
