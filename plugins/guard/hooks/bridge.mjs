@@ -2,9 +2,8 @@
 // event is turned into the Claude-shaped payload the command hooks get and passed to the same handlers, so the
 // rules behave alike everywhere. opencode.mjs and pi.mjs only map their harness's events onto these calls.
 import { spawn } from 'node:child_process'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 import { keepAwake } from './awake.mjs'
+import { fallbackDataDir } from './data.mjs'
 import { handle, hostFacts, pythonManager, run } from './guard.mjs'
 import { lintFile } from './lint.mjs'
 import { stopCheck } from './stop.mjs'
@@ -12,7 +11,7 @@ import { emit } from '../core/otel.mjs'
 import { recordAttrs } from './telemetry.mjs'
 
 // Neither harness gives plugins a data dir; the same fallback as VS Code.
-export const DATA_DIR = join(tmpdir(), 'guard-plugin')
+export const DATA_DIR = fallbackDataDir()
 
 const launchDetached = (argv) => {
   const child = spawn(argv[0], argv.slice(1), { detached: true, stdio: 'ignore', windowsHide: true })
