@@ -1,0 +1,10 @@
+schema_version: "1.0"
+name: land-trigger
+description: The model loads land when asked to merge an open PR whose checks are green.
+tags: [trigger]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  prompt: PR 42 is green and approved. Get it merged and clean up after it.
+  max_turns: 15
+  allowed_tools: [Read, Glob, Grep, Edit, Write, Skill]
