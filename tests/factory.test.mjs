@@ -87,6 +87,12 @@ test('marked comments: the documented filter drops a spoofed one and keeps the w
   assert.equal(run.status, 0, run.stderr.toString())
   const kept = run.stdout.toString().trim().split('\n').map((l) => JSON.parse(l))
   assert.deepEqual(kept.map((c) => [c.id, c.login]), [[2, 'owner'], [3, 'factory-bot[bot]'], [6, 'Owner']])
+  // Answers: unmarked comments by an approver, login case ignored.
+  const answers = read('plugins/factory/skills/ticket-run/references/comments.md').split('## Answers')[1].split('```')[1]
+  const answerProgram = answers.match(/jq -c --argjson a "\$A" --arg m "\$M" '([^']+)'/)[1]
+  const answerRun = spawnSync('jq', ['-c', '--argjson', 'a', '["OWNER"]', '--arg', 'm', '<!-- factory -->', answerProgram], { input: [...comments, comment(7, 'stranger', 'an unmarked stranger reply')].map((c) => JSON.stringify(c)).join('\n') })
+  assert.equal(answerRun.status, 0, answerRun.stderr.toString())
+  assert.deepEqual(answerRun.stdout.toString().trim().split('\n').map((l) => JSON.parse(l).id), [4])
 })
 
 test('marked comments: the config key and every reader of marked comments require a writer', () => {
