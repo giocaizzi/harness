@@ -3,7 +3,7 @@
 // apply the decision. `state.reminded` (a Set) is mutated: each rule fires once
 // per session ("remind once, then let it through").
 
-import { analyze, units } from './shell.mjs';
+import { analyze, commandWords, scan, units } from './shell.mjs';
 
 const bare = (skill) => skill.split(':').pop();
 
@@ -80,26 +80,67 @@ function pipelines(command, { injected = true } = {}) {
 // A `pipeline` rule fires on one pipeline whose code matches, whose text matches `raw` and not `unless`.
 const pipelineHit = (r, p) => riskyRe(r).test(p.code) && (!r.raw || new RegExp(r.raw, 'i').test(p.raw)) && !(r.unless && new RegExp(r.unless, 'i').test(p.raw));
 
-// The literal subject of `git commit -m` or of a PR/MR title flag, or null when it cannot be read statically
-// (heredoc, $(...), no flag). ponytail: first flag only, no shell parser; unreadable forms are allowed.
-const QUOTED = `("(?:[^"\\\\$\`]|\\\\.)*"|'[^']*')`;
+// Commands that set a commit or PR/MR title: [command words, title flags, flags that read the message from a file].
+// az's -t is --target-branch, so az has --title only.
 const TITLED = [
-  [String.raw`\bgit\s+commit\b`, '-[a-zA-Z]*m|--message'],
-  [String.raw`\bgh\s+pr\s+create\b`, '--title|-t'],
-  [String.raw`\bglab\s+mr\s+(?:create|update)\b`, '--title|-t'],
-  [String.raw`\baz\s+repos\s+pr\s+(?:create|update)\b`, '--title'], // az's -t is --target-branch
+  [['git', 'commit'], /^(?:-[a-zA-Z]*m|--message)$/, /^(?:-[a-zA-Z]*F|--file)$/],
+  [['gh', 'pr', /^(?:create|edit)$/], /^(?:--title|-t)$/],
+  [['glab', 'mr', /^(?:create|update)$/], /^(?:--title|-t)$/],
+  [['az', 'repos', 'pr', /^(?:create|update)$/], /^--title$/],
 ];
-export function titleOf(command) {
-  const t = TITLED.find(([cmd]) => new RegExp(cmd).test(matchable(command)));
-  const m = t && gitPlain(command).match(new RegExp(`${t[0]}[^\\n|;&]*?\\s(?:${t[1]})[\\s=]*${QUOTED}`));
-  return m ? m[1].slice(1, -1).split('\n')[0].trim() : null;
+// git's global options before the subcommand (`git -C dir`, `-c k=v`, `--no-pager`): the ones that take a value.
+const GIT_VALUE = new Set(['-C', '-c', '--git-dir', '--work-tree', '--namespace', '--config-env', '--attr-source']);
+
+// The message a word passes, or null when it cannot be read statically: a variable, a substitution other than
+// `"$(cat <<'EOF' … EOF)"`, or a backtick. Single-quoted text is literal.
+function literal(word) {
+  const sub = /^"\$\(([\s\S]*)\)"$/.exec(word.raw);
+  if (sub && word.substs.length === 1) {
+    const [cat, ...rest] = scan(sub[1]);
+    return !rest.length && commandWords(cat?.words ?? [])[0]?.val === 'cat' && cat.heredocs.length === 1 ? cat.heredocs[0] : null;
+  }
+  return /[$`]/.test(word.raw.replace(/'[^']*'/g, '')) ? null : word.val;
 }
 
+// The title one simple command sets, or null: the first title flag's value (`-m "x"`, `-mx`, `--title=x`), or the
+// first line of a heredoc passed as `-F -` / `--file=-`. Only a command at command position counts, so
+// `echo git commit -m x` sets none; a message read from a file or stdin without a heredoc is not read.
+function titleIn(cmd) {
+  let words = commandWords(cmd.words);
+  if (words[0]?.val === 'git') {
+    let k = 1;
+    while (words[k]?.val.startsWith('-')) k += GIT_VALUE.has(words[k].val) ? 2 : 1;
+    words = [words[0], ...words.slice(k)];
+  }
+  const vals = words.map((w) => w.val);
+  const titled = TITLED.find(([name]) => name.every((n, i) => (typeof n === 'string' ? vals[i] === n : n.test(vals[i] ?? ''))));
+  if (!titled) return null;
+  const [name, flag, file] = titled;
+  for (let i = name.length; i < words.length; i++) {
+    const v = vals[i];
+    if (v === '--') break;
+    const eq = /^(--[\w-]+)=([\s\S]*)$/.exec(v);
+    const joined = !v.startsWith('--') && /^(-[a-zA-Z]*?[mF])(.+)$/.exec(v);
+    const [f, value] = eq ? [eq[1], { ...words[i], val: eq[2], raw: words[i].raw.slice(words[i].raw.indexOf('=') + 1) }] : joined && !flag.test(v) && !file?.test(v) ? [joined[1], { ...words[i], val: joined[2], raw: words[i].raw.slice(joined[1].length) }] : [v, words[i + 1]];
+    if (file?.test(f)) return value?.val === '-' && cmd.heredocs.length ? cmd.heredocs[0] : null;
+    if (flag.test(f)) return value ? literal(value) : null;
+  }
+  return null;
+}
+
+// Every title a command sets, in order: each simple command at command position, payloads (bash -c, ssh) included.
+export function titlesOf(command) {
+  return units(analysis(command))
+    .map((u) => titleIn(u.cmd))
+    .filter((t) => t !== null)
+    .map((t) => t.split('\n')[0]);
+}
+
+// The first title that does not match the org's PR-title check (giocaizzi/.github `pr-title.yml`), or null. Git's own
+// merge commit subjects ("Merge branch …") are skipped.
 export function badTitle(command, rules) {
-  const title = titleOf(command);
-  if (title === null) return null;
-  const re = new RegExp(`^(${rules.titles.types.join('|')})(\\([a-z0-9._/-]+\\))?!?: [a-z]`);
-  return re.test(title) ? null : title;
+  const re = new RegExp(`^(${rules.titles.types.join('|')})(\\([a-z0-9._/-]+\\))?!?: [a-z].*$`);
+  return titlesOf(command).find((t) => !re.test(t) && !/^Merge (?:branch|pull request|remote-tracking branch|tag|commit) /.test(t)) ?? null;
 }
 
 const hit = (rules, command, opts) => rules.find((r) => new RegExp(r.match, 'i').test(matchable(command, opts)));
