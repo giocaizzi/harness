@@ -757,10 +757,10 @@ export function pureRead(command) {
 
 const hint = (rule) => `Skill hint (${rule.why}): load ${rule.skills.map((s) => `\`${s}\``).join(' or ')} if this task is that work.`;
 
-// Words of a command, one array per simple command: split on `; | & newline`, `(`, `)` and backticks outside quotes,
-// so every command substitution or subshell starts its own command (`URL=$(gh …)` gives `URL=$` and `gh …`). Quotes
-// and backslashes are removed from the words (`agent-o'k'` is `agent-ok`); a quoted word keeps its `$(…)` and is
-// read again when it holds `gh`.
+// Words of a command, one array per simple command: split on `; | & newline`, `(`, `)` and backticks outside quotes
+// (not the `&` of `2>&1` or `&>`), so every command substitution or subshell starts its own command (`URL=$(gh …)`
+// gives `URL=$` and `gh …`). Quotes and backslashes are removed from the words (`agent-o'k'` is `agent-ok`); a quoted
+// word keeps its `$(…)`.
 function shellWords(command) {
   const out = [[]];
   let word = null;
@@ -775,6 +775,7 @@ function shellWords(command) {
       if (command[i + 1] === '\n') i++;
       else { word = (word ?? '') + (command[i + 1] ?? ''); i++; }
     } else if (/\s/.test(c) && c !== '\n') push();
+    else if (c === '&' && (/[<>]/.test(command[i - 1] ?? '') || command[i + 1] === '>')) word = (word ?? '') + c;
     else if (/[;|&\n()`]/.test(c)) { push(); if (out.at(-1).length) out.push([]); }
     else word = (word ?? '') + c;
   }
@@ -782,61 +783,71 @@ function shellWords(command) {
   return out.filter((w) => w.length);
 }
 
+// Commands that only read and never reach the network, so a line made of them and `gh` reads cannot write a label.
+const LOCAL_READS = new Set(['jq', 'grep', 'egrep', 'fgrep', 'rg', 'head', 'tail', 'wc', 'sort', 'uniq', 'cut', 'tr', 'cat', 'echo', 'printf', 'test', '[', '[[', 'true', 'false', 'cd', 'ls', 'pwd', 'fi', 'done', '}']);
+const KEYWORDS = new Set(['if', 'then', 'elif', 'else', 'do', 'while', 'until', '!', '{']);
 const API_VALUE_FLAGS = new Set(['-X', '--method', '-H', '--header', '-f', '--raw-field', '-F', '--field', '--input', '-q', '--jq', '-t', '--template', '--hostname', '--cache', '-p', '--preview']);
 
-// A command that adds the factory approval label, while a factory run is active: `gh issue|pr edit|create` whose
-// `--add-label`/`--label`/`-l` value names it, or a `gh api` write (anything but GET) that names it in a field, or
-// sends a body the guard cannot read (`--input`, any `key=@file` field) to a labels, issues or issue endpoint.
-// Labels match ignoring case, like GitHub's. A value the shell builds from a variable (`$L`), a script, `curl` with
-// a token, a GraphQL mutation or a `gh` alias stay out of sight (docs/guard.md).
-export function addsApprovalLabel(command, label) {
+// One simple command, read for the label check: 'read' (a local read or a `gh` read), 'write-ok' (a `gh api` write to
+// an endpoint that holds no labels: a `/comments` one, or a literal path outside `/labels` and `/issues`), else 'other'.
+function commandKind(words) {
+  // A quoted `$(…)` or backtick still runs, in an assignment too: what it runs must be a read.
+  if (words.some((w) => /\$\(|`/.test(w) && !onlyReads(w))) return 'other';
+  let at = 0;
+  while (at < words.length && (KEYWORDS.has(words[at]) || /^[A-Za-z_]\w*=/.test(words[at]))) at++;
+  if (at === words.length) return 'read';
+  const cmd = words[at];
+  if (LOCAL_READS.has(cmd)) return 'read';
+  if (!/^(?:.*[\\/])?gh(?:\.exe)?$/.test(cmd)) return 'other';
+  const args = words.slice(at + 1);
+  const positional = [];
+  for (let i = 0; i < args.length && positional.length < 2; i++) {
+    if (['-R', '--repo', '--hostname'].includes(args[i])) i++;
+    else if (!args[i].startsWith('-')) positional.push(args[i]);
+  }
+  if (['issue', 'pr'].includes(positional[0]) && ['view', 'list', 'status'].includes(positional[1])) return 'read';
+  if (positional[0] !== 'api') return 'other';
+  let method = 'GET', endpoint = null, body = false;
+  for (let i = args.indexOf('api') + 1; i < args.length; i++) {
+    // `--flag=v`, and pflag's glued short forms `-fv`, `-f=v` (behind `-i`, the one boolean short flag: `-if v`).
+    const short = /^-i*([XHfFqtp])=?(.+)?$/.exec(args[i]);
+    const [flag, glued] = args[i].startsWith('--') && args[i].includes('=') ? [args[i].slice(0, args[i].indexOf('=')), args[i].slice(args[i].indexOf('=') + 1)] : short ? [`-${short[1]}`, short[2] ?? null] : [args[i], null];
+    if (!API_VALUE_FLAGS.has(flag)) { if (!args[i].startsWith('-') && endpoint === null) endpoint = args[i]; continue; }
+    const value = glued ?? args[++i] ?? '';
+    if (flag === '-X' || flag === '--method') { if (value.toUpperCase() !== 'GET') method = value.toUpperCase() || 'UNKNOWN'; }
+    else if (['-f', '--raw-field', '-F', '--field', '--input'].includes(flag)) body = true;
+  }
+  if (method === 'GET' && !body) return 'read';
+  const path = (endpoint ?? '').split('?')[0].replace(/\/+$/, '');
+  if (!path || /[$`]/.test(path)) return 'other';
+  return /\/comments(?:\/\d+)?$/.test(path) || !/(?:^|\/)(?:labels|issues)(?:\/|$)/.test(path) ? 'write-ok' : 'other';
+}
+
+const kinds = (command) => shellWords(command).map(commandKind);
+const onlyReads = (command) => kinds(command).every((k) => k === 'read');
+
+// Fail closed while a factory run is active: a command that names the approval label (any quoting, ignoring case,
+// as GitHub does) is denied unless every simple command in it is a read (`gh issue|pr view|list|status`, `gh api`
+// with GET and no fields or `--input`, or a local tool such as `jq` or `grep`). Adding or removing the label is the
+// owner's. A `gh` command with a body the guard cannot read (`--input`, a `key=@file` field) is denied unless its
+// writes only go to `/comments` or to a literal path outside `/labels` and `/issues`. A parser miss is a false deny,
+// never a false allow; a label the shell builds (`$L`) stays out of sight (docs/guard.md).
+export function touchesApprovalLabel(command, label) {
   const want = String(label).trim().toLowerCase();
   if (!want) return false;
   const named = new RegExp(`(?<![\\w-])${want.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w-])`, 'i');
-  for (const words of shellWords(command)) {
-    // A payload handed to another shell (`bash -c "…"`, `eval "…"`) is a word with spaces: read it again.
-    if (words.some((w) => /\s/.test(w) && /\bgh\b/.test(w) && addsApprovalLabel(w, label))) return true;
-    const at = words.findIndex((w) => w === 'gh' || /[\\/]gh(?:\.exe)?$/.test(w));
-    if (at < 0) continue;
-    const args = words.slice(at + 1);
-    const positional = [];
-    for (let i = 0; i < args.length && positional.length < 2; i++) {
-      if (['-R', '--repo', '--hostname'].includes(args[i])) i++;
-      else if (!args[i].startsWith('-')) positional.push(args[i]);
-    }
-    if ((positional[0] === 'issue' || positional[0] === 'pr') && (positional[1] === 'edit' || positional[1] === 'create')) {
-      for (let i = 0; i < args.length; i++) {
-        const m = /^(?:--add-label|--label)(?:=(.*))?$|^-l=?(.+)?$/.exec(args[i]);
-        if (m && named.test(m[1] ?? m[2] ?? args[i + 1] ?? '')) return true;
-      }
-    } else if (positional[0] === 'api') {
-      let method = null, endpoint = null, fields = false, unreadable = false;
-      const values = [];
-      for (let i = args.indexOf('api') + 1; i < args.length; i++) {
-        // `--flag=v`, and pflag's glued short forms `-fv`, `-f=v` (behind `-i`, the one boolean short flag: `-if v`).
-        const short = /^-i*([XHfFqtp])=?(.+)?$/.exec(args[i]);
-        const [flag, glued] = args[i].startsWith('--') && args[i].includes('=') ? [args[i].slice(0, args[i].indexOf('=')), args[i].slice(args[i].indexOf('=') + 1)] : short ? [`-${short[1]}`, short[2] ?? null] : [args[i], null];
-        if (!API_VALUE_FLAGS.has(flag)) { if (!args[i].startsWith('-') && endpoint === null) endpoint = args[i]; continue; }
-        const value = glued ?? args[++i] ?? '';
-        if (flag === '-X' || flag === '--method') method = value.toUpperCase();
-        else if (flag === '--input') fields = unreadable = true;
-        else if (['-f', '--raw-field', '-F', '--field'].includes(flag)) { fields = true; values.push(value); if (/^[^=]*=@/.test(value)) unreadable = true; }
-      }
-      if ((method ?? (fields ? 'POST' : 'GET')) === 'GET') continue;
-      const path = (endpoint ?? '').split('?')[0].replace(/\/+$/, '');
-      if (/\/comments(?:\/\d+)?$/.test(path)) continue;
-      if (values.some((v) => named.test(v))) return true;
-      if (unreadable && /(?:^|\/)(?:labels|issues(?:\/\d+(?:\/labels)?)?)$/.test(path)) return true;
-    }
-  }
+  const words = shellWords(command).flat();
+  // A glued short flag is read without its flag (`-lagent-ok`).
+  if (named.test(command) || words.some((w) => named.test(w) || named.test(w.replace(/^-[A-Za-z]=?/, '')))) return !onlyReads(command);
+  if (/\bgh\b/.test(command) && words.some((w) => /(?:^|\s)--input\b|=@/.test(w))) return !kinds(command).every((k) => k !== 'other');
   return false;
 }
 
 // `readTool`: the harness has a file-read tool (all but Codex), so a shell read gets a once-per-session hint.
 // `worktrees`, `branches`, `regenerable`: facts the adapters gather (worktreeFacts, branchFacts, regenFacts).
 export function evaluateCommand({ command, loadedSkills = new Set(), state, host = {}, env = {}, worktrees = {}, branches = {}, regenerable = {}, refs = {}, tags = {}, python = null, readTool = false, factory = null, rules }) {
-  // While a factory run is active the agent never applies the approval label: with an owner token it would count as the owner's.
-  if (factory && addsApprovalLabel(command, factory.approval)) return { action: 'deny', rule: 'factory-approval', reason: `${rules.factory.why} The \`${factory.approval}\` label is the owner's to apply; ask on the ticket instead.` }
+  // While a factory run is active the agent never touches the approval label: with an owner token it would count as the owner's.
+  if (factory && touchesApprovalLabel(command, factory.approval)) return { action: 'deny', rule: 'factory-approval', reason: `${rules.factory.why} The \`${factory.approval}\` label is the owner's to apply or remove; ask on the ticket instead.` }
   // Hard denies come first and fire every time, like the title guard. A `when` rule denies only in a repo
   // that adopted that manager; elsewhere it lets the command through with a once-per-session note.
   const denied = deniedBy(command, rules)
