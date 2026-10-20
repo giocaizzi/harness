@@ -18,7 +18,7 @@ test('result.json template: valid JSON whose keys are exactly the documented con
   const result = JSON.parse(read('plugins/factory/template/result.json'))
   assert.deepEqual(Object.keys(result).sort(), tableKeys('Result contract').sort())
   assert.ok(['done', 'parked', 'failed'].includes(result.end_state))
-  assert.equal(result.schema, 1)
+  assert.equal(result.schema, 2)
 })
 
 test('ticket-run names exactly the documented result keys', () => {
@@ -36,4 +36,35 @@ test('config.yaml template: placeholders only, no real logins, projects or hosts
   const text = read('plugins/factory/template/config.yaml')
   assert.match(text, /approvers:\n {2}- <github-login>/)
   assert.doesNotMatch(text, /https?:\/\//)
+})
+
+test('reason_code: ticket-run maps every documented code, and only those', () => {
+  const row = doc.split('\n').find((l) => l.startsWith('| `reason_code`'))
+  const documented = [...row.split('asks one):')[1].split(';')[0].matchAll(/`([a-z_]+)`/g)].map((m) => m[1])
+  const line = read('plugins/factory/skills/ticket-run/references/done.md').split('\n').find((l) => l.startsWith('- **`reason_code`:**'))
+  const mapped = [...new Set([...line.split('asks one:')[1].matchAll(/`([a-z_]+)`/g)].map((m) => m[1]))]
+  assert.deepEqual(mapped.sort(), documented.sort())
+})
+
+test('labels: the config template carries every documented label with its default', () => {
+  const rows = doc.split('## Labels')[1].split('\n## ')[0].split('\n').filter((l) => l.startsWith('| `labels.'))
+  const documented = Object.fromEntries(rows.map((l) => l.match(/^\| `labels\.([a-z_]+)` \| `([^`]+)`/).slice(1)))
+  const block = read('plugins/factory/template/config.yaml').split('\nlabels:\n')[1].split('\n\n')[0]
+  const template = Object.fromEntries(block.split('\n').filter((l) => /^ {2}[a-z_]+: /.test(l)).map((l) => l.trim().split(': ')))
+  assert.deepEqual(template, documented)
+})
+
+test('comment kinds: ticket-run knows every documented kind tag', () => {
+  const kinds = (text) => [...text.matchAll(/^\| `<!-- factory:([a-z]+)/gm)].map((m) => m[1])
+  assert.deepEqual(kinds(read('plugins/factory/skills/ticket-run/references/comments.md')).sort(), kinds(doc).sort())
+})
+
+test('label defaults: factory-status and the adoption runbook name every documented label', () => {
+  const defaults = [...doc.split('## Labels')[1].split('\n## ')[0].matchAll(/^\| `labels\.[a-z_]+` \| `([^`]+)`/gm)].map((m) => m[1])
+  const status = read('plugins/factory/skills/factory-status/SKILL.md').split('\n').find((l) => l.startsWith('Label names and the marker'))
+  const created = [...read('docs/adopt-factory.md').matchAll(/gh label create ([a-z-]+)/g)].map((m) => m[1])
+  for (const label of defaults) {
+    assert.ok(status.includes(`\`${label}\``), `factory-status lacks ${label}`)
+    assert.ok(created.includes(label), `adopt-factory.md does not create ${label}`)
+  }
 })

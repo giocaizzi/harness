@@ -12,8 +12,8 @@ gh api "repos/{owner}/{repo}/issues/N/timeline" --paginate \
 
 - **Approved:** open, the approval label is on, and the last timeline line is `labeled` by a login in `approvers`. Otherwise stop and say which part failed.
 - **Ready:** the body has acceptance criteria and a proof command (a command or observation that shows the ticket done). Without them, ask on the ticket, proposing both, instead of starting.
-- **Not claimed:** no claim label, or the newest `factory:claim` comment is this run's own (a resume on the same host). A claim by another run means stop: two runs never take one ticket. A stale claim is the owner's to clear.
-- **Claim:** add the claim label, then post `factory:claim` with the host name and run id. Release it (remove the label) when the run ends, whatever the end state.
+- **Not claimed:** no claim label, or the newest `factory:claim` comment is this run's own: a `runtime` claim only when its run id equals `FACTORY_RUN_ID` (the runtime claimed the ticket for this run); an `attended` claim from this host (a resume). Any other claim, including a runtime's on this host, is another run's. A claim by another run means stop: two runs never take one ticket. A stale claim is the owner's to clear.
+- **Claim:** add the claim label, then post `factory:claim` with the host name and run id. When `FACTORY_RUN_ID` is set, the runtime already did both: edit its claim comment (the newest one with that run id) instead of posting a second, and use that id as the run id. Release it (remove the label) when the run ends, whatever the end state.
 
 ## Comments
 
@@ -26,6 +26,7 @@ Each comment is the marker line, a kind tag line, then the fields as short label
 | `<!-- factory:question Q<n> -->` | per question; `n` counts up across the ticket | the question; whether it blocks shipping; context with `path:line`; options `A) B) …`; recommendation and why; done so far (what is pushed). |
 | `<!-- factory:log -->` | once; edited in place | the decision log table: `#`, item, found at, test, decision, where ([fold-in-test.md](fold-in-test.md#decision-log)). |
 | `<!-- factory:result <end_state> -->` | end of every run | end state; reason; PR; evidence links; follow-ups. |
+| `<!-- factory:notify <kind> -->` | never by the skill: a runtime's @-mention of the approvers | skip it when reading; it carries the marker, so it is never an answer. |
 
 **Posting is idempotent.** Before posting, look for an existing comment with the same kind tag (and question id) and edit it instead. Record the post in the run's `posts` as `posting`, then `posted` once the API returns the comment's URL; on an error or timeout record `maybe_posted` and look for the marker before trying again. A write counts only when the API confirms it.
 

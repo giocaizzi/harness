@@ -15,6 +15,9 @@ labels:
   claimed: factory-claimed
   needs_owner: needs-owner
   needs_grooming: needs-grooming
+  # Set by a runtime, not by the attended skills: a ticket it stopped picking, and an issue that halts it.
+  quarantine: factory-quarantine
+  halt: factory-halt
 
 # Hidden first line of every comment the skills post, so agent comments made under the owner's account are told apart.
 marker: "<!-- factory -->"
