@@ -127,7 +127,7 @@ The resource carries `service.name=guard` plus `OTEL_RESOURCE_ATTRIBUTES` (`serv
 
 Verify: after a denied command, `{service_name="guard"}` in Grafana Explore shows the record; `sum by (rule) (count_over_time({service_name="guard"} | rule != "" [1h]))` counts denials per rule.
 
-`GUARD_OTEL=off` (also `0`, `false`) sends nothing, whatever the endpoint. `make test` sets it, and so must any probe that spawns `hooks/guard.mjs` or imports the engine from a shell that exports the collector: fake sessions otherwise land in the real telemetry.
+`GUARD_OTEL=off` (also `0`, `false`) sends nothing, whatever the endpoint. `make test` sets it, and so must any probe that spawns `hooks/guard.mjs` or imports the engine from a shell that exports the collector: fake sessions otherwise land in the real telemetry. For the same reason `make test` empties `FACTORY_EVENTS_FILE` (empty writes nothing), and a probe run inside a factory run must too.
 
 ### Usage for opencode and pi
 

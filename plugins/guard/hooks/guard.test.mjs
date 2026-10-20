@@ -264,6 +264,14 @@ test('FACTORY_EVENTS_FILE: one JSON line per deny or ask with ts, decision, rule
   assert.doesNotMatch(readFileSync(file, 'utf8'), /bad title|git commit/)
 })
 
+test('FACTORY_EVENTS_FILE: a crashing guard logs its fail-closed deny as guard-error', async () => {
+  const file = join(mkdtempSync(join(tmpdir(), 'guard-events-')), 'events.jsonl')
+  const h = setup({ env: { FACTORY_EVENTS_FILE: file }, hostFacts: async () => { throw new Error('boom') } })
+  assert.equal(decision(await h(pre('Bash', 'npm run build && rm -rf build'))).permissionDecision, 'deny')
+  const [line] = readFileSync(file, 'utf8').trim().split('\n').map((l) => JSON.parse(l))
+  assert.deepEqual([line.decision, line.rule], ['deny', 'guard-error'])
+})
+
 test('FACTORY_EVENTS_FILE: unset writes nothing, an unwritable path leaves the decision standing', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'guard-events-'))
   assert.equal(decision(await setup({ env: { FACTORY_EVENTS_FILE: join(dir, 'missing', 'events.jsonl') } })(pre('Bash', 'git commit -m "bad"'))).permissionDecision, 'deny')

@@ -24,8 +24,10 @@ else
 	else echo "pwsh or PSScriptAnalyzer not found, skipped"; fi
 endif
 
-# Tests and probes never post to a real collector, whatever the shell exports (GUARD_OTEL=off, core/otel.mjs).
+# Tests and probes never post to a real collector, whatever the shell exports (GUARD_OTEL=off, core/otel.mjs),
+# nor append fake decisions to a factory run's events file.
 test: export GUARD_OTEL := off
+test: export FACTORY_EVENTS_FILE :=
 test: ## Run the plugins' hook tests (Node 22+), their mod tests (`claude plugin test`), then the skill script tests.
 	@node --test $(wildcard plugins/*/core/*.test.mjs plugins/*/hooks/*.test.mjs plugins/*/pi/*.test.mjs tests/*.test.mjs)
 ifeq ($(OS),Windows_NT)
