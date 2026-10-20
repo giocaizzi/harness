@@ -64,7 +64,7 @@
           {
             "type": "command",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/guard.mjs\" SessionEnd --no-ask --harness=codex",
-            "timeout": 10
+            "timeout": 3
           }
         ]
       }

@@ -127,6 +127,28 @@ const ARG = 'e2e-arg-4242'
 // A line of the wt skill's body, so the probe knows the skill itself (not just its listing) reached the model.
 const WT_BODY = 'There is no fixed cap on worktrees or agents'
 
+// Codex hook outputs only a live run can confirm: a failing stop check's block reaches the model (Codex rejects a
+// Stop output with keys it does not know), and a PreToolUse hint reaches it as context.
+async function codexOnly(h, env, root) {
+  const failures = []
+  const seen = async (command, cwd, runEnv, text) => {
+    const m = await mock(command, root)
+    const out = h.run(runEnv, cwd, m.port)
+    m.stop()
+    const ok = m.entries().some((e) => e.prompt.includes(text))
+    rmSync(join(root, 'mock.jsonl'), { force: true })
+    return ok ? null : `${out.stdout?.slice(-600)}\n${out.stderr?.slice(-600)}`
+  }
+  const dir = join(root, 'stopproj')
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(join(dir, 'Makefile'), 'check:\n\t@echo e2e-check-failed; exit 1\n')
+  const stop = await seen('echo hi', dir, { ...env, GUARD_STOP_CHECK: 'on' }, 'e2e-check-failed')
+  if (stop) failures.push(`stop: the failed check did not reach the model\n${stop}`)
+  const hint = await seen('pytest -q', project(root), env, 'Skill hint (')
+  if (hint) failures.push(`hint: the pytest skill hint did not reach the model\n${hint}`)
+  return failures
+}
+
 async function check(name) {
   const h = HARNESSES[name]
   const root = mkdtempSync(join(tmpdir(), `harness-e2e-${name}-`))
@@ -171,6 +193,7 @@ async function check(name) {
     }
     // sounds' Stop hook ran from the installed plugin: it keeps the session's alert levels in the plugin data dir.
     if (name === 'codex' && !readdirSync(join(root, 'home'), { recursive: true }).some((f) => /sounds-codex-.*\.json$/.test(f))) failures.push('sounds: the Stop hook left no state')
+    if (name === 'codex') failures.push(...(await codexOnly(h, env, root)))
     if (name === 'pi') {
       // The subagent tool: the parent delegates to scout, whose own session runs the command and answers "done".
       const m = await mock('echo from-scout', root, { MOCK_SUBAGENT: '1' })
