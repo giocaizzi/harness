@@ -1,0 +1,14 @@
+# This repo's labels beyond standard/labels.yaml in giocaizzi/.github (see its docs/standard.md, Labels).
+# Factory labels (docs/factory.md, Labels): the ticket-run contract and a runtime.
+- {name: agent-ok, color: 0e8a16, description: "Approved for an agent run (owner only)"}
+- {name: factory-claimed, color: 1d76db, description: "A factory run holds this ticket"}
+- {name: needs-owner, color: d93f0b, description: "An agent question waits on the owner"}
+- {name: needs-grooming, color: fbca04, description: "Parked three times: refine before the next run"}
+- {name: factory-quarantine, color: 5319e7, description: "Runs kept failing: the runtime skips this ticket"}
+- {name: factory-halt, color: b60205, description: "Open issue with this label: the runtime starts no run"}
+# Ticket sizes (size_label_prefix in .factory/config.yaml).
+- {name: "size: XS", color: c2e0c6, description: "Ticket size: extra small"}
+- {name: "size: S", color: c2e0c6, description: "Ticket size: small"}
+- {name: "size: M", color: c2e0c6, description: "Ticket size: medium"}
+- {name: "size: L", color: c2e0c6, description: "Ticket size: large"}
+- {name: "size: XL", color: c2e0c6, description: "Ticket size: extra large"}
