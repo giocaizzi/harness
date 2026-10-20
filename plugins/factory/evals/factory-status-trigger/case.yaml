@@ -1,0 +1,10 @@
+schema_version: "1.0"
+name: factory-status-trigger
+description: The model loads factory-status when asked which agent-run tickets wait on the owner in a repo that has a .factory config.
+tags: [trigger]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  prompt: Which of our tickets are the agents stuck on waiting for me, and what are they asking?
+  max_turns: 15
+  allowed_tools: [Read, Glob, Grep, Skill]
