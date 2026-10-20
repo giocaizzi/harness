@@ -78,6 +78,15 @@ These load by themselves when the work touches their subject; call them by name 
 | `api` | `sqlalchemy` | define models, write queries, manage sessions and migrations |
 | `api` | `ddd` | design bounded contexts, aggregates, ports and adapters |
 
+### Ticket runs (`factory`)
+
+For a repo adopted per [adopt-factory.md](adopt-factory.md): you approve a ticket by labelling it `agent-ok`, the agent works it, and everything it decides or asks lands on the ticket ([factory.md](factory.md)).
+
+| Skill | Argument | What it does |
+|---|---|---|
+| `ticket-run` | issue number | Checks you applied the approval label, posts a plan, works the ticket in its own worktree deciding scope with the fold-in test, asks questions on the ticket and parks until you answer there, runs the `verifier`, ships one PR that closes the ticket, merges by risk tier, deploys and live-verifies, and records the result. Run it again on a parked ticket after you answer. |
+| `factory-status` | days of done tickets (default 7) | One screen from GitHub labels and the marked comments: tickets that need you with their open question, in progress with PR and checks, parked for grooming, approved and not started, recently done. Read-only. |
+
 ## Agents
 
 | Agent | Plugin | Ask for it when | Model |
@@ -85,6 +94,7 @@ These load by themselves when the work touches their subject; call them by name 
 | `scout` | `dev-tools` | you need something found or read: code, logs, test output. Read-only; answers with `file:line` evidence. | cheapest (Claude: Haiku, `low`) |
 | `escalate` | `dev-tools` | the normal model failed twice on the same bug or design question | strongest (Claude: Fable) |
 | `api-reviewer` | `api` | you want an API security review: vulnerabilities, RBAC leaks, compliance | driver (Claude: Opus, `medium`) |
+| `verifier` | `factory` | a ticket's change is ready to ship and needs a gate that did not write it ([factory.md](factory.md#verification)) | driver (Claude: Opus, `high`; `medium` or `low` for trivial changes) |
 
 How to call one: say it ("use scout to list every place we read `GUARD_` env vars"). Per harness: Claude Code `/agents` lists them; Copilot CLI `/agent` picks one; opencode `@scout`; Codex and pi by asking (pi runs them through its `subagent` tool). Models per harness: [compatibility.md](compatibility.md). In Claude Code with `CLAUDE_CODE_SUBAGENT_MODEL=sonnet` set, any subagent that names no model (a plain or general-purpose one) runs on Sonnet; ask for another model by name ("use an opus subagent to …") when the task needs judgement.
 

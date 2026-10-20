@@ -1,0 +1,17 @@
+{
+  "name": "factory",
+  "version": "0.4.0",
+  "description": "Attended ticket runs on a GitHub issue board: owner-approved tickets worked end to end, scope decided by a fold-in test and logged on the ticket, questions asked on the ticket, a result contract per run",
+  "author": {
+    "name": "giocaizzi",
+    "url": "https://github.com/giocaizzi"
+  },
+  "repository": "https://github.com/giocaizzi/harness",
+  "license": "MIT",
+  "keywords": [
+    "github-issues",
+    "workflow",
+    "agents",
+    "verification"
+  ]
+}
