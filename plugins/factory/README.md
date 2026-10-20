@@ -13,7 +13,7 @@ Attended ticket runs on a GitHub issue board: an owner-approved ticket worked en
 
 | Agent | Description |
 |---|---|
-| `verifier` | Fresh-context gate before a ticket ships: every change traces to the ticket or its decision log, side effects present, acceptance evidence that could fail. Preset at `high` effort, the one exception in `subagent-orchestration`. |
+| `verifier` | Fresh-context gate before a ticket ships: every change traces to the ticket or its decision log, side effects present, acceptance evidence that could fail. Preset at `medium` effort; the driver spawns it at `high` for security or safety paths. |
 
 On pi, the `dev-tools` `subagent` tool runs it in its own `pi -p` session.
 

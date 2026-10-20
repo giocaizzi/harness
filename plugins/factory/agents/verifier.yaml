@@ -7,7 +7,7 @@ copilot:
     - search
     - execute
 codex:
-  model_reasoning_effort: high
+  model_reasoning_effort: medium
 opencode:
   permission:
     edit: deny
