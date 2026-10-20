@@ -86,7 +86,9 @@ export const rules = {
     {
       "id": "pip",
       "when": "uv",
-      "match": "(?<!uv )(?<![\\w-])(pipx|pip3?|python3? -m pip)(\\s|$)",
+      // At command position only (D13): `which pip`, `ls .venv/bin/pip` or `git log --grep pip` pass, and so do
+      // read-only `pip list`/`pip freeze`; `uv pip …` is uv's own.
+      "match": "(?:^|[;&|(\\n]\\s*|\\bsudo\\s+|/)(?:pip[\\d.]*\\s+(?:install|uninstall|download|wheel)|pipx\\s+(?:install|run|inject|upgrade|reinstall))\\b|\\bpython[\\d.]*\\s+-m\\s*pip\\s+(?:install|uninstall|download|wheel)\\b",
       "why": "This repo uses uv: use uv add / uv run / uvx, not pip or pipx."
     },
     {
@@ -135,7 +137,7 @@ export const rules = {
     {
       "id": "reset",
       "say": "Discards uncommitted changes (git reset --hard)",
-      "match": "\\bgit\\s+reset\\s+--hard\\b",
+      "match": "\\bgit\\s+reset\\b[^;&|\\n]*\\s--hard\\b",
       "why": "discards local work",
       "prefixes": [["git", "reset", "--hard"]]
     },
@@ -175,7 +177,8 @@ export const rules = {
       "id": "force",
       // `--force-with-lease` to a feature branch passes: it cannot clobber work it has not seen, and a branch
       // ruleset rejects it on a protected default branch. ponytail: a bare lease push from main is not caught.
-      "match": "\\bgit\\s+push\\b[^;&|\\n]*(--force(?!-with-lease)\\b|\\s-[a-z]*f[a-z]*\\b|\\s\\+[^\\s;&|]|--force-with-lease\\b[^;&|\\n]*[\\s:](?:refs/heads/)?(main|master)(?=[\\s;&|)]|$))",
+      // `--force-if-includes` alone is not a force push; a lease push naming main or master anywhere is.
+      "match": "\\bgit\\s+push\\b[^;&|\\n]*(--force(?![\\w-])|\\s-[a-z]*f[a-z]*\\b|\\s\\+[^\\s;&|])|\\bgit\\s+push\\b(?=[^;&|\\n]*--force-with-lease\\b)[^;&|\\n]*[\\s:](?:refs/heads/)?(main|master)(?=[\\s;&|)]|$)",
       "why": "rewrites remote history",
       "prefixes": [["git", "push", "--force"], ["git", "push", "-f"]]
     },
@@ -197,9 +200,54 @@ export const rules = {
     {
       "id": "terraform",
       "say": "Applies or destroys real infrastructure",
-      "match": "\\bterraform\\s+(apply|destroy)\\b",
+      "match": "\\b(?:terraform|tofu)\\b(?:\\s+-[\\w-]+(?:=\\S+)?)*\\s+(?:apply|destroy)\\b",
       "why": "changes real infrastructure",
-      "prefixes": [["terraform", "apply"], ["terraform", "destroy"]]
+      "prefixes": [["terraform", "apply"], ["terraform", "destroy"], ["tofu", "apply"], ["tofu", "destroy"]]
+    },
+    {
+      // Refs git cannot restore from the remote: a deleted ref, a rewritten history, main or master moved by force.
+      "id": "rewrite",
+      "say": "Rewrites history or moves a ref git cannot restore from the remote",
+      "match": "\\bgit\\s+update-ref\\b[^;&|\\n]*\\s-d\\b|\\bgit\\s+filter-(?:repo|branch)\\b|\\bgit\\s+branch\\b[^;&|\\n]*\\s(?:-f|--force)\\b[^;&|\\n]*\\s(?:refs/heads/)?(?:main|master)(?=[\\s;&|)]|$)",
+      "why": "rewrites history or a ref on main",
+      "prefixes": [["git", "update-ref", "-d"], ["git", "filter-repo"], ["git", "filter-branch"]]
+    },
+    // Data-loss forms outside git (owner decision D3). Routine `docker rm`/`rmi` of disposable containers and
+    // images, `docker image prune` and `docker stack rm` stay allowed.
+    {
+      "id": "docker",
+      "say": "Deletes container data volumes",
+      "match": "\\b(?:docker|podman)\\s+volume\\s+(?:rm|remove|prune)\\b|\\b(?:docker|podman)\\s+system\\s+prune\\b|\\b(?:docker|podman)\\s+(?:container\\s+)?rm\\b[^;&|\\n]*\\s(?:-[a-z]*v[a-z]*|--volumes)\\b|\\b(?:docker[\\s-]compose|podman-compose)\\b[^;&|\\n]*\\s(?:down|rm)\\b[^;&|\\n]*\\s(?:-[a-z]*v[a-z]*|--volumes)\\b",
+      "why": "deletes container data volumes",
+      "prefixes": [["docker", "volume", "rm"], ["docker", "volume", "prune"], ["docker", "system", "prune"], ["docker", "rm", "-v"], ["docker", "compose", "down", "-v"]]
+    },
+    {
+      "id": "gh-delete",
+      "say": "Deletes a GitHub repository, release, secret or resource",
+      "match": "\\bgh\\s+(?:repo|release|secret)\\s+delete\\b|\\bgh\\s+api\\b(?=[^;&|\\n]*\\s(?:-X|--method)[\\s=]*DELETE\\b)",
+      "why": "deletes on GitHub, which cannot be undone",
+      "prefixes": [["gh", "repo", "delete"], ["gh", "release", "delete"], ["gh", "secret", "delete"]]
+    },
+    {
+      "id": "k8s",
+      "say": "Deletes Kubernetes resources or a Helm release",
+      "match": "\\bkubectl\\b(?:[^;&|\\n]*\\s)?delete\\b|\\bhelm\\s+(?:uninstall|delete|del|un)\\b",
+      "why": "deletes cluster resources and their data",
+      "prefixes": [["kubectl", "delete"], ["helm", "uninstall"], ["helm", "delete"]]
+    },
+    {
+      // No prefixes: a cloud CLI's delete sits after a resource path, so no first-word prefix covers it.
+      "id": "cloud-delete",
+      "say": "Deletes a cloud resource",
+      "match": "\\b(?:gcloud|az)\\b[^;&|\\n]*\\sdelete\\b",
+      "why": "deletes cloud resources, which cannot be undone"
+    },
+    {
+      "id": "disk",
+      "say": "Overwrites or formats a disk",
+      "match": "\\bdd\\b[^;&|\\n]*\\sof=/dev/|\\bmkfs(?:\\.\\w+)?\\b|\\bdiskutil\\s+(?:erase\\w*|zeroDisk|secureErase|partitionDisk|reformat)\\b",
+      "why": "overwrites a disk",
+      "prefixes": [["mkfs"], ["diskutil", "eraseDisk"], ["diskutil", "eraseVolume"]]
     },
     {
       "id": "merge",
