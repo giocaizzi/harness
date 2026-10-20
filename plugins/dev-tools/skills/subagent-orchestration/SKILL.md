@@ -25,9 +25,9 @@ The main session (hub) plans, delegates and verifies. Subagents (spokes) do boun
 
 - `low`: quick, in-the-loop work.
 - `medium`: normal engineering, verification, edge cases.
-- `high`, `xhigh`, `max`: only when the user asks for them, with one preset exception below.
+- `high`, `xhigh`, `max`: only when the user asks for them, with one exception below for security or safety paths.
 
-Anything preset or automatic (agent definitions, settings, spawns you choose) stays at `medium` or below. Implement at `low`, verify at `medium`. The one exception is the `factory` plugin's `verifier`, preset at `high` because it is the last gate before a ticket ships; spawn it at `medium` for trivial changes (XS, docs-only, config-only), or `low` when a deterministic check fully covers the change. Nothing preset goes above `high`. More effort catches missed edge cases; it does not fix a wrong approach, so re-plan instead of raising it. Give every agent a way to check its work (a test, a build), or effort buys little.
+Anything preset or automatic (agent definitions, settings, spawns you choose) stays at `medium` or below. Implement at `low` or `medium`, verify at `medium`. The one exception is a spawn for security or safety paths (input trust, auth and credentials, secrets and redaction, kill switch and halt, merge and release gates, protected paths), which may go to `high`, as the `factory` plugin's routing table does for its `verifier`, whose preset is `medium`; for trivial changes (XS, docs-only, config-only) spawn it on Sonnet at `medium`. Nothing preset goes above `high`. More effort catches missed edge cases; it does not fix a wrong approach, so re-plan instead of raising it. Give every agent a way to check its work (a test, a build), or effort buys little.
 
 ## Delegation
 
@@ -48,7 +48,7 @@ Anything preset or automatic (agent definitions, settings, spawns you choose) st
 ## Mechanisms
 
 Claude Code:
-- `model` on each spawn (`haiku`, `sonnet`, `opus`, `fable`); `model` and `effort` in an agent definition.
+- `model` (`haiku`, `sonnet`, `opus`, `fable`) and `effort` on each spawn; both also in an agent definition.
 - `CLAUDE_CODE_SUBAGENT_MODEL` is the default for subagents: the spawn's `model` wins, then the definition's `model`, then this variable, then the session's model (v2.1.251+; earlier versions let the variable override both). A definition's `model: inherit` beats the variable and keeps the session's model. The built-in `general-purpose` and `claude` agents follow this order; built-in Explore and Plan run on the session's model and ignore the variable. A family alias passed on a spawn or in a definition (`opus`) resolves to the session's exact model when it is of that family; the variable's alias always resolves to the alias's current version. `CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1` (v2.1.257+) forces the variable onto every subagent and drops spawn and definition models, which breaks tier routing: leave it unset. Source: [sub-agents](https://code.claude.com/docs/en/sub-agents#choose-a-model).
 - `/model` and `/effort` change the session.
 - This plugin ships `scout` (tier 1) and `escalate` (tier 4).
