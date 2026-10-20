@@ -23,6 +23,7 @@ Works with [Claude Code](https://code.claude.com/), [GitHub Copilot CLI](https:/
 |---|---|
 | [`api`](plugins/api/README.md) | API development — FastAPI, SQLAlchemy, DDD; plus the `api-reviewer` agent. |
 | [`python`](plugins/python/README.md) | Python development and testing best practices. |
+| [`go`](plugins/go/README.md) | Go development and testing best practices. |
 | [`javascript`](plugins/javascript/README.md) | JavaScript/TypeScript, React, Next.js. |
 | [`dev-tools`](plugins/dev-tools/README.md) | General development tooling — git, GitHub, conventional commits, semantic versioning. |
 | [`guard`](plugins/guard/README.md) | Guardrail hooks for every harness — skill enforcer, commit-title guard, host guard, pip deny, risky-command ask, `make check` on stop. |

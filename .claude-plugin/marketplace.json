@@ -6,7 +6,7 @@
   },
   "metadata": {
     "description": "Personal agent harness: skills, agents and guards for Claude Code, Copilot CLI, VS Code, Codex, opencode and pi",
-    "version": "3.4.0"
+    "version": "3.5.0"
   },
   "plugins": [
     {
@@ -48,10 +48,24 @@
       ]
     },
     {
+      "name": "go",
+      "source": "./plugins/go",
+      "description": "Go development and testing best practices",
+      "version": "1.0.0",
+      "keywords": [
+        "go",
+        "golang",
+        "development",
+        "testing",
+        "golangci-lint",
+        "goreleaser"
+      ]
+    },
+    {
       "name": "dev-tools",
       "source": "./plugins/dev-tools",
       "description": "General development tooling — git, GitHub, conventional commits, semantic versioning",
-      "version": "1.25.0",
+      "version": "1.25.1",
       "keywords": [
         "git",
         "github",

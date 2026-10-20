@@ -1,0 +1,22 @@
+{
+  "name": "go",
+  "version": "1.0.0",
+  "description": "Go development and testing best practices",
+  "author": {
+    "name": "giocaizzi",
+    "url": "https://github.com/giocaizzi"
+  },
+  "repository": "https://github.com/giocaizzi/harness",
+  "license": "MIT",
+  "keywords": [
+    "go",
+    "golang",
+    "development",
+    "testing",
+    "golangci-lint",
+    "goreleaser"
+  ],
+  "agents": [
+    "./.generated/copilot/"
+  ]
+}
