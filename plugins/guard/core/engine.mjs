@@ -757,12 +757,14 @@ export function pureRead(command) {
 
 const hint = (rule) => `Skill hint (${rule.why}): load ${rule.skills.map((s) => `\`${s}\``).join(' or ')} if this task is that work.`;
 
-// Words of a command, one array per simple command: split on `; | & newline` outside quotes, quotes and backslashes
-// removed from the words (`agent-o'k'` is `agent-ok`), a leading `$(`, `(` or backtick dropped from a word.
+// Words of a command, one array per simple command: split on `; | & newline`, `(`, `)` and backticks outside quotes,
+// so every command substitution or subshell starts its own command (`URL=$(gh …)` gives `URL=$` and `gh …`). Quotes
+// and backslashes are removed from the words (`agent-o'k'` is `agent-ok`); a quoted word keeps its `$(…)` and is
+// read again when it holds `gh`.
 function shellWords(command) {
   const out = [[]];
   let word = null;
-  const push = () => { if (word !== null) out.at(-1).push(word.replace(/^(?:\$\(|\(|`)+/, '')); word = null; };
+  const push = () => { if (word !== null) out.at(-1).push(word); word = null; };
   for (let i = 0; i < command.length; i++) {
     const c = command[i];
     if (c === "'" || c === '"') {
@@ -773,7 +775,7 @@ function shellWords(command) {
       if (command[i + 1] === '\n') i++;
       else { word = (word ?? '') + (command[i + 1] ?? ''); i++; }
     } else if (/\s/.test(c) && c !== '\n') push();
-    else if (/[;|&\n]/.test(c)) { push(); if (out.at(-1).length) out.push([]); }
+    else if (/[;|&\n()`]/.test(c)) { push(); if (out.at(-1).length) out.push([]); }
     else word = (word ?? '') + c;
   }
   push();
@@ -784,7 +786,7 @@ const API_VALUE_FLAGS = new Set(['-X', '--method', '-H', '--header', '-f', '--ra
 
 // A command that adds the factory approval label, while a factory run is active: `gh issue|pr edit|create` whose
 // `--add-label`/`--label`/`-l` value names it, or a `gh api` write (anything but GET) that names it in a field, or
-// sends a body the guard cannot read (`--input`, `-F labels[]=@file`) to a labels, issues or issue endpoint.
+// sends a body the guard cannot read (`--input`, any `key=@file` field) to a labels, issues or issue endpoint.
 // Labels match ignoring case, like GitHub's. A value the shell builds from a variable (`$L`), a script, `curl` with
 // a token, a GraphQL mutation or a `gh` alias stay out of sight (docs/guard.md).
 export function addsApprovalLabel(command, label) {
@@ -804,14 +806,16 @@ export function addsApprovalLabel(command, label) {
     }
     if ((positional[0] === 'issue' || positional[0] === 'pr') && (positional[1] === 'edit' || positional[1] === 'create')) {
       for (let i = 0; i < args.length; i++) {
-        const m = /^(--add-label|--label|-l)(?:=(.*))?$/.exec(args[i]);
-        if (m && named.test(m[2] ?? args[i + 1] ?? '')) return true;
+        const m = /^(?:--add-label|--label)(?:=(.*))?$|^-l=?(.+)?$/.exec(args[i]);
+        if (m && named.test(m[1] ?? m[2] ?? args[i + 1] ?? '')) return true;
       }
     } else if (positional[0] === 'api') {
       let method = null, endpoint = null, fields = false, unreadable = false;
       const values = [];
       for (let i = args.indexOf('api') + 1; i < args.length; i++) {
-        const [flag, glued] = args[i].startsWith('--') && args[i].includes('=') ? [args[i].slice(0, args[i].indexOf('=')), args[i].slice(args[i].indexOf('=') + 1)] : [args[i], null];
+        // `--flag=v`, and pflag's glued short forms `-fv`, `-f=v` (behind `-i`, the one boolean short flag: `-if v`).
+        const short = /^-i*([XHfFqtp])=?(.+)?$/.exec(args[i]);
+        const [flag, glued] = args[i].startsWith('--') && args[i].includes('=') ? [args[i].slice(0, args[i].indexOf('=')), args[i].slice(args[i].indexOf('=') + 1)] : short ? [`-${short[1]}`, short[2] ?? null] : [args[i], null];
         if (!API_VALUE_FLAGS.has(flag)) { if (!args[i].startsWith('-') && endpoint === null) endpoint = args[i]; continue; }
         const value = glued ?? args[++i] ?? '';
         if (flag === '-X' || flag === '--method') method = value.toUpperCase();

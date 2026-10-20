@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { badTitle, branchFacts, cmdClass, branchTargets, codexRules, evaluateCommand, evaluateEdit, evaluateSpawn, nativeAsk, opencodeAsks, pureRead, refFacts, regenerableName, regenFacts, removalTargets, shellEdit, tagFacts, unattendedSet, usageLevel, worktreeFacts } from './engine.mjs';
+import { addsApprovalLabel, badTitle, branchFacts, cmdClass, branchTargets, codexRules, evaluateCommand, evaluateEdit, evaluateSpawn, nativeAsk, opencodeAsks, pureRead, refFacts, regenerableName, regenFacts, removalTargets, shellEdit, tagFacts, unattendedSet, usageLevel, worktreeFacts } from './engine.mjs';
 import { rules } from './rules.mjs';
 
 const fresh = () => ({ reminded: new Set() });
@@ -972,14 +972,60 @@ test('factory run: adding the approval label is denied in every spelling, other 
     'gh api -X POST repos/o/r/issues -F labels[]=@l.txt -f title=x',
     'gh api -X PATCH repos/o/r/issues/7 --input body.json -f x=/comments',
     'gh issue edit 7 --add-label "$(echo agent-ok)"',
+    // Inside command substitution, behind assignments, after separators and wrappers: every command position.
+    'X=$(gh issue edit 7 --add-label agent-ok)',
+    'URL="$(gh issue create -t t -b b --label agent-ok)"',
+    'export URL=$(gh pr create --label agent-ok -t t -b b)',
+    'local u="$(gh issue create --label agent-ok -t t -b b)"',
+    'X=`gh issue edit 7 --add-label agent-ok`',
+    'R=$(gh api -X POST repos/o/r/issues/7/labels -f labels[]=agent-ok)',
+    'R=$(gh api repos/o/r/issues/7/labels --input b.json)',
+    'R=$(gh api "repos/o/r/issues/7/labels?x=1" -X PUT --input b.json)',
+    'echo "$(gh -R o/r issue edit 7 --add-label agent-ok)"',
+    'X=$(cd x && gh issue edit 7 --add-label agent-ok)',
+    'cat <(gh issue edit 7 --add-label agent-ok)',
+    'cd x; gh issue edit 7 --add-label agent-ok',
+    'true && gh pr edit 3 --add-label agent-ok',
+    'false || gh issue edit 7 --add-label agent-ok',
+    'echo x | gh issue edit 7 --add-label agent-ok',
+    'env A=1 gh issue edit 7 --add-label agent-ok',
+    'command gh issue edit 7 --add-label agent-ok',
+    'time gh issue edit 7 --add-label agent-ok',
+    'sudo gh issue edit 7 --add-label agent-ok',
+    // pflag's glued short flags.
+    'gh api repos/o/r/issues/7/labels -f=labels[]=agent-ok',
+    'gh api repos/o/r/issues/7/labels -flabels[]=agent-ok',
+    'gh api repos/o/r/issues/7/labels -iflabels[]=agent-ok',
+    'gh api repos/o/r/issues/7/labels -F=labels[]=@l.txt',
+    'gh api -XPUT repos/o/r/issues/7/labels -f labels[]=agent-ok',
+    'gh issue create -t x -lagent-ok',
+    'gh issue create -t x -l=agent-ok',
   ]) {
     const d = run(c);
     assert.equal(d.action, 'deny', c);
     assert.equal(d.rule, 'factory-approval', c);
   }
-  for (const c of ['gh issue edit 7 --add-label needs-grooming --remove-label agent-ok', 'gh issue create --label bug --title "support agent-ok"', 'gh api -X GET search/issues -f q=label:agent-ok', 'gh issue edit 7 --add-label needs-owner', 'gh issue edit 7 --add-label agent-ok-not', 'gh issue list --label agent-ok', 'gh api repos/o/r/issues/7/labels', 'gh api repos/o/r/issues/7/comments -f body="please re-apply agent-ok"']) {
+  for (const c of ['gh issue edit 7 --add-label needs-grooming --remove-label agent-ok', 'gh issue create --label bug --title "support agent-ok"', 'gh api -X GET search/issues -f q=label:agent-ok', 'gh issue edit 7 --add-label needs-owner', 'gh issue edit 7 --add-label agent-ok-not', 'gh issue list --label agent-ok', 'gh api repos/o/r/issues/7/labels', 'gh api repos/o/r/issues/7/comments -f body="please re-apply agent-ok"',
+    'X=$(gh issue edit 7 --remove-label agent-ok)', 'X=$(gh issue view 7 --json labels)', 'L=$(gh issue list --label agent-ok)', 'X=$(gh api repos/o/r/issues/7/labels)',
+    'X=$(gh issue edit 7 --add-label agent-ok-later)', 'gh issue edit 7 --add-label not-agent-ok', 'gh issue edit 7 --add-label agent-oks',
+    'gh issue comment 7 --body "please re-apply agent-ok (thanks)"', 'X=$(gh issue comment 7 --body "agent-ok please")', 'gh issue comment 7 --body "$(cat note.md)"',
+    'gh api -X GET repos/o/r/issues/7/labels -f=per_page=1', 'gh api repos/o/r/issues/7/labels -fper_page=1 -X GET', 'gh label list']) {
     assert.equal(run(c).action, 'allow', c);
   }
+  assert.notEqual(run('gh api -X DELETE repos/o/r/issues/7/labels/agent-ok').rule, 'factory-approval', 'removing the label');
   assert.equal(run('gh issue edit 7 --add-label ready', { approval: 'ready' }).action, 'deny', 'a configured label');
   assert.equal(run('gh issue edit 7 --add-label agent-ok', null).action, 'allow', 'no factory run: allowed');
+});
+
+test('factory run: the label parser never throws or hangs on odd input', () => {
+  const parts = ['gh', 'api', 'issue', 'edit', '-f', '-F=', '-fx=@', '--input', 'labels', 'agent-ok', '$(', '`', '(', ')', '"', "'", '\\', ';', '&&', '|', '\n', '=', 'X=', 'bash', '-c', ' '];
+  let seed = 7;
+  const next = () => (seed = (seed * 1103515245 + 12345) % 2147483648);
+  const start = Date.now();
+  for (let n = 0; n < 5000; n++) {
+    const command = Array.from({ length: next() % 40 }, () => parts[next() % parts.length]).join(next() % 2 ? ' ' : '');
+    assert.doesNotThrow(() => addsApprovalLabel(command, 'agent-ok'), command);
+  }
+  assert.doesNotThrow(() => addsApprovalLabel(`${'$( '.repeat(20000)}gh${' )'.repeat(20000)}`, 'agent-ok'));
+  assert.ok(Date.now() - start < 5000, 'linear time');
 });
