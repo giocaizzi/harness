@@ -15,7 +15,7 @@ The `ticket-run` skill carries one ticket through these steps; call it with the 
 
 1. **Gate.** The ticket is open and carries the approval label, and the issue timeline shows an approver applied it. Otherwise the run stops and says why.
 2. **Plan comment.** Goal, acceptance checks (each one a command or observation that fails before the change), side effects in scope, planned fold-ins, size and risk tier. XS and S tickets start right after it; M and larger post it as a question and park until the owner's OK.
-3. **Work** in its own worktree and branch, applying the fold-in test to everything found on the way and logging each call in the decision log.
+3. **Work** in its own worktree and branch, applying the fold-in test to everything found on the way and logging the calls the plan does not already cover in the decision log.
 4. **Questions** go on the ticket, one per comment, and park the ticket (below).
 5. **Verify** with a fresh-context verifier that is never the author.
 6. **Ship and land**: one PR with `Closes #N` and the decision log as `## Scope`; merged per the risk tier (auto-merge or the owner).

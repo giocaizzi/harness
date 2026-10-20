@@ -26,7 +26,7 @@ Otherwise ask on the ticket.
 | Step 1 | Step 2 | Do |
 |---|---|---|
 | R1 or R2 | | fold in; log it only if the plan does not already cover it (see Decision log) |
-| R3 | L1-L4 hold | fold in, log it |
+| R3 | L1-L4 hold | fold in; log it unless the plan already names it |
 | R3 | any fails | ask on the ticket, logging which `L` failed |
 | separate | | don't touch it; handle as separate work |
 
