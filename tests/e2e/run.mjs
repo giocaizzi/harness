@@ -142,7 +142,8 @@ async function codexOnly(h, env, root) {
   const dir = join(root, 'stopproj')
   mkdirSync(dir, { recursive: true })
   writeFileSync(join(dir, 'Makefile'), 'check:\n\t@echo e2e-check-failed; exit 1\n')
-  const stop = await seen('echo hi', dir, { ...env, GUARD_STOP_CHECK: 'on' }, 'e2e-check-failed')
+  // `force`: a macOS CI runner sits above the guard's load cap (30-43), which would defer the check instead of blocking.
+  const stop = await seen('echo hi', dir, { ...env, GUARD_STOP_CHECK: 'force' }, 'e2e-check-failed')
   if (stop) failures.push(`stop: the failed check did not reach the model\n${stop}`)
   // Through the heavy wrapper (the guard's documented bypass): on a loaded CI runner the host deny would otherwise
   // block the bare `pytest` before the hint is sent.
