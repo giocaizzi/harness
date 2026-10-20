@@ -3,9 +3,11 @@
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { appendFileSync, readFileSync } from 'node:fs'
-import { basename, dirname, join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { otelEnabled } from '../core/otel.mjs'
+import { otelEnabled, repoSlug } from '../core/otel.mjs'
+
+export { repoSlug }
 
 // `--harness=<name>` (the Codex hooks file passes `--harness=codex`) wins; else the data dir variable each harness
 // sets: Claude Code sets CLAUDE_PLUGIN_DATA, Copilot CLI COPILOT_PLUGIN_DATA, VS Code only CLAUDE_PLUGIN_ROOT.
@@ -31,14 +33,23 @@ export function guardVersion() {
 }
 
 const repos = new Map()
-// The basename of the git top level of `cwd` (null outside git); one `git rev-parse` per directory and process.
+// `owner/name` of the repo at `cwd`, from its origin remote (else its first remote): the last two path segments of the
+// URL, `.git` dropped, never the host, user or a token in it. Null outside git, without a remote, or for a URL that
+// does not end in owner/name. One lookup per directory and process.
 export function repoName(cwd, run = execFileSync) {
   const key = cwd || '.'
   if (!repos.has(key)) {
+    const git = (...args) => String(run('git', args, { cwd: key, encoding: 'utf8', timeout: 2000, stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true })).trim()
     let name = null
     try {
-      const top = String(run('git', ['rev-parse', '--show-toplevel'], { cwd: key, encoding: 'utf8', timeout: 2000, stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true })).trim()
-      name = top ? basename(top) : null
+      let url = ''
+      try {
+        url = git('remote', 'get-url', 'origin')
+      } catch {
+        const first = git('remote').split(/\r?\n/)[0]
+        url = first ? git('remote', 'get-url', first) : ''
+      }
+      name = repoSlug(url)
     } catch {
       // not a repo, or git missing
     }
@@ -47,8 +58,8 @@ export function repoName(cwd, run = execFileSync) {
   return repos.get(key)
 }
 
-// Every record carries the harness, the guard version and the repo (the git top level's name of `cwd`, the hook
-// input's), read only when something will be sent.
+// Every record carries the harness, the guard version and the repo (`owner/name` of the hook input's `cwd`), read only
+// when something will be sent.
 export const recordAttrs = (attrs, cwd, harness, env = process.env) => (otelEnabled(env) ? { ...attrs, harness, guard_version: guardVersion(), repo: repoName(cwd) } : attrs)
 
 // A line of tool output made safe to send: long token-like runs and `key=value` / `key: value` pairs whose key names
