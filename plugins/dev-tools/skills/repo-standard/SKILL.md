@@ -46,6 +46,7 @@ Roll out lowest risk first: settings, CI with `check`, and only then the protect
 |---|---|
 | Code | Tests in CI (`test` target). |
 | Python | uv, ruff, mypy, pytest (see `python-development`). |
+| Go | `go tool` dependencies, golangci-lint v2, govulncheck, `go test -race` (see `go-development`). |
 | TypeScript | the repo's package manager, typecheck + lint + tests (see `javascript-typescript`). |
 | `Dockerfile` | hadolint in `lint`. |
 | Infrastructure | validate in `lint` (`terraform validate`, `bicep build`, `helm lint`). |

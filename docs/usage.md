@@ -8,7 +8,7 @@ There are four kinds of feature, and you call each one differently:
 
 | Kind | Plugins | How it starts |
 |---|---|---|
-| Skills | `dev-tools`, `python`, `javascript`, `api` | **By itself** when the request matches its description ("open a PR" loads `ship`), or **by you** with its slash command. |
+| Skills | `dev-tools`, `python`, `go`, `javascript`, `api` | **By itself** when the request matches its description ("open a PR" loads `ship`), or **by you** with its slash command. |
 | Agents | `dev-tools` (`scout`, `escalate`), `api` (`api-reviewer`) | **Ask for one by name** ("use scout to ..."); the main agent delegates to it. |
 | Hooks | `guard`, `sounds` | **Never called.** They run on their own around tool calls, prompts and turns. |
 | Display | `hud` | **Always on**, plus a few slash commands for panes. |
@@ -70,6 +70,8 @@ These load by themselves when the work touches their subject; call them by name 
 |---|---|---|
 | `python` | `python-development` | write, review or scaffold Python (uv, ruff, mypy, typing, layout) |
 | `python` | `python-testing` | write or review pytest tests |
+| `go` | `go-development` | write, review or scaffold Go (go.mod and `go tool` deps, golangci-lint v2, errors, context, slog, concurrency, process supervision, goreleaser) |
+| `go` | `go-testing` | write or review Go tests (table tests, fakes, golden files, synctest, fuzzing, benchmarks, race detector) |
 | `javascript` | `javascript-typescript` | write or review JS/TS or Node |
 | `javascript` | `react` | write or review React 19+ |
 | `javascript` | `nextjs` | work in a Next.js (App Router) project |
