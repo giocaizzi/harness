@@ -131,6 +131,52 @@ test('every ask outcome is reported as guard.ask_result', async ($, on) => {
   expect(posted[0]?.wait_ms).toBeDefined()
 })
 
+test('an ask_result carries the guard version, the repo as owner/name and the command class, never the command', async ($, on) => {
+  const clock = mock.clock(on)
+  const posted = collector(on, { OTEL_EXPORTER_OTLP_ENDPOINT: 'http://collector' })
+  on('fs.read', (_$, e) => ({ value: e.path.endsWith('plugin.json') ? '{"version":"9.9.9"}' : '' }))
+  on('process.run', () => ({ value: { exitCode: 0, stdout: 'https://token@example.com/acme/widgets.git\n', stderr: '' } }))
+  on('tool.check', ask)
+  answer(on, 'Allow')
+  await $.tool.check(call)
+  await clock.advance(1)
+  await settle()
+  expect(posted.map((p) => [p.guard_version, p.repo, p.cmd_class])).toEqual([['9.9.9', 'acme/widgets', 'files']])
+  expect(JSON.stringify(posted)).not.toContain('rm -r')
+  expect(JSON.stringify(posted)).not.toContain('token')
+})
+
+test('a throttle record carries the guard version, the repo from the first remote without origin, and cmd_class spawn', async ($, on) => {
+  on('session.usage', () => usage(95))
+  on('agent.spawn', () => ({ model: 'haiku', agentId: 'a1' }))
+  const posted = collector(on, { OTEL_EXPORTER_OTLP_ENDPOINT: 'http://collector' })
+  on('fs.read', () => ({ value: '{"version":"9.9.9"}' }))
+  on('process.run', (_$, e) => {
+    const a = e.argv.join(' ')
+    if (a === 'git remote get-url origin') return { value: { exitCode: 2, stdout: '', stderr: '' } }
+    if (a === 'git remote') return { value: { exitCode: 0, stdout: 'upstream\n', stderr: '' } }
+    return { value: { exitCode: 0, stdout: 'git@example.com:acme/tools.git\n', stderr: '' } }
+  })
+  await $.agent.spawn({ prompt: 'x' })
+  await settle()
+  expect(posted.map((p) => [p['event.name'], p.guard_version, p.repo, p.cmd_class])).toEqual([['guard.throttle', '9.9.9', 'acme/tools', 'spawn']])
+})
+
+test('a lookup that throws leaves the record without repo, and later records still go out', async ($, on) => {
+  const clock = mock.clock(on)
+  const posted = collector(on, { OTEL_EXPORTER_OTLP_ENDPOINT: 'http://collector' })
+  on('process.run', () => {
+    throw new Error('no git')
+  })
+  on('tool.check', ask)
+  answer(on, 'Allow')
+  await $.tool.check(call)
+  await $.tool.check(call)
+  await clock.advance(1)
+  await settle()
+  expect(posted.map((p) => [p['event.name'], p.repo])).toEqual([['guard.ask_result', undefined], ['guard.ask_result', undefined]])
+})
+
 test('a timeout is reported as guard.ask_result timeout', async ($, on) => {
   const clock = mock.clock(on)
   const posted = collector(on, { OTEL_EXPORTER_OTLP_ENDPOINT: 'http://collector' })

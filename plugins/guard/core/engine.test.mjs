@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { badTitle, branchFacts, branchTargets, codexRules, evaluateCommand, evaluateEdit, evaluateSpawn, nativeAsk, opencodeAsks, refFacts, regenerableName, regenFacts, removalTargets, shellEdit, unattendedSet, usageLevel, worktreeFacts } from './engine.mjs';
+import { badTitle, branchFacts, cmdClass, branchTargets, codexRules, evaluateCommand, evaluateEdit, evaluateSpawn, nativeAsk, opencodeAsks, pureRead, refFacts, regenerableName, regenFacts, removalTargets, shellEdit, tagFacts, unattendedSet, usageLevel, worktreeFacts } from './engine.mjs';
 import { rules } from './rules.mjs';
 
 const fresh = () => ({ reminded: new Set() });
@@ -892,4 +892,57 @@ test('a cd that may not have run holds only within its && chain; payloads the ou
   // The shell runs these in the directory or with the value the guard resolves.
   for (const c of ["bash -c 'cd /tmp/x && rm -rf $PWD/a'", "ssh h 'cd /tmp/x && rm -rf $PWD/a'", 'D=/tmp/x; ssh h "rm -rf $D/a"', '$(cd /tmp/x && rm -rf $PWD/a)'])
     assert.equal(decide(c, { env }).action, 'allow', c);
+});
+
+test('git tag -f or -d of a tag no remote has is not a release; anything else still is (G24)', async () => {
+  const calls = [];
+  const run = async (argv) => {
+    calls.push(argv.join(' '));
+    if (argv[3] === 'remote') return 'origin\nupstream\n';
+    if (argv[3] === 'ls-remote') return argv.at(-1) === 'refs/tags/shared' ? 'abc\trefs/tags/shared\n' : argv.at(-1) === 'refs/tags/flaky' ? null : '';
+    return null;
+  };
+  const decideWith = async (c) => evaluateCommand({ command: c, state: fresh(), host: calm, rules, tags: await tagFacts(c, rules, run) });
+  for (const c of ['git tag -f m4-old-a d4759d4', 'git tag -d m4-old-a m4-old-b', 'git status --short | head -3; git tag -f m4-old-a d4759d4 >/dev/null', 'git -C /r tag --delete scratch'])
+    assert.equal((await decideWith(c)).action, 'allow', c);
+  assert.ok(calls.includes('git -C . ls-remote --tags upstream refs/tags/m4-old-a'), 'every remote is asked');
+  for (const c of ['git tag -f shared', 'git tag -d flaky', 'git tag -f v1.2.0', 'git tag -d 1.0.0', 'git tag scratch', 'git tag -a -f x -m y', 'git tag -f m4 && npm version patch', "ssh h 'git tag -d x'", 'git tag -f $T',
+    'git tag -f m4-old-a && git push origin m4-old-a', 'git tag -f m4-old-a && git push --tags', 'git tag -d m4-old-a && gh release create m4-old-a', 'git tag -f m4-old-a && gh api -X POST repos/o/r/git/refs -f ref=refs/tags/m4-old-a'])
+    assert.equal((await decideWith(c)).rule, 'release', c);
+});
+
+test('a secret tool asked only for its usage is not a secret read (G24)', () => {
+  for (const c of ['command -v bws op secret-tool; bws secret get --help 2>&1 | head -30', 'bws secret get -h', 'bw help get', 'op help read', 'gh auth token --help', 'printenv --help'])
+    assert.equal(outcome(c, { state: { reminded: new Set(['read']) } }), 'allow', c);
+  for (const c of ['bws secret get x', 'bws secret get x | grep --help', 'bws secret list && echo --help', 'grep -h TOKEN .env', 'bws secret get x; bws --help', 'env | sort',
+    // Review of #207: a file reader prints the file whatever `--help` says, and a flag's value is no help request.
+    'cat .env --help', 'head .env --help', 'cat ~/.ssh/id_rsa --help', 'cat .netrc --help', 'source .env --help', 'gh auth token --hostname --help'])
+    assert.equal(outcome(c), 'ask:secrets', c);
+});
+
+test('pureRead: plain reads of non-secret files only (G24)', () => {
+  for (const c of ['sed -n 36,56p a/b.md', 'sed -n 5p f', 'cat a b', 'head -n 5 f', 'tail -20 f', 'cd r && cat f', 'less docs/x.md'])
+    assert.equal(pureRead(c), true, c);
+  for (const c of ["sed -n 's/a/b/w o' f", 'sed -n 1,5p', 'sed 1p f', 'cat', 'cat -', 'cat a > b', 'cat a | sh', 'cat "a b"', 'cat $F', 'cat *.md', 'cat .env', 'cat .env.local', 'cat ~/.netrc',
+    'head ~/.ssh/known_hosts', 'cat k.pem', 'cat my-secrets.txt', 'cat token.go', 'cat /dev/zero', 'cd ~/.ssh && cat config', 'cd a; cat f', 'cd a && cd b && cat f', 'grep x f', 'cat a && rm b',
+    // Review of #207: outside the working tree goes to the harness's own prompt, and more secret names.
+    'cd /r && cat f', 'cat /etc/hosts', 'cat ~/.config//gh/hosts.yml', 'cd ~/.config/ && cat gh/hosts.yml', 'cat //proc/self/environ', 'cd / && cat proc/self/environ',
+    'cat a/../b', 'cat a//b', 'cat ~/.codex/auth.json', 'cat terraform.tfstate', 'cat prod.tfvars', 'cat prod.env', 'cat .git/config', 'cat .zsh_history',
+    // Round 2: Windows drives and PowerShell's env: drive, and the cd dir joined to the path.
+    'cat C:/Users/me/.config/glab-cli/config.yml', 'more C:/Users/me/AppData/Roaming/gh/hosts.yml', 'cd C:/Users/me && cat .claude.json', 'cat env:ANTHROPIC_API_KEY', 'cat a\\b', 'cd .config && cat gh/hosts.yml'])
+    assert.equal(pureRead(c), false, c);
+});
+
+test('F4 cmdClass: a rule maps to its family, a command to its program family; never command text', () => {
+  for (const group of ['skills', 'files', 'deny', 'risky']) for (const r of rules[group]) assert.notEqual(cmdClass(r.id, ''), 'other', r.id);
+  assert.equal(cmdClass('host', ''), 'host');
+  assert.equal(cmdClass('rm', 'rm -rf x'), 'delete');
+  assert.equal(cmdClass('secrets', ''), 'secrets');
+  assert.equal(cmdClass('no-such-rule', ''), 'other');
+  assert.equal(cmdClass(null, 'cd /x && git status'), 'git');
+  assert.equal(cmdClass(null, 'FOO=1 /usr/bin/make check'), 'build');
+  assert.equal(cmdClass(null, 'some-private-tool --flag'), 'other');
+  assert.equal(cmdClass(null, ''), 'other');
+  for (const c of ['constructor x', 'toString', '__proto__ a', 'hasOwnProperty']) assert.equal(cmdClass(null, c), 'other', c);
+  assert.equal(cmdClass('constructor', ''), 'other');
 });

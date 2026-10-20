@@ -7,6 +7,7 @@ import { fallbackDataDir } from './data.mjs'
 import { handle, hostFacts, pythonManager, run } from './guard.mjs'
 import { lintFile } from './lint.mjs'
 import { stopCheck } from './stop.mjs'
+import { cmdClass } from '../core/engine.mjs'
 import { emit } from '../core/otel.mjs'
 import { recordAttrs } from './telemetry.mjs'
 
@@ -53,7 +54,7 @@ export function createGuard({ harness, noAsk = false, dataDir = DATA_DIR, deps =
     prompt: ({ sessionId, cwd, prompt }) => call({ hook_event_name: 'UserPromptSubmit', session_id: sessionId, cwd, prompt }),
     sessionEnd: ({ sessionId }) => call({ hook_event_name: 'SessionEnd', session_id: sessionId }),
     // The answer to an ask the harness showed itself (pi's confirm): allow, deny, or unavailable with no UI.
-    askResult: ({ sessionId, cwd, tool, result, waitMs, via }) => Promise.resolve(d.emit('guard.ask_result', { result, wait_ms: waitMs, via, tool, session_id: sessionId }, cwd)).catch(() => {}),
+    askResult: ({ sessionId, cwd, tool, command, result, waitMs, via }) => Promise.resolve(d.emit('guard.ask_result', { result, wait_ms: waitMs, via, tool, cmd_class: command ? cmdClass(null, command) : 'tool', session_id: sessionId }, cwd)).catch(() => {}),
     // Lint findings for an edit, or null.
     postTool({ cwd, tool, input }) {
       try {
@@ -66,7 +67,7 @@ export function createGuard({ harness, noAsk = false, dataDir = DATA_DIR, deps =
     // Async: make runs detached, so the harness's event loop keeps going meanwhile.
     async stop({ cwd, active }) {
       try {
-        const out = await stopCheck({ cwd, stop_hook_active: active }, d.spawnSync, { report: (attrs) => void d.emit('guard.stop', attrs, cwd) })
+        const out = await stopCheck({ cwd, stop_hook_active: active }, d.spawnSync, { report: (attrs) => void d.emit('guard.stop', { ...attrs, cmd_class: 'stop' }, cwd) })
         return out?.decision === 'block' ? out.reason : null
       } catch {
         return null

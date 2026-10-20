@@ -13,7 +13,7 @@ export default function guardExtension(pi, deps) {
     const d = await guard.preTool({ sessionId: sessionOf(ctx), cwd: ctx.cwd, tool: String(event.toolName).toLowerCase(), input: event.input ?? {} })
     if (d.decision === 'deny') return { block: true, reason: d.reason }
     if (d.decision === 'ask') {
-      const ask = { sessionId: sessionOf(ctx), cwd: ctx.cwd, tool: String(event.toolName) }
+      const ask = { sessionId: sessionOf(ctx), cwd: ctx.cwd, tool: String(event.toolName), command: event.input?.command }
       if (!ctx.hasUI) {
         await guard.askResult({ ...ask, result: 'unavailable', via: 'no-ui' })
         return { block: true, reason: `${d.reason}\nNo UI to confirm this (print or JSON mode), so the command was not run: ask the user to run it.` }

@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { commandHash, failedTarget, guardVersion, harnessName, recordAttrs, repoName, scrub } from './telemetry.mjs'
+import { commandHash, failedTarget, guardVersion, harnessName, recordAttrs, repoName, repoSlug, scrub } from './telemetry.mjs'
 
 test('harnessName: the --harness flag wins, then the data dir each harness sets', () => {
   assert.equal(harnessName(['node', 'stop.mjs', '--harness=codex'], { CLAUDE_PLUGIN_DATA: '/d' }), 'codex')
@@ -19,13 +19,32 @@ test('recordAttrs: harness, guard version and repo only when a record will be se
   assert.match(r.guard_version, /^\d+\.\d+\.\d+$/)
 })
 
-test('repoName: the git top level basename, once per directory; null outside git', () => {
+test('repoName: owner/name of the origin remote, else the first remote, once per directory; null outside git', () => {
   let calls = 0
-  const run = () => (calls++, '/Users/me/src/harness\n')
-  assert.equal(repoName('/x/y', run), 'harness')
-  assert.equal(repoName('/x/y', run), 'harness')
+  const run = (_, args) => (calls++, args.join(' ') === 'remote get-url origin' ? 'git@github.com:acme/widgets.git\n' : '')
+  assert.equal(repoName('/x/y', run), 'acme/widgets')
+  assert.equal(repoName('/x/y', run), 'acme/widgets')
   assert.equal(calls, 1)
+  const noOrigin = (_, args) => {
+    if (args[2] === 'origin') throw new Error('no origin')
+    return args[0] === 'remote' && args.length === 1 ? 'upstream\n' : 'https://token@example.com/acme/tools\n'
+  }
+  assert.equal(repoName('/z', noOrigin), 'acme/tools')
   assert.equal(repoName('/nowhere', () => { throw new Error('not a repo') }), null)
+})
+
+test('repoSlug: owner/name only, never host, user or token', () => {
+  assert.equal(repoSlug('https://github.com/acme/widgets.git'), 'acme/widgets')
+  assert.equal(repoSlug('https://x-access-token:abc@github.com/acme/widgets'), 'acme/widgets')
+  assert.equal(repoSlug('git@github.com:acme/widgets.git'), 'acme/widgets')
+  assert.equal(repoSlug('ssh://git@host:22/acme/widgets/'), 'acme/widgets')
+  assert.equal(repoSlug('https://dev.azure.com/org/proj/_git/widgets'), 'proj/widgets')
+  assert.equal(repoSlug('https://gitlab.com/group/sub/widgets.git'), 'sub/widgets')
+  // Local or host-only remotes carry directory names, a host or a port, never an owner/name: null.
+  for (const url of ['/srv/repos/widgets', '/Users/alice/repo', 'file:///home/bob/work/client/app.git', '../sibling/repo', 'https://git.internal.example/proj.git', 'ssh://git@host.example:2222/proj.git', 'C:/Users/alice/repo', 'https://h/o/r/..'])
+    assert.equal(repoSlug(url), null, url)
+  assert.equal(repoSlug(''), null)
+  assert.equal(repoSlug(null), null)
 })
 
 test('scrub: secrets and long tokens are masked, the line is capped', () => {
