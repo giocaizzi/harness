@@ -126,6 +126,18 @@ test('stop: a timeout is deferred, not blocked, and never marks green', async ()
   }
 })
 
+test('stop: GUARD_STOP_CHECK=force runs it on a strained host', async () => {
+  process.env.CLAUDE_PLUGIN_DATA = tmp()
+  process.env.GUARD_STOP_CHECK = 'force'
+  try {
+    const out = await stopCheck({ cwd: '/r' }, stopRun([], { status: 2 }), { strain: () => 'load 45' })
+    assert.equal(out.decision, 'block')
+  } finally {
+    delete process.env.CLAUDE_PLUGIN_DATA
+    delete process.env.GUARD_STOP_CHECK
+  }
+})
+
 test('stop: GUARD_STOP_CHECK=off disables it', async () => {
   process.env.GUARD_STOP_CHECK = 'off'
   try {
