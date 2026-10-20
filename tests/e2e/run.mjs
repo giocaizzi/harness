@@ -144,7 +144,9 @@ async function codexOnly(h, env, root) {
   writeFileSync(join(dir, 'Makefile'), 'check:\n\t@echo e2e-check-failed; exit 1\n')
   const stop = await seen('echo hi', dir, { ...env, GUARD_STOP_CHECK: 'on' }, 'e2e-check-failed')
   if (stop) failures.push(`stop: the failed check did not reach the model\n${stop}`)
-  const hint = await seen('pytest -q', project(root), env, 'Skill hint (')
+  // Through the heavy wrapper (the guard's documented bypass): on a loaded CI runner the host deny would otherwise
+  // block the bare `pytest` before the hint is sent.
+  const hint = await seen('scripts/heavy.sh pytest -q', project(root), env, 'Skill hint (')
   if (hint) failures.push(`hint: the pytest skill hint did not reach the model\n${hint}`)
   return failures
 }
