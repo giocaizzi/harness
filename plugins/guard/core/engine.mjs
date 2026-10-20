@@ -757,25 +757,23 @@ export function pureRead(command) {
 
 const hint = (rule) => `Skill hint (${rule.why}): load ${rule.skills.map((s) => `\`${s}\``).join(' or ')} if this task is that work.`;
 
-// A command that adds the factory approval label: `gh issue|pr edit --add-label` or `create --label` naming it, or a
-// `gh api` write that names it (or a `--input` body sent to a labels endpoint). Labels match ignoring case, like GitHub's.
-// A value built in the shell (`$L`) is out of sight; the runtime's own check of who applied the label is the backstop.
+// A command that adds the factory approval label: `gh issue|pr edit|create` with an add-label flag and the label named, or a
+// `gh api` write that names it, or sends a `--input`/`@file` body to a labels or issue endpoint. Quotes and backslashes
+// are dropped first (`agent-o'k'`), and labels match ignoring case, like GitHub's. A value built by the shell (`$L`,
+// `$(echo …)` of a variable) stays out of sight; docs/guard.md lists the limits.
 export function addsApprovalLabel(command, label) {
   const want = String(label).trim().toLowerCase();
   if (!want) return false;
-  const text = command.replace(/\\\r?\n/g, ' ');
-  if (/\bgh\b[^;|&\n]*?\b(?:issue|pr)\s+(?:edit|create)\b/.test(text)) {
-    for (const m of text.matchAll(/(?:--add-label|--label|(?<![\w-])-l)(?:=|\s+)("[^"]*"|'[^']*'|[^\s;|&]+)/g)) {
-      if (m[1].replace(/^["']|["']$/g, '').split(',').some((l) => l.trim().toLowerCase() === want)) return true;
-    }
-  }
+  const text = command.replace(/\\\r?\n/g, ' ').replace(/['"\\]/g, '');
+  const esc = want.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const named = new RegExp(`(?<![\\w-])${esc}(?![\\w-])`, 'i');
   for (const seg of text.split(/[;|&\n]+/)) {
-    if (!/\bgh\s+api\b/.test(seg) || /(?:-X|--method)[\s=]*GET\b/i.test(seg)) continue;
-    const esc = want.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const named = new RegExp(`(?<![\\w-])${esc}(?![\\w-])`, 'i').test(seg);
-    const writes = /(?:\s(?:-f|-F|--field|--raw-field)\b|\s(?:-X|--method)[\s=]*(?:POST|PUT|PATCH)\b)/i.test(seg);
-    if (named && writes) return true;
-    if (/\s--input\b/.test(seg) && /\/labels\b/.test(seg)) return true;
+    if (/\bgh\b[^;|&\n]*?\b(?:issue|pr)\s+(?:edit|create)\b/.test(seg) && /(?:--add-label|--label|(?<![\w-])-l)(?:=|\s)/.test(seg) && named.test(seg)) return true;
+    if (!/\bgh\s+api\b/.test(seg) || /\/comments\b/.test(seg)) continue;
+    const writes = /\s(?:-f|-F|--field|--raw-field)\b|\s(?:-X|--method)[\s=]*(?:POST|PUT|PATCH)\b/i.test(seg);
+    if (named.test(seg) && writes) return true;
+    // A body the guard cannot read: sent to the labels endpoint, or to the issue itself (PATCH carries `labels`).
+    if (/\s--input\b|\s-F\s*labels(?:\[\])?=@/.test(seg) && /\/(?:labels|issues\/\d+)(?:\s|$)/.test(seg)) return true;
   }
   return false;
 }

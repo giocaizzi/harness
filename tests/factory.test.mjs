@@ -142,6 +142,7 @@ test('verifier: the definition grants exactly one write, its verdict file, as th
 const COMMENTS = 'plugins/factory/skills/ticket-run/references/comments.md'
 const editCheck = (timeline, edit, approvers = ['owner'], label = 'agent-ok') => {
   const block = read(COMMENTS).split('## Edited after approval')[1].split('```')[1]
+  assert.equal(spawnSync('bash', ['-n'], { input: block }).status, 0, 'the documented snippet must parse in bash')
   assert.match(block, /gh api graphql/)
   assert.match(block, /lastEditedAt editor\{login\}/)
   assert.match(block, /event == "renamed"/)
@@ -159,6 +160,10 @@ test('Gate edit check: a body or title a non-approver edited after the approval 
   assert.equal(editCheck(approved, { lastEditedAt: '2026-01-01T00:00:00Z', editor: { login: 'stranger' } }), 'ok', 'edited before the approval')
   assert.match(editCheck(approved, { lastEditedAt: '2026-01-03T00:00:00Z', editor: { login: 'stranger' } }), /^refuse: body edited after approval by stranger/)
   assert.match(editCheck(approved, { lastEditedAt: '2026-01-03T00:00:00Z', editor: null }), /^refuse: body edited after approval by an unknown editor/, 'editor undeterminable')
+  for (const broken of [{ message: 'Bad credentials', status: '401' }, { errors: [{ message: 'x' }] }, {}, []]) assert.match(editCheck(approved, broken), /^refuse: the last edit of the body could not be read/, JSON.stringify(broken))
+  assert.match(editCheck(approved, { lastEditedAt: '2026-01-02T00:00:00Z', editor: { login: 'stranger' } }), /^refuse: body edited/, 'same second as the approval')
+  const before = [{ event: 'renamed', actor: { login: 'stranger' }, created_at: '2026-01-01T00:00:00Z' }, ...approved]
+  assert.equal(editCheck(before, { lastEditedAt: null, editor: null }), 'ok', 'a rename before the approval')
   assert.match(editCheck(approved, null), /^refuse: the last edit of the body could not be read/)
   assert.equal(editCheck(approved, { lastEditedAt: '2026-01-03T00:00:00Z', editor: { login: 'OWNER' } }), 'ok', 'an approver\'s edit')
   const relabeled = [...approved, labeled('owner', '2026-01-04T00:00:00Z', 'unlabeled'), labeled('owner', '2026-01-05T00:00:00Z')]

@@ -246,9 +246,9 @@ const PLAIN_DIR = /^[\w.@%+=:,\\/~-]+$/
 export function approvalLabel(cwd) {
   for (let dir = resolve(cwd || '.'); ; dir = dirname(dir)) {
     try {
-      const labels = readFileSync(join(dir, '.factory', 'config.yaml'), 'utf8').match(/^labels:[ \t]*\n((?:[ \t]+.*(?:\n|$)|[ \t]*\n)*)/m)
-      const name = labels?.[1].match(/^[ \t]+approval:[ \t]*["']?([^"'\s#]+)/m)
-      return name ? name[1] : rules.factory.approval
+      const labels = readFileSync(join(dir, '.factory', 'config.yaml'), 'utf8').replace(/\r/g, '').match(/^labels:[ \t]*\n((?:[ \t]+.*(?:\n|$)|[ \t]*\n)*)/m)
+      const name = labels?.[1].match(/^[ \t]+approval:[ \t]*(?:"([^"]+)"|'([^']+)'|([^\s#]+))/m)
+      return name ? (name[1] ?? name[2] ?? name[3]) : rules.factory.approval
     } catch {}
     if (dirname(dir) === dir) return rules.factory.approval
   }
