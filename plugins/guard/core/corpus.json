@@ -239,5 +239,10 @@
   ["git -C x reset --hard", "ask:reset", "CTRL", "probe"],
   ["rm -rf /private/tmp/claude-501/x/scratchpad/*", "allow", "CTRL", "probe"],
   ["git status", "allow", "CTRL", "control"],
-  ["ls -la", "allow", "CTRL", "control"]
+  ["ls -la", "allow", "CTRL", "control"],
+  ["cd /tmp/guard-x && bash -c \"cd /Users/me/repo && rm -rf \\$PWD\"", "ask:rm", "G23", "review round 2: escaped $PWD in an expanded payload is the inner shell's"],
+  ["D=/tmp/guard-x; bash -c \"D=/Users/me/repo; rm -rf \\$D\"", "ask:rm", "G23", "review round 2: escaped $D is the payload's own"],
+  ["cd /tmp/guard-x && eval \"cd /Users/me/repo; rm -rf \\$PWD/src\"", "ask:rm", "G23", "review round 2: escaped $PWD in eval"],
+  ["rm -rf /tmp/guard-x; cd /tmp/guard-x; rm -rf src", "ask:rm", "G23", "review round 2: the cd may fail after its dir was removed"],
+  ["mv /tmp/guard-x /tmp/guard-y; cd /tmp/guard-x; rm -rf src", "ask:rm", "G23", "review round 2: the cd may fail after its dir was moved"]
 ]

@@ -251,27 +251,31 @@ function assign(cmd, vars, env, pwd) {
 // the directory it runs in (a remote payload starts in no known directory, without this machine's HOME). A command
 // that hands its words to another host or a container (`ssh host rm -rf x`) is judged only through its payload.
 // Each entry: { seg (redirections dropped), code, words, dir, remote, resolve(path) }.
-// A `cd` holds past the end of its chain (`;`, a newline, `&`) only when it surely ran: it starts its chain, or follows
-// only other sure `cd`s there, and its directory exists (`env.dirs`, which the adapter gathers through `cdDirs`). Else
-// a failed `cd x; rm -rf y` would delete `./y`, so the directory becomes UNKNOWN_DIR after the break. Within a chain
+// A `cd` holds past the end of its chain (`;`, a newline, `&`) only when it surely ran: nothing but assignments and
+// other sure `cd`s ran before it in the whole command (`ran`, inherited by payloads), so nothing could have removed or
+// moved its directory first, and that directory exists (`env.dirs`, which the adapter gathers through `cdDirs`). Else
+// a failed `cd x; rm -rf y` (or `rm -rf x; cd x; rm -rf y`) would delete `./y`, so the directory becomes UNKNOWN_DIR
+// after the break. Within a chain
 // (`cd x && rm -rf y`) a failed `cd` stops what follows, so it always holds there.
 // A payload whose text the outer shell expands first (`bash -c "…$X…"`, an ssh command, a heredoc: `p.expanded`)
-// resolves `$NAME` and `$PWD` with the outer values (`frozen`), not with its own assignments and `cd`s.
+// resolves `$NAME` and `$PWD` with the outer values (`frozen`), not with its own assignments and `cd`s; one that also
+// escapes a `\$` for its own shell (`bash -c "D=x; rm -rf \$D"`) resolves neither, so its variables ask.
 // `cds`, when given, collects every directory a `cd` reaches, each taken to exist (see cdDirs).
 const CHAIN_BREAK = new Set([';', '\n', '&']);
 const ABS_DIR = /^(?:\/|[a-z]:[\\/])/i;
-function levelSegments(a, baseDir, remote, env, outer = {}, frozen = null, cds = null) {
+function levelSegments(a, baseDir, remote, env, outer = {}, frozen = null, cds = null, ranBefore = false) {
   const vars = { ...outer };
+  let ran = ranBefore;
   let dir = baseDir;
   let followCd = true;
   let sure = true;
-  let chainSure = true;
+  let chainSure = !ranBefore;
   const out = [];
   for (const [i, cmd] of a.commands.entries()) {
     const seg = cmd.code.replace(/\d*[<>]+(&\d+|\s*[^\s;&|]+)/g, ' ');
     if (i > 0 && CHAIN_BREAK.has(cmd.sep)) {
       if (dir !== baseDir && (!sure || cmd.sep === '&')) dir = UNKNOWN_DIR;
-      chainSure = true;
+      chainSure = !ran;
     }
     // The first subshell, group, `||` or conditional: a later `cd` is not followed, nor an earlier one past it.
     if (followCd && (BRANCH_SEP.has(cmd.sep) || BRANCH_CODE.test(cmd.code))) {
@@ -281,6 +285,7 @@ function levelSegments(a, baseDir, remote, env, outer = {}, frozen = null, cds =
     const pwd = frozen ? frozen.pwd : ABS_DIR.test(dir) && PLAIN_PATH.test(dir) ? dir : undefined;
     const snapshot = frozen ? frozen.vars : { ...vars };
     const resolve = (p) => expandPath(p, snapshot, env, pwd);
+    const ranHere = ran;
     if (assign(cmd, vars, env, pwd)) {
       // nothing runs
     } else if (CD.test(seg)) {
@@ -294,11 +299,12 @@ function levelSegments(a, baseDir, remote, env, outer = {}, frozen = null, cds =
       delete vars.OLDPWD;
     } else {
       chainSure = false;
+      ran = true;
       if (!cmd.payloads.some((p) => p.remote && p.kind !== 'subst')) out.push({ seg: gitPlain(seg), code: cmd.code, words: cmd.words, dir: gitDirs(seg).map(resolve).reduce(inDir, dir), remote, resolve });
     }
     for (const p of cmd.payloads) {
-      const inner = p.expanded ? { vars: snapshot, pwd } : frozen;
-      out.push(...(p.remote ? levelSegments(p.analysis, REMOTE_DIR, true, {}, {}, inner) : levelSegments(p.analysis, dir, remote, env, snapshot, inner, cds)));
+      const inner = p.expanded === 'escaped' ? { vars: {}, pwd: undefined } : p.expanded ? { vars: snapshot, pwd } : frozen;
+      out.push(...(p.remote ? levelSegments(p.analysis, REMOTE_DIR, true, {}, {}, inner) : levelSegments(p.analysis, dir, remote, env, snapshot, inner, cds, ranHere)));
     }
   }
   return out;

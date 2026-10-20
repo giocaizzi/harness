@@ -294,8 +294,13 @@ const requote = (words) => words.map((w) => (/^[\w./@%+=:,~-]+$/.test(w) ? w : `
 // `opaque` when it runs code the guard cannot read. `prev` is the command before it in the same pipeline.
 // `expanded`: this shell expands variables in the text before it runs (`bash -c "…$X…"`, an ssh command line, a
 // heredoc or echo piped into a shell), so `$X` there is this level's value, not one the payload sets. Only a
-// single-quoted `-c`, eval or ssh word, or a `$(…)` (which runs in a subshell), is not.
-const expands = (ws) => ws.some((w) => /[$`]/.test(w.raw.replace(/'[^']*'/g, '')))
+// single-quoted `-c`, eval or ssh word, or a `$(…)` (which runs in a subshell), is not. `'escaped'` when the text also
+// holds an escaped `\$` or backtick, which the payload's own shell expands: then neither level's values are known.
+const escapes = (text) => (/\\[$`]/.test(text) ? 'escaped' : true)
+const expands = (ws) => {
+  const outside = ws.map((w) => w.raw.replace(/'[^']*'/g, '')).join(' ')
+  return /[$`]/.test(outside) && escapes(outside)
+}
 function payloadsOf(cmd, prev) {
   const out = []
   let opaque = false
@@ -323,14 +328,14 @@ function payloadsOf(cmd, prev) {
     }
     if (c && args[k]) out.push({ kind: 'shell', text: args[k].val, expanded: expands([args[k]]) })
     else if (!c && !args.slice(k).length) {
-      for (const body of cmd.heredocs) out.push({ kind: 'shell', text: body, expanded: true })
+      for (const body of cmd.heredocs) out.push({ kind: 'shell', text: body, expanded: escapes(body) })
       if (prev) {
         const from = commandWords(prev.words)
         const fromName = from[0] ? basename(from[0].val) : ''
         if (prev.decoder) opaque = true
-        else if (fromName === 'echo') out.push({ kind: 'shell', text: from.slice(1).filter((w) => !/^-[neE]+$/.test(w.val)).map((w) => w.val).join(' '), expanded: true })
-        else if (fromName === 'printf') out.push({ kind: 'shell', text: ansiC(from[1]?.val ?? ''), expanded: true })
-        else if (fromName === 'cat' && prev.heredocs.length) for (const body of prev.heredocs) out.push({ kind: 'shell', text: body, expanded: true })
+        else if (fromName === 'echo') out.push({ kind: 'shell', text: from.slice(1).filter((w) => !/^-[neE]+$/.test(w.val)).map((w) => w.val).join(' '), expanded: escapes(from.map((w) => w.raw).join(' ')) })
+        else if (fromName === 'printf') out.push({ kind: 'shell', text: ansiC(from[1]?.val ?? ''), expanded: escapes(from[1]?.raw ?? '') })
+        else if (fromName === 'cat' && prev.heredocs.length) for (const body of prev.heredocs) out.push({ kind: 'shell', text: body, expanded: escapes(body) })
       }
     }
   } else if (name === 'eval') {
@@ -348,7 +353,7 @@ function payloadsOf(cmd, prev) {
     const host = args[k]?.val
     const rest = args.slice(k + 1).map((w) => w.val).join(' ')
     if (host && rest) out.push({ kind: 'ssh', text: rest, remote: true, host: host.replace(/^.*@/, ''), expanded: expands(args.slice(k + 1)) })
-    else if (host) for (const body of cmd.heredocs) out.push({ kind: 'ssh', text: body, remote: true, host: host.replace(/^.*@/, ''), expanded: true })
+    else if (host) for (const body of cmd.heredocs) out.push({ kind: 'ssh', text: body, remote: true, host: host.replace(/^.*@/, ''), expanded: escapes(body) })
   } else if (['docker', 'podman', 'nerdctl', 'kubectl', 'oc'].includes(name)) {
     let k = args.findIndex((w) => w.val === 'exec')
     if (k >= 0) {

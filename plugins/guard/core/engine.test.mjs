@@ -856,8 +856,8 @@ test('a cd that may not have run holds only within its && chain; payloads the ou
   for (const c of [
     'cd /tmp/x; rm -rf src',
     'cd /tmp/x\nrm -rf src',
-    'cd /Users/me/repo && git pull; cd /tmp/x; rm -rf src',
     'cd /tmp/nope && rm -rf src',
+    'cd /tmp/x; rmdir /tmp/x/a; rm -rf src',
   ])
     assert.equal(decide(c, { env }).action, 'allow', c);
   for (const c of [
@@ -878,6 +878,15 @@ test('a cd that may not have run holds only within its && chain; payloads the ou
     'ssh h "cd /tmp/x && rm -rf $PWD"',
     'D=/Users/me/repo; bash -c "D=/tmp/x; rm -rf $D"',
     'PWD=/tmp/y; cd /Users/me/repo && rm -rf $PWD/src',
+    // Round 2: something ran before the cd (it may have removed its directory), or the payload escapes `\$` for itself.
+    'cd /Users/me/repo && git pull; cd /tmp/x; rm -rf src',
+    'rm -rf /tmp/x; cd /tmp/x; rm -rf src',
+    'mv /tmp/x /tmp/y; cd /tmp/x; rm -rf src',
+    "rm -rf /tmp/x; bash -c 'cd /tmp/x; rm -rf src'",
+    'cd /tmp/x && bash -c "cd /Users/me/repo && rm -rf \\$PWD"',
+    'D=/tmp/x; bash -c "D=/Users/me/repo; rm -rf \\$D"',
+    'cd /tmp/x && eval "cd /Users/me/repo; rm -rf \\$PWD/src"',
+    'D=/tmp/x; echo "rm -rf \\$D/src" | bash',
   ])
     assert.notEqual(decide(c, { env }).action, 'allow', c);
   // The shell runs these in the directory or with the value the guard resolves.
