@@ -18,7 +18,7 @@ One ticket, one session, one worktree.
 1. **Gate and claim:** approved by an approver, ready (acceptance criteria and a proof command), not claimed by another run; then claim it ([comments.md](references/comments.md#gate)).
 2. **Resume** a parked ticket only on an approver's answer ([comments.md](references/comments.md#answers)).
 3. **Plan comment** first. XS and S start right after it; M and larger wait for the owner's OK.
-4. **Work** in a worktree (`wt`), committing as you go and keeping the run's checklist current ([done.md](references/done.md#checklist)). Decide what belongs to the ticket with the [fold-in test](references/fold-in-test.md), and log every call.
+4. **Work** in a worktree (`wt`), committing as you go and keeping the run's checklist current ([done.md](references/done.md#checklist)). Decide what belongs to the ticket with the [fold-in test](references/fold-in-test.md), and log the calls the plan does not cover.
 5. **Questions** go on the ticket and park it ([comments.md](references/comments.md#questions-and-parking)).
 6. **Finish:** verifier, ship, land, deploy, record ([done.md](references/done.md)).
 
