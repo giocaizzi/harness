@@ -220,6 +220,8 @@ Use semantic versioning (MAJOR.MINOR.PATCH) at three levels:
 
 `validate.py` flags any mismatch between per-plugin Claude `plugin.json`, Copilot `plugin.json`, the marketplace entry, and the root `pyproject.toml` repo version.
 
+**Parallel PRs on one plugin.** Two open PRs must never bump the same plugin to the same version: an installed cache updates only on a version change, so the second merge would ship under a version users already have. Bump as the last commit before pushing, re-check `main`'s version of the plugin right before merging (`git fetch && git show origin/main:plugins/<plugin>/.claude-plugin/plugin.json`), and when a parallel PR took that number first, merge `main` in and take the next free version.
+
 ---
 
 ## Installation reference
