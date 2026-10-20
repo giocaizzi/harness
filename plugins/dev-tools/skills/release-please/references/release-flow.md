@@ -13,7 +13,10 @@
    - rewrites `CHANGELOG.md`
    - creates tag `vX.Y.Z` (`<package>-vX.Y.Z` in monorepos)
    - publishes a GitHub Release pointing at that tag
-5. Downstream workflows triggered by the `v*` tag (Docker build, npm/PyPI publish, deployment) take over.
+5. Publish and deploy (Docker build, npm/PyPI publish, deployment) take over. A tag or release that release-please creates with the default `GITHUB_TOKEN` does **not** start other workflows: events made with that token create no new workflow runs, except `workflow_dispatch` and `repository_dispatch` ([GitHub docs](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow)). So an `on: push: tags: v*` or `on: release` workflow stays silent. What works:
+   - **A job in the same workflow** gated on the action's outputs: `needs: release-please` and `if: ${{ needs.release-please.outputs.release_created }}` (monorepos: `<path>--release_created`), using `tag_name` from the outputs.
+   - **A GitHub App installation token or a fine-grained PAT** passed as the action's `token`, so the tag and release it creates do trigger `push: tags` and `release` workflows. Store it as a secret (`secrets-handling`).
+   - **An explicit dispatch** from the release job (`gh workflow run <file> --ref <tag>`), which runs even with `GITHUB_TOKEN` when the job has `actions: write`.
 
 Do not hand-edit `CHANGELOG.md`; add manual notes through release-please-supported inputs.
 

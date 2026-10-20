@@ -3,7 +3,7 @@ name: release-please
 description: Working in a repo that uses release-please (release-please-config.json, manifest, or a Release PR) for automated versioning, changelogs and tags. Use when releasing, bumping versions, or editing release-please config.
 ---
 
-release-please parses Conventional Commits on the default branch and maintains one Release PR. Merging that PR is the release: it bumps tracked version files, regenerates `CHANGELOG.md`, tags `vX.Y.Z` (`<package>-vX.Y.Z` in monorepos) and creates a GitHub Release. Downstream publish/deploy hangs off the tag, not the PR. It depends on correctly typed commits; see `conventional-commits`.
+release-please parses Conventional Commits on the default branch and maintains one Release PR. Merging that PR is the release: it bumps tracked version files, regenerates `CHANGELOG.md`, tags `vX.Y.Z` (`<package>-vX.Y.Z` in monorepos) and creates a GitHub Release. Downstream publish/deploy hangs off the release, not the PR; with the default `GITHUB_TOKEN` the tag starts no other workflow, so gate a job on the action's `release_created` output or use an App token ([references/release-flow.md](references/release-flow.md)). It depends on correctly typed commits; see `conventional-commits`.
 
 ## Files and ownership
 
