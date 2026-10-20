@@ -2,13 +2,13 @@
 
 Runbook for every supported harness. What each one gets: [compatibility.md](compatibility.md). The hooks need `node` 22+ on PATH; everything works on macOS, Linux and Windows.
 
-Plugins: `api`, `python`, `javascript`, `dev-tools`, `guard`, `hud`, `sounds` (`hud` does something in Claude Code and pi, its status line also in Copilot CLI; `sounds` in Claude Code, pi, Codex and opencode).
+Plugins: `api`, `python`, `javascript`, `dev-tools`, `guard`, `hud`, `sounds`, `factory` (`hud` does something in Claude Code and pi, its status line also in Copilot CLI; `sounds` in Claude Code, pi, Codex and opencode).
 
 ## Claude Code
 
 ```bash
 claude plugin marketplace add giocaizzi/harness
-claude plugin install dev-tools@giocaizzi-harness   # and api, python, javascript, guard, hud, sounds
+claude plugin install dev-tools@giocaizzi-harness   # and api, python, javascript, guard, hud, sounds, factory
 ```
 
 Update: `claude plugin marketplace update giocaizzi-harness`; an installed plugin updates when its version changes. Check: `/plugin` lists them, `/agents` shows `scout`.
@@ -32,7 +32,7 @@ Plugins (skills, the guard's hooks and sounds' Stop hook) come from the marketpl
 
 ```bash
 codex plugin marketplace add giocaizzi/harness
-codex plugin add dev-tools@giocaizzi-harness        # and api, python, javascript, guard, sounds
+codex plugin add dev-tools@giocaizzi-harness        # and api, python, javascript, guard, sounds, factory
 git clone https://github.com/giocaizzi/harness ~/.local/share/giocaizzi-harness
 make -C ~/.local/share/giocaizzi-harness install HARNESS=codex   # agents -> ~/.codex/agents, guard prompt rules -> ~/.codex/rules ($CODEX_HOME)
 ```

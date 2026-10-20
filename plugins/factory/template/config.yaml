@@ -1,0 +1,61 @@
+# .factory/config.yaml: what the factory skills (ticket-run, factory-status) read about this repo at run time.
+# Copy it to .factory/config.yaml in the target repo and replace every <placeholder>.
+# Every key is documented in docs/factory.md of github.com/giocaizzi/harness.
+version: 1
+
+# GitHub logins whose actions count as the owner's: applying the approval label and answering questions.
+approvers:
+  - <github-login>
+
+labels:
+  approval: agent-ok
+  needs_owner: needs-owner
+  needs_grooming: needs-grooming
+
+# Hidden first line of every comment the skills post, so agent comments made under the owner's account are told apart.
+marker: "<!-- factory -->"
+
+# Where a ticket's size comes from. With a prefix, a label such as `size: S` sets it; without one, the plan estimates it.
+size_label_prefix: "size: "
+
+# Optional: a GitHub Project whose status field mirrors the run. Delete the block when the repo has no board.
+board:
+  owner: <org-or-user>
+  project: <project-number>
+  status_field: Status
+  status:
+    in_progress: In progress
+    blocked: Blocked
+    backlog: Backlog
+
+# The repo's components: the paths each owns and the checks that prove a change to it.
+components:
+  <component>:
+    paths:
+      - "<dir>/**"
+    checks:
+      - "make -C <dir> check"
+    # Optional: what happens after a merge to the default branch. Delete when merging does not deploy.
+    deploy:
+      wait: "<command that blocks until the deploy of $SHA has finished>"
+      verify:
+        - "<command that proves the deployed revision serves $SHA and behaves>"
+      rollback: "<command, or: revert PR>"
+
+# Risk tiers, lowest first. A change takes the highest tier any of its paths matches; unmatched paths are medium.
+# merge: auto arms auto-merge once checks pass; owner leaves the PR for the owner to merge.
+risk:
+  - tier: low
+    paths:
+      - "docs/**"
+      - "**/*.md"
+    merge: auto
+  - tier: medium
+    paths:
+      - "<dir>/migrations/**"
+    merge: owner
+  - tier: high
+    paths:
+      - ".github/**"
+      - "<infra-dir>/**"
+    merge: owner
