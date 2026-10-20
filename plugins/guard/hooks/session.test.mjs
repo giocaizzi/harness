@@ -1,14 +1,19 @@
-import { test } from 'node:test'
+import { after, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { fingerprint, runDetached, stopCheck, takeLock } from './stop.mjs'
 import { lintFile } from './lint.mjs'
 import { harnessPid, keepAwake, keeperArgv } from './awake.mjs'
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'guard-test-'))
+// Lint skips files in a temp dir, so lint tests write theirs next to this file, removed afterwards.
+const LINT_ROOT = fileURLToPath(new URL('./.lint-test/', import.meta.url))
+const lintTmp = () => (mkdirSync(LINT_ROOT, { recursive: true }), mkdtempSync(join(LINT_ROOT, 'x-')))
+after(() => rmSync(LINT_ROOT, { recursive: true, force: true }))
 
 // The stop tests expect the check to run; a developer's own GUARD_STOP_CHECK=off must not leak in.
 delete process.env.GUARD_STOP_CHECK
@@ -131,7 +136,7 @@ test('stop: GUARD_STOP_CHECK=off disables it', async () => {
 })
 
 test('lint: shellcheck findings come back as context; clean, missing tool or other files pass', () => {
-  const dir = tmp()
+  const dir = lintTmp()
   const sh = join(dir, 'a.sh')
   const md = join(dir, 'a.md')
   writeFileSync(sh, 'echo $x\n')
@@ -150,7 +155,7 @@ test('lint: shellcheck findings come back as context; clean, missing tool or oth
 })
 
 test('lint: VS Code and apply_patch spellings of the edited files', () => {
-  const dir = tmp()
+  const dir = lintTmp()
   const sh = join(dir, 'a.sh')
   const findings = () => ({ status: 1, stdout: 'SC2086\n' })
   writeFileSync(sh, 'echo $x\n')
@@ -167,7 +172,7 @@ test('lint: VS Code and apply_patch spellings of the edited files', () => {
 })
 
 test('lint: .ps1 goes to PSScriptAnalyzer through pwsh, powershell on Windows', () => {
-  const dir = tmp()
+  const dir = lintTmp()
   const ps1 = join(dir, 'a.ps1')
   writeFileSync(ps1, 'Write-Host x\n')
   let used
@@ -248,4 +253,19 @@ test("stop: of two stops taking over a dead holder's lock, only one wins", () =>
   assert.equal(second, null)
   first()
   assert.equal(existsSync(file), false)
+})
+
+test('lint: Codex apply_patch (`command`) is read; zsh scripts and temp files are skipped', () => {
+  const dir = lintTmp()
+  const findings = () => ({ status: 1, stdout: 'SC2086\n' })
+  const bash = join(dir, 'b.sh')
+  const zsh = join(dir, 'z.sh')
+  writeFileSync(bash, '#!/usr/bin/env bash\necho $x\n')
+  writeFileSync(zsh, '#!/bin/zsh\necho $x\n')
+  const patch = `*** Begin Patch\n*** Add File: ${bash}\n+y\n*** End Patch\n`
+  assert.match(lintFile({ tool_name: 'apply_patch', tool_input: { command: patch }, cwd: dir }, findings).additionalContext, /b\.sh/)
+  assert.equal(lintFile({ tool_name: 'Write', tool_input: { file_path: zsh } }, findings), null)
+  const scratch = join(tmp(), 's.sh')
+  writeFileSync(scratch, 'echo $x\n')
+  assert.equal(lintFile({ tool_name: 'Write', tool_input: { file_path: scratch } }, findings), null)
 })
