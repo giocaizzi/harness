@@ -93,6 +93,35 @@ test('Claude status line: two lines of `[icon value]` parts', async () => {
   assert.equal(plain(claudeStatusline({}, { user: 'me', host: 'mac', now: 0 })), '┌[ me@mac]\n└[ ~]\n')
 })
 
+test('subagentRows adds model and effort to each agent-panel row', async () => {
+  const { elapsed, modelName, subagentRows } = await import('./statusline.mjs')
+  assert.equal(modelName('claude-opus-5-5'), 'Opus 5.5')
+  assert.equal(modelName('claude-haiku-4-5-20251001'), 'Haiku 4.5')
+  assert.equal(modelName('gpt-x'), 'gpt-x')
+  assert.deepEqual([34_900, 229_000, 4_320_000].map(elapsed), ['34s', '3m 49s', '1h 12m'])
+  const input = {
+    columns: 80,
+    tasks: [
+      { id: 'a', name: 'ticket-103', agentType: 'general-purpose', status: 'running', label: 'Ticket-run #103', startTime: 1000, model: 'claude-sonnet-5-5', effort: 'high', tokenCount: 286_100 },
+      { id: 'b', agentType: 'Explore', status: 'completed', label: 'Find the status line config and its tests', startTime: 0, tokenCount: 40_800 },
+    ],
+  }
+  const rows = subagentRows(input, 230_000).trim().split('\n').map((l) => JSON.parse(l))
+  assert.deepEqual(rows.map((r) => r.id), ['a', 'b'])
+  assert.deepEqual(rows.map((r) => plain(r.content)), [
+    `ticket-103  Ticket-run #103${' '.repeat(9)}Sonnet 5.5 · high · 3m 49s · ↓ 286.1k tokens`,
+    `Explore     Find the status line config and its tests${' '.repeat(13)}↓ 40.8k tokens`,
+  ])
+  assert.ok(rows.every((r) => plain(r.content).length === 80))
+  assert.equal(plain(JSON.parse(subagentRows({ columns: 40, tasks: [input.tasks[1]] }, 0)).content), 'Explore  Find the statu…  ↓ 40.8k tokens')
+  assert.equal(subagentRows({}, 0), '')
+  // An unset effort is the session's; CLAUDE_CODE_EFFORT_LEVEL beats every one.
+  const effortOf = (task, effort) => plain(JSON.parse(subagentRows({ tasks: [task] }, 0, effort)).content)
+  assert.match(effortOf(input.tasks[1], { session: 'xhigh' }), / xhigh · ↓ 40.8k tokens$/)
+  assert.match(effortOf(input.tasks[0], { session: 'xhigh' }), /Sonnet 5.5 · high · /)
+  assert.match(effortOf(input.tasks[0], { forced: 'low', session: 'xhigh' }), /Sonnet 5.5 · low · /)
+})
+
 test('gcpProject reads the active gcloud configuration', async () => {
   const { gcpProject } = await import('./statusline.mjs')
   const { mkdtempSync, mkdirSync, writeFileSync } = await import('node:fs')

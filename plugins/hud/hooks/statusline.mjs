@@ -1,13 +1,13 @@
 // Status lines for both CLIs (`statusLine.command`), one script: `node statusline.mjs claude` for Claude Code's two-line
-// prompt (user, git, GCP, path, model, context, rate-limit windows, cost), no argument for Copilot CLI's token-weather
-// line. Each CLI pipes its session status as JSON on stdin. Copilot's token totals are cumulative and include cache
+// prompt (user, git, GCP, path, model, context, rate-limit windows, cost), `node statusline.mjs subagent` for Claude
+// Code's agent-panel rows (`subagentStatusLine.command`), no argument for Copilot CLI's token-weather line. Each CLI pipes its session status as JSON on stdin. Copilot's token totals are cumulative and include cache
 // reads and writes, so its hit rate is the session's, not the last turn's. No TTL: Copilot has none.
 import { execFileSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
-import { homedir, hostname, userInfo } from 'node:os'
+import { readFileSync, writeFileSync } from 'node:fs'
+import { homedir, hostname, tmpdir, userInfo } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { ICON, battery, forecast, glyph } from './weather.mjs'
+import { ICON, battery, forecast, glyph, tokens } from './weather.mjs'
 
 export function copilotWeather(status) {
   const c = status?.context_window ?? {}
@@ -96,15 +96,67 @@ export function claudeStatusline(status, facts) {
   return `${paint(C.blue, '┌')}${line1.join(' ')}\n${paint(C.blue, '└')}${line2.join(' ')}\n`
 }
 
+// "Opus 5.5" from "claude-opus-5-5" (a date suffix dropped); any other id as it is.
+export function modelName(id) {
+  const m = /^claude-([a-z]+)-(\d+)(?:-(\d{1,2}))?(?!\d)/.exec(id)
+  return m ? `${m[1][0].toUpperCase()}${m[1].slice(1)} ${m[2]}${m[3] ? `.${m[3]}` : ''}` : id
+}
+
+// "34s", "3m 49s", "1h 12m", as the default agent-panel row counts.
+export function elapsed(ms) {
+  const s = Math.max(0, Math.floor(ms / 1000))
+  return s < 60 ? `${s}s` : s < 3600 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`
+}
+
+// The agent panel's rows (`subagentStatusLine`): the default `name  label  time · ↓ tokens` with the subagent's model
+// and effort put before the time, dim. One JSON line per row; the time only while the task runs (no end time is given).
+// A task carries the effort set for it, or none; `effort` fills in the one it runs at: `forced` from
+// CLAUDE_CODE_EFFORT_LEVEL, which beats any, else `session`, the session's own, which an unset subagent inherits.
+export function subagentRows(input, now, effort = {}) {
+  const tasks = input?.tasks ?? []
+  const width = Math.max(0, ...tasks.map((t) => (t.name ?? t.agentType ?? '').length))
+  return tasks
+    .map((t) => {
+      const name = (t.name ?? t.agentType ?? '').padEnd(width + 2)
+      const right = [
+        t.model ? modelName(t.model) : null,
+        effort.forced ?? (typeof t.effort === 'number' ? tokens(t.effort) : t.effort) ?? effort.session,
+        t.status === 'running' && t.startTime ? elapsed(now - t.startTime) : null,
+        `↓ ${tokens(t.tokenCount ?? 0)} tokens`,
+      ]
+        .filter(Boolean)
+        .join(' · ')
+      let label = t.label ?? t.description ?? ''
+      const room = input.columns ? input.columns - name.length - right.length - 2 : Infinity
+      if (label.length > room) label = room > 1 ? `${label.slice(0, room - 1)}…` : ''
+      const gap = input.columns ? Math.max(2, input.columns - name.length - label.length - right.length) : 2
+      return JSON.stringify({ id: t.id, content: `${name}${label}${' '.repeat(gap)}${paint(C.grey, right)}` })
+    })
+    .map((line) => `${line}\n`)
+    .join('')
+}
+
+// The session's effort, as the main status line last saw it, for the agent-panel rows (their input has none).
+const effortFile = (session) => join(tmpdir(), `hud-effort-${String(session).replace(/[^\w-]/g, '')}`)
+
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
   try {
     const status = JSON.parse(readFileSync(0, 'utf8') || '{}')
     if (process.argv[2] === 'claude') {
       const cwd = status.workspace?.current_dir ?? status.cwd
       const home = homedir()
+      if (status.session_id && status.effort?.level) writeFileSync(effortFile(status.session_id), status.effort.level)
       process.stdout.write(
         claudeStatusline(status, { user: userInfo().username, host: hostname().split('.')[0], git: cwd ? gitState(cwd) : undefined, gcp: gcpProject(), now: Math.floor(Date.now() / 1000), home }),
       )
+    } else if (process.argv[2] === 'subagent') {
+      let session
+      try {
+        session = status.session_id ? readFileSync(effortFile(status.session_id), 'utf8') : undefined
+      } catch {
+        // no main status line drawn yet in this session
+      }
+      process.stdout.write(subagentRows(status, Date.now(), { forced: process.env.CLAUDE_CODE_EFFORT_LEVEL || undefined, session: status.effort?.level ?? session }))
     } else {
       process.stdout.write(copilotWeather(status))
     }
