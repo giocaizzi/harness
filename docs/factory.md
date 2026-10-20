@@ -14,7 +14,7 @@ The `factory` plugin works tickets from a GitHub issue board, one at a time and 
 
 The `ticket-run` skill carries one ticket through these steps; call it with the issue number, and again on a parked ticket once you have answered. `factory-status` lists what needs you, what is in progress and what is done, from the labels and marked comments.
 
-1. **Gate.** The ticket is open and carries the approval label, the issue timeline shows an approver applied it, and no non-approver edited the title or body since. Otherwise the run stops and says why.
+1. **Gate.** The ticket is open and carries the approval label, the issue timeline shows an approver applied it, and nobody, an approver included, edited the title or body since: the approval covers the text as it stood when the label was applied, and only an approver applying the label again restores it. Otherwise the run stops and says why.
 2. **Plan comment.** Goal, acceptance checks (each one a command or observation that fails before the change), side effects in scope, planned fold-ins, size and risk tier. XS and S tickets start right after it; M and larger post it as a question and park until the owner's OK.
 3. **Work** in its own worktree and branch, applying the fold-in test to everything found on the way and logging the calls the plan does not already cover in the decision log.
 4. **Questions** go on the ticket, one per comment, and park the ticket (below).
@@ -41,7 +41,7 @@ Every comment the agent posts starts with two hidden lines: the marker (config `
 
 | Kind tag | Posted | Body |
 |---|---|---|
-| `<!-- factory:claim -->` | when a run claims the ticket | Host, run id, runner (`attended`, `headless`, `runtime`). |
+| `<!-- factory:claim -->` | when a run claims the ticket | Host, run id, runner (`attended`, `headless`, `runtime`). A runtime may add the approval it pinned (`approved by`, `approved at`, `revision`); these are informational, never read back to decide anything. |
 | `<!-- factory:plan -->` | once at the start, edited in place | Goal, acceptance checks, side effects in scope, planned fold-ins, size, risk tier. M and larger end by asking for the owner's OK. |
 | `<!-- factory:question Q<n> -->` | per question | One question, the options, a recommendation with its reason, and what is done so far. |
 | `<!-- factory:log -->` | once, edited in place | The decision log: one row per call the plan does not already cover. Mirrored as `## Scope` in the PR. |
