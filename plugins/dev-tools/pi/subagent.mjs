@@ -1,4 +1,4 @@
-// pi extension: the plugins' agents (scout, escalate, api-reviewer) as a `subagent` tool, since pi has no subagents.
+// pi extension: the plugins' agents (scout, escalate, api-reviewer, verifier) as a `subagent` tool, since pi has no subagents.
 // Each call runs the agent in its own `pi -p --no-session` process with the agent's prompt appended and its tools
 // narrowed, on the session's model; the final text comes back as the tool result. Loaded from the root package.json.
 import { spawn } from 'node:child_process'
