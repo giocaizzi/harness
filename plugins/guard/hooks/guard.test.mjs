@@ -335,7 +335,7 @@ test('telemetry: guard.skill once per loaded skill (typed /name only for marketp
 })
 
 test('Codex has no read tool, so a shell read gets no hint there', async () => {
-  assert.equal(decision(await setup({ readTool: false })(pre('Bash', 'cat a.txt'))), undefined)
+  assert.equal(decision(await setup({ readTool: false, noAsk: true })(pre('Bash', 'cat a.txt'))), undefined)
   assert.match(decision(await setup()(pre('Bash', 'cat a.txt'))).additionalContext, /read tool/)
 })
 
@@ -400,14 +400,39 @@ test('parallel hook processes keep every loaded skill', async () => {
   assert.deepEqual(sessionStore(dataDir, 'q').load().loaded.sort(), names.sort())
 })
 
-test('skills count for the whole session, reminders per agent', async () => {
+test('skills count for the whole session, reminders per agent; the read and edit hints once per session (G24)', async () => {
   const h = setup()
   await h({ hook_event_name: 'PreToolUse', tool_name: 'Skill', tool_input: { skill: 'ship' }, agent_id: 'a1' })
   assert.equal(decision(await h(pre('Bash', 'git commit -m "fix: x"'))), undefined, "a subagent's skill load covers the main agent")
-  const hinted = async (agent_id) => Boolean(decision(await h({ ...pre('Bash', 'cat README.md'), agent_id }))?.additionalContext)
-  assert.equal(await hinted('a1'), true)
-  assert.equal(await hinted('a1'), false, 'once per agent')
-  assert.equal(await hinted(undefined), true, 'the main agent gets its own')
+  const hinted = async (command, agent_id) => Boolean(decision(await h({ ...pre('Bash', command), agent_id }))?.additionalContext)
+  assert.equal(await hinted('pytest -q', 'a1'), true)
+  assert.equal(await hinted('pytest -q', 'a1'), false, 'once per agent')
+  assert.equal(await hinted('pytest -q', undefined), true, 'the main agent gets its own')
+  for (const command of ['cat README.md', 'echo x > notes.txt']) {
+    assert.equal(await hinted(command, 'a1'), true, command)
+    assert.equal(await hinted(command, 'a2'), false, `${command}: once per session`)
+    assert.equal(await hinted(command, undefined), false, `${command}: once per session`)
+  }
+})
+
+test('auto mode, which tells the agent to read and edit through the shell, gets no read or edit hint (G24)', async () => {
+  const h = setup()
+  const ctx = async (command, permission_mode) => decision(await h({ ...pre('Bash', command), permission_mode }))?.additionalContext
+  assert.equal(await ctx('cat README.md', 'auto'), undefined)
+  assert.equal(await ctx("sed -i 's/a/b/' f.txt", 'auto'), undefined)
+  assert.match(await ctx('cat README.md', 'default'), /read tool/, 'held back, not spent')
+  assert.match(await ctx("sed -i 's/a/b/' f.txt", 'acceptEdits'), /edit tool/)
+})
+
+test('a plain read of non-secret files is allowed outright, so no harness prompt stalls it (G24)', async () => {
+  const h = setup()
+  for (const c of ['sed -n 36,56p internal/contract/testdata/harness/factory.md', 'cd /r/.claude/worktrees/m4 && sed -n 36,56p internal/contract/x.md', 'head -n 20 README.md', 'cat a.txt b.txt', 'tail -50 log/app.log']) {
+    const d = decision(await h(pre('Bash', c)))
+    assert.equal(d?.permissionDecision, 'allow', c)
+  }
+  for (const c of ['cat .env', 'cat ~/.ssh/config', 'head internal/token/token.go', 'cat secrets.yaml', 'cat a.txt > b.txt', 'cat $F', "sed -n '1w out' f", 'sed -n 1,5p f | sh', 'cat a; rm -rf b', 'cat /dev/stdin', 'less ~/.aws/config', 'cat id_ed25519'])
+    assert.notEqual(decision(await h(pre('Bash', c)))?.permissionDecision, 'allow', c)
+  assert.equal(decision(await setup({ noAsk: true })(pre('Bash', 'cat a.txt')))?.permissionDecision, undefined, 'Codex: no allow, it has no prompt for this')
 })
 
 test('without a session id nothing is kept, and the fallback data dir is per user', async () => {

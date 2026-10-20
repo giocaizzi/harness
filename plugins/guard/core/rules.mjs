@@ -275,9 +275,12 @@ export const rules = {
     },
     // Matched on what runs, so a token injected through a quoted `VAR="$(keyring read)" ./script` passes
     // (`skipInjected`): the value goes to one process's environment, never to output. `echo "$(bws secret get x)"` asks.
+    // `pipeline` + `help`: judged per pipeline, leaving out a command that only prints its usage (`--help`, `-h`, `help`).
     {
       "id": "secrets",
       "say": "Reads a secret",
+      "pipeline": true,
+      "help": true,
       "match": "\\bbws?\\s+(secret|get|list|run|unlock|login|export|serve)\\b|\\bsecurity\\s+find-(generic|internet)-password\\b[^|;&\\n]*\\s-[a-z]*[wg][a-z]*\\b|\\bsecurity\\s+dump-keychain\\b|\\bchezmoi\\s+secret\\s+keyring\\s+get\\b|\\bop\\s+read\\b|\\bop\\s+item\\s+get\\b[^|;&\\n]*\\s--reveal\\b|\\bpass\\s+show\\b|\\bgcloud\\s+secrets\\s+versions\\s+access\\b|\\baz\\s+keyvault\\s+secret\\s+show\\b|\\bgh\\s+auth\\s+token\\b|\\bgh\\s+auth\\s+status\\b[^;&|\\n]*--show-token\\b|\\bgcloud\\s+auth\\s+(?:application-default\\s+)?print-(?:access|identity)-token\\b|\\baz\\s+account\\s+get-access-token\\b|(?:^|[;&|(\\n]\\s*)printenv\\s+\\w*(token|secret|key|pass|credential)|(?:^|[;&|(\\n]\\s*)(?:env|printenv)\\s*(?=$|[;&\\n)]|\\|(?!\\s*(?:e?grep|rg|findstr|select-string)\\b))|\\b(?:cat|less|more|head|tail|bat|grep|egrep|rg|sed|awk|cut|xxd|strings|base64|jq)\\b[^;&|\\n]*\\s(?:[^\\s;&|]*/)?(?:\\.env(?:rc|\\.(?!example\\b|sample\\b|template\\b|dist\\b)[\\w.-]+)?|\\.netrc|\\.aws/credentials|\\.ssh/id_(?:rsa|ed25519|ecdsa|dsa))(?=[\\s;&|)]|$)|(?:^|[;&|(\\n]\\s*)(?:source|\\.)\\s+(?:[^\\s;&|]*/)?(?:\\.env(?:rc|\\.(?!example\\b|sample\\b|template\\b|dist\\b)[\\w.-]+)?|\\.netrc|\\.aws/credentials|\\.ssh/id_(?:rsa|ed25519|ecdsa|dsa))(?=[\\s;&|)]|$)|<\\s*(?:[^\\s;&|]*/)?(?:\\.env(?:rc|\\.(?!example\\b|sample\\b|template\\b|dist\\b)[\\w.-]+)?|\\.netrc|\\.aws/credentials|\\.ssh/id_(?:rsa|ed25519|ecdsa|dsa))(?=[\\s;&|)]|$)",
       "why": "reads a secret; load `secrets-handling` and never print or inline the value",
       "skipInjected": true,

@@ -66,7 +66,8 @@ function pipelines(command, { injected = true } = {}) {
     }
     if (pipe.length) groups.push(pipe);
     for (const p of groups) {
-      out.push({ code: gitPlain(p.map((c) => c.code.trim()).join(' | ')), raw: p.map((c) => c.raw).join(' | '), depth: ctx.depth, siblings: count(level), host: ctx.host, top });
+      const parts = p.map((c) => ({ code: gitPlain(c.code.trim()), vals: commandWords(c.words).map((w) => w.val) }));
+      out.push({ code: parts.map((x) => x.code).join(' | '), raw: p.map((c) => c.raw).join(' | '), parts, depth: ctx.depth, siblings: count(level), host: ctx.host, top });
       for (const c of p)
         for (const pl of c.payloads) {
           if (pl.injected && !injected) continue;
@@ -77,8 +78,12 @@ function pipelines(command, { injected = true } = {}) {
   walk(a, { depth: 0, host: undefined });
   return out;
 }
-// A `pipeline` rule fires on one pipeline whose code matches, whose text matches `raw` and not `unless`.
-const pipelineHit = (r, p) => riskyRe(r).test(p.code) && (!r.raw || new RegExp(r.raw, 'i').test(p.raw)) && !(r.unless && new RegExp(r.unless, 'i').test(p.raw));
+// A `pipeline` rule fires on one pipeline whose code matches, whose text matches `raw` and not `unless`. A `help` rule
+// leaves out a command that only prints its usage (`bws secret get --help`, `op help`, `gh auth token -h`).
+const HELP_CLI = /^(?:bws?|op|pass|security|chezmoi|gcloud|az|gh|printenv)$/;
+const helpOnly = ({ vals }) => vals.includes('--help') || (HELP_CLI.test(vals[0]?.replace(/^.*[\\/]/, '') ?? '') && (vals.includes('-h') || vals[1] === 'help'));
+const pipelineCode = (r, p) => (r.help ? p.parts.filter((x) => !helpOnly(x)).map((x) => x.code).join(' | ') : p.code);
+const pipelineHit = (r, p) => riskyRe(r).test(pipelineCode(r, p)) && (!r.raw || new RegExp(r.raw, 'i').test(p.raw)) && !(r.unless && new RegExp(r.unless, 'i').test(p.raw));
 
 // Commands that set a commit or PR/MR title: [command words, title flags, flags that read the message from a file].
 // az's -t is --target-branch, so az has --title only.
@@ -452,6 +457,51 @@ export async function branchFact(dir, name, run) {
 }
 const branchKey = ({ dir, name }) => `${dir}|${name}`;
 
+// Tags a `git tag -f <name> [<commit>]` or `git tag -d <name>…` moves or deletes: { dir, name }. Any other release step
+// (creating a tag, an annotated or signed one, a tag named like a version, release-please, npm version, another
+// host's) has no name, so it never rides on a local one.
+const VERSION_TAG = /^v?\d+(?:\.\d+)+/i;
+export function tagTargets(command, rules, env = {}) {
+  const re = new RegExp(rules.skills.find((r) => r.id === 'release').match, 'i');
+  return segments(command, env)
+    .filter(({ seg }) => re.test(seg))
+    .flatMap(({ words, dir, remote }) => {
+      let vals = commandWords(words).map((w) => w.val);
+      if (vals[0] === 'git') {
+        let k = 1;
+        while (vals[k]?.startsWith('-')) k += GIT_VALUE.has(vals[k]) ? 2 : 1;
+        vals = vals.slice(k);
+      }
+      const opts = vals.slice(1).filter((v) => v.startsWith('-'));
+      const names = vals.slice(1).filter((v) => !v.startsWith('-'));
+      const del = opts.length > 0 && opts.every((o) => /^(?:-d|--delete)$/.test(o));
+      const force = opts.length > 0 && opts.every((o) => /^(?:-f|--force)$/.test(o));
+      const named = del ? names : force ? names.slice(0, 1) : [];
+      const ok = vals[0] === 'tag' && !remote && named.length > 0 && named.every((n) => /^[\w./@+-]+$/.test(n) && !VERSION_TAG.test(n));
+      return ok ? named.map((name) => ({ dir, name })) : [{ dir, name: NO_TARGET }];
+    });
+}
+// A tag no remote has: `git remote` lists none, or `git ls-remote --tags <remote> refs/tags/<name>` is empty on each.
+// A failed lookup (offline, auth) counts as on a remote.
+export async function tagFact(dir, name, run) {
+  const sh = (argv) => Promise.resolve().then(() => run(argv)).catch(() => null);
+  const remotes = await sh(['git', '-C', dir || '.', 'remote']);
+  if (remotes == null) return { local: false, why: 'git check failed' };
+  const found = await Promise.all(remotes.split(/\r?\n/).filter(Boolean).map((r) => sh(['git', '-C', dir || '.', 'ls-remote', '--tags', r, `refs/tags/${name}`])));
+  if (found.some((f) => f == null)) return { local: false, why: 'ls-remote failed' };
+  return found.every((f) => !f.trim()) ? { local: true, why: '' } : { local: false, why: 'on a remote' };
+}
+// Tag facts for every tag a command moves or deletes: { [dir|name]: { local, why } }.
+export async function tagFacts(command, rules, run, env = {}) {
+  const targets = [...new Map(tagTargets(command, rules, env).map((t) => [branchKey(t), t])).values()].filter((t) => t.name !== NO_TARGET && PLAIN_PATH.test(t.dir || '.'));
+  const facts = await Promise.all(targets.map((t) => tagFact(t.dir, t.name, run)));
+  return Object.fromEntries(targets.map((t, i) => [branchKey(t), facts[i]]));
+}
+const localTagsOnly = (command, rules, tags, env) => {
+  const targets = tagTargets(command, rules, env);
+  return targets.length > 0 && targets.every((t) => tags[branchKey(t)]?.local === true);
+};
+
 // Branch refs every `gh api -X DELETE …/git/refs/heads/<b>` deletes: { dir, repo, name }, `repo` null for gh's
 // `{owner}/{repo}` placeholder, which gh fills from the repo in `dir`. The endpoint is gh's first operand, read from
 // the words with every option's value skipped (a `--jq` or `--template` value naming a ref is not the endpoint). Any
@@ -676,11 +726,33 @@ export function shellEdit(command, env = {}) {
 // `python`: the Python manager of the repo in cwd ('uv', 'poetry', 'pipenv', 'pip'; null for none), for deny rules with `when`.
 // A whole command that only prints files (`cat f`, `head -n 5 f`, `sed -n 1,20p f`): the harness's read tool does it better.
 const SHELL_READ = /^\s*(?:(?:cat|head|tail|less|more)(?:\s+-[\w-]+(?:\s+\d+)?)*|sed\s+-n\s+\S+)(?:\s+[^\s|;&<>()`$]+)+\s*$/;
+// A command that only prints files the harness may show anyway: `cat`, `head`, `tail`, `less`, `more` or `sed -n <range>p`
+// of plain paths, optionally after one `cd <dir> &&`. No quotes, variables, globs, redirections or pipes, no sed
+// script but a line range, and no path that looks like a secret (the secret readers' files, keys, tokens, `.ssh`,
+// `.aws`, `.gnupg`, ...) or a device. The guard allows these outright, so a harness prompt never stalls a read.
+const PLAIN_TOKEN = /^[\w./@%+=:,~-]+$/;
+const SED_RANGE = /^(?:\d+|\$)(?:,(?:\d+|\$))?p$/;
+const SECRET_PATH = /(?:^|\/)(?:\.env(?:rc)?(?:\.[\w.-]+)?|\.netrc|\.npmrc|\.pypirc|\.pgpass|\.git-credentials|id_[\w-]+|[^/]*(?:secret|token|credential|passw|private)[^/]*|[^/]*\.(?:pem|key|p12|pfx|kdbx|keychain(?:-db)?|jks|asc|gpg)|kubeconfig|[^/]*\.kubeconfig)$|(?:^|\/)\.(?:ssh|gnupg|aws|azure|kube|docker|password-store|config\/gh|config\/gcloud)(?:\/|$)|^\/(?:dev|proc|sys)\//i;
+export function pureRead(command) {
+  const m = /^\s*(?:cd\s+(\S+)\s*&&\s*)?(\S+)((?:[ \t]+\S+)+)\s*$/.exec(command);
+  if (!m || (m[1] && (!PLAIN_TOKEN.test(m[1]) || SECRET_PATH.test(m[1])))) return false;
+  const [tool, words] = [m[2], m[3].trim().split(/\s+/)];
+  if (!words.every((w) => PLAIN_TOKEN.test(w))) return false;
+  let paths;
+  if (tool === 'sed') {
+    if (words[0] !== '-n' || !SED_RANGE.test(words[1] ?? '')) return false;
+    paths = words.slice(2);
+  } else if (/^(?:cat|head|tail|less|more)$/.test(tool)) {
+    paths = words.filter((w, i) => !w.startsWith('-') && !(/^\d+$/.test(w) && /^-[nc]$/.test(words[i - 1] ?? '')));
+  } else return false;
+  return paths.length > 0 && paths.every((p) => !p.startsWith('-') && !SECRET_PATH.test(p.replace(/\/+$/, '')));
+}
+
 const hint = (rule) => `Skill hint (${rule.why}): load ${rule.skills.map((s) => `\`${s}\``).join(' or ')} if this task is that work.`;
 
 // `readTool`: the harness has a file-read tool (all but Codex), so a shell read gets a once-per-session hint.
 // `worktrees`, `branches`, `regenerable`: facts the adapters gather (worktreeFacts, branchFacts, regenFacts).
-export function evaluateCommand({ command, loadedSkills = new Set(), state, host = {}, env = {}, worktrees = {}, branches = {}, regenerable = {}, refs = {}, python = null, readTool = false, rules }) {
+export function evaluateCommand({ command, loadedSkills = new Set(), state, host = {}, env = {}, worktrees = {}, branches = {}, regenerable = {}, refs = {}, tags = {}, python = null, readTool = false, rules }) {
   // Hard denies come first and fire every time, like the title guard. A `when` rule denies only in a repo
   // that adopted that manager; elsewhere it lets the command through with a once-per-session note.
   const denied = deniedBy(command, rules)
@@ -742,7 +814,8 @@ export function evaluateCommand({ command, loadedSkills = new Set(), state, host
   }
 
   const loaded = new Set([...loadedSkills].map(bare));
-  const rule = hit(rules.skills, command);
+  // Moving or deleting a tag no remote has is local bookkeeping, not a release.
+  const rule = rules.skills.find((r) => new RegExp(r.match, 'i').test(matchable(command)) && !(r.id === 'release' && localTagsOnly(command, rules, tags, env)));
   if (rule && !rule.skills.some((s) => loaded.has(s)) && !state.reminded.has(rule.id)) {
     state.reminded.add(rule.id);
     if (rule.remind) return { action: 'allow', rule: rule.id, remind: true, context: hint(rule) };
