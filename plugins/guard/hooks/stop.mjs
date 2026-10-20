@@ -10,11 +10,12 @@
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { mkdirSync, readFileSync, rmSync, statfsSync, writeFileSync } from 'node:fs'
-import { loadavg, platform, tmpdir } from 'node:os'
+import { loadavg, platform } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { emit } from '../core/otel.mjs'
 import { rules } from '../core/rules.mjs'
+import { pluginDataDir } from './data.mjs'
 import { failedTarget, harnessName, recordAttrs, scrub } from './telemetry.mjs'
 
 const DEFAULT_TIMEOUT_MS = 1_750_000 // under the 1800 s hook limit in hooks.json
@@ -30,7 +31,7 @@ export function fingerprint(cwd, run = spawnSync) {
 }
 
 const stateFile = (cwd) =>
-  join(process.env.CLAUDE_PLUGIN_DATA || process.env.COPILOT_PLUGIN_DATA || join(tmpdir(), 'guard-plugin'), 'stop', `${sha(cwd).slice(0, 16)}.txt`)
+  join(pluginDataDir(), 'stop', `${sha(cwd).slice(0, 16)}.txt`)
 
 function lastGreen(cwd) {
   try {
