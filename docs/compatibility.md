@@ -9,7 +9,7 @@ Versions checked: Claude Code 2.1.296, Copilot CLI 1.0.95, VS Code 1.139, Codex 
 | Plugin / feature | Claude Code | Copilot CLI | VS Code Copilot | Codex CLI | opencode | pi |
 |---|---|---|---|---|---|---|
 | Install | marketplace | marketplace | marketplace (`chat.plugins.marketplaces`) | marketplace (plugins) + `make install` (agents, guard prompt rules) | `make install` | `pi install git:…` |
-| Skills (`api`, `python`, `javascript`, `dev-tools`) | yes | yes | yes | yes | yes, copied to `~/.config/opencode/skills` | yes |
+| Skills (`api`, `python`, `javascript`, `dev-tools`, `factory`) | yes | yes | yes | yes | yes, copied to `~/.config/opencode/skills` | yes |
 | Skill argument (`/land 42`; `$ARGUMENTS` in `land`, `pr-fix`, `ship`, `wt`, `docs-sync`) | substituted | not substituted (no `$ARGUMENTS` handling in the 1.0.98 bundle); the skill's words name the text after it; not checked live | not checked | not substituted: `$dev-tools:wt 42` injects the body as is, the text stays in the message (a bare `$wt` loads nothing) | substituted (`/wt 42`, `opencode run --command wt 42`) | not substituted: `/skill:wt 42` appends the text after the body |
 | Agents (`api-reviewer`, `scout`, `escalate`, `verifier`) | yes, `agents/*.md` | yes, `.generated/copilot/*.agent.md` | yes, `agents/*.md` (Claude format) | yes, `.generated/codex/*.toml` in `~/.codex/agents` | yes, `.generated/opencode/*.md` in `~/.config/opencode/agents` | yes, through the `subagent` tool (`dev-tools/pi/subagent.mjs`): each call is its own `pi -p` session |
 | `dev-tools` `host-hygiene` scripts (`.sh` macOS/Linux, `.ps1` Windows) | yes | yes | yes | yes | yes | yes |

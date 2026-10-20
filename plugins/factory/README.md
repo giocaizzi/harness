@@ -2,6 +2,12 @@
 
 Attended ticket runs on a GitHub issue board: an owner-approved ticket worked end to end, its scope decided by a fold-in test and logged on the ticket, questions asked on the ticket, and a result contract per run. Generic for any repo; the repo's own settings live in its `.factory/config.yaml`. Design, protocol and contract: [docs/factory.md](../../docs/factory.md); adoption runbook: [docs/adopt-factory.md](../../docs/adopt-factory.md).
 
+## Skills
+
+| Skill | Description |
+|---|---|
+| `ticket-run` | One approved ticket end to end, attended: approval gate, plan comment, fold-in test and decision log, questions that park the ticket, verifier, ship, deploy and live verify, result (`/ticket-run <number>`). |
+
 ## Agents
 
 | Agent | Description |

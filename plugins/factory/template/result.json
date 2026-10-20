@@ -1,25 +1,32 @@
 {
   "schema": 1,
   "ticket": "<owner>/<repo>#<number>",
+  "run_id": "<main session id, or <host>-<number>-<UTC timestamp>>",
   "end_state": "done",
   "reason": "",
   "pr": "https://github.com/<owner>/<repo>/pull/<number>",
   "decisions": [
-    {
-      "item": "<what was found>",
-      "test": "R2",
-      "decision": "folded",
-      "where": "<commit sha>"
-    }
+    { "item": "<what was found>", "test": "R2", "decision": "folded", "where": "<commit sha>" }
   ],
-  "evidence": [
-    "https://github.com/<owner>/<repo>/issues/<number>#issuecomment-<id>"
+  "evidence": ["<comment, check run or deploy run URL>"],
+  "checks": [
+    { "command": "<proof or component check>", "result": "pass" }
   ],
-  "follow_ups": [
-    "https://github.com/<owner>/<repo>/issues/<number>"
+  "follow_ups": ["<issue URL>"],
+  "posts": [
+    { "kind": "result", "url": "<comment URL>", "state": "posted" }
   ],
   "cost_usd": null,
+  "tokens": null,
+  "turns": null,
   "harness": "<claude-code|copilot-cli|vscode|codex|opencode|pi>",
   "model": "<model id as the harness reports it>",
+  "effort": null,
+  "sessions": [
+    { "role": "main", "id": "<session id>", "model": "<model id>", "effort": "<level>" },
+    { "role": "verifier", "id": "<session id>", "model": "<model id>", "effort": "<level>" }
+  ],
+  "plugin_versions": { "factory": "<version>", "dev-tools": "<version>" },
+  "host": { "name": "<hostname>", "os": "<darwin|linux|windows>", "runner": "attended" },
   "finished_at": "<ISO 8601 timestamp>"
 }
