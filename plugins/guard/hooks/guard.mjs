@@ -3,7 +3,7 @@
 // and reads `hookSpecificOutput.permissionDecision`. A hook is a fresh process, so per-session facts
 // (loaded skills, rules already reminded) live in a JSON file under $CLAUDE_PLUGIN_DATA.
 import { execFile } from 'node:child_process'
-import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, readdirSync, statSync } from 'node:fs'
+import { appendFileSync, closeSync, existsSync, fstatSync, openSync, readSync, mkdirSync, readFileSync, rmSync, readdirSync, statSync } from 'node:fs'
 import { statfs } from 'node:fs/promises'
 import { cpus, homedir, loadavg, platform } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
@@ -150,20 +150,49 @@ const preToolUse = (decision, reason) => ({
 // No decision: the harness's normal permission flow runs, the note reaches the agent next to the tool result.
 const note = (context) => ({ stdout: JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', additionalContext: context } }) })
 
+// Telemetry never holds a decision back: records are sent without waiting, and a command hook's process stays up
+// until they are out, after its answer is written.
+const fire = (deps, ...args) => {
+  try {
+    Promise.resolve(deps.emit?.(...args)).catch(() => {})
+  } catch {
+    // a failed record changes nothing
+  }
+}
+
+// `promise`, or `fallback` once `ms` pass.
+const within = (promise, ms, fallback) =>
+  new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(fallback), ms)
+    promise.then(
+      (v) => (clearTimeout(timer), resolve(v)),
+      () => (clearTimeout(timer), resolve(fallback)),
+    )
+  })
+
+// The hook's time budget (D2), under the harnesses' 30 s hook timeout: the slow lookups (worktrees, branches and
+// PRs, ignored build output) get FACTS_MS, the blast-radius preview PREVIEW_MS. A lookup that runs out is dropped,
+// the fast rules still apply, and a risky command whose safe case could not be shown asks.
+const FACTS_MS = 20_000
+const PREVIEW_MS = 3_000
+
 async function onShell(input, state, deps) {
   const command = String(input.tool_input?.command ?? '')
   if (!command) return {}
   try {
     const host = isHeavy(command, rules) ? await deps.hostFacts(input.cwd) : {}
     // HOME resolves `~` and `$HOME` in paths (USERPROFILE on Windows).
+    let unfinished = false
     const facts = { env: { TMPDIR: deps.env.TMPDIR, TEMP: deps.env.TEMP, TMP: deps.env.TMP, HOME: deps.env.HOME || deps.env.USERPROFILE } }
     if (isRisky(command, rules)) {
       const inCwd = (argv, cwd) => deps.run(argv, cwd ?? input.cwd)
-      ;[facts.worktrees, facts.branches, facts.regenerable] = await Promise.all([
-        worktreeFacts(command, facts.env, rules, inCwd),
-        branchFacts(command, rules, inCwd, facts.env),
-        regenFacts(command, facts.env, rules, inCwd),
-      ])
+      const gathered = await within(
+        Promise.all([worktreeFacts(command, facts.env, rules, inCwd), branchFacts(command, rules, inCwd, facts.env), regenFacts(command, facts.env, rules, inCwd)]),
+        deps.factsMs ?? FACTS_MS,
+        null,
+      )
+      if (gathered) [facts.worktrees, facts.branches, facts.regenerable] = gathered
+      else unfinished = true
     }
     // The manager of the repo the denied command runs in (`cd <repo> && pip install x`), not just the cwd's.
     if (deniedBy(command, rules)?.when) {
@@ -173,39 +202,40 @@ async function onShell(input, state, deps) {
     const reminded = new Set(state.reminded)
     const d = evaluateCommand({ command, loadedSkills: new Set(state.loaded), state: { reminded }, host, readTool: deps.readTool ?? true, ...facts, rules })
     state.reminded = [...reminded]
+    if (unfinished && d.action !== 'allow') d.reason += '\nChecks unfinished: the worktree, branch and build-output lookups ran out of time, so a safe case could not be shown.'
     // Logged after the harness-specific transforms, so `action` is what happened: an ask that became a deny is a deny,
     // with `via` saying why (unattended, no-ask) or how the ask was made (native-ask: the harness's own prompt).
     const report = (action, via) =>
-      deps.emit?.('guard.decision', { rule: d.rule, action, via, tool: String(input.tool_name ?? ''), session_id: input.session_id, tool_use_id: input.tool_use_id, cmd_hash: commandHash(command), ...(d.rule === 'host' ? hostAttrs(host) : {}) }, input.cwd)
-    if (d.remind) await deps.emit?.('guard.reminder', { rule: d.rule, tool: String(input.tool_name ?? ''), session_id: input.session_id, tool_use_id: input.tool_use_id }, input.cwd)
+      fire(deps, 'guard.decision', { rule: d.rule, action, via, tool: String(input.tool_name ?? ''), session_id: input.session_id, tool_use_id: input.tool_use_id, cmd_hash: commandHash(command), ...(d.rule === 'host' ? hostAttrs(host) : {}) }, input.cwd)
+    if (d.remind) fire(deps, 'guard.reminder', { rule: d.rule, tool: String(input.tool_name ?? ''), session_id: input.session_id, tool_use_id: input.tool_use_id }, input.cwd)
     if (d.action === 'deny') {
-      await report('deny', d.split ? 'split' : undefined)
+      report('deny', d.split ? 'split' : undefined)
       return preToolUse('deny', d.reason)
     }
     // Unattended run (GUARD_UNATTENDED=1): nobody can answer an ask, so it becomes a deny and the agent picks another way.
     if (d.action === 'ask' && /^(1|true|on)$/i.test(deps.env?.GUARD_UNATTENDED ?? '')) {
-      await report('deny', 'unattended')
+      report('deny', 'unattended')
       return preToolUse('deny', `${d.reason}\nUnattended run (GUARD_UNATTENDED): nobody can confirm this, so the command was not run. Pick another approach, or leave it for the user.`)
     }
     // Codex and opencode hooks cannot ask: the harness's own prompt rule asks for the plain forms (`deps.nativeAsk`),
     // anything else is denied and the user runs it.
     if (d.action === 'ask' && deps.noAsk) {
       if (await deps.nativeAsk?.(command, d.rule, input)) {
-        await report('ask', 'native-ask')
+        report('ask', 'native-ask')
         return {}
       }
-      await report('deny', 'no-ask')
+      report('deny', 'no-ask')
       return preToolUse('deny', `${d.reason}\nThis harness cannot ask for confirmation for this form, so the command was not run: ask the user to run it.`)
     }
     if (d.action === 'ask') {
-      await report('ask')
+      report('ask')
       const argv = previewCommand(d.rule, command, rules, facts.env)
-      return preToolUse('ask', argv ? withPreview(d.reason, await deps.run(argv, input.cwd).catch(() => '')) : d.reason)
+      return preToolUse('ask', argv ? withPreview(d.reason, await within(Promise.resolve(deps.run(argv, input.cwd)), deps.previewMs ?? PREVIEW_MS, '')) : d.reason)
     }
     return d.context ? note(d.context) : {}
   } catch (err) {
     // Fail open for reminders, closed for risky commands.
-    if (isRisky(command, rules)) await deps.emit?.('guard.decision', { rule: 'guard-error', action: 'deny', tool: String(input.tool_name ?? ''), session_id: input.session_id, tool_use_id: input.tool_use_id, cmd_hash: commandHash(command) }, input.cwd)
+    if (isRisky(command, rules)) fire(deps, 'guard.decision', { rule: 'guard-error', action: 'deny', tool: String(input.tool_name ?? ''), session_id: input.session_id, tool_use_id: input.tool_use_id, cmd_hash: commandHash(command) }, input.cwd)
     return isRisky(command, rules) ? preToolUse('deny', `The command guard failed, so this risky command was not run: ${err?.message ?? err}`) : {}
   }
 }
@@ -216,7 +246,7 @@ async function onEdit(input, state, deps) {
   const d = evaluateEdit({ path: t.file_path ?? t.path ?? t.filePath, loadedSkills: new Set(state.loaded), state: { reminded }, rules })
   state.reminded = [...reminded]
   if (!d.remind) return {}
-  await deps.emit?.('guard.reminder', { rule: d.rule, tool: String(input.tool_name ?? ''), session_id: input.session_id, tool_use_id: input.tool_use_id }, input.cwd)
+  fire(deps, 'guard.reminder', { rule: d.rule, tool: String(input.tool_name ?? ''), session_id: input.session_id, tool_use_id: input.tool_use_id }, input.cwd)
   return note(d.context)
 }
 
@@ -250,7 +280,7 @@ export async function handle(input, deps) {
   const known = deps.knownSkills ?? knownSkills()
   for (const skill of new Set(state.loaded)) {
     const name = skill.split(':').pop()
-    if (!before.has(skill) && (event !== 'UserPromptSubmit' || known.has(name))) await deps.emit?.('guard.skill', { skill: name, via: event === 'UserPromptSubmit' ? 'prompt' : 'tool', session_id: input.session_id }, input.cwd)
+    if (!before.has(skill) && (event !== 'UserPromptSubmit' || known.has(name))) fire(deps, 'guard.skill', { skill: name, via: event === 'UserPromptSubmit' ? 'prompt' : 'tool', session_id: input.session_id }, input.cwd)
   }
   state.loaded = [...new Set(state.loaded)]
   try {
@@ -270,11 +300,27 @@ export function codexReviewer(transcript) {
   const ctx = transcript.split('\n').filter((l) => l.includes('"turn_context"')).pop()
   return ctx ? JSON.parse(ctx).payload?.approvals_reviewer : undefined
 }
+// The last TAIL_BYTES of a file, from its first whole line: a rollout grows to hundreds of MB, and the latest
+// `turn_context` is near its end (older than that, the reviewer is unknown and the command is denied).
+const TAIL_BYTES = 256 * 1024
+export function tail(path, bytes = TAIL_BYTES) {
+  const fd = openSync(path, 'r')
+  try {
+    const size = fstatSync(fd).size
+    const start = Math.max(0, size - bytes)
+    const buf = Buffer.alloc(size - start)
+    readSync(fd, buf, 0, buf.length, start)
+    const text = buf.toString('utf8')
+    return start ? text.slice(text.indexOf('\n') + 1) : text
+  } finally {
+    closeSync(fd)
+  }
+}
 export function codexAsks(env, transcriptPath) {
   try {
     const home = env.CODEX_HOME || join(homedir(), '.codex')
     if (readFileSync(join(home, 'rules', CODEX_RULES), 'utf8') !== codexRules(rules)) return null
-    if (codexReviewer(readFileSync(transcriptPath, 'utf8')) !== 'user') return null
+    if (codexReviewer(tail(transcriptPath)) !== 'user') return null
     return (command, rule) => nativeAsk(command, rule, rules)
   } catch {
     return null
@@ -296,7 +342,7 @@ async function main() {
   // `--no-ask` comes from the Codex hooks file (.generated/codex/hooks.json), which build_agents.py generates.
   const noAsk = process.argv.includes('--no-ask')
   // Codex (`--no-ask`) is the one harness without a file-read tool.
-  const out = await handle(input, { dataDir, env: process.env, hostFacts, run, pythonManager, noAsk, readTool: !noAsk, nativeAsk: noAsk ? codexAsks(process.env, input.transcript_path) : null, emit: (event, attrs, cwd) => emit(process.env, event, recordAttrs(attrs, cwd, noAsk ? 'codex' : harnessName())) }).catch(() => ({}))
+  const out = await handle(input, { dataDir, env: process.env, hostFacts, run, pythonManager, noAsk, readTool: !noAsk, nativeAsk: noAsk ? (command, rule) => codexAsks(process.env, input.transcript_path)?.(command, rule) ?? false : null, emit: (event, attrs, cwd) => emit(process.env, event, recordAttrs(attrs, cwd, noAsk ? 'codex' : harnessName())) }).catch(() => ({}))
   if (out.stdout) process.stdout.write(out.stdout)
   if (out.stderr) process.stderr.write(out.stderr)
 }
