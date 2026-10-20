@@ -81,8 +81,13 @@ export const GuardPlugin = async ({ client, directory }, deps) => {
       if (event.type === 'session.created') guard.awake()
       else if (event.type === 'session.deleted') await guard.sessionEnd({ sessionId })
       else if (event.type === 'session.idle' && sessionId) {
-        // The Stop hook: when make check fails, send the failure back once; the next idle always passes.
-        const reason = guard.stop({ cwd: directory, active: blocked.has(sessionId) })
+        // The Stop hook: when make check fails, send the failure back once; the next idle always passes. A subagent's
+        // session (it has a parent) is part of its parent's turn: the parent's idle runs the check.
+        const session = await Promise.resolve()
+          .then(() => client.session.get({ path: { id: sessionId } }))
+          .catch(() => null)
+        if (session?.data?.parentID) return
+        const reason = await guard.stop({ cwd: directory, active: blocked.has(sessionId) })
         if (!reason) return void blocked.delete(sessionId)
         blocked.add(sessionId)
         await client.session.prompt({ path: { id: sessionId }, body: { parts: [{ type: 'text', text: reason }] } }).catch(() => {})

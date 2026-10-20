@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import subagentExtension, { loadAgents, piArgs } from './subagent.mjs'
+import subagentExtension, { childEnv, loadAgents, piArgs } from './subagent.mjs'
 
 test('loadAgents: every plugin agent, with Claude tools mapped to pi tools', () => {
   const agents = Object.fromEntries(loadAgents().map((a) => [a.name, a]))
@@ -25,4 +25,8 @@ test('the tool runs the agent and returns its answer, or throws on failure', asy
   await assert.rejects(tool.execute('id', { agent: 'nope', task: 'x' }, undefined, undefined, {}), /Unknown agent/)
   subagentExtension({ registerTool: (t) => (tool = t) }, { loadAgents: () => agents, run: async () => ({ code: 2, out: '', err: 'boom' }) })
   await assert.rejects(tool.execute('id', { agent: 'scout', task: 'x' }, undefined, undefined, {}), /exit 2.*boom/)
+})
+
+test("a subagent's pi runs without the guard's stop check: the parent's stop runs it", () => {
+  assert.deepEqual(childEnv({ PATH: '/bin' }), { PATH: '/bin', GUARD_STOP_CHECK: 'off' })
 })
