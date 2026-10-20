@@ -219,6 +219,8 @@ const ABSOLUTE = /^(?:[\\/]|[a-z]:|~|\$|%)/i;
 const inDir = (dir, p) => (!dir || ABSOLUTE.test(p) ? p : `${dir}/${p}`);
 const MKTEMP = /^\$\(mktemp(\s+-[dqu]+)*(\s+(-t|--tmpdir(=\S+)?)(\s+[\w.-]+)?)?\)$/;
 const DECLARE = /^(?:export|declare|typeset|local|readonly)$/;
+// Words before an assignment that still make it one: `export A=1`, `env A=1 cmd`.
+const DECLARE_WORDS = /^(?:export|declare|typeset|local|readonly|env)$/;
 const VAR_REF = /^\$(?:\{(\w+)\}|(\w+))(?=[\\/]|$)/;
 // `word` with a leading `~`, `$HOME`, `$PWD` or `$NAME` resolved from `vars` (assignments so far), `env` and `pwd`
 // (the absolute directory a followed `cd` reached); else as written.
@@ -248,21 +250,36 @@ function assign(cmd, vars, env, pwd) {
 // One level of commands (the top level, or a payload), each with its directory; payloads follow their command, in
 // the directory it runs in (a remote payload starts in no known directory, without this machine's HOME). A command
 // that hands its words to another host or a container (`ssh host rm -rf x`) is judged only through its payload.
-// Each entry: { seg (redirections dropped), code, dir, remote, resolve(path) }.
-function levelSegments(a, baseDir, remote, env, outer = {}) {
+// Each entry: { seg (redirections dropped), code, words, dir, remote, resolve(path) }.
+// A `cd` holds past the end of its chain (`;`, a newline, `&`) only when it surely ran: it starts its chain, or follows
+// only other sure `cd`s there, and its directory exists (`env.dirs`, which the adapter gathers through `cdDirs`). Else
+// a failed `cd x; rm -rf y` would delete `./y`, so the directory becomes UNKNOWN_DIR after the break. Within a chain
+// (`cd x && rm -rf y`) a failed `cd` stops what follows, so it always holds there.
+// A payload whose text the outer shell expands first (`bash -c "…$X…"`, an ssh command, a heredoc: `p.expanded`)
+// resolves `$NAME` and `$PWD` with the outer values (`frozen`), not with its own assignments and `cd`s.
+// `cds`, when given, collects every directory a `cd` reaches, each taken to exist (see cdDirs).
+const CHAIN_BREAK = new Set([';', '\n', '&']);
+const ABS_DIR = /^(?:\/|[a-z]:[\\/])/i;
+function levelSegments(a, baseDir, remote, env, outer = {}, frozen = null, cds = null) {
   const vars = { ...outer };
   let dir = baseDir;
   let followCd = true;
+  let sure = true;
+  let chainSure = true;
   const out = [];
   for (const [i, cmd] of a.commands.entries()) {
     const seg = cmd.code.replace(/\d*[<>]+(&\d+|\s*[^\s;&|]+)/g, ' ');
+    if (i > 0 && CHAIN_BREAK.has(cmd.sep)) {
+      if (dir !== baseDir && (!sure || cmd.sep === '&')) dir = UNKNOWN_DIR;
+      chainSure = true;
+    }
     // The first subshell, group, `||` or conditional: a later `cd` is not followed, nor an earlier one past it.
     if (followCd && (BRANCH_SEP.has(cmd.sep) || BRANCH_CODE.test(cmd.code))) {
       followCd = false;
       if (dir !== baseDir) dir = UNKNOWN_DIR;
     }
-    const pwd = /^(?:\/|[a-z]:[\\/])/i.test(dir) && PLAIN_PATH.test(dir) ? dir : undefined;
-    const snapshot = { ...vars };
+    const pwd = frozen ? frozen.pwd : ABS_DIR.test(dir) && PLAIN_PATH.test(dir) ? dir : undefined;
+    const snapshot = frozen ? frozen.vars : { ...vars };
     const resolve = (p) => expandPath(p, snapshot, env, pwd);
     if (assign(cmd, vars, env, pwd)) {
       // nothing runs
@@ -270,17 +287,32 @@ function levelSegments(a, baseDir, remote, env, outer = {}) {
       const m = followCd && !SUBSHELL_SEP.has(cmd.sep) && !SUBSHELL_SEP.has(a.commands[i + 1]?.sep) && PLAIN_CD.exec(seg);
       const to = m && (m[1] === undefined ? env.HOME : resolve(m[1]));
       dir = to && PLAIN_DIR.test(to) && !/^~/.test(to) ? inDir(dir, to) : UNKNOWN_DIR;
-    } else if (!cmd.payloads.some((p) => p.remote && p.kind !== 'subst')) {
-      out.push({ seg: gitPlain(seg), code: cmd.code, dir: gitDirs(seg).map(resolve).reduce(inDir, dir), remote, resolve });
+      if (cds && dir !== UNKNOWN_DIR) cds.push(dir);
+      sure = chainSure = chainSure && dir !== UNKNOWN_DIR && (cds !== null || env.dirs?.has(dir) === true);
+      // bash resets $PWD and $OLDPWD on every cd.
+      delete vars.PWD;
+      delete vars.OLDPWD;
+    } else {
+      chainSure = false;
+      if (!cmd.payloads.some((p) => p.remote && p.kind !== 'subst')) out.push({ seg: gitPlain(seg), code: cmd.code, words: cmd.words, dir: gitDirs(seg).map(resolve).reduce(inDir, dir), remote, resolve });
     }
     for (const p of cmd.payloads) {
-      out.push(...(p.remote ? levelSegments(p.analysis, REMOTE_DIR, true, {}) : levelSegments(p.analysis, dir, remote, env, snapshot)));
+      const inner = p.expanded ? { vars: snapshot, pwd } : frozen;
+      out.push(...(p.remote ? levelSegments(p.analysis, REMOTE_DIR, true, {}, {}, inner) : levelSegments(p.analysis, dir, remote, env, snapshot, inner, cds)));
     }
   }
   return out;
 }
+const prepared = (command) => analysis(expandLoops(command).replace(SIMPLE_QUOTED, '$1'));
 function segments(command, env = {}) {
-  return levelSegments(analysis(expandLoops(command).replace(SIMPLE_QUOTED, '$1')), '', false, env);
+  return levelSegments(prepared(command), '', false, env);
+}
+// Every directory a `cd` in the command reaches on this machine, as the engine names it (relative to the cwd when it
+// does not start with `/`): the adapter checks which exist and passes them back as `env.dirs`.
+export function cdDirs(command, env = {}) {
+  const cds = [];
+  levelSegments(prepared(command), '', false, env, {}, null, cds);
+  return [...new Set(cds)];
 }
 const plainArgs = (rest) => rest.split(/\s+/).filter((t) => t && !t.startsWith('-'));
 function findRoots(rest) {
@@ -415,15 +447,38 @@ export async function branchFact(dir, name, run) {
 const branchKey = ({ dir, name }) => `${dir}|${name}`;
 
 // Branch refs every `gh api -X DELETE …/git/refs/heads/<b>` deletes: { dir, repo, name }, `repo` null for gh's
-// `{owner}/{repo}` placeholder, which gh fills from the repo in `dir`. Any other GitHub delete (a repo, a tag, a
-// release, another host's) has no name, so it never rides on a safe ref.
-const REF_DELETE = /\bgh\s+api\b[^;&|\n]*?\s\/?repos\/([\w.-]+\/[\w.-]+|\{owner\}\/\{repo\})\/git\/refs\/heads\/([^\s;&|)]+)(?=[\s;&|)]|$)/;
+// `{owner}/{repo}` placeholder, which gh fills from the repo in `dir`. The endpoint is gh's first operand, read from
+// the words with every option's value skipped (a `--jq` or `--template` value naming a ref is not the endpoint). Any
+// other GitHub delete (a repo, a tag, a release), another host's (`--hostname`, GH_HOST) or another repo's (GH_REPO
+// set in the command) has no name, so it never rides on a safe ref.
+const GH_API_VALUE = new Set(['-X', '--method', '-H', '--header', '-f', '--raw-field', '-F', '--field', '-q', '--jq', '-t', '--template', '--input', '-p', '--preview', '--cache', '--hostname']);
+const REF_ENDPOINT = /^\/?repos\/([\w.-]+\/[\w.-]+|\{owner\}\/\{repo\})\/git\/refs\/heads\/(\S+)$/;
+function refEndpoint(words) {
+  const vals = commandWords(words).map((w) => w.val);
+  if (vals[0] !== 'gh' || vals[1] !== 'api') return null;
+  let endpoint = null;
+  for (let k = 2; k < vals.length; k++) {
+    const v = vals[k];
+    if (v === '--') {
+      endpoint ??= vals[k + 1] ?? null;
+      break;
+    }
+    if (/^--hostname(?:=|$)/.test(v)) return null;
+    if (GH_API_VALUE.has(v)) k++;
+    else if (!v.startsWith('-')) endpoint ??= v;
+  }
+  return endpoint && REF_ENDPOINT.exec(endpoint);
+}
+// A variable a command sets anywhere (prefix, export, env, a plain assignment), at any level on this machine.
+const setsVariable = (command, re) =>
+  units(analysis(command)).some(({ cmd, remote }) => !remote && cmd.words.some((w, i, ws) => re.test(w.val) && ws.slice(0, i).every((x) => /^[A-Za-z_]\w*=/.test(x.val) || DECLARE_WORDS.test(x.val))));
 export function refTargets(command, rules, env = {}) {
   const re = riskyRe(rules.risky.find((r) => r.id === 'gh-delete'));
+  const elsewhere = setsVariable(command, /^GH_(?:REPO|HOST)=/);
   return segments(command, env)
     .filter(({ seg }) => re.test(seg))
-    .map(({ seg, dir, remote }) => {
-      const m = !remote && REF_DELETE.exec(seg);
+    .map(({ words, dir, remote }) => {
+      const m = !remote && !elsewhere && refEndpoint(words);
       return m ? { dir, repo: m[1].startsWith('{') ? null : m[1], name: m[2] } : { dir: remote ? REMOTE_DIR : dir, repo: null, name: NO_TARGET };
     });
 }
@@ -492,15 +547,15 @@ function safeRemoval(command, rules, env, worktrees, regenerable) {
 }
 
 // GUARD_UNATTENDED as a command sets it for this machine (`export GUARD_UNATTENDED=1`, a prefix
-// `GUARD_UNATTENDED=1 cmd`, `env GUARD_UNATTENDED=1 cmd`): true when on (1, true, on), false for any other value,
-// null when the command does not set it. Only words in assignment position count, so a commit message or an echo
+// `GUARD_UNATTENDED=1 cmd`, `env GUARD_UNATTENDED=1 cmd`): true when on (1, true, on), false for any other value or
+// `unset GUARD_UNATTENDED`, null when the command does not set it. Only words in assignment position count, so a commit message or an echo
 // naming it does not; another host's or a container's setting is not this session's.
-const DECLARE_WORDS = /^(?:export|declare|typeset|local|readonly|env)$/;
 export function unattendedSet(command) {
   let set = null;
   for (const { cmd, remote } of units(analysis(command))) {
     if (remote) continue;
     const words = cmd.words.map((w) => w.val);
+    if (words[0] === 'unset' && words.includes('GUARD_UNATTENDED')) set = false;
     for (let k = DECLARE_WORDS.test(words[0] ?? '') ? 1 : 0; k < words.length && /^[A-Za-z_]\w*=/.test(words[k]); k++) {
       const m = /^GUARD_UNATTENDED=([\s\S]*)$/.exec(words[k]);
       if (m) set = /^(?:1|true|on)$/i.test(m[1]);

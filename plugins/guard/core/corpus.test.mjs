@@ -13,7 +13,8 @@ import { rules } from './rules.mjs'
 const OPEN = new Set([])
 
 const corpus = JSON.parse(readFileSync(new URL('./corpus.json', import.meta.url), 'utf8'))
-const env = { TMPDIR: '/var/folders/ab/xyz/T/', HOME: '/Users/me' }
+// Every directory a `cd` names exists.
+const env = { TMPDIR: '/var/folders/ab/xyz/T/', HOME: '/Users/me', dirs: { has: () => true } }
 const loadedSkills = new Set(['conventional-commits', 'github-workflow', 'wt', 'release-please', 'docs-sync', 'python-testing', 'pr-fix'])
 
 // Facts the guard gathers come back favourable, so a row asks only when the guard cannot reach or read them:

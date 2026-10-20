@@ -760,7 +760,7 @@ test('cd is followed up to the first branch, subshell or ||, and $PWD is the dir
   assert.deepEqual(removalTargets(`cd ${S}/p && D=$PWD/data && rm -rf $D && for i in 1 2; do echo $i & done; wait`, rules, env), [`${S}/p/data`]);
   assert.deepEqual(removalTargets(`cd ${S} && rm -rf "$PWD/a" \${PWD}/b`, rules, env), [`${S}/a`, `${S}/b`]);
   for (const c of [`cd ${S}/p && D=$PWD/data && rm -rf $D`, `cd ${S}; rm -rf a; (make test)`])
-    assert.equal(decide(c, { env }).action, 'allow', c);
+    assert.equal(decide(c, { env: { ...env, dirs: new Set([S, `${S}/p`]) } }).action, 'allow', c);
   for (const c of [
     `cd ${S} || true; rm -rf build`,
     `cd ${S} || exit 1; rm -rf build`,
@@ -807,8 +807,19 @@ test('gh api DELETE of a branch ref passes when the ref is the head of a merged 
     'gh api -X DELETE repos/o/r',
     'gh api -X DELETE repos/o/r/git/refs/heads/feat/x && gh repo delete o/other --yes',
     "ssh h 'gh api -X DELETE repos/o/r/git/refs/heads/feat/x'",
+    'gh api -X DELETE repos/o/r --template repos/o/r/git/refs/heads/feat/x',
+    'gh api -X DELETE repos/o/r/git/refs/tags/v1.0.0 -t repos/o/r/git/refs/heads/feat/x',
+    'gh api -X DELETE repos/o/r/releases/1 --jq repos/o/r/git/refs/heads/feat/x',
+    'GH_REPO=o/other gh api -X DELETE repos/{owner}/{repo}/git/refs/heads/feat/x',
+    'export GH_REPO=o/other; gh api -X DELETE repos/{owner}/{repo}/git/refs/heads/feat/x',
+    'env GH_HOST=ghe.corp gh api -X DELETE repos/o/r/git/refs/heads/feat/x',
+    'GH_HOST=ghe.corp gh api -X DELETE repos/o/r/git/refs/heads/feat/x',
+    'gh api --hostname ghe.corp -X DELETE repos/o/r/git/refs/heads/feat/x',
+    'gh api --hostname=ghe.corp -X DELETE repos/o/r/git/refs/heads/feat/x',
   ])
     assert.equal((await decideWith(c)).action, 'ask', c);
+  for (const c of ['gh api -X DELETE -H "Accept: application/vnd.github+json" repos/o/r/git/refs/heads/feat/x', 'gh api --silent -XDELETE -- repos/o/r/git/refs/heads/feat/x'])
+    assert.equal((await decideWith(c)).action, 'allow', c);
   assert.equal((await decide('gh api -X DELETE repos/o/r/git/refs/heads/feat/x', { refs: await refFacts('gh api -X DELETE repos/o/r/git/refs/heads/feat/x', rules, fakeRefs({ fail: true })) })).action, 'ask');
   const calls = [];
   await refFacts('cd /r && gh api -X DELETE repos/{owner}/{repo}/git/refs/heads/feat/x', rules, fakeRefs({}, calls));
@@ -821,7 +832,7 @@ test('gh api DELETE of a branch ref passes when the ref is the head of a merged 
 test('unattendedSet reads GUARD_UNATTENDED set by any command spelling, never from quoted text (G23)', () => {
   for (const c of ['export GUARD_UNATTENDED=1', 'GUARD_UNATTENDED=1 git rebase main', 'GUARD_UNATTENDED=true', 'export GUARD_UNATTENDED="on"; make test', 'cd x && GUARD_UNATTENDED=1 make'])
     assert.equal(unattendedSet(c), true, c);
-  for (const c of ['export GUARD_UNATTENDED=0', 'GUARD_UNATTENDED= make', 'export GUARD_UNATTENDED=1; export GUARD_UNATTENDED=off'])
+  for (const c of ['export GUARD_UNATTENDED=0', 'GUARD_UNATTENDED= make', 'export GUARD_UNATTENDED=1; export GUARD_UNATTENDED=off', 'unset GUARD_UNATTENDED'])
     assert.equal(unattendedSet(c), false, c);
   for (const c of ['git commit -m "set GUARD_UNATTENDED=1"', 'echo GUARD_UNATTENDED', "ssh h 'GUARD_UNATTENDED=1 x'", 'cat <<EOF\nGUARD_UNATTENDED=1\nEOF', 'make test'])
     assert.equal(unattendedSet(c), null, c);
@@ -838,4 +849,38 @@ test('a branch delete on another host never rides on a safe local one (G23)', as
   const d = decide(c, { branches: await branchFacts(c, rules, run) });
   assert.equal(d.action, 'ask');
   assert.match(d.reason, /x \(on another host\)/);
+});
+
+test('a cd that may not have run holds only within its && chain; payloads the outer shell expands use its values (G23 review)', () => {
+  const env = { HOME: '/Users/me', TMPDIR: '/var/folders/ab/xyz/T/', dirs: new Set(['/tmp/x', '/Users/me/repo']) };
+  for (const c of [
+    'cd /tmp/x; rm -rf src',
+    'cd /tmp/x\nrm -rf src',
+    'cd /Users/me/repo && git pull; cd /tmp/x; rm -rf src',
+    'cd /tmp/nope && rm -rf src',
+  ])
+    assert.equal(decide(c, { env }).action, 'allow', c);
+  for (const c of [
+    'cd /tmp/nope; rm -rf src',
+    'cd /tmp/nope; rm -rf src; (make test)',
+    '[ -d /tmp/x ] && cd /tmp/x; rm -rf src',
+    'false && cd /tmp/x; rm -rf build',
+    'cd /tmp/nope && cd /tmp/x; rm -rf src',
+    'cd /tmp/x &\nrm -rf src',
+    'cd /tmp/x & # bg\nrm -rf src',
+    'cd /tmp/x |\nrm -rf src',
+    'true ||\ncd /tmp/x\nrm -rf src',
+    'cd /tmp/x && make & rm -rf src',
+    'bash -c "cd /tmp/x && rm -rf $PWD"',
+    'sh -c "cd /tmp/x; rm -rf $PWD/src"',
+    'bash <<EOF\ncd /tmp/x && rm -rf $PWD\nEOF',
+    'echo "cd /tmp/x && rm -rf $PWD" | sh',
+    'ssh h "cd /tmp/x && rm -rf $PWD"',
+    'D=/Users/me/repo; bash -c "D=/tmp/x; rm -rf $D"',
+    'PWD=/tmp/y; cd /Users/me/repo && rm -rf $PWD/src',
+  ])
+    assert.notEqual(decide(c, { env }).action, 'allow', c);
+  // The shell runs these in the directory or with the value the guard resolves.
+  for (const c of ["bash -c 'cd /tmp/x && rm -rf $PWD/a'", "ssh h 'cd /tmp/x && rm -rf $PWD/a'", 'D=/tmp/x; ssh h "rm -rf $D/a"', '$(cd /tmp/x && rm -rf $PWD/a)'])
+    assert.equal(decide(c, { env }).action, 'allow', c);
 });

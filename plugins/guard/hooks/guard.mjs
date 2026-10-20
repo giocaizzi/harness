@@ -8,7 +8,7 @@ import { statfs } from 'node:fs/promises'
 import { cpus, homedir, loadavg, platform } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { analysis, branchFacts, codexRules, deniedBy, deniedDir, evaluateCommand, evaluateEdit, isHeavy, isRisky, nativeAsk, previewCommand, refFacts, regenFacts, unattendedSet, withPreview, worktreeFacts } from '../core/engine.mjs'
+import { analysis, branchFacts, cdDirs, codexRules, deniedBy, deniedDir, evaluateCommand, evaluateEdit, isHeavy, isRisky, nativeAsk, previewCommand, refFacts, regenFacts, unattendedSet, withPreview, worktreeFacts } from '../core/engine.mjs'
 import { cpuPercentFrom } from '../core/host.mjs'
 import { commandWords, units } from '../core/shell.mjs'
 import { emit } from '../core/otel.mjs'
@@ -219,21 +219,38 @@ const within = (promise, ms, fallback) =>
 const FACTS_MS = 20_000
 const PREVIEW_MS = 3_000
 
-// Unattended: GUARD_UNATTENDED in the environment the harness was launched with, or set by a command earlier in
-// this session (`export GUARD_UNATTENDED=1`), which a hook cannot otherwise see: each hook is its own process.
+// Unattended: GUARD_UNATTENDED in the environment the harness was launched with, or set by a command in this session
+// (`export GUARD_UNATTENDED=1`), which a hook cannot otherwise see: each hook is its own process. The command's own
+// setting counts for itself; it is kept for the session only once the guard lets that command run.
 const ON = /^(1|true|on)$/i
-const unattended = (deps, state) => ON.test(deps.env?.GUARD_UNATTENDED ?? '') || state.unattended === true
+
+// The directories a command's `cd`s reach that exist, so a `cd x; rm -rf y` is followed only when `cd x` surely ran.
+export function existingDirs(command, env, cwd) {
+  const dirs = new Set()
+  for (const d of cdDirs(command, env)) {
+    if (!PLAIN_DIR.test(d)) continue
+    try {
+      if (statSync(resolve(cwd || '.', d)).isDirectory()) dirs.add(d)
+    } catch {
+      // missing: the cd may fail
+    }
+  }
+  return dirs
+}
+const PLAIN_DIR = /^[\w.@%+=:,\\/~-]+$/
 
 async function onShell(input, state, deps) {
   const command = String(input.tool_input?.command ?? '')
   if (!command) return {}
   const set = unattendedSet(command)
-  if (set !== null) state.unattended = set
+  const fromEnv = ON.test(deps.env?.GUARD_UNATTENDED ?? '')
+  const unattended = fromEnv || (set ?? state.unattended) === true
   try {
     const host = isHeavy(command, rules) ? await deps.hostFacts(input.cwd) : {}
     // HOME resolves `~` and `$HOME` in paths (USERPROFILE on Windows).
     let unfinished = false
     const facts = { env: { TMPDIR: deps.env.TMPDIR, TEMP: deps.env.TEMP, TMP: deps.env.TMP, HOME: deps.env.HOME || deps.env.USERPROFILE } }
+    facts.env.dirs = existingDirs(command, facts.env, input.cwd)
     if (isRisky(command, rules)) {
       // A lookup's own directory (a `cd` the engine followed) is relative to the call's cwd.
       const inCwd = (argv, cwd) => deps.run(argv, cwd == null ? input.cwd : resolve(input.cwd || '.', cwd))
@@ -266,9 +283,10 @@ async function onShell(input, state, deps) {
       return preToolUse('deny', d.reason)
     }
     // Unattended run (GUARD_UNATTENDED=1): nobody can answer an ask, so it becomes a deny and the agent picks another way.
-    if (d.action === 'ask' && unattended(deps, state)) {
+    if (d.action === 'ask' && unattended) {
       report('deny', 'unattended')
-      return preToolUse('deny', `${d.reason}\nUnattended run (GUARD_UNATTENDED): nobody can confirm this, so the command was not run. Pick another approach, or leave it for the user.`)
+      const source = fromEnv ? '' : ' It was switched on by a command in this session; `export GUARD_UNATTENDED=0` turns it off.'
+      return preToolUse('deny', `${d.reason}\nUnattended run (GUARD_UNATTENDED): nobody can confirm this, so the command was not run. Pick another approach, or leave it for the user.${source}`)
     }
     // Codex and opencode hooks cannot ask: the harness's own prompt rule asks for the plain forms (`deps.nativeAsk`),
     // anything else is denied and the user runs it.
@@ -285,6 +303,7 @@ async function onShell(input, state, deps) {
       const argv = previewCommand(d.rule, command, rules, facts.env)
       return preToolUse('ask', argv ? withPreview(d.reason, await within(Promise.resolve(deps.run(argv, input.cwd)), deps.previewMs ?? PREVIEW_MS, '')) : d.reason)
     }
+    if (set !== null) state.unattended = set
     return d.context ? note(d.context) : {}
   } catch (err) {
     // Fail open for reminders, closed for risky commands.

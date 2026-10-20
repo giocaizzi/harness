@@ -147,6 +147,22 @@ test('GUARD_UNATTENDED set once by a command holds for the rest of the session, 
   assert.equal(decision(await h(pre('Bash', 'rm -rf ~/x'))).permissionDecision, 'ask')
   assert.equal(decision(await h(pre('Bash', 'rm -rf ~/x'), { GUARD_UNATTENDED: '1' })).permissionDecision, 'deny', 'the launcher environment wins')
   assert.equal(decision(await h(pre('Bash', 'export GUARD_UNATTENDED=1; rm -rf ~/x'))).permissionDecision, 'deny', 'set in the same command')
+  assert.equal(decision(await h(pre('Bash', 'rm -rf ~/x'))).permissionDecision, 'ask', 'a denied command does not switch the session')
+  await h(pre('Bash', 'export GUARD_UNATTENDED=1'))
+  assert.match(decision(await h(pre('Bash', 'rm -rf ~/x'))).permissionDecisionReason, /switched on by a command in this session/)
+  await h(pre('Bash', 'unset GUARD_UNATTENDED'))
+  assert.equal(decision(await h(pre('Bash', 'rm -rf ~/x'))).permissionDecision, 'ask')
+})
+
+test('a cd followed across ; only when its directory exists (G23 review)', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'guard-cd-'))
+  const h = setup({ env: { TMPDIR: '/var/folders/ab/T/' } })
+  assert.equal(decision(await h({ ...pre('Bash', 'cd sub; rm -rf /tmp/x/build'), cwd: dir })), undefined)
+  mkdirSync(join(dir, 'sub'))
+  const run = async (argv) => (argv.includes('rev-list') ? '0\n' : null)
+  const h2 = setup({ run })
+  assert.equal(decision(await h2({ ...pre('Bash', 'cd sub; git branch -D feat/x'), cwd: dir })), undefined, 'existing dir: followed')
+  assert.equal(decision(await h2({ ...pre('Bash', 'cd gone; git branch -D feat/x'), cwd: dir })).permissionDecision, 'ask', 'missing dir: not followed')
 })
 
 test('a branch ref deleted through gh api passes once a merged PR holds its tip, looked up where the command cds (G23)', async () => {
