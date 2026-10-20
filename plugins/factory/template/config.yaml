@@ -3,12 +3,16 @@
 # Every key is documented in docs/factory.md of github.com/giocaizzi/harness.
 version: 1
 
+# Where tickets live. Only github is implemented; other forges map the same intents (docs/factory.md).
+forge: github
+
 # GitHub logins whose actions count as the owner's: applying the approval label and answering questions.
 approvers:
   - <github-login>
 
 labels:
   approval: agent-ok
+  claimed: factory-claimed
   needs_owner: needs-owner
   needs_grooming: needs-grooming
 
@@ -59,3 +63,22 @@ risk:
       - ".github/**"
       - "<infra-dir>/**"
     merge: owner
+
+# Optional backends a runtime would use; the attended skills ignore them. Delete what you do not use.
+# How to tell the owner a question is waiting: a command that reads the message on stdin, or a URL to POST it to.
+notify:
+  command: "<command reading the message on stdin>"
+# Resource attributes to tag a run's telemetry with. The OTLP endpoint comes from the environment
+# (OTEL_EXPORTER_OTLP_ENDPOINT), never from this file.
+telemetry:
+  resource_attributes:
+    - factory.run_id
+    - factory.ticket
+    - factory.role
+    - factory.phase
+# Secrets the deploy or verify commands need, by reference only (a provider from the secrets-handling skill
+# and the item's name), never values.
+secrets:
+  <NAME>:
+    provider: <provider>
+    ref: <item-name>

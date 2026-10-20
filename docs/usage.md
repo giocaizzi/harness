@@ -78,6 +78,14 @@ These load by themselves when the work touches their subject; call them by name 
 | `api` | `sqlalchemy` | define models, write queries, manage sessions and migrations |
 | `api` | `ddd` | design bounded contexts, aggregates, ports and adapters |
 
+### Ticket runs (`factory`)
+
+For a repo adopted per [adopt-factory.md](adopt-factory.md): you approve a ticket by labelling it `agent-ok`, the agent works it, and everything it decides or asks lands on the ticket ([factory.md](factory.md)).
+
+| Skill | Argument | What it does |
+|---|---|---|
+| `ticket-run` | issue number | Checks you applied the approval label, posts a plan, works the ticket in its own worktree deciding scope with the fold-in test, asks questions on the ticket and parks until you answer there, runs the `verifier`, ships one PR that closes the ticket, merges by risk tier, deploys and live-verifies, and records the result. Run it again on a parked ticket after you answer. |
+
 ## Agents
 
 | Agent | Plugin | Ask for it when | Model |
