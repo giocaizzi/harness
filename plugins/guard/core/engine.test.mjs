@@ -419,8 +419,9 @@ test('secret reads ask every time, naming secrets-handling; look-alikes and inje
       'pass show email/me', 'gcloud secrets versions access latest --secret=api', 'az keyvault secret show --vault-name v --name n',
       'printenv GITHUB_TOKEN', 'echo ok && printenv API_KEY',
       'cat .env', 'less .env.local', 'cat ./app/.env', 'head -n 5 config/.env.production', 'X=$(bws secret get 0000) ./run.sh',
+      'env | sort | grep PASSWORD', 'env', 'printenv | sort', 'gh auth token', 'echo "$GITHUB_TOKEN"', 'grep X .env', 'source .env', '. ./.env', 'cat ~/.aws/credentials',
     ],
-    'secrets-env': ['printenv | grep TOKEN', 'env | grep -i "secret"', "env | rg -i 'api_key'", 'env | sort | grep PASSWORD'],
+    'secrets-env': ['printenv | grep TOKEN', 'env | grep -i "secret"', "env | rg -i 'api_key'", 'env | grep TOKEN | sort'],
   };
   for (const [rule, commands] of Object.entries(asks))
     for (const command of commands) {
@@ -437,7 +438,7 @@ test('secret reads ask every time, naming secrets-handling; look-alikes and inje
     'security find-generic-password -s svc', 'security find-generic-password -a me -s gmail', 'security list-keychains',
     'op item get github --fields username', 'op whoami', 'pass ls', 'pass insert x',
     'gcloud secrets list', 'gcloud secrets versions list api', 'az keyvault secret list --vault-name v',
-    'printenv PATH', 'printenv', 'env | grep PATH', 'env FOO=1 node app.js | grep ok', 'docker compose --env-file .env config | grep image',
+    'printenv PATH', 'env | grep PATH', 'echo $KEY_PATH', 'echo $HOME', 'env FOO=1 node app.js | grep ok', 'docker compose --env-file .env config | grep image',
     'cat .env.example', 'cat .env.sample', 'cat .envrc.example', 'cat foo.env', 'cat environment.md', 'echo "cat .env"',
     "grep -rn 'bws secret get' docs/", 'git commit -m "docs: never run printenv | grep TOKEN"',
   ])

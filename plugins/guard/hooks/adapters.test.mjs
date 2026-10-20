@@ -34,7 +34,7 @@ test('opencode: the config hook appends bash asks last, and a covered risky comm
   assert.deepEqual(Object.keys(cfg.permission), ['*', 'bash'])
   const bash = Object.entries(cfg.permission.bash)
   assert.deepEqual(bash[0], ['*', 'allow'])
-  assert.deepEqual(bash.at(-1), ['less .env *', 'ask'])
+  assert.deepEqual(bash.at(-1), ['security dump-keychain *', 'ask'])
   assert.equal(cfg.permission.bash['rm -rf *'], 'ask')
   assert.equal(cfg.agent.scout.permission.bash['git reset --hard *'], 'ask')
   assert.equal(cfg.agent.x.permission, undefined)

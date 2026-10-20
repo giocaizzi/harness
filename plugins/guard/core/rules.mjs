@@ -260,7 +260,7 @@ export const rules = {
     {
       "id": "secrets",
       "say": "Reads a secret",
-      "match": "\\bbws?\\s+(secret|get|list|run|unlock|login|export|serve)\\b|\\bsecurity\\s+find-(generic|internet)-password\\b[^|;&\\n]*\\s-[a-z]*[wg][a-z]*\\b|\\bchezmoi\\s+secret\\s+keyring\\s+get\\b|\\bop\\s+read\\b|\\bop\\s+item\\s+get\\b[^|;&\\n]*\\s--reveal\\b|\\bpass\\s+show\\b|\\bgcloud\\s+secrets\\s+versions\\s+access\\b|\\baz\\s+keyvault\\s+secret\\s+show\\b|(^|[;&|(\\n]\\s*)printenv\\s+\\w*(token|secret|key|pass|credential)|\\b(cat|less|more|head|tail|bat)\\s+([^\\s;&|]+\\s+)*([^\\s;&|]*/)?\\.env(\\.(?!example\\b|sample\\b|template\\b|dist\\b)[\\w.-]+)?(?=[\\s;&|)]|$)",
+      "match": "\\bbws?\\s+(secret|get|list|run|unlock|login|export|serve)\\b|\\bsecurity\\s+find-(generic|internet)-password\\b[^|;&\\n]*\\s-[a-z]*[wg][a-z]*\\b|\\bsecurity\\s+dump-keychain\\b|\\bchezmoi\\s+secret\\s+keyring\\s+get\\b|\\bop\\s+read\\b|\\bop\\s+item\\s+get\\b[^|;&\\n]*\\s--reveal\\b|\\bpass\\s+show\\b|\\bgcloud\\s+secrets\\s+versions\\s+access\\b|\\baz\\s+keyvault\\s+secret\\s+show\\b|\\bgh\\s+auth\\s+token\\b|\\bgh\\s+auth\\s+status\\b[^;&|\\n]*--show-token\\b|\\bgcloud\\s+auth\\s+(?:application-default\\s+)?print-(?:access|identity)-token\\b|\\baz\\s+account\\s+get-access-token\\b|(?:^|[;&|(\\n]\\s*)printenv\\s+\\w*(token|secret|key|pass|credential)|(?:^|[;&|(\\n]\\s*)(?:env|printenv)\\s*(?=$|[;&\\n)]|\\|(?!\\s*(?:e?grep|rg|findstr|select-string)\\b))|\\b(?:cat|less|more|head|tail|bat|grep|egrep|rg|sed|awk|cut|xxd|strings|base64|jq)\\b[^;&|\\n]*\\s(?:[^\\s;&|]*/)?(?:\\.env(?:rc|\\.(?!example\\b|sample\\b|template\\b|dist\\b)[\\w.-]+)?|\\.netrc|\\.aws/credentials|\\.ssh/id_(?:rsa|ed25519|ecdsa|dsa))(?=[\\s;&|)]|$)|(?:^|[;&|(\\n]\\s*)(?:source|\\.)\\s+(?:[^\\s;&|]*/)?(?:\\.env(?:rc|\\.(?!example\\b|sample\\b|template\\b|dist\\b)[\\w.-]+)?|\\.netrc|\\.aws/credentials|\\.ssh/id_(?:rsa|ed25519|ecdsa|dsa))(?=[\\s;&|)]|$)|<\\s*(?:[^\\s;&|]*/)?(?:\\.env(?:rc|\\.(?!example\\b|sample\\b|template\\b|dist\\b)[\\w.-]+)?|\\.netrc|\\.aws/credentials|\\.ssh/id_(?:rsa|ed25519|ecdsa|dsa))(?=[\\s;&|)]|$)",
       "why": "reads a secret; load `secrets-handling` and never print or inline the value",
       "skipInjected": true,
       "prefixes": [
@@ -268,15 +268,30 @@ export const rules = {
         ["bws", "secret"], ["bws", "get"], ["bws", "list"], ["bws", "run"],
         ["chezmoi", "secret", "keyring", "get"], ["op", "read"], ["pass", "show"],
         ["gcloud", "secrets", "versions", "access"], ["az", "keyvault", "secret", "show"],
-        ["cat", ".env"], ["less", ".env"]
+        ["cat", ".env"], ["less", ".env"],
+        ["gh", "auth", "token"], ["gcloud", "auth", "print-access-token"], ["az", "account", "get-access-token"], ["security", "dump-keychain"]
       ]
     },
+    // Echoing a secret variable (D9): `match` finds the echo, `raw` the variable as written (it is usually quoted).
+    // Names ending in TOKEN, KEY, SECRET or PASSWORD; `$KEY_PATH` passes.
+    {
+      "id": "secrets",
+      "say": "Prints a secret variable",
+      "match": "(?:^|[;&|(\\n\\s])(?:echo|printf|write-output|write-host)\\b",
+      "raw": "(?:echo|printf|write-output|write-host)\\b[^;&|\\n]*\\$(?:\\{|env:)?(?:\\w*_)?(?:TOKEN|KEY|SECRET|PASSWORD|PASSWD)\\}?(?!\\w)|(?:echo|printf)\\b[^;&|\\n]*\\$\\{?\\w*PASSWORD\\}?(?!\\w)",
+      "why": "prints a secret variable; load `secrets-handling` and never print the value",
+      "skipInjected": true
+    },
     // `raw` must also match the command as written: the grep pattern is usually quoted, which `match` cannot see.
+    // `pipeline`: match, raw and unless are tested per pipeline, so a secret word elsewhere in the command does not
+    // count (G09). `unless`: a pipeline that ends by keeping only the names (`cut -d= -f1`) prints no value.
     {
       "id": "secrets-env",
+      "pipeline": true,
+      "unless": "\\|\\s*(?:cut\\s+-d\\s*['\"]?=['\"]?\\s+-f\\s*1|cut\\s+-f\\s*1\\s+-d\\s*['\"]?=['\"]?|sed\\s+(?:-E\\s+)?['\"]?s/=\\.\\*//['\"]?|awk\\s+-F\\s*['\"]?=['\"]?\\s+['\"]?\\{\\s*print\\s+\\$1\\s*\\}['\"]?)\\s*$",
       "say": "Prints environment variables that hold secrets",
       "match": "(^|[;&|(\\n]\\s*)(printenv|env)\\b(?![-.=])[^;&\\n]*\\|\\s*(e?grep|rg|findstr|select-string)\\b",
-      "raw": "token|secret|key|pass|credential",
+      "raw": "token|secret|key|pass|credential|\\btok|gh_|\\bpat\\b|bearer",
       "why": "dumps secret environment variables; load `secrets-handling` and filter to names only",
       "skipInjected": true
     },
