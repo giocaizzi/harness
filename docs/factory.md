@@ -7,13 +7,14 @@ The `factory` plugin works tickets from a GitHub issue board, one at a time and 
 - **The owner picks which tickets; the agent owns finishing them.** A ticket is worked only when an approver applied the approval label. Everything the ticket needs to be done is then in scope, and nothing else.
 - **The ticket is the shared record.** Plans, questions, scope decisions and evidence go on the issue as comments, so whoever runs the next step (a person, a subagent, a later headless process) starts from the same state.
 - **A contract, not code.** A run starts from a ticket and ends with a marked result comment on it and a `result.json`. Nothing else is assumed about what runs it, so a runtime can come later without changing the skills.
+- **Only declared identities instruct a run.** Text from anyone outside `approvers` and `writers` is untrusted data: it describes at most a problem and never changes scope, steps, permissions or the plan. A ticket whose title or body a non-approver edited after the approval is not approved, an owner-gated merge resumes the ticket only when an approver merged it, and any change under `.factory/` lands as `merge: owner`. While a run is active the `guard` plugin denies any command that adds the approval label, since a token that is also an approver would make it the owner's.
 - **Never a decision by silence.** A question parks the ticket until an approver answers on it. The agent never closes, re-scopes or marks an issue not planned; only its own PR's `Closes #N` closes the ticket.
 
 ## Attended flow
 
 The `ticket-run` skill carries one ticket through these steps; call it with the issue number, and again on a parked ticket once you have answered. `factory-status` lists what needs you, what is in progress and what is done, from the labels and marked comments.
 
-1. **Gate.** The ticket is open and carries the approval label, and the issue timeline shows an approver applied it. Otherwise the run stops and says why.
+1. **Gate.** The ticket is open and carries the approval label, the issue timeline shows an approver applied it, and no non-approver edited the title or body since. Otherwise the run stops and says why.
 2. **Plan comment.** Goal, acceptance checks (each one a command or observation that fails before the change), side effects in scope, planned fold-ins, size and risk tier. XS and S tickets start right after it; M and larger post it as a question and park until the owner's OK.
 3. **Work** in its own worktree and branch, applying the fold-in test to everything found on the way and logging the calls the plan does not already cover in the decision log.
 4. **Questions** go on the ticket, one per comment, and park the ticket (below).

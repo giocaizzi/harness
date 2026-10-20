@@ -24,9 +24,22 @@ gh api "repos/{owner}/{repo}/issues/N/timeline" --paginate \
 ```
 
 - **Approved:** open, the approval label is on, and the last timeline line is `labeled` by a login in `approvers`. Otherwise stop and say which part failed.
+- **Not edited since:** the approval covers the ticket as the approver saw it, so a title or body changed afterwards by a non-approver voids it ([below](#edited-after-approval)). Stop and say who edited.
 - **Ready:** the body has acceptance criteria and a proof command (a command or observation that shows the ticket done). Without them, ask on the ticket, proposing both, instead of starting.
 - **Not claimed:** no claim label, or the newest trusted `factory:claim` comment is this run's own: a `runtime` claim only when its run id equals `FACTORY_RUN_ID` (the runtime claimed the ticket for this run); an `attended` claim from this host (a resume). Any other claim, including a runtime's on this host, is another run's. A claim by another run means stop: two runs never take one ticket. A stale claim is the owner's to clear.
 - **Claim:** add the claim label, then post `factory:claim` with the host name and run id. When `FACTORY_RUN_ID` is set, the runtime already did both: edit its claim comment (the newest trusted one with that run id) instead of posting a second, and use that id as the run id. Release it (remove the label) when the run ends, whatever the end state.
+
+## Edited after approval
+
+The REST timeline records a title rename but not a body edit, so read the body's last edit over GraphQL and the renames from the timeline. `A` is the approvers as a JSON array, `L` the approval label, `N` the issue number. GraphQL reports an App editor without its `[bot]` suffix, so such an editor is not an approver and the check fails closed.
+
+```bash
+EDIT=$(gh api graphql -F n=N -F owner=':owner' -F name=':repo' --jq .data.repository.issue -f query='query($owner:String!,$name:String!,$n:Int!){repository(owner:$owner,name:$name){issue(number:$n){lastEditedAt editor{login}}}}')
+gh api "repos/{owner}/{repo}/issues/N/timeline" --paginate --jq '.[]' \
+  | jq -rs --argjson a "$A" --argjson e "$EDIT" --arg l "$L" 'def lc: ascii_downcase; def apr($u): $u != null and ($a | map(lc) | index($u | lc)) != null; [.[] | select((.event == "labeled" or .event == "unlabeled") and (.label.name | lc) == ($l | lc))] as $labels | ($labels | last) as $approval | if ($approval == null or $approval.event != "labeled" or (apr($approval.actor.login) | not)) then "refuse: not approved by an approver" elif $e == null then "refuse: the last edit of the body could not be read" else $approval.created_at as $at | ([.[] | select(.event == "renamed" and .created_at > $at)] | last) as $rename | if $e.lastEditedAt != null and $e.lastEditedAt > $at and (apr($e.editor.login // null) | not) then "refuse: body edited after approval by " + ($e.editor.login // "an unknown editor") elif $rename != null and (apr($rename.actor.login) | not) then "refuse: title renamed after approval by " + ($rename.actor.login // "an unknown actor") else "ok" end end')
+```
+
+Anything but `ok` means stop: the ticket is not approved as it now reads. The editor cannot be determined (a missing editor, an unreadable query) counts as a non-approver. An approver's own edit, or an approver applying the label again after the edit, makes the ticket eligible again; ask on the ticket for that, never apply the label yourself.
 
 ## Comments
 
