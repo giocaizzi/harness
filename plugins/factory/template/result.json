@@ -21,6 +21,9 @@
     { "name": "plan", "started_at": "<ISO 8601 timestamp>", "ended_at": "<ISO 8601 timestamp>" }
   ],
   "verifier": { "verdict": "pass", "rounds": 1 },
+  "routing": [
+    { "phase": "verify", "policy_model": "opus", "policy_effort": "medium", "model": "opus", "effort": "medium", "deviation_reason": null }
+  ],
   "cost_usd": null,
   "tokens": null,
   "turns": null,
