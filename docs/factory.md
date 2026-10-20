@@ -29,6 +29,8 @@ The `ticket-run` skill carries one ticket through these steps; call it with the 
 | `labels.claimed` | `factory-claimed` | the agent | A run holds the ticket (see [Claims](#claims)). Removed when the run ends. |
 | `labels.needs_owner` | `needs-owner` | the agent | A question waits on the owner. Removed when the run resumes on an answer. |
 | `labels.needs_grooming` | `needs-grooming` | the agent | Three parks: the ticket is under-specified and goes back to the owner for refinement. |
+| `labels.quarantine` | `factory-quarantine` | a runtime | Repeated failed or stalled runs: a runtime stops picking the ticket until an approver removes the label. |
+| `labels.halt` | `factory-halt` | an approver, an alert or a runtime | Set on an open issue (the halt issue): a runtime starts no run in the repo while any open issue carries it. |
 
 When the repo has a project board (`board` in the config), the agent also sets its status field: in progress while working, blocked while parked.
 
@@ -43,16 +45,17 @@ Every comment the agent posts starts with two hidden lines: the marker (config `
 | `<!-- factory:question Q<n> -->` | per question | One question, the options, a recommendation with its reason, and what is done so far. |
 | `<!-- factory:log -->` | once, edited in place | The decision log: one row per item found and the call made on it. Mirrored as `## Scope` in the PR. |
 | `<!-- factory:result <end_state> -->` | at the end of each run | End state, PR, evidence links, follow-ups. The same facts as `result.json`. |
+| `<!-- factory:notify <kind> -->` | by a runtime only, when it must reach an approver | An @-mention of the approvers and one line on why, `<kind>` naming the event (for example `question`, `halt`, `quarantine`, `budget`). It carries the marker, so it is never read as an answer. |
 
 Posting is idempotent: before posting, the agent looks for its own comment of the same kind and edits it instead; a write counts only once the forge's API confirms it, and an unconfirmed one is recorded as `maybe_posted` and checked by its marker before any retry. Statuses in a comment are read from their live source just before posting, and links are copied from the API's URL fields.
 
-**Answers.** The answer to an open question is the newest comment after it that an approver wrote and that does not carry the marker. Comments by any other account are ignored. A run resumes only on such an answer; with none, the ticket stays parked.
+**Answers.** The answer to an open question is the newest comment after it that an approver wrote and that does not carry the marker (so a `factory:notify` mention never counts). Comments by any other account are ignored. A run resumes only on such an answer; with none, the ticket stays parked.
 
 **Parks.** A question sets `needs-owner` (and the board's blocked status) and ends the run. After the third question on one ticket, the agent sets `needs-grooming`, removes the approval label and stops.
 
 ## Claims
 
-A claim is visible on the forge, never only a local lock, so runs on different hosts never take the same ticket. A run claims a ticket by adding the claim label and posting a `factory:claim` comment with its host and run id, and releases it by removing the label when it ends, in any end state. A run that finds the label with another run's claim stops. A claim left by a run that died is cleared by the owner, by removing the label. A runtime on several hosts uses the same protocol; the race between two claims at the same moment is its to settle (for example by re-reading the newest claim comment after posting).
+A claim is visible on the forge, never only a local lock, so runs on different hosts never take the same ticket. A run claims a ticket by adding the claim label and posting a `factory:claim` comment with its host and run id (a run a runtime started finds both already there, under the run id in `FACTORY_RUN_ID`, and edits that comment instead of posting a second), and releases it by removing the label when it ends, in any end state. A run that finds the label with another run's claim stops. A claim left by a run that died is cleared by the owner, by removing the label. A runtime on several hosts uses the same protocol; the race between two claims at the same moment is its to settle (for example by re-reading the newest claim comment after posting).
 
 ## Readiness
 
@@ -82,13 +85,18 @@ The whole scope is merged in one PR that closes the ticket (no partial PRs, no `
 
 Each run writes `.factory/runs/<number>/result.json` in the repo's main checkout (not in the worktree, so it outlives it; `.factory/runs/` is git-ignored). It is overwritten by each run on the same ticket. Template: [`plugins/factory/template/result.json`](../plugins/factory/template/result.json).
 
+**Schema versions.** Schema 2 is schema 1 plus the keys `reason_code`, `phases` and `verifier` and the `end_state` value `halted`, which only a runtime writes; nothing in schema 1 changed meaning. The skills write schema 2. Every schema-1 key keeps its meaning, so a schema-1 consumer upgrades by accepting `schema: 2` and ignoring the added keys. A consumer refuses a schema newer than it supports rather than guess.
+
 | Key | Type | Meaning |
 |---|---|---|
-| `schema` | integer | Contract version, `1`. |
+| `schema` | integer | Contract version, `2` (`1` in older results). |
 | `ticket` | string | `<owner>/<repo>#<number>`. |
-| `run_id` | string | The main session's id where the harness exposes one, else `<host>-<number>-<UTC timestamp>`. Also in the claim comment. |
-| `end_state` | `done` \| `parked` \| `failed` \| `budget_reached` | `done`: merged, deployed and verified per the definition of done. `parked`: waiting on the owner (a question, the M+ plan, a merge, or three parks). `failed`: could not be finished for a reason the owner must look at. `budget_reached`: a budget cap stopped the run; a pause, not a failure. |
+| `run_id` | string | `FACTORY_RUN_ID` when a runtime started the run (it sets that variable and claims under it); else the main session's id where the harness exposes one, else `<host>-<number>-<UTC timestamp>`. Also in the claim comment. |
+| `end_state` | `done` \| `parked` \| `failed` \| `budget_reached` \| `halted` | `done`: merged, deployed and verified per the definition of done. `parked`: waiting on the owner (a question, the M+ plan, a merge, or three parks). `failed`: could not be finished for a reason the owner must look at. `budget_reached`: a budget cap stopped the run; a pause, not a failure. `halted`: a runtime stopped the run on a halt (kill switch or circuit breaker); written only by the runtime, never by the skills. |
 | `reason` | string | Why the run parked or failed; empty when done. |
+| `reason_code` | string \| null | Optional machine-readable `reason`: `question`, `plan_gate`, `merge_gate`, `grooming`, `verify_rounds`, `live_verify_failed`, `env_blocked`, `budget` or `auth`; `null` when done or none fits. |
+| `phases` | array | `{name, started_at, ended_at}` per run step, in order: `gate`, `plan`, `work`, `verify`, `ship`, `deploy`, `record`, only those the run reached. ISO 8601 timestamps; `ended_at` is `null` for a step the run stopped in. |
+| `verifier` | object \| null | `{verdict, rounds}`: the verifier's last verdict (`pass` or `fail`) and how many review rounds ran; `null` when the run stopped before verification. |
 | `pr` | string \| null | The PR URL, if one exists. |
 | `decisions` | array | The decision log rows: `item`, `test` (`R1`, `R2`, `R3` or `separate`), `decision` (`folded`, `asked`, `noted`, `filed`, `commented`), `where` (commit, issue or comment). |
 | `evidence` | array of URLs | Comments, check runs or deploy runs that prove the acceptance checks. |
@@ -106,7 +114,7 @@ Each run writes `.factory/runs/<number>/result.json` in the repo's main checkout
 | `host` | object | `{name, os, runner}`: host name, `darwin`, `linux` or `windows`, and `attended`, `headless` or `runtime`, so runs from several machines can be told apart. |
 | `finished_at` | string | ISO 8601 timestamp. |
 
-**Telemetry.** `sessions` and `plugin_versions` let a run be joined to the harness's OpenTelemetry data by `session.id` and compared across plugin versions. A runtime may also tag a run's telemetry through `OTEL_RESOURCE_ATTRIBUTES` (for example `factory.run_id`, `factory.ticket`, `factory.role`, `factory.phase`); the skills emit nothing themselves.
+**Telemetry.** `sessions` and `plugin_versions` let a run be joined to the harness's OpenTelemetry data by `session.id` and compared across plugin versions, and `phases` lets it be sliced by step. A runtime may also tag a run's telemetry through `OTEL_RESOURCE_ATTRIBUTES` (for example `factory.run_id`, `factory.ticket`, `factory.role`, `factory.phase`); the skills emit nothing themselves.
 
 ## Config: `.factory/config.yaml`
 
@@ -117,7 +125,7 @@ Template with placeholders: [`plugins/factory/template/config.yaml`](../plugins/
 | `version` | yes | Config format, `1`. |
 | `forge` | yes | `github`, the only forge implemented. The skills express each operation as an intent (read the timeline, label, comment, search issues, open a PR) mapped to the forge's CLI, so GitLab or Azure DevOps can be added the way `repo-standard` maps them. |
 | `approvers` | yes | GitHub logins whose label and comments count as the owner's. |
-| `labels` | no | `approval`, `claimed`, `needs_owner`, `needs_grooming`; defaults as in [Labels](#labels). |
+| `labels` | no | `approval`, `claimed`, `needs_owner`, `needs_grooming`, `quarantine`, `halt`; defaults as in [Labels](#labels). |
 | `marker` | no | Hidden first line of every agent comment; default `<!-- factory -->`. |
 | `size_label_prefix` | no | Label prefix that carries the ticket's size (`XS`, `S`, `M`, `L`, `XL`). Without it, the plan estimates the size. |
 | `board` | no | `owner`, `project` (number), `status_field` and the `status` option names for `in_progress`, `blocked` and `backlog`. Omit when there is no board. |
