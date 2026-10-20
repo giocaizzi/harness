@@ -160,11 +160,10 @@ const fire = (deps, ...args) => {
   }
 }
 
-// `promise`, or `fallback` once `ms` pass. The timer does not keep the process alive.
+// `promise`, or `fallback` once `ms` pass.
 const within = (promise, ms, fallback) =>
   new Promise((resolve) => {
     const timer = setTimeout(() => resolve(fallback), ms)
-    timer.unref?.()
     promise.then(
       (v) => (clearTimeout(timer), resolve(v)),
       () => (clearTimeout(timer), resolve(fallback)),
