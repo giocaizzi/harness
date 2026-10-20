@@ -292,3 +292,11 @@ test('a risky step buried in a long chain is denied with "split it out" and logg
   assert.match(out.permissionDecisionReason, /own simple command/)
   assert.deepEqual([events[0].action, events[0].via, events[0].rule], ['deny', 'split', 'rm'])
 })
+
+test('the pip deny judges the repo the command cds into, not the session cwd (G06)', async () => {
+  const uv = mkdtempSync(join(tmpdir(), 'guard-uv-'))
+  writeFileSync(join(uv, 'uv.lock'), '')
+  const out = decision(await setup()({ ...pre('Bash', `cd ${uv} && pip install x`), cwd: mkdtempSync(join(tmpdir(), 'guard-plain-')) }))
+  assert.equal(out.permissionDecision, 'deny')
+  assert.match(out.permissionDecisionReason, /uses uv/)
+})

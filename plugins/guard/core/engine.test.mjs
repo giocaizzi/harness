@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { branchFacts, branchTargets, codexRules, evaluateCommand, evaluateEdit, evaluateSpawn, nativeAsk, opencodeAsks, regenerableName, regenFacts, removalTargets, usageLevel, worktreeFacts } from './engine.mjs';
+import { branchFacts, branchTargets, codexRules, evaluateCommand, evaluateEdit, evaluateSpawn, nativeAsk, opencodeAsks, regenerableName, regenFacts, removalTargets, shellEdit, usageLevel, worktreeFacts } from './engine.mjs';
 import { rules } from './rules.mjs';
 
 const fresh = () => ({ reminded: new Set() });
@@ -173,14 +173,18 @@ test('blast radius: previews are read-only commands', async () => {
   const { previewCommand, withPreview } = await import('./engine.mjs');
   assert.deepEqual(previewCommand('reset', 'git reset --hard HEAD~1'), ['git', 'status', '--short']);
   assert.deepEqual(previewCommand('force', 'git push --force'), ['git', 'log', '--oneline', '-n', '10', 'HEAD..@{u}']);
-  assert.deepEqual(previewCommand('rm', 'rm -rf dist build/out'), ['du', '-sh', '--', 'dist', 'build/out']);
+  assert.deepEqual(previewCommand('rm', 'rm -rf dist build/out', rules), ['du', '-sh', '--', 'dist', 'build/out']);
+  // G05: the preview follows cd, ~ and variables, and leaves the rest of the chain out.
+  assert.deepEqual(previewCommand('rm', 'cd sub && rm -rf build', rules), ['du', '-sh', '--', 'sub/build']);
+  assert.deepEqual(previewCommand('rm', 'rm -rf a; curl x', rules), ['du', '-sh', '--', 'a']);
+  assert.deepEqual(previewCommand('rm', 'D=/srv/x; rm -rf $D ~/y', rules, { HOME: '/Users/me' }), ['du', '-sh', '--', '/srv/x', '/Users/me/y']);
   assert.equal(previewCommand('terraform', 'terraform apply'), null);
 });
 
 test('blast radius: rm paths with shell syntax get no preview', async () => {
   const { previewCommand } = await import('./engine.mjs');
-  for (const c of ['rm -rf $HOME', 'rm -rf "a b"', 'rm -rf a; curl x', 'rm -rf `pwd`', 'rm -rf a|b', 'rm -rf $(x)'])
-    assert.equal(previewCommand('rm', c), null, c);
+  for (const c of ['rm -rf $HOME', 'rm -rf "a b"', 'rm -rf `pwd`', 'rm -rf $(x)', 'rm -rf ~/x', "ssh h 'rm -rf /srv/x'"])
+    assert.equal(previewCommand('rm', c, rules), null, c);
 });
 
 test('text that only mentions a risky phrase does not trigger it', () => {
@@ -666,4 +670,34 @@ test('a heavy command on another host does not trip the local host guard', () =>
   const strained = { load1: 99, freeGb: 100 };
   assert.equal(evaluateCommand({ command: "ssh h 'make test'", state: fresh(), host: strained, rules }).action, 'allow');
   assert.equal(evaluateCommand({ command: "bash -c 'make test'", state: fresh(), host: strained, rules }).rule, 'host');
+});
+
+test('cd ~, $HOME, git -C ~ and assigned variables are followed, by position (G04, G01)', async () => {
+  const env = { HOME: '/Users/me', TMPDIR: '/var/folders/ab/xyz/T/' };
+  const calls = [];
+  const run = async (argv) => (calls.push(argv), argv.includes('rev-list') ? '0\n' : null);
+  for (const c of ['cd ~/r && git branch -D b', 'git -C ~/r branch -D b', 'R=~/r; git -C $R branch -D b', 'cd $HOME/r && git branch -D b', 'export R=/Users/me/r && cd $R && git branch -D b']) {
+    calls.length = 0;
+    const branches = await branchFacts(c, rules, run, env);
+    assert.deepEqual(Object.keys(branches), ['/Users/me/r|b'], c);
+    assert.deepEqual(calls[0].slice(0, 3), ['git', '-C', '/Users/me/r'], c);
+    assert.equal(evaluateCommand({ command: c, state: fresh(), host: calm, env, branches, rules }).action, 'allow', c);
+  }
+  for (const c of ['cd ~other/r && git branch -D b', 'cd $UNSET && git branch -D b', 'R=$(pwd); git -C $R branch -D b', 'R=/srv/r cmd && git -C $R branch -D b'])
+    assert.deepEqual(await branchFacts(c, rules, run, env), {}, c);
+  assert.deepEqual(removalTargets('T=/tmp/x; T=~; rm -rf $T', rules, env), ['/Users/me']);
+  assert.deepEqual(removalTargets('rm -rf $T; T=/tmp/x', rules, env), ['$T']);
+  assert.deepEqual(removalTargets('SP=/private/tmp/s; cd $SP && rm -rf a', rules, env), ['/private/tmp/s/a']);
+  assert.deepEqual(removalTargets("bash -c 'd=$(mktemp -d); rm -rf $d'", rules, env), ['/tmp/mktemp.placeholder']);
+});
+
+test('shell edits judged where they write: cd, variables and sed -i operands (G08)', () => {
+  const edit = (c) => shellEdit(c, { TMPDIR: '/var/folders/ab/xyz/T/' });
+  assert.equal(edit('cd /private/tmp/s && cat > smoke.py <<EOF\nx\nEOF'), false);
+  assert.equal(edit('S=/private/tmp/x; cd $S/scripts && cat > f.py <<EOF\nx\nEOF'), false);
+  assert.equal(edit("sed -i '' s/a/b/ /private/tmp/x/scan.py"), false);
+  assert.equal(edit("perl -pi -e 's/a/b/' /tmp/x.txt"), false);
+  assert.equal(edit('sed -i s/a/b/ src/x.py'), true);
+  assert.equal(edit('cd src && cat > x.py <<EOF\nx\nEOF'), true);
+  assert.equal(edit("sed -i -e s/a/b/ /tmp/a src/b"), true);
 });

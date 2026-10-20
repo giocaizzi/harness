@@ -79,6 +79,15 @@ const riskyMatch = (r, command) => riskyRe(r).test(matchable(command, { injected
 
 // The deny rule a command hits, so adapters gather repo facts (the Python manager) only when one applies.
 export const deniedBy = (command, rules) => hit(rules.deny ?? [], command);
+// Where the denied command runs, relative to the cwd ('' for the cwd itself): `cd <uv repo> && pip install x` is
+// judged by that repo's manager. Null when it cannot be known (an unfollowed cd) or it runs on another host.
+export function deniedDir(command, rules, env = {}) {
+  const rule = deniedBy(command, rules);
+  if (!rule) return null;
+  const at = segments(command, env).find(({ seg }) => new RegExp(rule.match, 'i').test(seg));
+  if (!at || at.remote || at.dir.startsWith(UNKNOWN_DIR)) return null;
+  return at.dir;
+}
 
 // `for VAR in w1 w2; do BODY; done` with only plain words in the list becomes BODY once per word, $VAR and ${VAR}
 // replaced, so each removal target can be judged. The loop is found with quotes and heredoc bodies masked (same
@@ -109,6 +118,10 @@ export function expandLoops(command) {
 // with the directory it runs in. A relative path after `cd DIR` is in DIR, and after `git -C DIR` in DIR too. `cd` is
 // followed only through plain `;`/`&&` chains with a plain DIR: after any other `cd`, or with a subshell, group, `||`,
 // pushd or conditional in the command, the directory is UNKNOWN_DIR, which no check accepts.
+// Paths are resolved the way the shell would, by position (owner decision D5): a leading `~` or `$HOME` from the
+// environment, and `$NAME` from an assignment earlier in the same command (`NAME=/abs/path`, `NAME=$(mktemp -d)`,
+// `export NAME=…`), the latest one winning. A prefix assignment (`NAME=v cmd`) holds for that command only, so it is
+// never followed. An unset or external variable, `~user` or a value that is not a plain path stays as written and asks.
 // A double-quoted word with no spaces or other expansions ("$TMPDIR/x", "$S") is that word: unquote it so the
 // temp check can resolve it instead of seeing the blanked string.
 const SIMPLE_QUOTED = /"((?:\$\{?\w+\}?)?[^"\s$`\\]*)"/g;
@@ -116,29 +129,68 @@ const UNKNOWN_DIR = '<cd?>';
 const REMOTE_DIR = '<remote>';
 const NO_TARGET = '<none>';
 const CD = /(?:^|[\s({])(?:cd|chdir|set-location|sl)(?=\s|$)/i;
-const PLAIN_CD = /^\s*(?:cd|chdir|set-location|sl)\s+([\w.@%+=:,\\/][\w.@%+=:,\\/-]*)\s*$/i;
+const PLAIN_CD = /^\s*(?:cd|chdir|set-location|sl)(?:\s+(\S+))?\s*$/i;
+const PLAIN_DIR = /^[\w.@%+=:,\\/~][\w.@%+=:,\\/~-]*$/;
 const BRANCHY = /[(){}]|\|\||(?:^|[\s;&|])(?:pushd|popd|push-location|pop-location|if|then|else|elif|fi|case|esac|for|while|until|do|done)(?=[\s;]|$)/i;
 const ABSOLUTE = /^(?:[\\/]|[a-z]:|~|\$|%)/i;
 const inDir = (dir, p) => (!dir || ABSOLUTE.test(p) ? p : `${dir}/${p}`);
+const MKTEMP = /^\$\(mktemp(\s+-[dqu]+)*(\s+(-t|--tmpdir(=\S+)?)(\s+[\w.-]+)?)?\)$/;
+const DECLARE = /^(?:export|declare|typeset|local|readonly)$/;
+const VAR_REF = /^\$(?:\{(\w+)\}|(\w+))(?=[\\/]|$)/;
+// `word` with a leading `~`, `$HOME` or `$NAME` resolved from `vars` (assignments so far) and `env`; else as written.
+function expandPath(word, vars, env) {
+  if (/^~(?=[\\/]|$)/.test(word)) return env.HOME ? env.HOME.replace(/[\\/]+$/, '') + word.slice(1) : word;
+  const m = VAR_REF.exec(word);
+  if (!m) return word;
+  const name = m[1] ?? m[2];
+  const value = name in vars ? vars[name] : name === 'HOME' ? env.HOME?.replace(/[\\/]+$/, '') : undefined;
+  return value ? value + word.slice(m[0].length) : word;
+}
+// A command made only of assignments (`A=1 B=2`, `export A=1`): they persist, so later commands see them.
+function assign(cmd, vars, env) {
+  const words = cmd.words.filter((w, i) => !(i === 0 && DECLARE.test(w.val)));
+  if (!words.length || !words.every((w) => /^[A-Za-z_]\w*=/.test(w.val))) return false;
+  for (const w of words) {
+    const name = w.val.slice(0, w.val.indexOf('='));
+    const raw = w.raw.slice(w.raw.indexOf('=') + 1).replace(/^"([\s\S]*)"$/, '$1');
+    const value = expandPath(w.val.slice(name.length + 1), vars, env);
+    if (MKTEMP.test(raw)) vars[name] = '/tmp/mktemp.placeholder';
+    else if (/^(?:[\\/]|[a-z]:[\\/])/i.test(value) && PLAIN_PATH.test(value)) vars[name] = value;
+    else if (isTempPath(value, env)) vars[name] = value;
+    else vars[name] = null;
+  }
+  return true;
+}
 // One level of commands (the top level, or a payload), each with its directory; payloads follow their command, in
-// the directory it runs in (a remote payload starts in no known directory). A command that hands its words to
-// another host or a container (`ssh host rm -rf x`) is judged only through its payload.
-function levelSegments(a, baseDir, remote) {
+// the directory it runs in (a remote payload starts in no known directory, without this machine's HOME). A command
+// that hands its words to another host or a container (`ssh host rm -rf x`) is judged only through its payload.
+// Each entry: { seg (redirections dropped), code, dir, remote, resolve(path) }.
+function levelSegments(a, baseDir, remote, env, outer = {}) {
   const followCd = !BRANCHY.test(levelCode(a));
+  const vars = { ...outer };
   let dir = baseDir;
   const out = [];
   for (const cmd of a.commands) {
     const seg = cmd.code.replace(/\d*[<>]+(&\d+|\s*[^\s;&|]+)/g, ' ');
-    if (CD.test(seg)) {
-      const to = followCd && PLAIN_CD.exec(seg)?.[1];
-      dir = to ? inDir(dir, to) : UNKNOWN_DIR;
-    } else if (!cmd.payloads.some((p) => p.remote && p.kind !== 'subst')) out.push({ seg: gitPlain(seg), dir: gitDirs(seg).reduce(inDir, dir), remote });
-    for (const p of cmd.payloads) out.push(...levelSegments(p.analysis, p.remote ? REMOTE_DIR : dir, remote || Boolean(p.remote)));
+    const snapshot = { ...vars };
+    const resolve = (p) => expandPath(p, snapshot, env);
+    if (assign(cmd, vars, env)) {
+      // nothing runs
+    } else if (CD.test(seg)) {
+      const m = followCd && PLAIN_CD.exec(seg);
+      const to = m && (m[1] === undefined ? env.HOME : resolve(m[1]));
+      dir = to && PLAIN_DIR.test(to) && !/^~/.test(to) ? inDir(dir, to) : UNKNOWN_DIR;
+    } else if (!cmd.payloads.some((p) => p.remote && p.kind !== 'subst')) {
+      out.push({ seg: gitPlain(seg), code: cmd.code, dir: gitDirs(seg).map(resolve).reduce(inDir, dir), remote, resolve });
+    }
+    for (const p of cmd.payloads) {
+      out.push(...(p.remote ? levelSegments(p.analysis, REMOTE_DIR, true, {}) : levelSegments(p.analysis, dir, remote, env, snapshot)));
+    }
   }
   return out;
 }
-function segments(command) {
-  return levelSegments(analysis(expandLoops(command).replace(SIMPLE_QUOTED, '$1')), '', false);
+function segments(command, env = {}) {
+  return levelSegments(analysis(expandLoops(command).replace(SIMPLE_QUOTED, '$1')), '', false, env);
 }
 const plainArgs = (rest) => rest.split(/\s+/).filter((t) => t && !t.startsWith('-'));
 function findRoots(rest) {
@@ -155,27 +207,27 @@ function findRoots(rest) {
 // unsafe later; a delete with no target (`xargs rm -rf`) yields NO_TARGET, so it never rides on a safe one. A find's
 // targets are its start paths, before the first option or expression.
 const REMOVAL = new Set(['rm', 'find', 'worktree-rm']);
-export function removalEntries(command, rules) {
+export function removalEntries(command, rules, env = {}) {
   const risky = (id) => riskyRe(rules.risky.find((r) => r.id === id));
   const removes = [...REMOVAL].map(risky);
   const entries = [];
-  for (const { seg, dir, remote } of segments(command)) {
+  for (const { seg, dir, remote, resolve } of segments(command, env)) {
     if (!removes.some((re) => re.test(seg))) continue;
     const found = risky('find').test(seg)
       ? findRoots(/\bfind\b(.*)$/i.exec(seg)?.[1] ?? '')
       : plainArgs(/\b(?:rm|remove-item|ri|del|erase|rd|rmdir|worktree\s+remove)\b(.*)$/i.exec(seg)?.[1] ?? '');
-    entries.push(...(found.length ? found : [NO_TARGET]).map((t) => ({ target: inDir(dir, t), remote })));
+    entries.push(...(found.length ? found : [NO_TARGET]).map((t) => ({ target: inDir(dir, resolve(t)), remote })));
   }
   return entries;
 }
-export const removalTargets = (command, rules) => removalEntries(command, rules).map((e) => e.target);
+export const removalTargets = (command, rules, env) => removalEntries(command, rules, env).map((e) => e.target);
 // Targets on this machine: facts (git, gh) are never gathered for another host's or a container's paths.
-const localTargets = (command, rules) => removalEntries(command, rules).filter((e) => !e.remote).map((e) => e.target);
+const localTargets = (command, rules, env) => removalEntries(command, rules, env).filter((e) => !e.remote).map((e) => e.target);
 
 // Branches every `git branch -D` in a command deletes: { dir, name }, `dir` from `cd`/`git -C` ('' for the cwd).
-export function branchTargets(command, rules) {
+export function branchTargets(command, rules, env = {}) {
   const re = riskyRe(rules.risky.find((r) => r.id === 'branch-delete'));
-  return segments(command)
+  return segments(command, env)
     .filter(({ seg, remote }) => re.test(seg) && !remote)
     .flatMap(({ seg, dir }) => {
       const names = plainArgs(/\bbranch\b(.*)$/.exec(seg)?.[1] ?? '');
@@ -241,7 +293,7 @@ async function mergedPrHead(git, sh, cwd, branch, rev = 'HEAD') {
 const PLAIN_PATH = /^[\w./\\@+=:,-]+$/;
 // Worktree facts for every non-temp removal target of a command, checked in parallel: { [target]: { safe, why } }.
 export async function worktreeFacts(command, env, rules, run) {
-  const targets = [...new Set(localTargets(command, rules))].filter((t) => !isTempPath(t, env) && PLAIN_PATH.test(t));
+  const targets = [...new Set(localTargets(command, rules, env))].filter((t) => !isTempPath(t, env) && PLAIN_PATH.test(t));
   const facts = await Promise.all(targets.map((t) => worktreeFact(t, run)));
   return Object.fromEntries(targets.map((t, i) => [t, facts[i]]).filter(([, f]) => f));
 }
@@ -263,8 +315,8 @@ export async function branchFact(dir, name, run) {
 const branchKey = ({ dir, name }) => `${dir}|${name}`;
 
 // Branch facts for every `git branch -D` of a command, in parallel: { [dir|name]: { safe, why } }.
-export async function branchFacts(command, rules, run) {
-  const targets = [...new Map(branchTargets(command, rules).map((b) => [branchKey(b), b])).values()].filter((b) => b.name !== NO_TARGET && PLAIN_PATH.test(b.dir || '.'));
+export async function branchFacts(command, rules, run, env = {}) {
+  const targets = [...new Map(branchTargets(command, rules, env).map((b) => [branchKey(b), b])).values()].filter((b) => b.name !== NO_TARGET && PLAIN_PATH.test(b.dir || '.'));
   const facts = await Promise.all(targets.map((b) => branchFact(b.dir, b.name, run)));
   return Object.fromEntries(targets.map((b, i) => [branchKey(b), facts[i]]));
 }
@@ -283,7 +335,7 @@ export function regenerableName(target) {
 
 // { [target]: true } for every removal target that is a regenerable name git ignores.
 export async function regenFacts(command, env, rules, run) {
-  const targets = [...new Set(localTargets(command, rules))].filter((t) => !isTempPath(t, env) && regenerableName(t));
+  const targets = [...new Set(localTargets(command, rules, env))].filter((t) => !isTempPath(t, env) && regenerableName(t));
   const ignored = await Promise.all(
     targets.map((t) => {
       const p = t.replace(/\\/g, '/').replace(/\/+$/, '');
@@ -295,33 +347,11 @@ export async function regenFacts(command, env, rules, run) {
   return Object.fromEntries(targets.filter((t, i) => ignored[i]).map((t) => [t, true]));
 }
 
-// Variables the command itself points at a temp dir: `S=$(mktemp -d)` (no template, so it lands in $TMPDIR; `-t`
-// keeps it there) or `T=/tmp/x` / `T="$TMPDIR/x"`. Name -> path, a placeholder temp path for mktemp.
-// ponytail: a later reassignment of the same variable in the command is not tracked.
-const MKTEMP = /^\$\(mktemp(\s+-[dqu]+)*(\s+(-t|--tmpdir(=\S+)?)(\s+[\w.-]+)?)?\)$/;
-export function tempVars(command, env = {}) {
-  const vars = {};
-  // Every level's own text, so an assignment inside `bash -c '…'` counts for that payload.
-  const texts = [command, ...units(analysis(command)).filter((u) => u.depth > 0).map((u) => u.cmd.raw)].join('\n');
-  for (const [, name, raw] of texts.replace(SIMPLE_QUOTED, '$1').matchAll(/(?:^|[\s;&|(])(?:export\s+)?([A-Za-z_]\w*)=(\$\([^)]*\)|[^\s;&|]+)/g)) {
-    if (MKTEMP.test(raw)) vars[name] = '/tmp/mktemp.placeholder';
-    else if (isTempPath(raw, env)) vars[name] = raw;
-  }
-  return vars;
-}
-
-// `$VAR` at the head of a path, replaced when the command itself points VAR at a temp dir.
-const tempResolver = (command, env) => {
-  const vars = tempVars(command, env);
-  return (t) => t.replace(/^\$\{?([A-Za-z_]\w*)\}?(?=\/|$)/, (m, name) => vars[name] ?? m);
-};
-
 // A removal is exempt when it has targets and every one is a temp path, a safe worktree or regenerable output.
 // A remote target (ssh, a container) passes only as a temp path: no fact about this machine applies to it.
 function safeRemoval(command, rules, env, worktrees, regenerable) {
-  const entries = removalEntries(command, rules);
-  const resolve = tempResolver(command, env);
-  return entries.length > 0 && entries.every(({ target: t, remote }) => isTempPath(resolve(t), env) || (!remote && (worktrees[t]?.safe === true || regenerable[t] === true)));
+  const entries = removalEntries(command, rules, env);
+  return entries.length > 0 && entries.every(({ target: t, remote }) => isTempPath(t, env) || (!remote && (worktrees[t]?.safe === true || regenerable[t] === true)));
 }
 
 // The pipeline a risky rule fires on, at whatever level of the command it sits: { raw, depth, siblings, host, top }
@@ -357,15 +387,15 @@ function riskyStep(command, rule) {
 
 // What the risky part does, in plain words, with the targets the guard resolved.
 const shown = (t) => (t.startsWith(`${REMOTE_DIR}/`) ? t.slice(REMOTE_DIR.length + 1) : t.startsWith(`${UNKNOWN_DIR}/`) ? `${t.slice(UNKNOWN_DIR.length + 1)} (after a cd the guard cannot follow)` : t === NO_TARGET ? 'paths it cannot read (from a pipe or xargs)' : t);
-function summary(command, rule, step, rules) {
+function summary(command, rule, step, rules, env) {
   const list = (xs) => [...new Set(xs)].join(', ');
   if (REMOVAL.has(rule.id)) {
-    const targets = removalTargets(command, rules);
+    const targets = removalTargets(command, rules, env);
     if (rule.id === 'worktree-rm') return `Force-removes worktree${targets.length > 1 ? 's' : ''} ${list(targets.map(shown))}`;
     return `Deletes${targets.length > 1 ? ` ${targets.length} paths` : ''} recursively: ${list(targets.map(shown))}`;
   }
   if (rule.id === 'branch-delete') {
-    const names = branchTargets(command, rules).map((b) => (b.dir ? `${b.name} (in ${b.dir})` : b.name));
+    const names = branchTargets(command, rules, env).map((b) => (b.dir ? `${b.name} (in ${b.dir})` : b.name));
     return `Deletes branch${names.length > 1 ? 'es' : ''} ${list(names.length ? names : ['(unread)'])}`;
   }
   if (rule.id === 'force') {
@@ -376,8 +406,8 @@ function summary(command, rule, step, rules) {
 }
 
 // A branch delete is exempt when every branch it names is safe (merged or pushed).
-function safeBranchDelete(command, rules, branches) {
-  const targets = branchTargets(command, rules);
+function safeBranchDelete(command, rules, branches, env) {
+  const targets = branchTargets(command, rules, env);
   return targets.length > 0 && targets.every((b) => branches[branchKey(b)]?.safe === true);
 }
 
@@ -393,21 +423,42 @@ const NODE_WRITE = /\b(?:writeFileSync|appendFileSync|writeFile|appendFile|creat
 const WRITERS = /^(?:echo|printf|cat|write-output)$/i;
 const PS_WRITERS = /^(?:set-content|add-content|out-file)$/i;
 const NOT_A_FILE = /^(?:\/dev\/\w+|\$null|nul)$/i;
+const IN_PLACE_CMD = /^(?:sudo\s+)?(sed|perl)\b(.*)$/;
+// The files an in-place `sed -i`/`perl -pi` edits: its operands without the script (the first operand, unless the
+// script came with -e/-f). An empty list means "unread", which counts as an edit.
+function inPlaceFiles(tool, rest) {
+  const words = rest.trim().split(/\s+/).filter(Boolean);
+  const operands = [];
+  let script = false;
+  for (let i = 0; i < words.length; i++) {
+    const w = words[i];
+    if (/^-(?:e|f|-expression|-file)$/.test(w) || (tool === 'perl' && /^-[\w]*e$/.test(w))) (script = true), i++;
+    else if (!w.startsWith('-') && w !== '""') operands.push(w);
+  }
+  return script ? operands : operands.slice(1);
+}
 export function shellEdit(command, env = {}) {
   const code = executable(command);
-  if (IN_PLACE.test(code)) return true;
-  const resolve = tempResolver(command, env);
-  const fileTarget = (t) => !NOT_A_FILE.test(t) && !isTempPath(resolve(t), env);
+  const fileTarget = (t) => !NOT_A_FILE.test(t) && !isTempPath(t, env);
   for (const [inline, write] of [[PY_INLINE, PY_WRITE], [NODE_INLINE, NODE_WRITE]]) {
     if (!inline.test(code)) continue;
     for (const m of command.matchAll(write)) {
       const lit = /^\s*(['"`])([^'"`$]*)\1\s*$/.exec(m[1] ?? m[2]);
-      if (!lit || fileTarget(lit[2])) return true;
+      if (!lit || fileTarget(expandPath(lit[2], {}, env))) return true;
     }
   }
-  const plain = executable(command.replace(SIMPLE_QUOTED, '$1')).replace(/\d*[<>]&\d+/g, ' ').replace(/&>/g, '>');
-  for (const seg of plain.split(/&&|\|\||[;|&\n]/)) {
-    const words = seg.trim().split(/\s+/).filter((w) => !/^\w+=/.test(w));
+  // Every write target in the directory and with the variables of its own command (`cd /tmp/x && cat > f`).
+  for (const { code: c, dir, remote, resolve } of segments(command, env)) {
+    if (remote) continue;
+    const at = (t) => inDir(dir, resolve(t));
+    const seg = c.replace(/\d*[<>]&\d+/g, ' ').replace(/&>/g, '>').replace(/<<-?\S*/g, ' ').trim();
+    const inPlace = IN_PLACE.test(` ${seg}`) && IN_PLACE_CMD.exec(seg);
+    if (inPlace) {
+      const files = inPlaceFiles(inPlace[1], inPlace[2]);
+      if (!files.length || files.map(at).some(fileTarget)) return true;
+      continue;
+    }
+    const words = seg.split(/\s+/).filter((w) => !/^\w+=/.test(w));
     const cmd = words[0] === 'sudo' ? words[1] : words[0];
     if (!cmd) continue;
     let targets = [];
@@ -418,7 +469,7 @@ export function shellEdit(command, env = {}) {
       const named = /\s-(?:file)?path\s+(\S+)|\s-literalpath\s+(\S+)/i.exec(rest);
       targets = named ? [named[1] ?? named[2]] : plainArgs(rest).slice(0, 1);
     }
-    if (targets.some(fileTarget)) return true;
+    if (targets.map(at).some(fileTarget)) return true;
   }
   return false;
 }
@@ -437,7 +488,7 @@ export function evaluateCommand({ command, loadedSkills = new Set(), state, host
   if (denied && (!denied.when || denied.when === python)) return { action: 'deny', rule: denied.id, reason: denied.why }
   const note = denied && !state.reminded.has(denied.id) ? denied.id : null
 
-  const exempt = new Set([...(safeRemoval(command, rules, env, worktrees, regenerable) ? REMOVAL : []), ...(safeBranchDelete(command, rules, branches) ? ['branch-delete'] : [])]);
+  const exempt = new Set([...(safeRemoval(command, rules, env, worktrees, regenerable) ? REMOVAL : []), ...(safeBranchDelete(command, rules, branches, env) ? ['branch-delete'] : [])]);
   const risky = rules.risky.find((r) => riskyMatch(r, command) && !exempt.has(r.id));
   if (risky) {
     const why = [
@@ -445,7 +496,7 @@ export function evaluateCommand({ command, loadedSkills = new Set(), state, host
       ...Object.entries(branches).filter(([, f]) => !f.safe).map(([k, f]) => `\nBranch ${k.slice(k.indexOf('|') + 1)}: ${f.why}`),
     ].join('');
     const step = riskyStep(command, risky);
-    const what = summary(command, risky, step, rules);
+    const what = summary(command, risky, step, rules, env);
     const where = step.host ? ` on ${step.host}` : '';
     const shown = step.raw !== command.trim() ? `\nStep: ${step.raw}` : '';
     const rule = `\nRule: ${risky.id} (${risky.why})`;
@@ -582,17 +633,18 @@ export const opencodeAsks = (rules) => Object.fromEntries(rules.risky.flatMap((r
 // Only plain path tokens are passed through; anything with shell syntax gets no preview.
 const SAFE_TOKEN = /^[\w./~@%+=:,-]+$/;
 
-export function previewCommand(ruleId, command) {
+export function previewCommand(ruleId, command, rules, env = {}) {
   // `git -C DIR` previews DIR; a DIR with shell syntax gets no preview.
   const dirs = gitDirs(command);
   if (['reset', 'force'].includes(ruleId) && !dirs.every((d) => SAFE_TOKEN.test(d))) return null;
   const git = ['git', ...dirs.flatMap((d) => ['-C', d])];
   if (ruleId === 'reset') return [...git, 'status', '--short'];
   if (ruleId === 'force') return [...git, 'log', '--oneline', '-n', '10', 'HEAD..@{u}'];
-  if (ruleId === 'rm') {
-    const args = command.replace(/^.*?\brm\b/i, '').trim().split(/\s+/);
-    const paths = args.filter((a) => !a.startsWith('-'));
-    if (!paths.length || !paths.every((p) => SAFE_TOKEN.test(p))) return null;
+  if (ruleId === 'rm' && rules) {
+    // The delete's own targets, resolved through cd, ~ and variables; this machine's only.
+    const entries = removalEntries(command, rules, env).filter((e) => !e.remote);
+    const paths = entries.map((e) => e.target);
+    if (!paths.length || !paths.every((p) => SAFE_TOKEN.test(p) && !p.startsWith('~'))) return null;
     return ['du', '-sh', '--', ...paths];
   }
   return null;
