@@ -38,6 +38,13 @@ Anything preset or automatic (agent definitions, settings, spawns you choose) st
 - If a subagent fails or returns something unexpected, surface its error and wait; don't silently retry or substitute.
 - Before starting in a repo, check which other sessions are running and coordinate with any that overlap. Coordinate through the lightest channel that fits (brief and report, fork, message, shared file, doc or artifact, GitHub): [references/collaboration.md](references/collaboration.md).
 
+## Waiting on other agents
+
+- **Verdicts go somewhere durable.** A delegated reviewer or verifier posts its verdict where the waiting side can read it without a hand-back: a PR comment opening with a fixed marker (`Review round N — verdict:`), or a file path named in the brief. The waiter polls that, never a hand-back or a background notice. Why: [references/collaboration.md](references/collaboration.md#waiting-without-hand-backs).
+- **Decisions go in the brief.** A running teammate reads messages only between its turns, so a later message can land after it acted. Check it acted (the PR head, the comment) before relying on it.
+- **The hub checks merges itself** (`gh pr view <n> --json state,mergeCommit`), never trusting a "will merge" or "merged" report.
+- **At most 2 review rounds per PR.** Round 2 also re-reviews the round-1 fix diff for regressions. After round 2, fix Majors and any regression, file Minors as issues, then merge. Never merge with a known regression.
+
 ## Mechanisms
 
 Claude Code:
