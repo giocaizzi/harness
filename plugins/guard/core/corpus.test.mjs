@@ -3,11 +3,12 @@
 // the PR that fixes a bug drops its id from OPEN. Every new false ask or missed command found in telemetry or
 // transcripts becomes a row here.
 // Row: [command, expected ('allow' | 'allow:<hint>' | 'ask:<rule>' | 'deny:<rule>'), bug id, source, options?]
-// options: { python: 'uv' } the repo's Python manager; { hints: true } the read and edit hints not yet shown.
+// options: { python: 'uv' } the repo's Python manager; { hints: true } the read and edit hints not yet shown;
+// { read: false } the command must not get the plain-read allow (`pureRead`), so the harness's own prompt decides.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { branchFacts, evaluateCommand, refFacts, regenFacts, worktreeFacts } from './engine.mjs'
+import { branchFacts, evaluateCommand, pureRead, refFacts, regenFacts, worktreeFacts } from './engine.mjs'
 import { rules } from './rules.mjs'
 
 const OPEN = new Set([])
@@ -38,6 +39,7 @@ const decide = async (command, { python = null, hints = false } = {}) => {
 for (const [command, expected, bug, source, options] of corpus) {
   test(`${bug} ${JSON.stringify(command)} -> ${expected} (${source})`, { todo: OPEN.has(bug) && !/^(control|probe)/.test(source) }, async () => {
     assert.equal(await decide(command, options), expected)
+    if (options?.read !== undefined) assert.equal(pureRead(command), options.read, 'plain-read allow')
   })
 }
 

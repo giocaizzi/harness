@@ -8,7 +8,7 @@ import { statfs } from 'node:fs/promises'
 import { cpus, homedir, loadavg, platform } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { analysis, branchFacts, cdDirs, codexRules, deniedBy, deniedDir, evaluateCommand, evaluateEdit, isHeavy, isRisky, nativeAsk, previewCommand, refFacts, regenFacts, unattendedSet, withPreview, worktreeFacts } from '../core/engine.mjs'
+import { analysis, branchFacts, cdDirs, codexRules, deniedBy, deniedDir, evaluateCommand, evaluateEdit, isHeavy, isRisky, nativeAsk, previewCommand, pureRead, refFacts, tagFacts, tagTargets, regenFacts, unattendedSet, withPreview, worktreeFacts } from '../core/engine.mjs'
 import { cpuPercentFrom } from '../core/host.mjs'
 import { commandWords, units } from '../core/shell.mjs'
 import { emit } from '../core/otel.mjs'
@@ -89,7 +89,9 @@ export function knownSkills(here = dirname(fileURLToPath(import.meta.url))) {
 // `{"unattended":true}`). Parallel hooks each append their own lines with one O_APPEND write, which the OS keeps
 // whole, so none is lost and no lock is needed. Skill loads and the unattended switch (the latest wins) count for the
 // whole session, subagents included; reminders count per agent (`agent_id`, absent for the main agent), so a subagent
-// gets its own hints. Without a session id nothing is kept.
+// gets its own hints, except the read and edit hints, which say the same to every agent and so come once per session.
+// Without a session id nothing is kept.
+const SESSION_HINTS = new Set(['read', 'edit'])
 export function sessionStore(dir, sessionId, agentId) {
   const file = sessionId ? join(dir, 'sessions', `${String(sessionId).replace(/[^\w-]/g, '_')}.jsonl`) : null
   const agent = agentId ? String(agentId) : undefined
@@ -112,7 +114,7 @@ export function sessionStore(dir, sessionId, agentId) {
           continue
         }
         if (typeof fact.loaded === 'string') seen.loaded.push(fact.loaded)
-        if (typeof fact.reminded === 'string' && fact.agent === agent) seen.reminded.push(fact.reminded)
+        if (typeof fact.reminded === 'string' && (fact.agent === agent || SESSION_HINTS.has(fact.reminded))) seen.reminded.push(fact.reminded)
         if (typeof fact.unattended === 'boolean') seen.unattended = fact.unattended
       }
       return { reminded: [...new Set(seen.reminded)], loaded: [...new Set(seen.loaded)], unattended: seen.unattended }
@@ -262,14 +264,21 @@ async function onShell(input, state, deps) {
       if (gathered) [facts.worktrees, facts.branches, facts.regenerable, facts.refs] = gathered
       else unfinished = true
     }
+    // A `git tag -f`/`-d` of a tag no remote has is not a release (one `ls-remote` per remote, same budget).
+    if (tagTargets(command, rules, facts.env).some((t) => !t.name.startsWith('<'))) {
+      facts.tags = (await within(tagFacts(command, rules, (argv) => deps.run(argv, input.cwd), facts.env), deps.factsMs ?? FACTS_MS, null)) ?? {}
+    }
     // The manager of the repo the denied command runs in (`cd <repo> && pip install x`), not just the cwd's.
     if (deniedBy(command, rules)?.when) {
       const dir = deniedDir(command, rules, facts.env)
       facts.python = deps.pythonManager(dir ? resolve(input.cwd || '.', dir) : input.cwd)
     }
-    const reminded = new Set(state.reminded)
+    // Auto mode tells the agent to read and make small edits through the shell, so the read and edit hints would
+    // contradict it: they are held back there, and still come once the session leaves auto mode.
+    const held = input.permission_mode === 'auto' ? ['read', 'edit'].filter((r) => !state.reminded.includes(r)) : []
+    const reminded = new Set([...state.reminded, ...held])
     const d = evaluateCommand({ command, loadedSkills: new Set(state.loaded), state: { reminded }, host, readTool: deps.readTool ?? true, ...facts, rules })
-    state.reminded = [...reminded]
+    state.reminded = [...reminded].filter((r) => !held.includes(r))
     if (unfinished && d.action !== 'allow') d.reason += '\nChecks unfinished: the worktree, branch and build-output lookups ran out of time, so a safe case could not be shown.'
     // Logged after the harness-specific transforms, so `action` is what happened: an ask that became a deny is a deny,
     // with `via` saying why (unattended, no-ask) or how the ask was made (native-ask: the harness's own prompt).
@@ -304,6 +313,11 @@ async function onShell(input, state, deps) {
       return preToolUse('ask', argv ? withPreview(d.reason, await within(Promise.resolve(deps.run(argv, input.cwd)), deps.previewMs ?? PREVIEW_MS, '')) : d.reason)
     }
     if (set !== null) state.unattended = set
+    // A plain read of non-secret files never waits on the harness's prompt (Claude Code, Copilot CLI, VS Code; Codex
+    // and the in-process harnesses do not prompt for it).
+    if (!deps.noAsk && pureRead(command)) {
+      return { stdout: JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow', permissionDecisionReason: 'guard: a plain read of non-secret files', ...(d.context ? { additionalContext: d.context } : {}) } }) }
+    }
     return d.context ? note(d.context) : {}
   } catch (err) {
     // Fail open for reminders, closed for risky commands.
