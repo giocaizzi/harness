@@ -183,7 +183,12 @@ async function check(name) {
   } catch (err) {
     failures.push(String(err?.message ?? err))
   } finally {
-    rmSync(root, { recursive: true, force: true })
+    // A harness's background work (Codex's plugin clone) can still be writing here: retry, and never let cleanup fail the run.
+    try {
+      rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 })
+    } catch {
+      // a leftover temp dir is harmless
+    }
   }
   return failures
 }
