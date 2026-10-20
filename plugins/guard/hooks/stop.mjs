@@ -7,7 +7,8 @@
 // It never becomes the bottleneck: on a strained host (the guard's host caps), while another stop check runs in the
 // same repo, or past the timeout it is deferred, not failed: nothing is marked green, so the next stop runs it.
 // Every outcome goes to telemetry as guard.stop (result, target, duration_ms).
-// Env: GUARD_STOP_CHECK=off disables it; GUARD_STOP_TIMEOUT_MS overrides the timeout (default 300 s).
+// Env: GUARD_STOP_CHECK=off disables it, =force runs it on a strained host too (CI, where load is high by design);
+// GUARD_STOP_TIMEOUT_MS overrides the timeout (default 300 s).
 import { spawn, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { mkdirSync, readFileSync, rmSync, statfsSync, writeFileSync } from 'node:fs'
@@ -139,7 +140,7 @@ export async function stopCheck(input, run = spawnSync, { exec = run === spawnSy
     report({ result: 'deferred', target, why, ...attrs })
     return { systemMessage: `make ${target} deferred (${why}); it runs at the next stop. Run it before you ship.` }
   }
-  const strained = strain(cwd)
+  const strained = process.env.GUARD_STOP_CHECK === 'force' ? null : strain(cwd)
   if (strained) return deferred(`host strained: ${strained}`)
   const unlock = lock(cwd)
   if (!unlock) return deferred('another stop check is running in this repo')
