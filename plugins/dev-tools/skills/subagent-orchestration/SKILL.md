@@ -44,6 +44,7 @@ Anything preset or automatic (agent definitions, settings, spawns you choose) st
 - **Decisions go in the brief.** A running teammate reads messages only between its turns, so a later message can land after it acted. Check it acted (the PR head, the comment) before relying on it.
 - **The hub checks merges itself** (`gh pr view <n> --json state,mergeCommit`, or the forge's equivalent), never trusting a "will merge" or "merged" report.
 - **At most 2 review rounds per PR.** Round 2 also re-reviews the round-1 fix diff for regressions. After round 2, fix Blockers, Majors and any regression, file Minors as issues, then `land` with checks green. Never merge with a known regression. A workflow with its own verdict channel and round rules (the `factory` verifier) keeps them.
+- **Commits after approval need a hub check and a landing note** before the merge: `land` step 2.
 
 ## Mechanisms
 
