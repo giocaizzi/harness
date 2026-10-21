@@ -19,7 +19,8 @@ const tableKeys = (heading) => {
 
 test('result.json template: valid JSON whose keys are exactly the documented contract', () => {
   const result = JSON.parse(read('plugins/factory/template/result.json'))
-  assert.deepEqual(Object.keys(result).sort(), tableKeys('Result contract').sort())
+  // `mode` is set only by a dev run, so the prod template omits it.
+  assert.deepEqual(Object.keys(result).sort(), tableKeys('Result contract').filter((k) => k !== 'mode').sort())
   assert.ok(['done', 'parked', 'failed'].includes(result.end_state))
   assert.equal(result.schema, 2)
 })
@@ -145,6 +146,17 @@ test('result.json routing: a deviation without a reason fails validation, a matc
   assert.match(routingErrors({ routing: [{ ...entry, model: 'sonnet', deviation_reason: '  ' }] })[0], /without a deviation_reason/)
   assert.deepEqual(routingErrors({ routing: [{ ...entry, effort: 'high', deviation_reason: 'touches the merge gate' }] }), [])
   assert.match(routingErrors({ routing: [{ phase: 'verify' }] })[0], /missing/)
+})
+
+test('result.json mode: only dev or absent passes validation', async () => {
+  const { modeErrors } = await import(join(repo, 'plugins/factory/skills/ticket-run/scripts/check-result.mjs'))
+  assert.deepEqual(modeErrors({}), [])
+  assert.deepEqual(modeErrors({ mode: 'dev' }), [])
+  for (const mode of ['prod', '', null, 1]) assert.match(modeErrors({ mode })[0], /mode must be/)
+})
+
+test('dev mode: docs and ticket-run carry FACTORY_DEV, the mode key and the mode: dev comment line', () => {
+  for (const p of ['docs/factory.md', 'plugins/factory/skills/ticket-run/references/comments.md']) assert.match(read(p), /FACTORY_DEV=1[\s\S]*`mode: dev`/, p)
 })
 
 test('verifier: preset effort is medium, in the agent file and the Codex override', () => {

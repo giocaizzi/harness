@@ -1,9 +1,11 @@
-// Checks the optional `routing` entries of a run's result.json: usage `node check-result.mjs <result.json>`.
+// Checks the optional `routing` entries and `mode` (only `dev`) of a run's result.json: usage `node check-result.mjs <result.json>`.
 // A deviation (model or effort differing from the policy's) needs a non-empty deviation_reason.
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
 const fields = ['phase', 'policy_model', 'policy_effort', 'model', 'effort']
+
+export const modeErrors = (result) => (result.mode === undefined || result.mode === 'dev' ? [] : ['mode must be "dev" or absent'])
 
 export const routingErrors = (result) => {
   if (result.routing === undefined) return []
@@ -21,7 +23,8 @@ export const routingErrors = (result) => {
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  const errors = routingErrors(JSON.parse(readFileSync(process.argv[2], 'utf8')))
+  const result = JSON.parse(readFileSync(process.argv[2], 'utf8'))
+  const errors = [...routingErrors(result), ...modeErrors(result)]
   for (const e of errors) console.error(e)
   process.exit(errors.length ? 1 : 0)
 }
