@@ -54,6 +54,8 @@ Each comment is the marker line, a kind tag line, then the fields as short label
 | `<!-- factory:result <end_state> -->` | end of every run | end state; reason; PR; evidence links; follow-ups. |
 | `<!-- factory:notify <kind> -->` | never by the skill: a runtime's @-mention of the approvers | skip it when reading; it carries the marker, so it is never an answer. |
 
+**Dev mode.** When `FACTORY_DEV=1` is set, end every comment you post with a last field line `mode: dev`, so dev output never passes as prod.
+
 **Posting is idempotent.** Before posting, look for an existing trusted comment with the same kind tag (and question id) and edit it instead; an untrusted one never stands in for yours. Record the post in the run's `posts` as `posting`, then `posted` once the API returns the comment's URL; on an error or timeout record `maybe_posted` and look for the marker before trying again. A write counts only when the API confirms it.
 
 **State what is true now.** Read any status you report (checks, merge, deploy, labels) from its live source just before posting, and copy links from the API's URL fields (`html_url`, `url`) rather than building them.
