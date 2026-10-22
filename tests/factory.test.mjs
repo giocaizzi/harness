@@ -4,7 +4,7 @@ import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { evaluateCommand, touchesApprovalLabel } from '../plugins/guard/core/engine.mjs'
 import { rules } from '../plugins/guard/core/rules.mjs'
 
@@ -137,7 +137,7 @@ test('marked comments: the config key and every reader of marked comments requir
 })
 
 test('result.json routing: a deviation without a reason fails validation, a matching or explained one passes', async () => {
-  const { routingErrors } = await import(join(repo, 'plugins/factory/skills/ticket-run/scripts/check-result.mjs'))
+  const { routingErrors } = await import(pathToFileURL(join(repo, 'plugins/factory/skills/ticket-run/scripts/check-result.mjs')).href)
   const entry = { phase: 'verify', policy_model: 'opus', policy_effort: 'medium', model: 'opus', effort: 'medium', deviation_reason: null }
   assert.deepEqual(routingErrors(JSON.parse(read('plugins/factory/template/result.json'))), [])
   assert.deepEqual(routingErrors({}), [], 'routing stays optional')
@@ -149,7 +149,7 @@ test('result.json routing: a deviation without a reason fails validation, a matc
 })
 
 test('result.json mode: only dev or absent passes validation', async () => {
-  const { modeErrors } = await import(join(repo, 'plugins/factory/skills/ticket-run/scripts/check-result.mjs'))
+  const { modeErrors } = await import(pathToFileURL(join(repo, 'plugins/factory/skills/ticket-run/scripts/check-result.mjs')).href)
   assert.deepEqual(modeErrors({}), [])
   assert.deepEqual(modeErrors({ mode: 'dev' }), [])
   for (const mode of ['prod', '', null, 1]) assert.match(modeErrors({ mode })[0], /mode must be/)
