@@ -42,13 +42,22 @@ export function fingerprint(cwd, run = spawnSync) {
 
 // Runs make with no terminal: stdin closed, output piped, in its own session (`detached`: setsid on Unix, its own
 // process group), with CI=1 and TERM=dumb. Past `timeout` the whole group is killed, grandchildren included.
+// It resolves right after the kill, without waiting for 'close': a grandchild outside the group (an MSYS `&` job on
+// Windows, which taskkill misses) can hold the pipes open for good, so they are destroyed and the child unref'd.
 // Resolves { status, stdout, stderr, timedOut, error }.
 export function runDetached(cmd, args, { cwd, timeout }) {
   return new Promise((resolve) => {
     let stdout = ''
     let stderr = ''
     let timedOut = false
+    let settled = false
     const child = spawn(cmd, args, { cwd, detached: true, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, env: { ...process.env, CI: '1', TERM: 'dumb' } })
+    const finish = (r) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      resolve({ stdout, stderr, timedOut, ...r })
+    }
     child.stdout.on('data', (d) => (stdout += d))
     child.stderr.on('data', (d) => (stderr += d))
     const timer = setTimeout(() => {
@@ -59,9 +68,13 @@ export function runDetached(cmd, args, { cwd, timeout }) {
       } catch {
         child.kill('SIGKILL')
       }
+      child.stdout.destroy()
+      child.stderr.destroy()
+      child.unref()
+      finish({ status: null })
     }, timeout)
-    child.on('error', (error) => (clearTimeout(timer), resolve({ status: null, stdout, stderr, timedOut, error })))
-    child.on('close', (status) => (clearTimeout(timer), resolve({ status, stdout, stderr, timedOut })))
+    child.on('error', (error) => finish({ status: null, error }))
+    child.on('close', (status) => finish({ status }))
   })
 }
 
