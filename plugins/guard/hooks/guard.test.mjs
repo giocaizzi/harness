@@ -4,7 +4,7 @@ import { mkdtempSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFil
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { tmpdir, userInfo } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { CODEX_RULES, codexAsks, codexReviewer, approvalLabel, handle, pythonManager, sessionStore, tail } from './guard.mjs'
 import { fallbackDataDir } from './data.mjs'
 import { codexRules } from '../core/engine.mjs'
@@ -170,7 +170,7 @@ test('a branch ref deleted through gh api passes once a merged PR holds its tip,
   const run = async (argv, cwd) => (calls.push([argv[1], cwd]), argv[0] === 'gh' ? 'abc\n' : null)
   const h = setup({ run })
   assert.equal(decision(await h({ ...pre('Bash', 'cd sub && gh api -X DELETE repos/{owner}/{repo}/git/refs/heads/feat/x'), cwd: '/r' })), undefined)
-  assert.deepEqual(calls, [['pr', '/r/sub'], ['api', '/r/sub']])
+  assert.deepEqual(calls, [['pr', resolve('/r/sub')], ['api', resolve('/r/sub')]])
   assert.equal(decision(await h(pre('Bash', 'gh api -X DELETE repos/o/r/git/refs/tags/v1'))).permissionDecision, 'ask')
 })
 
@@ -227,7 +227,7 @@ test('a squash-merged worktree (merged PR found by gh in the worktree) is not as
   }
   const h = setup({ run })
   assert.equal(decision(await h(pre('Bash', 'rm -rf /r/.claude/worktrees/x'))), undefined)
-  assert.ok(calls.some(([cmd, cwd]) => cmd === 'gh' && cwd === '/r/.claude/worktrees/x'))
+  assert.ok(calls.some(([cmd, cwd]) => cmd === 'gh' && cwd === resolve('/r/.claude/worktrees/x')))
 })
 
 // A throwaway repo with the given files (path -> content), returning its root.
