@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Tests for plugins/dev-tools/skills/host-hygiene/scripts/*.sh (run by `make test`).
 set -u
+# The .sh scripts are for macOS/Linux (lsof, flock-style locks); Windows runs the .ps1 ones (tests/host-hygiene.test.ps1).
+case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) echo "Windows: host-hygiene .sh tests skipped, tests/host-hygiene.test.ps1 covers it"; exit 0 ;; esac
 scripts="$(cd "$(dirname "$0")/.." && pwd)/plugins/dev-tools/skills/host-hygiene/scripts"
 heavy=$scripts/heavy.sh lease=$scripts/lease.sh reg=$scripts/register-service.sh sweep=$scripts/sweep-stale.sh
 tmp=$(cd "$(mktemp -d)" && pwd -P); trap 'rm -rf "$tmp"' EXIT
