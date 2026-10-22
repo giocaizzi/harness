@@ -244,6 +244,23 @@ test('stop: a timeout kills the whole process group, grandchildren included', { 
   assert.throws(() => process.kill(pid, 0))
 })
 
+test('stop: a timeout resolves at once even when a surviving grandchild keeps the pipes open', async () => {
+  const dir = tmp()
+  // The middle process starts a grandchild in its own session holding stdout and stderr, then exits: no group or
+  // tree kill reaches the grandchild, so 'close' would wait the full 10 s.
+  const middle = "const c = require('child_process').spawn(process.execPath, ['-e', 'setTimeout(() => {}, 10000)'], { stdio: ['ignore', 'inherit', 'inherit'], detached: true }); require('fs').writeFileSync('pid', String(c.pid)); c.unref()"
+  const started = Date.now()
+  const r = await runDetached(process.execPath, ['-e', middle], { cwd: dir, timeout: 500 })
+  try {
+    assert.equal(r.timedOut, true)
+    assert.ok(Date.now() - started < 5000, `resolved after ${Date.now() - started} ms`)
+  } finally {
+    try {
+      process.kill(Number(readFileSync(join(dir, 'pid'), 'utf8')))
+    } catch {}
+  }
+})
+
 test('stop: the fingerprint changes when an untracked file changes', () => {
   const dir = tmp()
   const git = (...args) => execFileSync('git', args, { cwd: dir, stdio: 'ignore' })
