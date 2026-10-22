@@ -11,10 +11,13 @@ validate: ## Run all repo invariant checks (build sync, manifests, skills, marke
 
 check: lint test ## Standard entrypoint: lint + test.
 
+# cmd.exe recipes only when make runs them through cmd; with sh on PATH (Git for Windows) the POSIX ones work.
+WIN_CMD := $(if $(filter Windows_NT,$(OS)),$(if $(filter sh sh.exe bash bash.exe,$(notdir $(SHELL))),,1))
+
 SH := $(wildcard plugins/*/skills/*/scripts/*.sh tests/*.sh)
 
 lint: validate ## Repo invariant checks, plus shellcheck and PSScriptAnalyzer when installed.
-ifeq ($(OS),Windows_NT)
+ifneq ($(WIN_CMD),)
 	@where shellcheck >nul 2>nul & if errorlevel 1 (echo shellcheck not found, skipped) else (shellcheck --exclude=SC1017,SC1091,SC1103,SC2183 $(SH))
 	@where pwsh >nul 2>nul & if errorlevel 1 (echo pwsh or PSScriptAnalyzer not found, skipped) else (pwsh -NoProfile -Command "$$r = Get-Module -ListAvailable PSScriptAnalyzer; if ($$null -eq $$r) { Write-Output 'PSScriptAnalyzer not found, skipped'; exit 0 }; $$result = Invoke-ScriptAnalyzer -Path . -Recurse; $$result; exit $$result.Count")
 else
@@ -30,12 +33,12 @@ test: export GUARD_OTEL := off
 test: export FACTORY_EVENTS_FILE :=
 test: ## Run the plugins' hook tests (Node 22+), their mod tests (`claude plugin test`), then the skill script tests.
 	@node --test $(wildcard plugins/*/core/*.test.mjs plugins/*/hooks/*.test.mjs plugins/*/pi/*.test.mjs tests/*.test.mjs)
-ifeq ($(OS),Windows_NT)
+ifneq ($(WIN_CMD),)
 	@pwsh -NoProfile -Command "$$env:CLAUDE_CODE_ENABLE_FUNCTION_HOOKS = '1'; $$dirs = Get-ChildItem -Path plugins -Recurse -Filter *.test.ts | ForEach-Object { Split-Path $$_.DirectoryName -Parent } | Sort-Object -Unique; foreach ($$dir in $$dirs) { claude plugin test $$dir; if ($$LASTEXITCODE -ne 0) { exit $$LASTEXITCODE } }"
 else
 	@for d in $(sort $(patsubst %/tests/,%,$(dir $(wildcard plugins/*/tests/*.test.ts)))); do CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1 claude plugin test $$d || exit 1; done
 endif
-ifeq ($(OS),Windows_NT)
+ifneq ($(WIN_CMD),)
 	@where bash >nul 2>nul & if errorlevel 1 (echo bash not found, host-hygiene .sh tests skipped) else (bash tests/host-hygiene.test.sh)
 	@where pwsh >nul 2>nul & if errorlevel 1 (echo pwsh not found, host-hygiene .ps1 tests skipped) else (pwsh -NoProfile -File tests/host-hygiene.test.ps1)
 else
