@@ -1,0 +1,12 @@
+# Overrides for the harnesses that do not read agents/reviewer.md as-is (make build).
+# Copilot: model left unset in the agent file; the dotfiles set it per agent under subagents.agents.
+copilot:
+  tools:
+    - read
+    - search
+    - execute
+codex:
+  model_reasoning_effort: medium
+opencode:
+  permission:
+    edit: deny

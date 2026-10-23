@@ -9,7 +9,7 @@ There are four kinds of feature, and you call each one differently:
 | Kind | Plugins | How it starts |
 |---|---|---|
 | Skills | `dev-tools`, `python`, `go`, `javascript`, `api` | **By itself** when the request matches its description ("open a PR" loads `ship`), or **by you** with its slash command. |
-| Agents | `dev-tools` (`scout`, `escalate`), `api` (`api-reviewer`) | **Ask for one by name** ("use scout to ..."); the main agent delegates to it. |
+| Agents | `dev-tools` (`scout`, `driver`, `reviewer`, `escalate`), `api` (`api-reviewer`) | **Ask for one by name** ("use scout to ..."); the main agent delegates to it. |
 | Hooks | `guard`, `sounds` | **Never called.** They run on their own around tool calls, prompts and turns. |
 | Display | `hud` | **Always on**, plus a few slash commands for panes. |
 
@@ -94,6 +94,8 @@ For a repo adopted per [adopt-factory.md](adopt-factory.md): you approve a ticke
 | Agent | Plugin | Ask for it when | Model |
 |---|---|---|---|
 | `scout` | `dev-tools` | you need something found or read: code, logs, test output. Read-only; answers with `file:line` evidence. | cheapest (Claude: Haiku, `low`) |
+| `driver` | `dev-tools` | a hub hands off judgement work: investigate, plan, implement, integrate | driver tier (Claude: Opus) |
+| `reviewer` | `dev-tools` | a change needs review by someone who did not write it (not a factory ticket) | driver tier (Claude: Opus) |
 | `escalate` | `dev-tools` | the normal model failed twice on the same bug or design question | strongest (Claude: Fable) |
 | `api-reviewer` | `api` | you want an API security review: vulnerabilities, RBAC leaks, compliance | driver (Claude: Opus, `medium`) |
 | `verifier` | `factory` | a ticket's change is ready to ship and needs a gate that did not write it ([factory.md](factory.md#verification)) | driver (Claude: Opus, `medium`; Sonnet `medium` for trivial changes, `high` for security or safety paths, set on the spawn in Claude Code) |

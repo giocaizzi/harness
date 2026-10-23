@@ -62,7 +62,7 @@ Update: `git pull` in the checkout (the guard updates with it), then the `make i
 pi install git:github.com/giocaizzi/harness
 ```
 
-pi reads the repo's `package.json`: every plugin's skills and four extensions: the guard, a `subagent` tool that runs `scout`, `escalate`, `api-reviewer` and `verifier` in their own pi sessions, hud's footer and sounds' alerts. Update: `pi update --extensions`. Check: `pi list` shows the package; `/skill:ship` loads a skill; asking for a scout runs the `subagent` tool.
+pi reads the repo's `package.json`: every plugin's skills and four extensions: the guard, a `subagent` tool that runs `scout`, `driver`, `reviewer`, `escalate`, `api-reviewer` and `verifier` in their own pi sessions, hud's footer and sounds' alerts. Update: `pi update --extensions`. Check: `pi list` shows the package; `/skill:ship` loads a skill; asking for a scout runs the `subagent` tool.
 
 ## From a checkout (development)
 
