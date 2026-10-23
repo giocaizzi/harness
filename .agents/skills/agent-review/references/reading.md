@@ -5,6 +5,9 @@
 | Cost by harness and model | A harness or model grows without a reason; compare with the budget. |
 | Claude Code cost by source | `hook_prompt`, `away_summary` or `prompt_suggestion` are a large share: background spend no task asked for. |
 | Subagent routing | Subagent spend on Opus or Fable is high: lookups belong on Haiku, routine edits on Sonnet (`subagent-orchestration`). |
+| Subagent cost by agent | The unattributed (named spawn) share is large: spawns get a `name` they did not need, and their cost cannot be traced. |
+| Spawns with no model pinned | Any row: the spawn ran on the session's model. Fix the skill or brief that spawned it. |
+| Model swaps | Any row: a subagent finished on a fallback model; a factory run records it as a routing deviation. |
 | Skills: never loaded | Not used in the window. Keep a skill at least 30 days before pruning it; check it is still installed. |
 | Skills: never picked by the model | Loaded only when typed or by another skill: its description does not trigger. Write a trigger eval (below), then rework the description ([docs/skills.md](../../../../docs/skills.md)). |
 | Guard reminders | A rule reminds often: the matching skill's description misses that situation, or the read hint fires for commands a read tool cannot replace. |

@@ -1,7 +1,10 @@
 {
   "costByHarness": "sum by (service_name, model) (sum_over_time({service_name=~\"claude-code|codex.*|github-copilot|copilot-chat|opencode|pi\", deployment_environment_name!=\"test\"} | agent_event=\"api_request\" or event_name=\"api_request\" | unwrap cost_usd | __error__=\"\" [$r]))",
-  "costBySource": "sum by (model, query_source) (sum_over_time({service_name=\"claude-code\"} | event_name=\"api_request\" | unwrap cost_usd | __error__=\"\" [$r]))",
+  "costBySource": "sum by (model, query_source) (sum_over_time({service_name=\"claude-code\", deployment_environment_name!=\"test\"} | event_name=\"api_request\" | unwrap cost_usd | __error__=\"\" [$r]))",
   "subagents": "sum by (agent_type, model) (count_over_time({service_name=\"claude-code\"} | event_name=\"subagent_completed\" [$r]))",
+  "subagentCost": "sum by (agent_name, model) (sum_over_time({service_name=\"claude-code\", deployment_environment_name!=\"test\"} | event_name=\"api_request\" | query_source=~\"agent:.*\" | unwrap cost_usd | __error__=\"\" [$r]))",
+  "modelSwaps": "sum by (agent_type, model, final_model) (count_over_time({service_name=\"claude-code\"} | event_name=\"subagent_completed\" | model_swapped=\"true\" [$r]))",
+  "unpinnedSpawns": "sum by (agent) (count_over_time({service_name=\"claude-code\"} | event_name=\"tool_result\" | tool_name=\"Agent\" | line_format \"{{.tool_input}}\" !~ `\"model\":` | regexp `\"subagent_type\":\"(?P<agent>[^\"]+)\"` [$r]))",
   "skillsClaude": "sum by (skill_name, invocation_trigger) (count_over_time({service_name=\"claude-code\"} | event_name=\"skill_activated\" [$r]))",
   "skillsGuard": "sum by (skill, via) (count_over_time({service_name=\"guard\"} | event_name=\"guard.skill\" [$r]))",
   "reminders": "sum by (rule) (count_over_time({service_name=\"guard\"} | event_name=\"guard.reminder\" [$r]))",
