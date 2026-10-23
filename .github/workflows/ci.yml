@@ -57,5 +57,5 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 22 # guard plugin tests: node --test
-      - run: npm install -g @anthropic-ai/claude-code@2.1.304 # validate.py runs `claude plugin validate`; pinned like the e2e CLIs
+      - run: npm install -g @anthropic-ai/claude-code@2.1.309 # validate.py runs `claude plugin validate`; pinned like the e2e CLIs
       - run: make check
