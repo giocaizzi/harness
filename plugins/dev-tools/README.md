@@ -27,6 +27,8 @@ General development tooling — git, GitHub/GitLab/Azure DevOps, conventional co
 | Agent | Description |
 |---|---|
 | `scout` | Read-only search and summarization on a cheap model; reports findings with evidence. |
+| `driver` | Driver-tier engineer a hub hands judgement work to: investigates, plans, implements and integrates in its own worktree. |
+| `reviewer` | Driver-tier reviewer of a change it did not write; posts a verdict with severities, at most two rounds. |
 | `escalate` | Hard-problem solver on the strongest model, for work that stalled twice. |
 
 On pi, which has no subagents, `pi/subagent.mjs` runs these agents (and `api`'s `api-reviewer`, `factory`'s `verifier`) as a `subagent` tool, each in its own `pi -p` session.
