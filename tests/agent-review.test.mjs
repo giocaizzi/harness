@@ -59,6 +59,18 @@ test('report lists unused and user-only skills and subagent spend on Opus', () =
   assert.match(asks, /\| rm \| deny \| unattended \| 2 \|/)
 })
 
+test('report attributes subagent cost and lists unpinned spawns and model swaps', () => {
+  const data = empty()
+  data.subagentCost = [row({ agent_name: 'factory:verifier', model: 'claude-opus-5-5' }, 3), row({ model: 'claude-opus-5-5' }, 9)]
+  data.unpinnedSpawns = [row({}, 4), row({ agent: 'dev-tools:scout' }, 1)]
+  data.modelSwaps = [row({ agent_type: 'factory:verifier', model: 'claude-opus-5-5', final_model: 'claude-opus-4-8' }, 1)]
+  const md = report(data, [], '7d')
+  assert.match(md, /Unattributed: \$9\.00/)
+  assert.match(md, /\| \(named spawn\) \| claude-opus-5-5 \| \$9\.00 \|/)
+  assert.match(md, /\| general-purpose \| 4 \|/)
+  assert.match(md, /\| factory:verifier \| claude-opus-5-5 \| claude-opus-4-8 \| 1 \|/)
+})
+
 test('evalStubs targets skills the model never loads itself', () => {
   const data = empty()
   data.skillsClaude = [row({ skill_name: 'dev-tools:ship', invocation_trigger: 'claude-proactive' }, 1)]

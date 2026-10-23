@@ -75,6 +75,7 @@ export function report(data, known, range) {
   const unused = Object.entries(use).filter(([, u]) => u.user + u.model + u.nested === 0).map(([s]) => s)
   const userOnly = Object.entries(use).filter(([, u]) => u.user + u.nested > 0 && u.model === 0).map(([s]) => s)
   const opusSub = data.costBySource.filter((r) => /^agent/.test(r.labels.query_source) && /opus|fable/.test(r.labels.model))
+  const unnamed = data.subagentCost.filter((r) => !r.labels.agent_name)
   return [
     `# Agent review (last ${range})`,
     '',
@@ -90,6 +91,18 @@ export function report(data, known, range) {
     '## Subagent routing',
     `Subagent spend on Opus or Fable: ${usd(sum(opusSub))}. Lookups belong on Haiku, routine edits on Sonnet (subagent-orchestration).`,
     table(['agent', 'model', 'runs'], top(data.subagents).map((r) => [r.labels.agent_type, r.labels.model, r.value])),
+    '',
+    '### Subagent cost by agent',
+    `Unattributed: ${usd(sum(unnamed))}, spent by spawns given a \`name\` (Claude Code drops their agent name from api_request).`,
+    table(['agent', 'model', 'cost'], top(data.subagentCost).map((r) => [r.labels.agent_name || '(named spawn)', r.labels.model, usd(r.value)])),
+    '',
+    '### Spawns with no model pinned',
+    'Each ran on the session\'s model (subagent-orchestration: pin a model on every spawn). web-fetch and claude-code-guide pick their own.',
+    table(['agent', 'spawns'], top(data.unpinnedSpawns).map((r) => [r.labels.agent || 'general-purpose', r.value])),
+    '',
+    '### Model swaps',
+    'A subagent that finished on another model than it started on (a fallback chain): record it as a routing deviation.',
+    table(['agent', 'model', 'finished on', 'runs'], top(data.modelSwaps).map((r) => [r.labels.agent_type, r.labels.model, r.labels.final_model, r.value])),
     '',
     '## Skills',
     `Never loaded: ${unused.length ? unused.join(', ') : 'none'}.`,
