@@ -5,7 +5,7 @@ description: Routing work to subagents and models in Claude Code, Copilot CLI, C
 
 # Subagent orchestration
 
-The main session (hub) plans, delegates and verifies. Subagents (spokes) do bounded work and report evidence. Spend model power where judgment decides the outcome, not on lookups.
+The main session (hub) routes, tracks state and coordinates. Subagents (spokes) do bounded work and report evidence. Spend model power where judgment decides the outcome, not on lookups.
 
 ## Tiers
 
@@ -17,7 +17,9 @@ The main session (hub) plans, delegates and verifies. Subagents (spokes) do boun
 | 4 Escalation | a problem that stalled at tier 3 | Fable 5.1 | GPT-6 Astra |
 
 - **Scout for reading, not editing.** A weak model's mistake in a summary shows up as a missing detail; in an edit it ships a bug. Routine, well-specified edits go to Sonnet; anything needing judgement goes to the driver.
-- **Spawns default to tier 2.** With `CLAUDE_CODE_SUBAGENT_MODEL=sonnet` (Claude Code), a spawn without a model runs on Sonnet; pass the model explicitly for tier 1, 3 and 4 work. Other harnesses have no such default: a spawn runs on the session's model unless the agent's own settings pin one.
+- **Spawns default to tier 2.** With `CLAUDE_CODE_SUBAGENT_MODEL=sonnet` (Claude Code), a spawn without a model runs on Sonnet; pass the model explicitly for tier 1, 3 and 4 work. Other harnesses have no such default: a spawn runs on the session's model unless the agent's own settings pin one (see the pin bullet below).
+- **The hub is tier 2 at `medium`.** It does no specific work: it routes, tracks state, relays between sessions and runs mechanical checks (commit hash, green CI, closing keyword, merged-tree equality). Investigation, design, planning and security triage go to a tier 3 or 4 agent with a written brief; implementation goes to tier 2 or 3; review goes to a tier 3 verifier that is not the author. A merge OK rests on the verifier's verdict plus the mechanical checks. A hub-side judgment call on a gate or ruleset, such as lifting a protection rule, goes to a tier 3 or 4 advisor first. A session that must do tier 3 work itself (a lone attended session with no spokes) runs at tier 3 instead.
+- **Pin a model on every spawn after a model switch.** Spokes without one inherit the session's model, and `/model` changes them too, so a switch to a cheaper hub silently downgrades every inheriting spoke.
 - **Escalate only after the driver failed twice on the same problem.** Compact first, since the new model re-pays the cache write for the whole conversation, and return to the driver once solved.
 - **Reviewer is not the author.** Review important changes at the author's tier or higher.
 
