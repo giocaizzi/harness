@@ -46,7 +46,8 @@ test('without an endpoint a throttle denial posts nothing', async ($, on) => {
   expect((await $.agent.spawn({ prompt: 'x' })).deny).toContain('95%')
 })
 
-// The test's tool.check hook stands for the engine: an ask from the guard's command hook.
+// The test's tool.check hook stands for the engine: an ask from the guard's command hook. Scoped to Bash: since
+// Claude Code 2.1.307 the kit checks the dialog's own AskUserQuestion call too, and an ask there refuses it.
 const ask = () => ({ decision: 'ask' as const, reason: 'guard: recursive delete', hook: 'PreToolUse' })
 const call = { tool: 'Bash', input: { command: 'rm -r build' }, tool_use_id: 't1' } as never
 
@@ -56,13 +57,15 @@ function answer(on: Parameters<Parameters<typeof test>[1]>[1], label: string) {
 }
 
 test('an ask the person allows in the guard dialog runs', async ($, on) => {
-  on('tool.check', ask)
+  mock.clock(on)
+  on('tool.check', { tool: 'Bash' }, ask)
   answer(on, 'Allow')
   expect((await $.tool.check(call)).decision).toBe('allow')
 })
 
 test('an ask the person denies is refused, and the agent is told not to retry', async ($, on) => {
-  on('tool.check', ask)
+  mock.clock(on)
+  on('tool.check', { tool: 'Bash' }, ask)
   answer(on, 'Deny')
   const r = await $.tool.check(call)
   expect(r.decision).toBe('deny')
@@ -72,7 +75,7 @@ test('an ask the person denies is refused, and the agent is told not to retry', 
 
 test('an ask nobody answers is parked after the timeout, never called a user deny', async ($, on) => {
   const clock = mock.clock(on)
-  on('tool.check', ask)
+  on('tool.check', { tool: 'Bash' }, ask)
   on('tool.call', { tool: 'AskUserQuestion' }, () => new Promise(() => {}))
   const pending = $.tool.check(call)
   await clock.advance(60_000)
@@ -84,7 +87,7 @@ test('an ask nobody answers is parked after the timeout, never called a user den
 })
 
 test('an ask whose dialog cannot show (headless, dismissed) is parked, not called a user deny', async ($, on) => {
-  on('tool.check', ask)
+  on('tool.check', { tool: 'Bash' }, ask)
   on('tool.call', { tool: 'AskUserQuestion' }, () => {
     throw new Error('no dialog')
   })
@@ -95,7 +98,7 @@ test('an ask whose dialog cannot show (headless, dismissed) is parked, not calle
 })
 
 test('dontAsk mode leaves the ask to the engine', async ($, on) => {
-  on('tool.check', ask)
+  on('tool.check', { tool: 'Bash' }, ask)
   on('tool.call', { tool: 'AskUserQuestion' }, () => {
     throw new Error('must not ask')
   })
@@ -122,7 +125,7 @@ const settle = async () => {
 test('every ask outcome is reported as guard.ask_result', async ($, on) => {
   const clock = mock.clock(on)
   const posted = collector(on, { OTEL_EXPORTER_OTLP_ENDPOINT: 'http://collector' })
-  on('tool.check', ask)
+  on('tool.check', { tool: 'Bash' }, ask)
   answer(on, 'Allow')
   await $.tool.check(call)
   await clock.advance(1)
@@ -136,7 +139,7 @@ test('an ask_result carries the guard version, the repo as owner/name and the co
   const posted = collector(on, { OTEL_EXPORTER_OTLP_ENDPOINT: 'http://collector' })
   on('fs.read', (_$, e) => ({ value: e.path.endsWith('plugin.json') ? '{"version":"9.9.9"}' : '' }))
   on('process.run', () => ({ value: { exitCode: 0, stdout: 'https://token@example.com/acme/widgets.git\n', stderr: '' } }))
-  on('tool.check', ask)
+  on('tool.check', { tool: 'Bash' }, ask)
   answer(on, 'Allow')
   await $.tool.check(call)
   await clock.advance(1)
@@ -168,7 +171,7 @@ test('a lookup that throws leaves the record without repo, and later records sti
   on('process.run', () => {
     throw new Error('no git')
   })
-  on('tool.check', ask)
+  on('tool.check', { tool: 'Bash' }, ask)
   answer(on, 'Allow')
   await $.tool.check(call)
   await $.tool.check(call)
@@ -180,7 +183,7 @@ test('a lookup that throws leaves the record without repo, and later records sti
 test('a timeout is reported as guard.ask_result timeout', async ($, on) => {
   const clock = mock.clock(on)
   const posted = collector(on, { OTEL_EXPORTER_OTLP_ENDPOINT: 'http://collector' })
-  on('tool.check', ask)
+  on('tool.check', { tool: 'Bash' }, ask)
   on('tool.call', { tool: 'AskUserQuestion' }, () => new Promise(() => {}))
   const pending = $.tool.check(call)
   await clock.advance(60_000)
@@ -204,7 +207,7 @@ test('the mod falls back to the GUARD_-prefixed endpoint, and GUARD_OTEL=off sen
 test('GUARD_ASK_TIMEOUT_MS sets the timeout', async ($, on) => {
   const clock = mock.clock(on)
   on('env.get', (_$, e) => ({ value: e.name === 'GUARD_ASK_TIMEOUT_MS' ? '5000' : undefined }))
-  on('tool.check', ask)
+  on('tool.check', { tool: 'Bash' }, ask)
   on('tool.call', { tool: 'AskUserQuestion' }, () => new Promise(() => {}))
   const pending = $.tool.check(call)
   await clock.advance(5000)
@@ -216,7 +219,7 @@ test('GUARD_ASK_TIMEOUT_MS sets the timeout', async ($, on) => {
 test('GUARD_UNATTENDED parks an ask at once, without showing the dialog', async ($, on) => {
   const clock = mock.clock(on)
   const posted = collector(on, { GUARD_UNATTENDED: '1', OTEL_EXPORTER_OTLP_ENDPOINT: 'http://collector' })
-  on('tool.check', ask)
+  on('tool.check', { tool: 'Bash' }, ask)
   on('tool.call', { tool: 'AskUserQuestion' }, () => {
     throw new Error('must not ask')
   })
@@ -231,7 +234,7 @@ test('GUARD_UNATTENDED parks an ask at once, without showing the dialog', async 
 
 test('GUARD_ASK_TIMEOUT_MS=0 leaves the ask to the engine', async ($, on) => {
   on('env.get', (_$, e) => ({ value: e.name === 'GUARD_ASK_TIMEOUT_MS' ? '0' : undefined }))
-  on('tool.check', ask)
+  on('tool.check', { tool: 'Bash' }, ask)
   on('tool.call', { tool: 'AskUserQuestion' }, () => {
     throw new Error('must not ask')
   })
@@ -241,7 +244,7 @@ test('GUARD_ASK_TIMEOUT_MS=0 leaves the ask to the engine', async ($, on) => {
 test('an invalid GUARD_ASK_TIMEOUT_MS keeps the default', async ($, on) => {
   const clock = mock.clock(on)
   on('env.get', (_$, e) => ({ value: e.name === 'GUARD_ASK_TIMEOUT_MS' ? '1m' : undefined }))
-  on('tool.check', ask)
+  on('tool.check', { tool: 'Bash' }, ask)
   on('tool.call', { tool: 'AskUserQuestion' }, () => new Promise(() => {}))
   const pending = $.tool.check(call)
   await clock.advance(60_000)
