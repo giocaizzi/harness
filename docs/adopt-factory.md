@@ -40,7 +40,7 @@
 - `gh label list` shows `agent-ok`, `factory-claimed`, `needs-owner`, `needs-grooming`, `factory-quarantine`, `factory-halt` and `factory-takeover`.
 - the placeholder search prints nothing, and `git check-ignore .factory/runs/x` prints the path.
 - On an open test issue with the approval label applied by you, `factory-status` lists it, and `ticket-run <number>` passes the gate and posts a plan comment.
-- With a runtime: a run it starts on the test issue passes the gate and edits the runtime's claim comment instead of posting a second; a stop with `reason_code: auth` means its login is missing from `writers`.
+- With a runtime: a run it starts on the test issue passes the gate and edits the runtime's claim comment instead of posting a second; a stop with `reason_code: auth` means no trusted claim carries the run's id: the runtime's login is missing from `writers` (the stop names it when the claim label's timeline proves it; check it is the runtime's before adding it).
 
 ## Rollback
 
