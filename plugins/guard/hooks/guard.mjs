@@ -93,6 +93,9 @@ export function knownSkills(here = dirname(fileURLToPath(import.meta.url))) {
 // gets its own hints, except the read and edit hints, which say the same to every agent and so come once per session.
 // Without a session id nothing is kept.
 const SESSION_HINTS = new Set(['read', 'edit'])
+// Harness processes whose plugin versions a session file keeps. More means the hook's parent is no harness process
+// but a shell started per call (#254): recording stops there, so the stale note stays silent and the file small.
+const MAX_PROCESSES = 4
 // `processId`: the harness process the facts belong to (the plugin versions it loaded).
 export function sessionStore(dir, sessionId, agentId, processId) {
   const file = sessionId ? join(dir, 'sessions', `${String(sessionId).replace(/[^\w-]/g, '_')}.jsonl`) : null
@@ -100,7 +103,7 @@ export function sessionStore(dir, sessionId, agentId, processId) {
   let seen = { reminded: [], loaded: [] }
   return {
     load() {
-      seen = { reminded: [], loaded: [], unattended: undefined, plugins: {} }
+      seen = { reminded: [], loaded: [], unattended: undefined, plugins: {}, processes: new Set() }
       if (!file) return { reminded: [], loaded: [], plugins: {} }
       const proc = String(processId ?? '')
       let text = ''
@@ -121,7 +124,10 @@ export function sessionStore(dir, sessionId, agentId, processId) {
         if (typeof fact.unattended === 'boolean') seen.unattended = fact.unattended
         // The plugin versions this harness process loaded: the first record of each wins. A resumed or restarted session
         // keeps its id but is a new process, which loaded what was installed then.
-        if (typeof fact.plugin === 'string' && typeof fact.version === 'string' && String(fact.process ?? '') === proc) seen.plugins[fact.plugin] ??= fact.version
+        if (typeof fact.plugin === 'string' && typeof fact.version === 'string') {
+          seen.processes.add(String(fact.process ?? ''))
+          if (String(fact.process ?? '') === proc) seen.plugins[fact.plugin] ??= fact.version
+        }
       }
       return { reminded: [...new Set(seen.reminded)], loaded: [...new Set(seen.loaded)], unattended: seen.unattended, plugins: { ...seen.plugins } }
     },
@@ -132,7 +138,7 @@ export function sessionStore(dir, sessionId, agentId, processId) {
         ...[...new Set(state.loaded)].filter((s) => !seen.loaded.includes(s)).map((s) => JSON.stringify({ loaded: s })),
         ...[...new Set(state.reminded)].filter((r) => !seen.reminded.includes(r)).map((r) => JSON.stringify({ reminded: r, agent })),
         ...(typeof state.unattended === 'boolean' && state.unattended !== seen.unattended ? [JSON.stringify({ unattended: state.unattended })] : []),
-        ...Object.entries(state.plugins ?? {}).filter(([p]) => !(p in seen.plugins)).map(([plugin, version]) => JSON.stringify({ plugin, version, process: processId })),
+        ...(seen.processes.has(String(processId ?? '')) || seen.processes.size < MAX_PROCESSES ? Object.entries(state.plugins ?? {}).filter(([p]) => !(p in seen.plugins)).map(([plugin, version]) => JSON.stringify({ plugin, version, process: processId })) : []),
       ]
       if (!lines.length) return
       mkdirSync(dirname(file), { recursive: true, mode: 0o700 })

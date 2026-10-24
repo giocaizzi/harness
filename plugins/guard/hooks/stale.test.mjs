@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { installedVersions, newer, staleCheck } from './stale.mjs'
@@ -111,4 +111,14 @@ test('a stale step that throws leaves the decision standing', async () => {
   const harness = { toString: () => assert.fail('boom') }
   const out = await handle({ session_id: 's1', cwd: '/', hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'gh pr create -t x -b y' } }, { dataDir: mkdtempSync(join(tmpdir(), 'guard-test-')), env: {}, harness, pluginRoot, hostFacts: async () => ({ load1: 1, freeGb: 100 }), run: async () => null, pythonManager })
   assert.equal(JSON.parse(out.stdout).hookSpecificOutput.permissionDecision, 'deny')
+})
+
+test('a hook parent that changes on every call stops the recording, so the session file stays small (#254)', async () => {
+  const plugins = mkdtempSync(join(tmpdir(), 'stale-'))
+  const pluginRoot = plugin(join(plugins, 'guard'), '1.0.0')
+  for (const p of ['hud', 'sounds', 'dev-tools']) plugin(join(plugins, p), '1.0.0')
+  const dataDir = mkdtempSync(join(tmpdir(), 'guard-test-'))
+  for (let pid = 1; pid <= 50; pid++) await handle({ session_id: 's1', cwd: '/', hook_event_name: 'PreToolUse', tool_name: 'Skill', tool_input: { skill: 'ship' } }, { dataDir, env: {}, pluginRoot, processId: pid, hostFacts: async () => ({ load1: 1, freeGb: 100 }), run: async () => null, pythonManager })
+  const lines = readFileSync(join(dataDir, 'sessions', 's1.jsonl'), 'utf8').trim().split('\n')
+  assert.equal(lines.filter((l) => l.includes('"plugin"')).length, 4 * 4, 'four processes of four plugins, then nothing')
 })
