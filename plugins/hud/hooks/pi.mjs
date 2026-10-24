@@ -1,5 +1,5 @@
 // pi extension: hud's status line in pi's footer (ctx.ui.setStatus): the context weather, the model, the branch's PR
-// with its checks, unpushed and uncommitted work, and each running `subagent` call with its agent and model. Same parts
+// with its checks, unpushed and uncommitted work, and each running `subagent` call with its agent, model and effort. Same parts
 // and icons as the Claude band; refreshed at session start, after each turn and as a subagent starts and ends. Also rewrites each reply (rewrite.mjs: links, paths, commits, secrets, ...). Loaded from the root
 // package.json.
 import { execFile } from 'node:child_process'
@@ -25,7 +25,7 @@ export function piStatus({ pct, model, repo, agents = [] }) {
   if (repo?.ahead || repo?.behind) parts.push(`[${ICON.sync} ↑${repo.ahead} ↓${repo.behind}]`)
   const c = repo?.changes
   if (c && (c.files || c.untracked)) parts.push(`[${ICON.changes} ${c.files + c.untracked} +${c.added} -${c.removed}]`)
-  for (const a of agents) parts.push(`[${ICON.agents} ${[a.agent, a.model].filter(Boolean).join(' · ')}]`)
+  for (const a of agents) parts.push(`[${ICON.agents} ${[a.agent, a.model, a.thinking].filter(Boolean).join(' · ')}]`)
   return parts.join(' ')
 }
 
@@ -103,8 +103,8 @@ const SETTLE_MS = 1500
 export default function hudExtension(pi, deps = {}) {
   let repo = null
   let facts = null
-  // The running `subagent` calls (dev-tools/pi/subagent.mjs) by tool call: the agent, and the session's model, which
-  // the call hands its child. No effort: the child is not given the session's thinking level, so it runs at its default.
+  // The running `subagent` calls (dev-tools/pi/subagent.mjs) by tool call: the agent, the session's model, which the
+  // call hands its child, and the thinking level once the call reports it.
   const agents = new Map()
   const draw = (ctx) => {
     try {
@@ -132,6 +132,15 @@ export default function hudExtension(pi, deps = {}) {
   pi.on('tool_execution_start', (e, ctx) => {
     if (e.toolName !== 'subagent') return
     agents.set(e.toolCallId, { agent: e.args?.agent, model: ctx.model?.id })
+    draw(ctx)
+  })
+  // The call reports what its child runs at before it starts it (`details`: `model` as provider/id, `thinking`, the
+  // level it passes as --thinking); without that report the effort is unknown and left out.
+  pi.on('tool_execution_update', (e, ctx) => {
+    const a = agents.get(e.toolCallId)
+    const d = e.partialResult?.details
+    if (!a || !d?.thinking) return
+    agents.set(e.toolCallId, { ...a, model: typeof d.model === 'string' ? d.model.split('/').pop() : a.model, thinking: d.thinking })
     draw(ctx)
   })
   pi.on('tool_execution_end', (e, ctx) => {

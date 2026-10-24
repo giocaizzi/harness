@@ -352,6 +352,9 @@ test('a spawn that bypasses the typed agents gets a routing hint, never a decisi
   assert.match(decision(await setup()(spawn('task', { agent_type: 'dev-tools:driver', model: 'claude-opus-4.7' }))).additionalContext, /overrides it/)
   assert.equal(decision(await setup()(spawn('Agent', { subagent_type: 'dev-tools:driver' }))), undefined)
   assert.equal(decision(await setup()(spawn('task', { subagent_type: 'general' }))), undefined) // opencode: no model on a spawn
+  assert.match(decision(await setup()(spawn('spawn_agent', { agent_type: 'default', model: 'gpt-6-astra' }))).additionalContext, /untyped spawn on gpt-6-astra/) // Codex
+  assert.match(decision(await setup()(spawn('runSubagent', { agentName: 'driver', model: 'Claude Opus 4.7 (copilot)' }))).additionalContext, /overrides it/) // VS Code
+  assert.equal(decision(await setup()(spawn('runSubagent', {}))), undefined) // VS Code: no agentName runs a copy of the current agent
   assert.deepEqual(events, [['guard.reminder', 'routing-plan', 'routing'], ['guard.reminder', 'routing-model', 'routing']])
 })
 
