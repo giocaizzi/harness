@@ -814,25 +814,38 @@ function ghAction(args) {
 // Subcommands that cannot send a body the guard cannot read to a labels or issues endpoint (`gh api` can).
 const GH_SUBCOMMANDS = new Set(['issue', 'pr', 'repo', 'run', 'workflow', 'search', 'release', 'project', 'auth', 'label', 'browse', 'status']);
 
-// A line that is not one plain `gh` command but runs `gh` with `api` or a subcommand the guard cannot read literally
-// (`gh $'a'pi`, `gh "$X"`, `gh>/dev/null api`, zsh `=gh`). Read with quotes and backslashes removed, as the shell joins
-// them; `-R`/`--repo` may come first.
-function opaqueGh(flat) {
-  for (const m of flat.matchAll(/(?:^|[\s;&|(){}`!=])(?:[^\s;&|(){}`!=]*\/)?gh(?:\.exe)?(?=[\s;&|()`<>]|$)/g)) {
+// How many times a line runs `gh` with `api` or a subcommand the guard cannot read literally (`gh $'a'pi`, `gh "$X"`,
+// `gh>/dev/null api`, zsh `=gh`, `gh` as a parameter's value or default: `${X:=gh}`, `${X:-gh}`). Read with quotes and
+// backslashes removed, as the shell joins them; `-R`/`--repo` may come first.
+function opaqueGhCount(flat) {
+  let count = 0;
+  for (const m of flat.matchAll(/(?:^|[\s;&|(){}`!=])(?:[^\s;&|(){}`!=]*\/)?gh(?:\.exe)?(?=[\s;&|(){}`<>]|$)/g)) {
     const words = flat.slice(m.index + m[0].length).split(/[\s;&|()<>`]+/).filter(Boolean);
     let i = 0;
     while (words[i] === '-R' || words[i] === '--repo' || /^--repo=/.test(words[i] ?? '')) i += words[i].includes('=') ? 1 : 2;
-    if (!GH_SUBCOMMANDS.has(words[i])) return true;
+    if (!GH_SUBCOMMANDS.has(words[i])) count++;
   }
-  return false;
+  return count + (flat.match(/\$\{[^}]*(?<![\w.])gh(?:\.exe)?\}/gi)?.length ?? 0);
 }
+const opaqueGh = (flat) => opaqueGhCount(flat) > 0;
 
-// Whether every `gh` command opaqueGh flags in a line is a plain `gh` command (plainGh) at its top level, in a line the
-// shell reader splits cleanly: `echo …; gh api user; git remote -v` is three commands, not an opaque `gh` (G26). A `gh`
-// inside a substitution or another command's payload stays opaque.
+// Whether every `gh` call opaqueGh counts in a line is a plain `gh` command (plainGh) of its own at the top level, in a
+// line the shell reader splits cleanly: `echo …; gh api user; git remote -v` is three commands, not an opaque `gh` (G26).
+// The calls must add up to the line's: one in a heredoc body (which may be run as a script later) or in a substitution
+// or payload is not a plain command. A line that defines `gh` (a function or an alias) never passes.
 function plainGhCalls(command) {
+  const flat = command.replace(/['"\\]/g, '');
+  if (/(?:^|[\s;&|(){}`])(?:function\s+gh(?:\.exe)?\b|gh(?:\.exe)?\s*\(\s*\)|alias\s+(?:-\S+\s+)*gh=)/.test(flat)) return false;
   const a = analyze(command);
-  return !a.opaque && units(a).every(({ cmd, depth }) => !opaqueGh(cmd.raw.replace(/['"\\]/g, '')) || (depth === 0 && !cmd.payloads.length && plainGh(cmd.raw) !== null));
+  if (a.opaque) return false;
+  let found = 0;
+  for (const { cmd, depth } of units(a)) {
+    const n = opaqueGhCount(cmd.raw.replace(/['"\\]/g, ''));
+    if (!n) continue;
+    if (n !== 1 || depth !== 0 || cmd.payloads.length || plainGh(cmd.raw) === null) return false;
+    found++;
+  }
+  return found === opaqueGhCount(flat);
 }
 
 // Whether one plain `gh` command sends a body the guard cannot read to a labels or issues endpoint.

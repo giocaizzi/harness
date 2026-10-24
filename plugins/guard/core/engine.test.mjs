@@ -1175,7 +1175,10 @@ test('factory run: a command naming the approval label is denied unless it only 
     assert.notEqual(run(c).rule, 'factory-approval', c);
   }
   // ...but not when one of them is not plain, sits in a substitution or carries a body.
-  for (const c of ['echo hi; gh "$SUB" repos/o/r/issues/1/labels', 'echo hi; gh api $(echo repos/o/r/issues/1/labels)', 'echo $(gh api user)', 'echo hi; xargs gh api < list', 'echo hi; gh api repos/o/r/issues/1/labels --input b.json', 'echo hi; gh api -X POST repos/o/r/issues/1/labels -F "labels[]=@f"']) {
+  for (const c of ['echo hi; gh "$SUB" repos/o/r/issues/1/labels', 'echo hi; gh api $(echo repos/o/r/issues/1/labels)', 'echo $(gh api user)', 'echo hi; xargs gh api < list', 'echo hi; gh api repos/o/r/issues/1/labels --input b.json', 'echo hi; gh api -X POST repos/o/r/issues/1/labels -F "labels[]=@f"',
+    // A gh call the units do not account for: a heredoc body run later, a defined gh, gh out of an expansion (#270).
+    "cat > x.sh <<'EOF'\ngh api -X POST repos/o/r/issues/1/labels --inp${E}ut b.json\nEOF\nbash x.sh",
+    'gh() { command "$1" "$2" repos/o/r/issues/1/labels; }; gh gh api', 'alias gh=x; gh api user', 'function gh { :; }; gh api user', 'echo hi; ${G:-gh} api repos/o/r/issues/1/labels']) {
     assert.equal(touchesApprovalLabel(c, 'agent-ok'), true, c);
   }
   assert.equal(run('gh issue edit 7 --add-label ready', { approval: 'ready' }).action, 'deny', 'a configured label');
