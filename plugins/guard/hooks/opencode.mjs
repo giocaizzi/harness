@@ -59,6 +59,7 @@ export const GuardPlugin = async ({ client, directory }, deps) => {
       const d = await guard.preTool({ sessionId: input.sessionID, cwd: directory, tool: String(input.tool).toLowerCase(), input: output.args ?? {} })
       if (d.decision === 'deny' || d.decision === 'ask') throw new Error(d.reason)
       if (d.context) notes.set(input.callID, d.context)
+      if (d.notice) Promise.resolve().then(() => client.tui.showToast({ body: { message: d.notice, variant: 'info' } })).catch(() => {})
     },
     'tool.execute.after': async (input, output) => {
       const extra = [notes.get(input.callID), guard.postTool({ cwd: directory, tool: String(input.tool).toLowerCase(), input: input.args ?? {} })].filter(Boolean)
