@@ -493,14 +493,25 @@ test('auto mode, which tells the agent to read and edit through the shell, gets 
 })
 
 test('a plain read of non-secret files is allowed outright, so no harness prompt stalls it (G24)', async () => {
-  const h = setup()
+  const repoDir = mkdtempSync(join(tmpdir(), 'guard-repo-'))
+  mkdirSync(join(repoDir, '.git'))
+  const h0 = setup()
+  const h = (input) => h0({ cwd: repoDir, ...input })
   for (const c of ['sed -n 36,56p internal/contract/testdata/harness/factory.md', 'cd sub && sed -n 36,56p internal/contract/x.md', 'head -n 20 README.md', 'cat a.txt b.txt', 'tail -50 log/app.log']) {
     const d = decision(await h(pre('Bash', c)))
     assert.equal(d?.permissionDecision, 'allow', c)
   }
   for (const c of ['cat .env', 'cat ~/.ssh/config', 'head internal/token/token.go', 'cat secrets.yaml', 'cat a.txt > b.txt', 'cat $F', "sed -n '1w out' f", 'sed -n 1,5p f | sh', 'cat a; rm -rf b', 'cat /dev/stdin', 'less ~/.aws/config', 'cat id_ed25519', 'cd /r/.claude/worktrees/m4 && sed -n 36,56p x.md', 'cat /etc/hosts', 'cat env:GH_PAT', 'cat C:/Users/me/AppData/Roaming/gh/hosts.yml'])
     assert.notEqual(decision(await h(pre('Bash', c)))?.permissionDecision, 'allow', c)
-  assert.equal(decision(await setup({ noAsk: true })(pre('Bash', 'cat a.txt')))?.permissionDecision, undefined, 'Codex: no allow, it has no prompt for this')
+  assert.equal(decision(await setup({ noAsk: true })({ cwd: repoDir, ...pre('Bash', 'cat a.txt') }))?.permissionDecision, undefined, 'Codex: no allow, it has no prompt for this')
+  // #208: only inside a work tree that is not the home directory's.
+  const home = mkdtempSync(join(tmpdir(), 'guard-home-'))
+  const inHome = setup({ env: { HOME: home } })
+  assert.equal(decision(await inHome({ cwd: home, ...pre('Bash', 'cat .codex/auth2.json') }))?.permissionDecision, undefined, 'cwd at $HOME')
+  mkdirSync(join(home, '.git'))
+  mkdirSync(join(home, '.config'))
+  assert.equal(decision(await inHome({ cwd: join(home, '.config'), ...pre('Bash', 'cat glab-cli/config.yml') }))?.permissionDecision, undefined, 'a dotfiles repo at $HOME')
+  assert.equal(decision(await h0(pre('Bash', 'cat a.txt')))?.permissionDecision, undefined, 'outside any work tree')
 })
 
 test('without a session id nothing is kept, and the fallback data dir is per user', async () => {

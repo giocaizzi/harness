@@ -377,8 +377,8 @@ async function onShell(input, state, deps) {
     }
     if (set !== null) state.unattended = set
     // A plain read of non-secret files never waits on the harness's prompt (Claude Code, Copilot CLI, VS Code; Codex
-    // and the in-process harnesses do not prompt for it).
-    if (!deps.noAsk && pureRead(command)) {
+    // and the in-process harnesses do not prompt for it), inside a project's work tree only.
+    if (!deps.noAsk && pureRead(command) && inWorkTree(input.cwd, deps.env)) {
       allowed('read')
       return { stdout: JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow', permissionDecisionReason: 'guard: a plain read of non-secret files', ...(d.context ? { additionalContext: d.context } : {}) } }) }
     }
@@ -430,6 +430,17 @@ function onStale(input, state, deps, out) {
   fire(deps, 'guard.reminder', { rule: 'stale-plugins', cmd_class: 'hint', tool: String(input.tool_name ?? ''), session_id: input.session_id, tool_use_id: input.tool_use_id }, input.cwd)
   const context = out.stdout ? JSON.parse(out.stdout).hookSpecificOutput?.additionalContext : null
   return note(context ? `${context}\n${s.context}` : s.context, s.notice)
+}
+
+// Whether `cwd` is inside a git work tree other than the home directory's: a relative read there is project files.
+// From `$HOME`, or a dotfiles repo at `$HOME`, `cat .codex/auth.json` is a secret the path rules may not know (#208).
+export function inWorkTree(cwd, env = {}) {
+  if (typeof cwd !== 'string' || !cwd) return false
+  const home = resolve(env.HOME || env.USERPROFILE || homedir())
+  for (let dir = resolve(cwd); ; dir = dirname(dir)) {
+    if (existsSync(join(dir, '.git'))) return dir !== home
+    if (dir === dirname(dir) || dir === home) return false
+  }
 }
 
 // One hook event in, { stdout?, stderr?, code? } out. `deps` is injected so tests run without a host.
