@@ -242,15 +242,33 @@ export function existingDirs(command, env, cwd) {
 }
 const PLAIN_DIR = /^[\w.@%+=:,\\/~-]+$/
 
-// The factory approval label of the repo around `cwd` (`labels.approval` in the nearest `.factory/config.yaml`), else the default.
-export function approvalLabel(cwd) {
+// The factory labels a run never touches, from `labels` in the nearest `.factory/config.yaml` above `cwd`, each else its default.
+// Fails closed: a config that exists but cannot be read, or whose `labels` cannot be parsed, returns the defaults with
+// `unsure` set and any names it can still find in `extra`, and the engine then denies every label change.
+export function factoryLabels(cwd) {
+  const defaults = { approval: rules.factory.approval, takeover: rules.factory.takeover }
+  const keys = Object.keys(defaults)
   for (let dir = resolve(cwd || '.'); ; dir = dirname(dir)) {
+    let text
     try {
-      const labels = readFileSync(join(dir, '.factory', 'config.yaml'), 'utf8').replace(/\r/g, '').match(/^labels:[ \t]*\n((?:[ \t]+.*(?:\n|$)|[ \t]*\n)*)/m)
-      const name = labels?.[1].match(/^[ \t]+approval:[ \t]*(?:"([^"]+)"|'([^']+)'|([^\s#]+))/m)
-      return name ? (name[1] ?? name[2] ?? name[3]) : rules.factory.approval
-    } catch {}
-    if (dirname(dir) === dir) return rules.factory.approval
+      text = readFileSync(join(dir, '.factory', 'config.yaml'), 'utf8').replace(/\r/g, '')
+    } catch (e) {
+      if (e?.code !== 'ENOENT' && e?.code !== 'ENOTDIR') return { ...defaults, unsure: true, extra: [] }
+    }
+    if (text !== undefined) {
+      if (!/^labels\b/m.test(text)) return defaults
+      const block = text.match(/^labels:[ \t]*\n((?:[ \t]+.*(?:\n|$)|[ \t]*\n)*)/m)?.[1]
+      const named = Object.fromEntries(keys.map((key) => {
+        if (block === undefined) return [key, null]
+        if (!new RegExp(`^[ \\t]+${key}[ \\t]*:`, 'm').test(block)) return [key, defaults[key]]
+        const name = block.match(new RegExp(`^[ \\t]+${key}:[ \\t]*(?:"([^"]+)"|'([^']+)'|([^\\s#]+))`, 'm'))
+        return [key, name ? (name[1] ?? name[2] ?? name[3]) : null]
+      }))
+      if (keys.every((key) => named[key] !== null)) return named
+      const extra = [...text.matchAll(/\b(?:approval|takeover)[ \t]*:[ \t]*["']?([^\s"',}\]#]+)/g)].map((m) => m[1])
+      return { ...defaults, unsure: true, extra }
+    }
+    if (dirname(dir) === dir) return defaults
   }
 }
 
@@ -291,7 +309,7 @@ async function onShell(input, state, deps) {
     const held = input.permission_mode === 'auto' ? ['read', 'edit'].filter((r) => !state.reminded.includes(r)) : []
     const reminded = new Set([...state.reminded, ...held])
     const judged = hostJudged(command, rules, reminded)
-    const d = evaluateCommand({ command, loadedSkills: new Set(state.loaded), state: { reminded }, host, readTool: deps.readTool ?? true, ...facts, factory: deps.env?.FACTORY_RUN_ID ? { approval: approvalLabel(input.cwd) } : null, rules })
+    const d = evaluateCommand({ command, loadedSkills: new Set(state.loaded), state: { reminded }, host, readTool: deps.readTool ?? true, ...facts, factory: deps.env?.FACTORY_RUN_ID ? factoryLabels(input.cwd) : null, rules })
     state.reminded = [...reminded].filter((r) => !held.includes(r))
     if (unfinished && d.action !== 'allow') d.reason += '\nChecks unfinished: the worktree, branch and build-output lookups ran out of time, so a safe case could not be shown.'
     // Logged after the harness-specific transforms, so `action` is what happened: an ask that became a deny is a deny,

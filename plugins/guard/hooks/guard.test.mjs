@@ -5,7 +5,7 @@ import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { tmpdir, userInfo } from 'node:os'
 import { join, resolve } from 'node:path'
-import { CODEX_RULES, codexAsks, codexReviewer, approvalLabel, handle, pythonManager, sessionStore, tail } from './guard.mjs'
+import { CODEX_RULES, codexAsks, codexReviewer, factoryLabels, handle, pythonManager, sessionStore, tail } from './guard.mjs'
 import { fallbackDataDir } from './data.mjs'
 import { codexRules } from '../core/engine.mjs'
 import { rules } from '../core/rules.mjs'
@@ -546,15 +546,28 @@ test('VS Code task tools are judged by the command they run', async () => {
   assert.match(decision(await task('run_task', { id: 'shell: missing', workspaceFolder: ws })).additionalContext, /could not read the command/)
 })
 
-test('FACTORY_RUN_ID set: the approval label (default or the repo\'s configured one) cannot be added; unset, it can', async () => {
+test('FACTORY_RUN_ID set: the approval and takeover labels (default or the repo\'s configured ones) cannot be added; unset, they can', async () => {
   const cwd = mkdtempSync(join(tmpdir(), 'guard-factory-'))
   const configured = mkdtempSync(join(tmpdir(), 'guard-factory-'))
   mkdirSync(join(configured, '.factory'))
-  writeFileSync(join(configured, '.factory', 'config.yaml'), 'labels:\n  approval: go-ahead\n  claimed: x\n')
+  writeFileSync(join(configured, '.factory', 'config.yaml'), 'labels:\n  approval: go-ahead\n  claimed: x\n  takeover: hand-over # set by an approver\n')
   const crlf = mkdtempSync(join(tmpdir(), 'guard-factory-'))
   mkdirSync(join(crlf, '.factory'))
   writeFileSync(join(crlf, '.factory', 'config.yaml'), 'labels:\r\n  approval: "go ahead"\r\n  claimed: x\r\n')
-  assert.equal(approvalLabel(crlf), 'go ahead', 'CRLF and a quoted name with a space')
+  assert.deepEqual(factoryLabels(crlf), { approval: 'go ahead', takeover: 'factory-takeover' }, 'CRLF and a quoted name with a space; an unset key keeps its default')
+  assert.deepEqual(factoryLabels(configured), { approval: 'go-ahead', takeover: 'hand-over' })
+  assert.deepEqual(factoryLabels(cwd), { approval: 'agent-ok', takeover: 'factory-takeover' }, 'no config: the defaults')
+  const config = (text) => {
+    const d = mkdtempSync(join(tmpdir(), 'guard-factory-'))
+    mkdirSync(join(d, '.factory'))
+    if (text === null) mkdirSync(join(d, '.factory', 'config.yaml'))
+    else writeFileSync(join(d, '.factory', 'config.yaml'), text)
+    return d
+  }
+  assert.deepEqual(factoryLabels(config('version: 1\n')), { approval: 'agent-ok', takeover: 'factory-takeover' }, 'no labels key: the defaults')
+  assert.deepEqual(factoryLabels(config('labels: {approval: go-ahead, takeover: hand-over}\n')), { approval: 'agent-ok', takeover: 'factory-takeover', unsure: true, extra: ['go-ahead', 'hand-over'] }, 'flow style: fail closed')
+  assert.deepEqual(factoryLabels(config('labels:\n  approval:\n    - x\n')), { approval: 'agent-ok', takeover: 'factory-takeover', unsure: true, extra: [] }, 'a key without a plain value: fail closed')
+  assert.deepEqual(factoryLabels(config(null)), { approval: 'agent-ok', takeover: 'factory-takeover', unsure: true, extra: [] }, 'unreadable: fail closed')
   const inRun = setup({ env: { FACTORY_RUN_ID: 'r1' } })
   const add = (label, dir) => ({ ...pre('Bash', `gh issue edit 70 --add-label ${label}`), cwd: dir })
   const denied = decision(await inRun(add('agent-ok', cwd)))
@@ -565,5 +578,16 @@ test('FACTORY_RUN_ID set: the approval label (default or the repo\'s configured 
   assert.equal(decision(await inRun(add('go-ahead', configured))).permissionDecision, 'deny')
   assert.equal(decision(await inRun(add('agent-ok', configured))), undefined, 'the configured name replaces the default')
   assert.equal(decision(await inRun(add('needs-owner', cwd))), undefined)
+  const takeover = decision(await inRun(add('factory-takeover', cwd)))
+  assert.equal(takeover.permissionDecision, 'deny')
+  assert.match(takeover.permissionDecisionReason, /takeover label/)
+  assert.equal(decision(await inRun(add('hand-over', configured))).permissionDecision, 'deny', 'the configured takeover label')
+  assert.equal(decision(await setup({ env: {} })(add('factory-takeover', cwd))), undefined, 'an attended run removes or adds it freely')
+  const flow = config('labels: {approval: go-ahead}\n')
+  const unsure = decision(await inRun(add('needs-owner', flow)))
+  assert.equal(unsure.permissionDecision, 'deny', 'an unparsable config denies every label change in a run')
+  assert.match(unsure.permissionDecisionReason, /could not be read/)
+  assert.equal(decision(await inRun({ ...pre('Bash', 'gh issue view 70 --json labels'), cwd: flow })), undefined, 'reads still pass')
+  assert.equal(decision(await setup({ env: {} })(add('needs-owner', flow))), undefined, 'outside a run: unchanged')
   assert.equal(decision(await setup({ env: {} })(add('agent-ok', cwd))), undefined, 'no run active: allowed')
 })

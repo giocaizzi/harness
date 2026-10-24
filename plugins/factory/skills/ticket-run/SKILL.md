@@ -15,7 +15,7 @@ The repo's `.factory/config.yaml` holds what is particular to it: forge, approve
 
 One ticket, one session, one worktree.
 
-1. **Gate and claim:** approved by an approver, not in grooming, ready (acceptance criteria and a proof command), not claimed by another run; then claim it ([comments.md](references/comments.md#gate)).
+1. **Gate and claim:** approved by an approver, not in grooming, ready (acceptance criteria and a proof command), not claimed by another run; then claim it ([comments.md](references/comments.md#gate)). A ticket with the takeover label, applied by an approver, is handed from a runtime to you: wait for its release, gate again, claim, remove the label, then check out its WIP branch ([comments.md](references/comments.md#takeover)).
 2. **Resume** a parked ticket only on an approver's answer ([comments.md](references/comments.md#answers)), or, for a merge gate, an approver's merge ([done.md](references/done.md#ship-and-land)).
 3. **Plan comment** first. XS and S start right after it; M and larger wait for the owner's OK.
 4. **Work** in a worktree (`wt`), committing as you go and keeping the run's checklist current ([done.md](references/done.md#checklist)). Decide what belongs to the ticket with the [fold-in test](references/fold-in-test.md), and log the calls the plan does not cover. You route, and only you spawn ([routing.md](references/routing.md)): a `dev-tools:driver` spawn plans and splits, you hand each clear XS/S unit to a fresh Sonnet worker with that unit's plan as the brief, and a `dev-tools:driver` spawn integrates and runs the checks; a unit that fails twice goes back to the driver. Brief each driver spawn to assume nothing: on a ticket its questions park.
@@ -26,7 +26,7 @@ Models, effort, escalation and cost for anything you spawn follow the policy tab
 
 ## Firm rules
 
-- Proceed only past the gate; never add or remove the approval label.
+- Proceed only past the gate; never add or remove the approval label. The takeover label is an approver's too: you only remove it, once your claim on a ticket under takeover is posted.
 - Never close, re-scope or mark an issue not planned; only your own PR's `Closes #N` closes the ticket.
 - No partial PRs: one PR with the whole scope, never a `Refs`-only PR for the ticket.
 - Every comment and issue you write starts with the marker, or it reads as the owner's.
