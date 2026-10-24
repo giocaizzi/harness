@@ -1,5 +1,5 @@
 # Overrides for the harnesses that do not read agents/worker.md as-is (make build).
-# Copilot: model left unset in the agent file; the dotfiles set it per agent under subagents.agents.
+# Copilot: model left unset in the agent file; the dotfiles will pin it per agent under subagents.agents.
 copilot:
   tools:
     - read

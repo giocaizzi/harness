@@ -9,7 +9,7 @@ One ticket, from approval to merged, deployed and verified work. The owner chose
 
 The repo's `.factory/config.yaml` holds what is particular to it: forge, approvers, writers, labels, the marker, components with their checks and deploys, risk tiers. If it is missing or unreadable, stop and point to `docs/adopt-factory.md` in giocaizzi/harness; never fall back to defaults for a config you could not read. `docs/factory.md` there explains the protocol.
 
-The run needs the `dev-tools` plugin: its agents and its `wt`, `ship` and `land` skills. If `dev-tools:driver` is not an available agent, stop and say so; never substitute another agent for it.
+The run needs the `dev-tools` plugin: its agents and its `wt`, `ship` and `land` skills. If the dev-tools `driver` agent is not available (`dev-tools:driver` in Claude Code, `driver` where agents go by bare name), stop and say so; never substitute another agent for it. Agent names below are Claude Code's; [routing.md](references/routing.md) maps them per harness.
 
 **Done means** the whole scope is merged in one PR that closes the ticket, the deploy and live checks passed where the component deploys, and the evidence and result are on the ticket. When a step doesn't need the owner, keep going; stop and ask on the ticket only when you can't continue, or before anything destructive or outside the repo.
 

@@ -1,6 +1,6 @@
 ---
 name: subagent-orchestration
-description: Use before starting work that needs a plan, a design, an investigation, a root-cause fix, a feature or a review, to route it to the agent that does it rather than doing it in the main session; and when spawning a subagent, splitting work in parallel, escalating after failed attempts, waiting on a reviewer's verdict, or choosing a model or effort. Claude Code, Copilot CLI, Codex, opencode and pi.
+description: Use before starting work that needs a plan, a design, an investigation, a root-cause fix, a feature or a review, to route it to the agent that does it rather than doing it in the main session; and when spawning a subagent, splitting work in parallel, escalating after failed attempts, coordinating with other running sessions, waiting on a reviewer's verdict or capping review rounds, or choosing a model or effort. Claude Code, Copilot CLI, Codex, opencode and pi.
 ---
 
 # Subagent orchestration
@@ -9,7 +9,7 @@ The main session (the hub) routes, tracks state and checks; typed agents do the 
 
 ## Who does what
 
-This plugin's agents, spawned as `dev-tools:<name>`:
+This plugin's agents (`dev-tools:<name>` in Claude Code; a harness that lists agents by bare name uses the name, and Codex registers the worker as `dev-tools-worker`):
 
 | Work | Agent |
 |---|---|
@@ -20,7 +20,7 @@ This plugin's agents, spawned as `dev-tools:<name>`:
 | Review before merge | `reviewer`, which never reviews its own change |
 
 - **The hub does only mechanical work itself:** a lookup it can answer in one or two tool calls, commits, CI and merge checks (commit hash, green CI, closing keyword, merged state), relaying between sessions and the user. A judgement call on a gate or ruleset, such as lifting a protection rule, goes to a `driver` first.
-- **Spawn the typed agent, without `model` or `effort`:** its definition carries both. The one override is `high` effort for a review or gate of a change on a security or safety path: input trust, auth and credentials, secrets and redaction, kill switch and halt, merge and release gates, protected paths. Nothing goes above `high`; more effort catches missed edge cases but does not fix a wrong approach, so re-plan instead.
+- **The one effort override** is `high` for a review or gate of a change on a security or safety path: input trust, auth and credentials, secrets and redaction, kill switch and halt, merge and release gates, protected paths. Nothing preset goes above `high`; `xhigh` or `max` only when the user asks. More effort catches missed edge cases but does not fix a wrong approach, so re-plan instead.
 - **Fixes go back to the author's tier.** A `CHANGES` verdict goes to the `driver` that wrote the change (a message to it by name, or a new spawn briefed with the verdict and the worktree); a purely mechanical fix may go to a `worker`.
 - **The hub's own tier depends on the harness.** Where agents pin their own model (Claude Code; Copilot CLI through user settings), run the hub on the routine tier. In Codex, opencode and pi spokes take the hub's model, so run the hub, or the judgement work in its own session, at the driver tier. Tiers and mechanisms per harness: [references/harnesses.md](references/harnesses.md).
 

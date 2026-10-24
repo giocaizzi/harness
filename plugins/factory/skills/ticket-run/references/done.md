@@ -13,7 +13,7 @@ A fresh-context `verifier` (this plugin's agent) gates the change; it must not b
 - **Verdict file:** the verifier writes its report there (through Bash where it has no Write tool); it never posts or hands back. Its first line names the head SHA it covers. Once the PR exists, post each verdict verbatim as a `factory:verdict <round>` comment on it, and add links to the verdicts to the PR body (edit it once they are posted).
 - **Rounds:** a `dev-tools:driver` spawn fixes what it reports (brief: the verdict file and the worktree), then the verifier re-reviews only the new diff; at most three rounds in all, the scoped rounds after a pass included (why three: the verifier's definition). Still failing, or a fourth round due: ask on the ticket with its findings and park.
 - **After a pass:** a comment-only or doc-only fix needs no new round. Any code change needs a scoped round on that delta only.
-- **Merge gate:** a passing verdict whose head SHA is the PR head. Later commits may only be merges of the default branch, verified as `land` step 2 does (patch-id check, landing note); any other change needs its round first.
+- **Merge gate:** a passing verdict whose head SHA is the PR head. Commits after it go through `land` step 2 (the hub's check and the landing note); a code change among them also needs its scoped round (After a pass).
 
 ## Ship and land
 

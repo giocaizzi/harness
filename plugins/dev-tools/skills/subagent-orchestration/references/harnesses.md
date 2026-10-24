@@ -14,7 +14,7 @@ A weak model's mistake in a summary shows up as a missing detail; in an edit it 
 ## Mechanisms
 
 Claude Code:
-- `model` (`haiku`, `sonnet`, `opus`, `fable`) and `effort` on each spawn and in an agent definition. A spawn's values override the definition's, which is why typed spawns pass neither.
+- `model` (`haiku`, `sonnet`, `opus`, `fable`) and `effort` on each spawn and in an agent definition. A spawn's values override the definition's.
 - Precedence: the spawn's `model`, then the definition's, then `CLAUDE_CODE_SUBAGENT_MODEL`, then the session's model. A definition's `model: inherit` beats the variable. A family alias on a spawn or in a definition (`opus`) resolves to the session's exact model when it is of that family; the variable's alias always resolves to the alias's current version. Source: [sub-agents](https://code.claude.com/docs/en/sub-agents#choose-a-model).
 - `/model` and `/effort` change the session.
 - Pass `subagent_type` on every spawn. A subagent that hit a fallback chain reports `model_swapped` and `final_model` on `subagent_completed`; record the swap where a run tracks routing.

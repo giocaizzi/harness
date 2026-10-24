@@ -15,6 +15,8 @@ Roles, spawn rules, effort and escalation are `dev-tools`' `subagent-orchestrati
 | Verify security or safety paths | `factory:verifier`, `effort: high` on the spawn | Opus, `high` |
 | Escalate, after a driver failed twice on the same problem | `dev-tools:escalate`, while the run's budget allows | Fable, `medium` |
 
+Agent names are Claude Code's (`<plugin>:<agent>`). A harness that lists agents by bare name uses `scout`, `driver`, `worker`, `escalate` and `verifier`, except Codex, which registers the worker as `dev-tools-worker`.
+
 **Security and safety paths** are `subagent-orchestration`'s list plus any path in the repo's highest `risk` tier (`.factory/config.yaml`), whatever the change's size. Where the harness fixes effort in the agent definition, see [done.md](done.md#verify).
 
 **Workers' worktrees.** Parallel workers each get their own worktree on a branch off the ticket branch (`isolation: worktree`); sequential workers may share the ticket worktree. The integrating driver merges their branches into the ticket branch.
