@@ -1,7 +1,7 @@
 // Stale plugins: a session keeps the plugin versions it loaded, so after an update it misses every fix until it
 // reloads. The guard compares what this session runs with what is installed now and says so once per newer version.
 // Never throws: anything unreadable reads as "nothing newer".
-import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { basename, dirname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -24,11 +24,25 @@ const attempt = (f) => {
 }
 const manifestVersion = (dir) => attempt(() => JSON.parse(readFileSync(join(dir, '.claude-plugin', 'plugin.json'), 'utf8')).version) ?? null
 
-// The registry entries of a plugin that apply to a session in `cwd`: a project or local install whose project holds
-// `cwd` wins over a user one; another project's install does not apply here.
+// A path as the file system names it: symlinks resolved, and lower-cased on a case-insensitive volume (macOS and
+// Windows by default), where `Repo` and `repo` are one directory. Unreadable: as given.
+const real = (p) => attempt(() => realpathSync.native(p)) ?? resolve(p)
+function canonical(p) {
+  const r = real(p)
+  const flipped = r.replace(/[a-z]/gi, (c) => (c === c.toLowerCase() ? c.toUpperCase() : c.toLowerCase()))
+  const same = flipped !== r && attempt(() => statSync(flipped).ino === statSync(r).ino)
+  return same ? r.toLowerCase() : r
+}
+
+// The registry entries of a plugin that apply to a session started in `cwd`: a project or local install whose project
+// holds `cwd` wins over a user one; another project's install does not apply here.
 function scopedVersion(entries, cwd) {
-  const here = cwd ? resolve(cwd) : null
-  const project = entries.filter((e) => e?.projectPath && here && (here === resolve(e.projectPath) || here.startsWith(resolve(e.projectPath) + sep)))
+  const here = cwd ? canonical(cwd) : null
+  const holds = (dir) => {
+    const d = canonical(dir)
+    return here === d || here.startsWith(d.endsWith(sep) ? d : d + sep)
+  }
+  const project = entries.filter((e) => e?.projectPath && here && holds(e.projectPath))
   return maxVersion((project.length ? project : entries.filter((e) => e && !e.projectPath)).map((e) => e.version))
 }
 

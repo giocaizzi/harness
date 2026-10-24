@@ -124,12 +124,14 @@ export function sessionStore(dir, sessionId, agentId, processId) {
         if (typeof fact.unattended === 'boolean') seen.unattended = fact.unattended
         // The plugin versions this harness process loaded: the first record of each wins. A resumed or restarted session
         // keeps its id but is a new process, which loaded what was installed then.
+        // The directory this process started in, which picks the plugin installs that apply to it.
+        if (typeof fact.cwd === 'string' && String(fact.process ?? '') === proc) seen.cwd ??= fact.cwd
         if (typeof fact.plugin === 'string' && typeof fact.version === 'string') {
           seen.processes.add(String(fact.process ?? ''))
           if (String(fact.process ?? '') === proc) seen.plugins[fact.plugin] ??= fact.version
         }
       }
-      return { reminded: [...new Set(seen.reminded)], loaded: [...new Set(seen.loaded)], unattended: seen.unattended, plugins: { ...seen.plugins } }
+      return { reminded: [...new Set(seen.reminded)], loaded: [...new Set(seen.loaded)], unattended: seen.unattended, plugins: { ...seen.plugins }, startCwd: seen.cwd }
     },
     // Appends the facts `state` adds to what load() read.
     save(state) {
@@ -138,7 +140,12 @@ export function sessionStore(dir, sessionId, agentId, processId) {
         ...[...new Set(state.loaded)].filter((s) => !seen.loaded.includes(s)).map((s) => JSON.stringify({ loaded: s })),
         ...[...new Set(state.reminded)].filter((r) => !seen.reminded.includes(r)).map((r) => JSON.stringify({ reminded: r, agent })),
         ...(typeof state.unattended === 'boolean' && state.unattended !== seen.unattended ? [JSON.stringify({ unattended: state.unattended })] : []),
-        ...(seen.processes.has(String(processId ?? '')) || seen.processes.size < MAX_PROCESSES ? Object.entries(state.plugins ?? {}).filter(([p]) => !(p in seen.plugins)).map(([plugin, version]) => JSON.stringify({ plugin, version, process: processId })) : []),
+        ...(seen.processes.has(String(processId ?? '')) || seen.processes.size < MAX_PROCESSES
+          ? [
+              ...(typeof state.startCwd === 'string' && !seen.cwd ? [JSON.stringify({ cwd: state.startCwd, process: processId })] : []),
+              ...Object.entries(state.plugins ?? {}).filter(([p]) => !(p in seen.plugins)).map(([plugin, version]) => JSON.stringify({ plugin, version, process: processId })),
+            ]
+          : []),
       ]
       if (!lines.length) return
       mkdirSync(dirname(file), { recursive: true, mode: 0o700 })
@@ -414,7 +421,9 @@ function onSpawn(input, state, deps) {
 function onStale(input, state, deps, out) {
   const decided = out.stdout && JSON.parse(out.stdout).hookSpecificOutput?.permissionDecision
   const reminded = state.reminded.filter((r) => r.startsWith('stale:')).map((r) => r.slice(6))
-  const s = staleCheck({ root: deps.pluginRoot, cwd: input.cwd, loaded: state.plugins, reminded, harness: deps.harness })
+  // Scoped by the directory the session started in: moving into another project mid-session loads nothing new.
+  state.startCwd ??= typeof input.cwd === 'string' ? input.cwd : undefined
+  const s = staleCheck({ root: deps.pluginRoot, cwd: state.startCwd, loaded: state.plugins, reminded, harness: deps.harness })
   state.plugins = s.loaded
   if (!s.context || decided) return out
   state.reminded.push(...s.remind.map((r) => `stale:${r}`))

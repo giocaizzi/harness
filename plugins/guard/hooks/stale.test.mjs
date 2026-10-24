@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { installedVersions, newer, staleCheck } from './stale.mjs'
@@ -121,4 +121,27 @@ test('a hook parent that changes on every call stops the recording, so the sessi
   for (let pid = 1; pid <= 50; pid++) await handle({ session_id: 's1', cwd: '/', hook_event_name: 'PreToolUse', tool_name: 'Skill', tool_input: { skill: 'ship' } }, { dataDir, env: {}, pluginRoot, processId: pid, hostFacts: async () => ({ load1: 1, freeGb: 100 }), run: async () => null, pythonManager })
   const lines = readFileSync(join(dataDir, 'sessions', 's1.jsonl'), 'utf8').trim().split('\n')
   assert.equal(lines.filter((l) => l.includes('"plugin"')).length, 4 * 4, 'four processes of four plugins, then nothing')
+})
+
+test('the scope lookup compares real paths, ignoring case where the volume does, from the starting dir (#255)', async () => {
+  const base = mkdtempSync(join(tmpdir(), 'stale-'))
+  const plugins = join(base, 'plugins')
+  for (const v of ['0.52.0', '0.53.0']) plugin(join(plugins, 'cache', 'acme', 'guard', v), v)
+  const project = join(base, 'Proj')
+  mkdirSync(join(project, 'sub'), { recursive: true })
+  symlinkSync(project, join(base, 'link'), 'junction') // a junction needs no privilege on Windows
+  const registry = (projectPath) => writeFileSync(join(plugins, 'installed_plugins.json'), JSON.stringify({ version: 2, plugins: { 'guard@acme': [{ scope: 'user', version: '0.52.0' }, { scope: 'project', projectPath, version: '0.53.0' }] } }))
+  const root = join(plugins, 'cache', 'acme', 'guard', '0.52.0')
+  registry(join(base, 'link'))
+  assert.match(staleCheck({ root, cwd: join(project, 'sub') }).context ?? '', /0\.53\.0/, 'a symlinked project path')
+  const insensitive = existsSync(join(base, 'proj'))
+  registry(join(base, 'PROJ'))
+  assert.equal(Boolean(staleCheck({ root, cwd: join(project, 'sub') }).context), insensitive, 'case follows the volume')
+  // The session started outside the project: moving into it mid-session changes nothing.
+  registry(project)
+  const dataDir = mkdtempSync(join(tmpdir(), 'guard-test-'))
+  const h = (cwd) => handle({ session_id: 's1', cwd, hook_event_name: 'PreToolUse', tool_name: 'Skill', tool_input: { skill: 'ship' } }, { dataDir, env: {}, pluginRoot: root, processId: 1, hostFacts: async () => ({ load1: 1, freeGb: 100 }), run: async () => null, pythonManager })
+  const ctx = (out) => (out.stdout ? JSON.parse(out.stdout).hookSpecificOutput?.additionalContext : undefined)
+  assert.equal(ctx(await h(base)), undefined)
+  assert.equal(ctx(await h(join(project, 'sub'))), undefined)
 })
