@@ -26,7 +26,7 @@ Events:
 | Event (Claude and VS Code / Copilot CLI) | Tools (matcher, re-checked in the script) | What runs |
 |---|---|---|
 | `SessionStart` / `sessionStart` | all | Keep-awake keeper, one per harness process. |
-| `PreToolUse` / `preToolUse` | Shell: `Bash`, `PowerShell` (Claude), `bash`, `powershell` (Copilot), `run_in_terminal` (VS Code). Skill: `Skill`, `skill` | Shell: deny rules (pip, poetry), risky ask, title guard, host guard, skill reminder. Skill: records the loaded skill. |
+| `PreToolUse` / `preToolUse` | Shell: `Bash`, `PowerShell` (Claude), `bash`, `powershell` (Copilot), `run_in_terminal` (VS Code). Skill: `Skill`, `skill`. Spawn: `Agent`, `Task` (Claude), `task` (Copilot) | Shell: deny rules (pip, poetry), risky ask, title guard, host guard, skill reminder. Skill: records the loaded skill. Spawn: the routing hint. |
 | `PostToolUse` / `postToolUse` | `Edit`, `Write`, `MultiEdit` (Claude); `edit`, `create`, `Edit` with an apply_patch string (Copilot); `create_file`, `replace_string_in_file`, `multi_replace_string_in_file`, `insert_edit_into_file`, `apply_patch` (VS Code) | Lint the edited files; findings as `additionalContext`. |
 | `Stop` / `agentStop` | all | `make check-fast` (when defined) or `make check` when the repo changed since the last green run; on failure `decision: block` once, never when `stop_hook_active`. |
 | `UserPromptSubmit` / `userPromptSubmitted` | all | A typed `/skill` counts as loaded. |
