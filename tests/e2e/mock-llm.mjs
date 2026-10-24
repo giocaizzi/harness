@@ -2,7 +2,8 @@
 // (Codex) and Chat Completions (opencode, pi). The first turn of a conversation calls the harness's shell tool
 // with MOCK_COMMAND; once the request carries that call's result, it records the result in MOCK_LOG and answers
 // "done". Usage: MOCK_COMMAND='pip install x' MOCK_LOG=/tmp/log.jsonl node mock-llm.mjs <port>
-import { appendFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { basename, join } from 'node:path'
 import { createServer } from 'node:http'
 
 const command = process.env.MOCK_COMMAND ?? 'echo hello'
@@ -13,6 +14,9 @@ function shellCall(tools = []) {
   const names = tools.map((t) => t.name ?? t.function?.name)
   // MOCK_SUBAGENT=1: delegate to scout where a `subagent` tool exists (pi), so its child session runs too.
   if (process.env.MOCK_SUBAGENT && names.includes('subagent')) return { name: 'subagent', args: { agent: 'scout', task: 'run the command' } }
+  // MOCK_SPAWN='{"agent_type":…}': call Codex's spawn_agent (in its multi_agent namespace) with those arguments.
+  const spawnNs = tools.find((t) => t.type === 'namespace' && t.tools?.some((f) => f.name === 'spawn_agent'))
+  if (process.env.MOCK_SPAWN && spawnNs) return { name: 'spawn_agent', namespace: spawnNs.name, args: JSON.parse(process.env.MOCK_SPAWN) }
   if (names.includes('exec_command')) return { name: 'exec_command', args: { cmd: command } }
   const bash = names.find((n) => /^bash$/i.test(n))
   if (bash) return { name: bash, args: { command, description: 'run the command' } }
@@ -34,7 +38,7 @@ function responses(res, call, text) {
   const ev = (type, d) => sse(res, { type, ...d }, type)
   ev('response.created', { response: { id: 'r1' } })
   const item = call
-    ? { type: 'function_call', id: 'fc1', call_id: 'call_1', name: call.name, arguments: JSON.stringify(call.args) }
+    ? { type: 'function_call', id: 'fc1', call_id: 'call_1', name: call.name, ...(call.namespace ? { namespace: call.namespace } : {}), arguments: JSON.stringify(call.args) }
     : { type: 'message', role: 'assistant', id: 'm1', content: [{ type: 'output_text', text }] }
   ev('response.output_item.done', { item })
   ev('response.completed', { response: { id: 'r1', usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 } } })
@@ -63,6 +67,11 @@ createServer((req, res) => {
     if (req.method === 'GET') {
       res.writeHead(200, { 'content-type': 'application/json' })
       return res.end(JSON.stringify({ object: 'list', data: [{ id: 'mock', object: 'model' }] }))
+    }
+    // MOCK_PLUGIN_UPDATE=<dir>: a plugin version that appears once the session runs (a manifest only), as an update would.
+    if (process.env.MOCK_PLUGIN_UPDATE && !existsSync(process.env.MOCK_PLUGIN_UPDATE)) {
+      mkdirSync(join(process.env.MOCK_PLUGIN_UPDATE, '.claude-plugin'), { recursive: true })
+      writeFileSync(join(process.env.MOCK_PLUGIN_UPDATE, '.claude-plugin', 'plugin.json'), JSON.stringify({ version: basename(process.env.MOCK_PLUGIN_UPDATE) }))
     }
     const result = toolResult(body)
     const call = result === null ? shellCall(body.tools) : null
