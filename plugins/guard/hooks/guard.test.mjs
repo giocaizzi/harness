@@ -483,6 +483,17 @@ test('skills count for the whole session, reminders per agent; the read and edit
   }
 })
 
+test('Copilot CLI: a subagent hook names its own session and the parent in parent_agent_id; skills are shared, reminders its own (#172)', async () => {
+  const h = setup()
+  const child = { session_id: 'c1', agent_id: 'c1', parent_agent_id: 's1' }
+  await h({ hook_event_name: 'PreToolUse', tool_name: 'Skill', tool_input: { skill: 'ship' }, ...child })
+  assert.equal(decision(await h(pre('Bash', 'git commit -m "fix: x"'))), undefined, "the subagent's skill load covers the main agent")
+  const hinted = async (extra) => Boolean(decision(await h({ ...pre('Bash', 'pytest -q'), ...extra }))?.additionalContext)
+  assert.equal(await hinted(child), true)
+  assert.equal(await hinted(child), false, 'once for the subagent')
+  assert.equal(await hinted({}), true, 'the main agent gets its own')
+})
+
 test('auto mode, which tells the agent to read and edit through the shell, gets no read or edit hint (G24)', async () => {
   const h = setup()
   const ctx = async (command, permission_mode) => decision(await h({ ...pre('Bash', command), permission_mode }))?.additionalContext

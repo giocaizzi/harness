@@ -446,7 +446,10 @@ export function inWorkTree(cwd, env = {}) {
 // One hook event in, { stdout?, stderr?, code? } out. `deps` is injected so tests run without a host.
 export async function handle(input, deps) {
   // A command hook's parent is the harness process (one per session run: a resume or restart is a new one).
-  const store = sessionStore(deps.dataDir, input.session_id, input.agent_id, deps.processId ?? process.ppid)
+  // A subagent keeps its own reminders (`agent_id`) and shares the session's skills: Claude Code and Codex send the
+  // parent's `session_id`, Copilot CLI the subagent's own with `parent_agent_id` naming the parent session.
+  const session = input.agent_id && input.parent_agent_id ? input.parent_agent_id : input.session_id
+  const store = sessionStore(deps.dataDir, session, input.agent_id, deps.processId ?? process.ppid)
   const state = { reminded: [], loaded: [], plugins: {}, ...store.load() }
   const loadedBefore = [...state.loaded]
   const event = input.hook_event_name

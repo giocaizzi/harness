@@ -35,13 +35,32 @@ export const GuardPlugin = async ({ client, directory }, deps) => {
         // Any `--auto` spelling yargs takes (`--auto`, `--auto=true`, `--auto true`) except an explicit false.
         const auto = (deps?.argv ?? process.argv).some((a) => a.startsWith('--auto') && a !== '--auto=false')
         if (!asks || auto || !nativeAsk(command, rule, rules)) return false
-        const s = await client.session.get({ path: { id: input.session_id } }).catch(() => null)
+        const s = await client.session.get({ path: { id: input.agent_id ?? input.session_id } }).catch(() => null)
         return Boolean(s?.data) && !(s.data.permission ?? []).some((r) => r.permission === 'bash' || r.permission === '*')
       },
       ...deps,
     },
   })
   const notes = new Map() // callID -> note for the tool output (the pip note outside uv repos)
+  // A subagent runs in a child session (`parentID`): it belongs to the root session, as its own agent. Unreadable: its own.
+  const roots = new Map()
+  const rootOf = (id) => {
+    if (!roots.has(id))
+      roots.set(id, (async () => {
+        let cur = id
+        for (let depth = 0; depth < 5; depth++) {
+          const parent = (await client.session?.get?.({ path: { id: cur } }).catch(() => null))?.data?.parentID
+          if (!parent) break
+          cur = parent
+        }
+        return cur
+      })().catch(() => id))
+    return roots.get(id)
+  }
+  const who = async (id) => {
+    const root = await rootOf(id)
+    return root && root !== id ? { sessionId: root, agentId: id } : { sessionId: id }
+  }
   const blocked = new Set() // sessions whose last stop make check already blocked
   const reported = new Set() // assistant messages whose usage was sent (message.updated repeats)
   const text = (t) => (typeof t === 'string' ? t : '')
@@ -56,7 +75,7 @@ export const GuardPlugin = async ({ client, directory }, deps) => {
       asks = true
     },
     'tool.execute.before': async (input, output) => {
-      const d = await guard.preTool({ sessionId: input.sessionID, cwd: directory, tool: String(input.tool).toLowerCase(), input: output.args ?? {} })
+      const d = await guard.preTool({ ...(await who(input.sessionID)), cwd: directory, tool: String(input.tool).toLowerCase(), input: output.args ?? {} })
       if (d.decision === 'deny' || d.decision === 'ask') throw new Error(d.reason)
       if (d.context) notes.set(input.callID, d.context)
       if (d.notice) Promise.resolve().then(() => client.tui.showToast({ body: { message: d.notice, variant: 'info' } })).catch(() => {})
@@ -68,7 +87,7 @@ export const GuardPlugin = async ({ client, directory }, deps) => {
     },
     'chat.message': async (input, output) => {
       const prompt = (output.parts ?? []).filter((p) => p.type === 'text').map((p) => p.text).join('\n')
-      if (prompt) await guard.prompt({ sessionId: input.sessionID, cwd: directory, prompt })
+      if (prompt) await guard.prompt({ ...(await who(input.sessionID)), cwd: directory, prompt })
     },
     event: async ({ event }) => {
       const sessionId = event.properties?.sessionID ?? event.properties?.info?.id

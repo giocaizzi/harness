@@ -50,11 +50,12 @@ export function createGuard({ harness, noAsk = false, dataDir = DATA_DIR, deps =
   return {
     // { decision: 'deny'|'ask'|undefined, reason, context, notice } for a tool call; `notice` is for the user. `tool` is the harness's tool name,
     // lower-cased; `input` its arguments (a shell call carries `command`).
-    async preTool({ sessionId, cwd, tool, input }) {
-      const o = await call({ hook_event_name: 'PreToolUse', session_id: sessionId, cwd, tool_name: tool, tool_input: input })
+    // `agentId`: a subagent's own id, whose reminders are its own while `sessionId` is the session it belongs to.
+    async preTool({ sessionId, agentId, cwd, tool, input }) {
+      const o = await call({ hook_event_name: 'PreToolUse', session_id: sessionId, agent_id: agentId, cwd, tool_name: tool, tool_input: input })
       return { decision: o.permissionDecision, reason: o.permissionDecisionReason, context: o.additionalContext, notice: o.systemMessage }
     },
-    prompt: ({ sessionId, cwd, prompt }) => call({ hook_event_name: 'UserPromptSubmit', session_id: sessionId, cwd, prompt }),
+    prompt: ({ sessionId, agentId, cwd, prompt }) => call({ hook_event_name: 'UserPromptSubmit', session_id: sessionId, agent_id: agentId, cwd, prompt }),
     sessionEnd: ({ sessionId }) => call({ hook_event_name: 'SessionEnd', session_id: sessionId }),
     // The answer to an ask the harness showed itself (pi's confirm): allow, deny, or unavailable with no UI.
     askResult: ({ sessionId, cwd, tool, command, result, waitMs, via }) => Promise.resolve(d.emit('guard.ask_result', { result, wait_ms: waitMs, via, tool, cmd_class: command ? cmdClass(null, command) : 'tool', session_id: sessionId }, cwd)).catch(() => {}),

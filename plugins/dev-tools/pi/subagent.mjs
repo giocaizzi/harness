@@ -38,12 +38,13 @@ export function piArgs(agent, task, promptFile, model) {
 const piCommand = () => (process.argv[1] && existsSync(process.argv[1]) ? [process.execPath, process.argv[1]] : ['pi'])
 
 // The child's environment: the guard's stop check is off there, since the parent's own stop runs it once the
-// subagent's work is part of its turn.
-export const childEnv = (env = process.env) => ({ ...env, GUARD_STOP_CHECK: 'off' })
+// subagent's work is part of its turn; and the guard keeps the child's reminders as its own agent's within the
+// parent session, so the skills either loads count for both.
+export const childEnv = (env = process.env, { session, agent } = {}) => ({ ...env, GUARD_STOP_CHECK: 'off', ...(session ? { GUARD_PARENT_SESSION: session, GUARD_AGENT_ID: agent } : {}) })
 
-function run(argv, cwd, signal) {
+function run(argv, cwd, signal, ids) {
   return new Promise((resolve) => {
-    const child = spawn(argv[0], argv.slice(1), { cwd, signal, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, env: childEnv() })
+    const child = spawn(argv[0], argv.slice(1), { cwd, signal, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, env: childEnv(process.env, ids) })
     let out = ''
     let err = ''
     child.stdout.on('data', (d) => (out += d))
@@ -66,7 +67,7 @@ export default function subagentExtension(pi, deps = {}) {
       properties: { agent: { type: 'string', enum: agents.map((a) => a.name), description: 'Agent name' }, task: { type: 'string', description: 'Self-contained brief: goal, scope, what to report' } },
       required: ['agent', 'task'],
     },
-    async execute(_id, params, signal, _onUpdate, ctx) {
+    async execute(id, params, signal, _onUpdate, ctx) {
       const agent = agents.find((a) => a.name === params.agent)
       if (!agent) throw new Error(`Unknown agent ${params.agent}; one of ${agents.map((a) => a.name).join(', ')}`)
       const dir = mkdtempSync(join(tmpdir(), 'pi-subagent-'))
@@ -74,7 +75,8 @@ export default function subagentExtension(pi, deps = {}) {
         const file = join(dir, `${agent.name}.md`)
         writeFileSync(file, agent.prompt)
         const model = ctx?.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined
-        const r = await (deps.run ?? run)([...piCommand(), ...piArgs(agent, params.task, file, model)], ctx?.cwd, signal)
+        const session = process.env.GUARD_PARENT_SESSION || ctx?.sessionManager?.getSessionId?.()
+        const r = await (deps.run ?? run)([...piCommand(), ...piArgs(agent, params.task, file, model)], ctx?.cwd, signal, { session, agent: `${agent.name}-${id}` })
         if (r.code !== 0) throw new Error(`${agent.name} failed (exit ${r.code}): ${(r.err || r.out).trim().slice(-2000)}`)
         return { content: [{ type: 'text', text: r.out.trim() || '(no output)' }], details: undefined }
       } finally {
