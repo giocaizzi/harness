@@ -59,3 +59,4 @@ Read [references/PATTERNS.md](./references/PATTERNS.md) for the `main`/`run` ske
 - `go mod tidy -diff` (in `lint`) fails on an untidy module without touching files; `make fmt` tidies.
 - Since 1.27, `go vet` flags `fmt.Errorf("%w", p)` when `p` is `*E` and `E` (not `*E`) implements `error`: give the `Error` method one receiver kind and use it everywhere.
 - `encoding/json` in 1.27 is backed by v2 even in v1 code; error texts changed. Never match on JSON error strings.
+- Keep `GOMODCACHE` and envtest assets (`setup-envtest --bin-dir`) outside the git worktree: they are written read-only, so `git worktree remove` fails partway and leaves gigabytes of unregistered directories behind.
