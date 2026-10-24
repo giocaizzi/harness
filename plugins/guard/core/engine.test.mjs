@@ -510,32 +510,56 @@ test('an edit under docs/ or to README/AGENTS hints at docs-sync once', () => {
 });
 
 test('a spawn that bypasses the typed agents gets one routing hint per case and session', () => {
-  const rule = (type, model, state = fresh()) => evaluateRouting({ type, model, state, rules }).rule;
+  const rule = (type, model, state = fresh(), effort, tool) => evaluateRouting({ type, model, effort, tool, state, rules }).rule;
   assert.equal(rule('Plan'), 'routing-plan');
   assert.equal(rule('general-purpose', 'opus'), 'routing-model');
   assert.equal(rule(undefined, 'claude-opus-5-5'), 'routing-model');
   assert.equal(rule('claude', 'fable'), 'routing-model');
   assert.equal(rule('general-purpose', 'gpt-6.1-sol'), 'routing-model');
+  assert.equal(rule('default', 'gpt-6-astra'), 'routing-model'); // Codex
+  // An untyped spawn without a model inherits the session's: use a typed agent.
+  assert.equal(rule('general-purpose'), 'routing-untyped');
+  assert.equal(rule('default'), 'routing-untyped');
+  assert.match(evaluateRouting({ type: 'general-purpose', state: fresh(), rules }).context, /runs on `CLAUDE_CODE_SUBAGENT_MODEL` or the session's model.*scout` for lookups, `dev-tools:worker` for routine edits, `dev-tools:driver` for judgement/);
+  // A typed agent's model or effort override, in any plugin, bare names included.
   assert.equal(rule('dev-tools:driver', 'opus'), 'routing-override');
   assert.equal(rule('scout', 'haiku'), 'routing-override');
-  // Routed as the skill says: a typed agent without a model, a routine unit on Sonnet, the verifier's per-change model.
+  assert.equal(rule('api:api-reviewer', 'opus'), 'routing-override');
+  assert.equal(rule('factory:verifier', 'haiku'), 'routing-override');
+  assert.equal(rule('dev-tools:driver', undefined, fresh(), 'high'), 'routing-override');
+  assert.equal(rule('dev-tools:reviewer', undefined, fresh(), 'max'), 'routing-override');
+  assert.match(evaluateRouting({ type: 'scout', model: 'opus', effort: 'high', state: fresh(), rules }).context, /`model: opus` and `effort: high` overrides it\. Drop them from the spawn/);
+  assert.match(evaluateRouting({ type: 'scout', model: 'opus', state: fresh(), rules }).context, /Drop it from the spawn \(/);
+  // Codex: dev-tools worker registers as dev-tools-worker; the bare `worker` there is Codex's built-in role.
+  assert.equal(rule('dev-tools-worker', 'gpt-6-luna', fresh(), undefined, 'spawn_agent'), 'routing-override');
+  assert.equal(rule('worker', 'gpt-6-luna', fresh(), undefined, 'spawn_agent'), undefined);
+  assert.equal(rule('worker', 'opus', fresh(), undefined, 'task'), 'routing-override'); // opencode's bare name is ours
+  // Routed as the skill says: a typed agent without overrides, the two allowed ones, an untyped unit on Sonnet.
   assert.equal(rule('dev-tools:driver'), undefined);
   assert.equal(rule('general-purpose', 'sonnet'), undefined);
-  assert.equal(rule('general-purpose'), undefined);
   assert.equal(rule('factory:verifier', 'sonnet'), undefined);
-  assert.equal(rule('api:api-reviewer', 'opus'), undefined);
+  assert.equal(rule('factory:verifier', undefined, fresh(), 'high'), undefined);
+  // The ticket-run routing table: docs, config or XS on Sonnet at medium, security paths on Opus at high.
+  assert.equal(rule('factory:verifier', 'sonnet', fresh(), 'medium'), undefined);
+  assert.equal(rule('factory:verifier', 'opus', fresh(), 'high'), undefined);
+  assert.equal(rule('factory:verifier', 'haiku', fresh(), 'medium'), 'routing-override');
+  // Full model names: Copilot CLI, VS Code, a Claude id.
+  for (const m of ['claude-sonnet-4.6', 'Claude Sonnet 4.6 (copilot)', 'claude-opus-4.7']) assert.equal(rule('factory:verifier', m, fresh(), 'high'), undefined, m);
+  assert.equal(rule('factory:verifier', 'Claude Haiku 4.5 (copilot)'), 'routing-override');
+  assert.equal(rule('dev-tools:reviewer', undefined, fresh(), 'high'), undefined);
   assert.equal(rule('Explore', 'opus'), undefined);
+  assert.equal(rule('other:scout', 'opus'), undefined); // another plugin's agent
+  assert.equal(rule(undefined), undefined); // a Codex fork
   const state = fresh();
   assert.equal(rule('Plan', undefined, state), 'routing-plan');
   assert.equal(rule('Plan', undefined, state), undefined); // once
   assert.equal(rule('general-purpose', 'opus', state), 'routing-model'); // another case still hints
-  assert.match(evaluateRouting({ type: 'Plan', state: fresh(), rules }).context, /dev-tools:driver.*plan-only brief/);
-  assert.match(evaluateRouting({ type: 'dev-tools:driver', model: 'opus', state: fresh(), rules }).context, /without a `model`/);
+  assert.match(evaluateRouting({ type: 'Plan', state: fresh(), rules }).context, /^Routing hint: .*dev-tools:driver.*plan-only brief.*\(`subagent-orchestration`\)\.$/);
 });
 
 test('a malformed spawn (non-string type or model) never throws and gets no decision', () => {
   for (const [type, model] of [[null, null], [42, {}], [{}, 7], [[], ['opus']], [true, false]]) {
-    assert.equal(evaluateRouting({ type, model, state: fresh(), rules }).action, 'allow', JSON.stringify([type, model]));
+    assert.equal(evaluateRouting({ type, model, effort: model, state: fresh(), rules }).action, 'allow', JSON.stringify([type, model]));
   }
 });
 
@@ -934,11 +958,13 @@ test('git tag -f or -d of a tag no remote has is not a release; anything else st
     return null;
   };
   const decideWith = async (c) => evaluateCommand({ command: c, state: fresh(), host: calm, rules, tags: await tagFacts(c, rules, run) });
-  for (const c of ['git tag -f m4-old-a d4759d4', 'git tag -d m4-old-a m4-old-b', 'git status --short | head -3; git tag -f m4-old-a d4759d4 >/dev/null', 'git -C /r tag --delete scratch'])
+  for (const c of ['git tag -f m4-old-a d4759d4', 'git tag -d m4-old-a m4-old-b', 'git status --short | head -3; git tag -f m4-old-a d4759d4 >/dev/null', 'git -C /r tag --delete scratch', 'git tag -f m4-old-a && gh api repos/o/r/pulls --jq .[].number'])
     assert.equal((await decideWith(c)).action, 'allow', c);
   assert.ok(calls.includes('git -C . ls-remote --tags upstream refs/tags/m4-old-a'), 'every remote is asked');
   for (const c of ['git tag -f shared', 'git tag -d flaky', 'git tag -f v1.2.0', 'git tag -d 1.0.0', 'git tag scratch', 'git tag -a -f x -m y', 'git tag -f m4 && npm version patch', "ssh h 'git tag -d x'", 'git tag -f $T',
-    'git tag -f m4-old-a && git push origin m4-old-a', 'git tag -f m4-old-a && git push --tags', 'git tag -d m4-old-a && gh release create m4-old-a', 'git tag -f m4-old-a && gh api -X POST repos/o/r/git/refs -f ref=refs/tags/m4-old-a'])
+    'git tag -f m4-old-a && git push origin m4-old-a', 'git tag -f m4-old-a && git push --tags', 'git tag -d m4-old-a && gh release create m4-old-a', 'git tag -f m4-old-a && gh api -X POST repos/o/r/git/refs -f ref=refs/tags/m4-old-a',
+    // #208: the ref in a quoted field or an --input file.
+    "git tag -f m4-old-a && gh api -X POST repos/o/r/git/refs -f 'ref=refs/tags/m4-old-a' -f sha=abc", 'git tag -f m4-old-a && gh api -X POST repos/o/r/git/refs --input body.json', 'git tag -d m4-old-a && gh api repos/o/r/git/refs --input body.json'])
     assert.equal((await decideWith(c)).rule, 'release', c);
 });
 

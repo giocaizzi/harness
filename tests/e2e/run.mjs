@@ -16,7 +16,7 @@ const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 const MOCK = join(REPO, 'tests', 'e2e', 'mock-llm.mjs')
 // npm installs each CLI as a .cmd shim on Windows, which only runs through cmd.exe and its quoting. Run the
 // package's own entry point instead: a .js bin under node, a native one directly. Elsewhere, the name on PATH.
-const PACKAGES = { codex: '@openai/codex', opencode: 'opencode-ai', pi: '@earendil-works/pi-coding-agent' }
+const PACKAGES = { copilot: '@github/copilot', codex: '@openai/codex', opencode: 'opencode-ai', pi: '@earendil-works/pi-coding-agent' }
 function cli(name) {
   if (process.platform !== 'win32' || !PACKAGES[name]) return [name]
   const root = spawnSync('npm', ['root', '-g'], { encoding: 'utf8', shell: true }).stdout.trim()
@@ -69,6 +69,20 @@ const project = (root) => {
 
 // Per harness: install into `home`, then run one prompt against the mock in `cwd`.
 const HARNESSES = {
+  copilot: {
+    install(home) {
+      const env = { ...BASE_ENV, COPILOT_HOME: home }
+      sh('copilot', ['plugin', 'marketplace', 'add', REPO], { env })
+      const market = JSON.parse(readFileSync(join(REPO, '.claude-plugin', 'marketplace.json'), 'utf8'))
+      for (const { name } of market.plugins) sh('copilot', ['plugin', 'install', `${name}@giocaizzi-harness`], { env })
+      return env
+    },
+    // Offline against the mock: no login, no update check, no telemetry.
+    run(env, cwd, port, prompt = ['run the command']) {
+      const offline = { COPILOT_OFFLINE: 'true', COPILOT_PROVIDER_BASE_URL: `http://127.0.0.1:${port}/v1`, COPILOT_PROVIDER_API_KEY: 'mock' }
+      return sh('copilot', ['-p', prompt.join(' '), '--model', 'mock', '--allow-all-tools', '--no-auto-update'], { env: { ...env, ...offline }, cwd, input: '', allowFail: true })
+    },
+  },
   codex: {
     install(home) {
       const env = { ...BASE_ENV, CODEX_HOME: home }
@@ -132,28 +146,36 @@ const HARNESSES = {
   },
 }
 
-// What each harness must show. `skill`/`agent`: how its prompt lists one (Codex `- plugin:skill: …` and
-// `name: {`, opencode and pi `<name>skill</name>` and `- name: …`; pi lists the agents in the dev-tools
-// `subagent` tool). `asked`: the harness's own prompt for a plain risky command, which a non-interactive run
-// rejects (Codex's prompt rules, opencode's bash ask entries, pi's confirm dialog without a UI). `invoke`: the
-// prompt argv that runs a skill with an argument (Codex needs the plugin prefix: a bare `$wt` loads nothing);
+// What each harness must show. `skill`/`agent`: how its prompt lists one (Copilot `<name>skill</name>` and
+// `- **plugin:agent**: …`, Codex `- plugin:skill: …` and `name: {`, opencode and pi `<name>skill</name>` and
+// `- name: …`; pi lists the agents in the dev-tools `subagent` tool). `asked`: the harness's own prompt for a plain
+// risky command, which a non-interactive run rejects (Copilot's hook ask, which it cannot put to anyone, Codex's
+// prompt rules, opencode's bash ask entries, pi's confirm dialog without a UI). `invoke`: the
+// prompt argv that runs a skill with an argument (Codex needs the plugin prefix: a bare `$wt` loads nothing), and
+// `invokeMock` the mock's env for it (Copilot loads the skill only through its `skill` tool);
 // `substitutes`: whether the harness replaces `$ARGUMENTS` in the skill body (pi and Codex append the text instead).
 const EXPECT = {
-  codex: { invoke: (skill, arg) => [`$dev-tools:${skill} ${arg}`], substitutes: false, skill: (s) => `- ${s.plugin}:${s.name}: `, agent: (a) => `${a.name}: {`, asked: /approval required by policy/ },
+  copilot: { invoke: (skill, arg) => [`use the ${skill} skill for ${arg}`], invokeMock: { MOCK_SKILL: 'wt' }, substitutes: false, skill: (s) => `<name>${s.name}</name>`, agent: (a) => `- **${a.plugin}:${a.name}**: `, asked: /unable to ask user for confirmation/ },
+  codex: { invoke: (skill, arg) => [`$dev-tools:${skill} ${arg}`], substitutes: false, skill: (s) => `- ${s.plugin}:${s.name}: `, agent: (a) => `${codexName(a)}: {`, asked: /approval required by policy/ },
   opencode: { invoke: (skill, arg) => ['--command', skill, arg], substitutes: true, skill: (s) => `<name>${s.name}</name>`, agent: (a) => `- ${a.name}: `, asked: /permission requested: bash \(git reset --hard/ },
   pi: { invoke: (skill, arg) => [`/skill:${skill} ${arg}`], substitutes: false, skill: (s) => `<name>${s.name}</name>`, agent: (a) => `- ${a.name}: `, asked: /Risky command/ },
 }
 const { skills: SKILLS, agents: AGENTS } = inventory()
+// The name a Codex agent registers under: its TOML `name`, which `<name>.yaml` may rename (dev-tools `worker`
+// would replace Codex's built-in role).
+function codexName({ plugin, name }) {
+  return /^name\s*=\s*"([^"]+)"/m.exec(readFileSync(join(REPO, 'plugins', plugin, '.generated', 'codex', `${name}.toml`), 'utf8'))?.[1] ?? name
+}
 const ARG = 'e2e-arg-4242'
 // A line of the wt skill's body, so the probe knows the skill itself (not just its listing) reached the model.
 const WT_BODY = 'There is no fixed cap on worktrees or agents'
 
 // Codex hook outputs only a live run can confirm: a failing stop check's block reaches the model (Codex rejects a
-// Stop output with keys it does not know), and a PreToolUse hint reaches it as context.
+// Stop output with keys it does not know), and a PreToolUse hint reaches it as context, on a shell call and a spawn.
 async function codexOnly(h, env, root) {
   const failures = []
-  const seen = async (command, cwd, runEnv, text) => {
-    const m = await mock(command, root)
+  const seen = async (command, cwd, runEnv, text, mockEnv) => {
+    const m = await mock(command, root, mockEnv)
     const out = h.run(runEnv, cwd, m.port)
     m.stop()
     const ok = m.entries().some((e) => e.prompt.includes(text))
@@ -170,6 +192,20 @@ async function codexOnly(h, env, root) {
   // block the bare `pytest` before the hint is sent.
   const hint = await seen('scripts/heavy.sh pytest -q', project(root), env, 'Skill hint (')
   if (hint) failures.push(`hint: the pytest skill hint did not reach the model\n${hint}`)
+  // Codex runs PreToolUse on spawn_agent too, so the routing hint reaches the model there.
+  const routing = await seen('echo hi', project(root), env, 'Routing hint: an untyped `default` spawn', { MOCK_SPAWN: JSON.stringify({ agent_type: 'default', message: 'look around' }) })
+  if (routing) failures.push(`routing: the spawn_agent routing hint did not reach the model\n${routing}`)
+  // A newer guard lands in the plugin cache while the session runs: the stale-plugin note reaches the model, which
+  // tells the user (`codex exec` prints no PreToolUse `systemMessage`). A newer version dir present at start is the one
+  // Codex loads.
+  const update = join(env.CODEX_HOME, 'plugins', 'cache', 'giocaizzi-harness', 'guard', '999.0.0')
+  const m = await mock('echo hi', root, { MOCK_PLUGIN_UPDATE: update })
+  const out = h.run(env, project(root), m.port)
+  m.stop()
+  const told = m.entries().some((e) => e.prompt.includes('Harness plugins updated (guard'))
+  rmSync(join(root, 'mock.jsonl'), { force: true })
+  rmSync(update, { recursive: true, force: true })
+  if (!told) failures.push(`stale: the stale-plugin note did not reach the model\n${out.stdout?.slice(-600)}\n${out.stderr?.slice(-600)}`)
   return failures
 }
 
@@ -207,17 +243,33 @@ async function check(name) {
     // A skill invoked with an argument: its body and the argument both reach the model, and `$ARGUMENTS` is
     // substituted only where `substitutes` says so (the skills name the argument in words for the others).
     {
-      const m = await mock('echo hello', root)
+      const m = await mock('echo hello', root, EXPECT[name].invokeMock)
       const out = h.run(env, cwd, m.port, EXPECT[name].invoke('wt', ARG))
       m.stop()
       const prompt = m.entries().map((e) => e.prompt).join('\n')
       const seen = { body: prompt.includes(WT_BODY), arg: prompt.includes(ARG), literal: prompt.includes('$ARGUMENTS') }
       if (!seen.body || !seen.arg || seen.literal === EXPECT[name].substitutes) failures.push(`skill argument: ${JSON.stringify(seen)}\n${out.stdout?.slice(-600)}\n${out.stderr?.slice(-600)}`)
+      // An allowed call with nothing updated: no stale-plugin note.
+      if (prompt.includes('Harness plugins updated')) failures.push(`stale: a note without an update\n${prompt.slice(prompt.indexOf('Harness plugins updated'), prompt.indexOf('Harness plugins updated') + 200)}`)
       rmSync(join(root, 'mock.jsonl'), { force: true })
     }
     // sounds' Stop hook ran from the installed plugin: it keeps the session's alert levels in the plugin data dir.
     if (name === 'codex' && !readdirSync(join(root, 'home'), { recursive: true }).some((f) => /sounds-codex-.*\.json$/.test(f))) failures.push('sounds: the Stop hook left no state')
     if (name === 'codex') failures.push(...(await codexOnly(h, env, root)))
+    if (name === 'opencode') {
+      // hud's TUI plugin is listed in tui.json and exists; `task` runs scout as a child session, whose events the
+      // plugin draws (opencode-agents.mjs; `opencode run` has no TUI, so the drawing itself is not checked here).
+      const tui = JSON.parse(readFileSync(join(env.XDG_CONFIG_HOME, 'opencode', 'tui.json'), 'utf8'))
+      const plugin = (tui.plugin ?? []).find((p) => String(p).endsWith('/plugins/hud/hooks/opencode-tui.mjs'))
+      if (!plugin || !existsSync(new URL(plugin))) failures.push(`hud: tui.json lists no TUI plugin: ${JSON.stringify(tui)}`)
+      const m = await mock('echo from-scout', root, { MOCK_SUBAGENT: '1' })
+      const out = h.run(env, cwd, m.port)
+      m.stop()
+      const results = m.entries().map((e) => e.result ?? '')
+      if (!results.some((r) => r.includes('from-scout')) || !results.some((r) => /<task id="ses_/.test(r)))
+        failures.push(`task: results ${JSON.stringify(results).slice(0, 300)}\n${out.stdout?.slice(-600)}\n${out.stderr?.slice(-600)}`)
+      rmSync(join(root, 'mock.jsonl'), { force: true })
+    }
     if (name === 'pi') {
       // The subagent tool: the parent delegates to scout, whose own session runs the command and answers "done";
       // meanwhile hud's footer names the running subagent and its model.

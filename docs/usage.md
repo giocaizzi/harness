@@ -9,7 +9,7 @@ There are four kinds of feature, and you call each one differently:
 | Kind | Plugins | How it starts |
 |---|---|---|
 | Skills | `dev-tools`, `python`, `go`, `javascript`, `api` | **By itself** when the request matches its description ("open a PR" loads `ship`), or **by you** with its slash command. |
-| Agents | `dev-tools` (`scout`, `driver`, `reviewer`, `escalate`), `api` (`api-reviewer`) | **Ask for one by name** ("use scout to ..."); the main agent delegates to it. |
+| Agents | `dev-tools` (`scout`, `worker`, `driver`, `reviewer`, `escalate`), `api` (`api-reviewer`), `factory` (`verifier`) | **By the main session**, which routes to them on its own (judgement work to `driver`, edits to `worker`, lookups to `scout`, review to `reviewer`). Name one to force it ("use scout to ..."). |
 | Hooks | `guard`, `sounds` | **Never called.** They run on their own around tool calls, prompts and turns. |
 | Display | `hud` | **Always on**, plus a few slash commands for panes. |
 
@@ -59,10 +59,10 @@ These load by themselves when the work touches their subject; call them by name 
 | `repo-standard` | set up or audit a repo (CI, settings, publishing) on GitHub, GitLab or Azure DevOps |
 | `secrets-handling` | touch credentials, tokens, `.env`, a keyring or a vault (Bitwarden details in its `references/bitwarden.md`) |
 | `host-hygiene` | run heavy builds, emulators, full test suites or parallel agents; the host is slow |
-| `subagent-orchestration` | spawn subagents, pick a model or effort, coordinate with other running sessions |
+| `subagent-orchestration` | start work that needs a plan, design, investigation, fix or review (to route it); spawn subagents, pick a model or effort, coordinate with other running sessions |
 | `unattended-runs` | start an overnight, headless or auto-approve run |
 
-`host-hygiene` also ships scripts the agent runs for you: `heavy.sh` (one heavy command at a time), `lease.sh` (exclusive use of a device or port), `register-service.sh`, `memory-lint.mjs` (report-only memory lint), `sweep-stale.sh` (stale worktrees, `--branches` for stale branches), with `.ps1` twins for Windows.
+`host-hygiene` also ships scripts the agent runs for you: `heavy.sh` (one heavy command at a time), `lease.sh` (exclusive use of a device or port), `register-service.sh`, `memory-lint.mjs` (report-only memory lint), `sweep-stale.sh` (stale worktrees, `--branches` for stale branches, `--plugins` for outdated Claude Code plugin versions), with `.ps1` twins for Windows. Where they live per harness, so a brief names the right path: [compatibility](compatibility.md).
 
 ### Language skills
 
@@ -91,16 +91,17 @@ For a repo adopted per [adopt-factory.md](adopt-factory.md): you approve a ticke
 
 ## Agents
 
-| Agent | Plugin | Ask for it when | Model |
+| Agent | Plugin | Used when | Model |
 |---|---|---|---|
 | `scout` | `dev-tools` | you need something found or read: code, logs, test output. Read-only; answers with `file:line` evidence. | cheapest (Claude: Haiku, `low`) |
-| `driver` | `dev-tools` | a hub hands off judgement work: investigate, plan, implement, integrate | driver tier (Claude: Opus) |
+| `worker` | `dev-tools` | an edit whose every decision is made: a written plan, a rename, a config rollout. Stops on any unsettled choice. | routine tier (Claude: Sonnet, `medium`) |
+| `driver` | `dev-tools` | a hub hands off judgement work: investigate, plan, implement, integrate, fix review findings | driver tier (Claude: Opus) |
 | `reviewer` | `dev-tools` | a change needs review by someone who did not write it (not a factory ticket) | driver tier (Claude: Opus) |
-| `escalate` | `dev-tools` | the normal model failed twice on the same bug or design question | strongest (Claude: Fable) |
-| `api-reviewer` | `api` | you want an API security review: vulnerabilities, RBAC leaks, compliance | driver (Claude: Opus, `medium`) |
-| `verifier` | `factory` | a ticket's change is ready to ship and needs a gate that did not write it ([factory.md](factory.md#verification)) | driver (Claude: Opus, `medium`; Sonnet `medium` for trivial changes, `high` for security or safety paths, set on the spawn in Claude Code) |
+| `escalate` | `dev-tools` | a `driver` failed twice on the same problem | strongest (Claude: Fable) |
+| `api-reviewer` | `api` | you want an API security review: vulnerabilities, RBAC leaks, compliance. Read-only; posts a verdict like `reviewer` | driver (Claude: Opus, `medium`) |
+| `verifier` | `factory` | a ticket's change is ready to ship and needs a gate that did not write it ([factory.md](factory.md#verification)) | driver (Claude: Opus, `medium`; per-change overrides in `ticket-run`'s `references/routing.md`) |
 
-How to call one: say it ("use scout to list every place we read `GUARD_` env vars"). Per harness: Claude Code `/agents` lists them; Copilot CLI `/agent` picks one; opencode `@scout`; Codex and pi by asking (pi runs them through its `subagent` tool). Models per harness: [compatibility.md](compatibility.md). In Claude Code with `CLAUDE_CODE_SUBAGENT_MODEL=sonnet` set, any subagent that names no model (a plain or general-purpose one) runs on Sonnet; for work that needs judgement (planning, design, debugging, a feature) ask for `driver` ("use driver to plan …"), which runs at the driver tier whatever the session's model.
+To force one, name it ("use scout to list every place we read `GUARD_` env vars"). Per harness: Claude Code `/agents` lists them; Copilot CLI `/agent` picks one; opencode `@scout`; Codex and pi by asking (pi runs them through its `subagent` tool). Models per harness: [compatibility.md](compatibility.md).
 
 ## guard: what it does to the agent
 
