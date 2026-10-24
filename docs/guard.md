@@ -113,7 +113,7 @@ copilot plugin marketplace add "$PWD" && copilot plugin install guard@giocaizzi-
 copilot plugin list                               # shows guard
 rm -rf "$COPILOT_HOME"; unset COPILOT_HOME
 
-# Codex, opencode, pi: each in a throwaway home against a scripted model (tests/e2e)
+# Copilot CLI, Codex, opencode, pi: each in a throwaway home against a scripted model (tests/e2e)
 make e2e
 
 # VS Code: a throwaway profile, never your own

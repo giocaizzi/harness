@@ -67,7 +67,7 @@ The other three harnesses read the same sources differently (details in [docs/co
 │   ├── install.mjs               copies Codex agents / opencode skills, agents and guard/sounds stubs from a checkout
 │   ├── parity.mjs                every skill and agent reaches every harness (run by validate.py)
 │   └── validate.py               full repo invariant checks
-├── tests/e2e/                    drives Codex, opencode and pi against a scripted model (`make e2e`)
+├── tests/e2e/                    drives Copilot CLI, Codex, opencode and pi against a scripted model (`make e2e`)
 ├── package.json                  pi package manifest (`pi` key)
 │
 ├── Makefile                      canonical command surface
@@ -99,7 +99,7 @@ The other three harnesses read the same sources differently (details in [docs/co
 | `make build` | Generate `plugins/*/.generated/` and the Copilot and Codex `plugin.json`. |
 | `make validate` | Build sync + plugin manifest hygiene + SKILL.md spec + marketplace ↔ disk + README ↔ disk + harness parity (`scripts/parity.mjs`: every skill and agent reaches every harness). |
 | `make check` | `make lint` + `make test` (standard entrypoint, run by CI; `make lint` is an alias for `make validate`). |
-| `make e2e` | Codex, opencode and pi against a scripted model in throwaway homes (skips a CLI that is missing; CI runs it on Linux, macOS and Windows). |
+| `make e2e` | Copilot CLI, Codex, opencode and pi against a scripted model in throwaway homes (skips a CLI that is missing; CI runs it on Linux, macOS and Windows). |
 | `make agent-review` | Weekly agent-telemetry review without an agent; in a session use the repo-local `/agent-review` skill (`.agents/skills/`, linked from `.claude/skills/`): [docs/agent-review.md](docs/agent-review.md). |
 | `make install HARNESS="codex opencode"` | Copy what Codex and opencode cannot take from the marketplace into their config dirs. |
 | `make new-agent NAME=<name> PLUGIN=<plugin>` | Scaffold `plugins/<plugin>/agents/<name>.md` and `<name>.yaml`. |

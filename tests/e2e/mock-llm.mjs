@@ -1,5 +1,5 @@
 // A scripted model for end-to-end hook tests, so no harness needs a login. It speaks the OpenAI Responses API
-// (Codex) and Chat Completions (opencode, pi). The first turn of a conversation calls the harness's shell tool
+// (Codex) and Chat Completions (opencode, pi, Copilot CLI). The first turn of a conversation calls the harness's shell tool
 // with MOCK_COMMAND; once the request carries that call's result, it records the result in MOCK_LOG and answers
 // "done". Usage: MOCK_COMMAND='pip install x' MOCK_LOG=/tmp/log.jsonl node mock-llm.mjs <port>
 import { appendFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs'
@@ -17,6 +17,8 @@ function shellCall(tools = []) {
   // MOCK_SPAWN='{"agent_type":…}': call Codex's spawn_agent (in its multi_agent namespace) with those arguments.
   const spawnNs = tools.find((t) => t.type === 'namespace' && t.tools?.some((f) => f.name === 'spawn_agent'))
   if (process.env.MOCK_SPAWN && spawnNs) return { name: 'spawn_agent', namespace: spawnNs.name, args: JSON.parse(process.env.MOCK_SPAWN) }
+  // MOCK_SKILL=<name>: load that skill through Copilot's `skill` tool (a slash prompt in `copilot -p` loads none).
+  if (process.env.MOCK_SKILL && names.includes('skill')) return { name: 'skill', args: { skill: process.env.MOCK_SKILL } }
   if (names.includes('exec_command')) return { name: 'exec_command', args: { cmd: command } }
   const bash = names.find((n) => /^bash$/i.test(n))
   if (bash) return { name: bash, args: { command, description: 'run the command' } }

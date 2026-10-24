@@ -16,7 +16,7 @@ const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 const MOCK = join(REPO, 'tests', 'e2e', 'mock-llm.mjs')
 // npm installs each CLI as a .cmd shim on Windows, which only runs through cmd.exe and its quoting. Run the
 // package's own entry point instead: a .js bin under node, a native one directly. Elsewhere, the name on PATH.
-const PACKAGES = { codex: '@openai/codex', opencode: 'opencode-ai', pi: '@earendil-works/pi-coding-agent' }
+const PACKAGES = { copilot: '@github/copilot', codex: '@openai/codex', opencode: 'opencode-ai', pi: '@earendil-works/pi-coding-agent' }
 function cli(name) {
   if (process.platform !== 'win32' || !PACKAGES[name]) return [name]
   const root = spawnSync('npm', ['root', '-g'], { encoding: 'utf8', shell: true }).stdout.trim()
@@ -69,6 +69,20 @@ const project = (root) => {
 
 // Per harness: install into `home`, then run one prompt against the mock in `cwd`.
 const HARNESSES = {
+  copilot: {
+    install(home) {
+      const env = { ...BASE_ENV, COPILOT_HOME: home }
+      sh('copilot', ['plugin', 'marketplace', 'add', REPO], { env })
+      const market = JSON.parse(readFileSync(join(REPO, '.claude-plugin', 'marketplace.json'), 'utf8'))
+      for (const { name } of market.plugins) sh('copilot', ['plugin', 'install', `${name}@giocaizzi-harness`], { env })
+      return env
+    },
+    // Offline against the mock: no login, no update check, no telemetry.
+    run(env, cwd, port, prompt = ['run the command']) {
+      const offline = { COPILOT_OFFLINE: 'true', COPILOT_PROVIDER_BASE_URL: `http://127.0.0.1:${port}/v1`, COPILOT_PROVIDER_API_KEY: 'mock' }
+      return sh('copilot', ['-p', prompt.join(' '), '--model', 'mock', '--allow-all-tools', '--no-auto-update'], { env: { ...env, ...offline }, cwd, input: '', allowFail: true })
+    },
+  },
   codex: {
     install(home) {
       const env = { ...BASE_ENV, CODEX_HOME: home }
@@ -132,13 +146,16 @@ const HARNESSES = {
   },
 }
 
-// What each harness must show. `skill`/`agent`: how its prompt lists one (Codex `- plugin:skill: …` and
-// `name: {`, opencode and pi `<name>skill</name>` and `- name: …`; pi lists the agents in the dev-tools
-// `subagent` tool). `asked`: the harness's own prompt for a plain risky command, which a non-interactive run
-// rejects (Codex's prompt rules, opencode's bash ask entries, pi's confirm dialog without a UI). `invoke`: the
-// prompt argv that runs a skill with an argument (Codex needs the plugin prefix: a bare `$wt` loads nothing);
+// What each harness must show. `skill`/`agent`: how its prompt lists one (Copilot `<name>skill</name>` and
+// `- **plugin:agent**: …`, Codex `- plugin:skill: …` and `name: {`, opencode and pi `<name>skill</name>` and
+// `- name: …`; pi lists the agents in the dev-tools `subagent` tool). `asked`: the harness's own prompt for a plain
+// risky command, which a non-interactive run rejects (Copilot's hook ask, which it cannot put to anyone, Codex's
+// prompt rules, opencode's bash ask entries, pi's confirm dialog without a UI). `invoke`: the
+// prompt argv that runs a skill with an argument (Codex needs the plugin prefix: a bare `$wt` loads nothing), and
+// `invokeMock` the mock's env for it (Copilot loads the skill only through its `skill` tool);
 // `substitutes`: whether the harness replaces `$ARGUMENTS` in the skill body (pi and Codex append the text instead).
 const EXPECT = {
+  copilot: { invoke: (skill, arg) => [`use the ${skill} skill for ${arg}`], invokeMock: { MOCK_SKILL: 'wt' }, substitutes: false, skill: (s) => `<name>${s.name}</name>`, agent: (a) => `- **${a.plugin}:${a.name}**: `, asked: /unable to ask user for confirmation/ },
   codex: { invoke: (skill, arg) => [`$dev-tools:${skill} ${arg}`], substitutes: false, skill: (s) => `- ${s.plugin}:${s.name}: `, agent: (a) => `${codexName(a)}: {`, asked: /approval required by policy/ },
   opencode: { invoke: (skill, arg) => ['--command', skill, arg], substitutes: true, skill: (s) => `<name>${s.name}</name>`, agent: (a) => `- ${a.name}: `, asked: /permission requested: bash \(git reset --hard/ },
   pi: { invoke: (skill, arg) => [`/skill:${skill} ${arg}`], substitutes: false, skill: (s) => `<name>${s.name}</name>`, agent: (a) => `- ${a.name}: `, asked: /Risky command/ },
@@ -226,7 +243,7 @@ async function check(name) {
     // A skill invoked with an argument: its body and the argument both reach the model, and `$ARGUMENTS` is
     // substituted only where `substitutes` says so (the skills name the argument in words for the others).
     {
-      const m = await mock('echo hello', root)
+      const m = await mock('echo hello', root, EXPECT[name].invokeMock)
       const out = h.run(env, cwd, m.port, EXPECT[name].invoke('wt', ARG))
       m.stop()
       const prompt = m.entries().map((e) => e.prompt).join('\n')
