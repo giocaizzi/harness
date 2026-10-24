@@ -958,11 +958,13 @@ test('git tag -f or -d of a tag no remote has is not a release; anything else st
     return null;
   };
   const decideWith = async (c) => evaluateCommand({ command: c, state: fresh(), host: calm, rules, tags: await tagFacts(c, rules, run) });
-  for (const c of ['git tag -f m4-old-a d4759d4', 'git tag -d m4-old-a m4-old-b', 'git status --short | head -3; git tag -f m4-old-a d4759d4 >/dev/null', 'git -C /r tag --delete scratch'])
+  for (const c of ['git tag -f m4-old-a d4759d4', 'git tag -d m4-old-a m4-old-b', 'git status --short | head -3; git tag -f m4-old-a d4759d4 >/dev/null', 'git -C /r tag --delete scratch', 'git tag -f m4-old-a && gh api repos/o/r/pulls --jq .[].number'])
     assert.equal((await decideWith(c)).action, 'allow', c);
   assert.ok(calls.includes('git -C . ls-remote --tags upstream refs/tags/m4-old-a'), 'every remote is asked');
   for (const c of ['git tag -f shared', 'git tag -d flaky', 'git tag -f v1.2.0', 'git tag -d 1.0.0', 'git tag scratch', 'git tag -a -f x -m y', 'git tag -f m4 && npm version patch', "ssh h 'git tag -d x'", 'git tag -f $T',
-    'git tag -f m4-old-a && git push origin m4-old-a', 'git tag -f m4-old-a && git push --tags', 'git tag -d m4-old-a && gh release create m4-old-a', 'git tag -f m4-old-a && gh api -X POST repos/o/r/git/refs -f ref=refs/tags/m4-old-a'])
+    'git tag -f m4-old-a && git push origin m4-old-a', 'git tag -f m4-old-a && git push --tags', 'git tag -d m4-old-a && gh release create m4-old-a', 'git tag -f m4-old-a && gh api -X POST repos/o/r/git/refs -f ref=refs/tags/m4-old-a',
+    // #208: the ref in a quoted field or an --input file.
+    "git tag -f m4-old-a && gh api -X POST repos/o/r/git/refs -f 'ref=refs/tags/m4-old-a' -f sha=abc", 'git tag -f m4-old-a && gh api -X POST repos/o/r/git/refs --input body.json', 'git tag -d m4-old-a && gh api repos/o/r/git/refs --input body.json'])
     assert.equal((await decideWith(c)).rule, 'release', c);
 });
 
