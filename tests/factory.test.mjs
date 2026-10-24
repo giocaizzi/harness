@@ -164,10 +164,12 @@ test('verifier: preset effort is medium, in the agent file and the Codex overrid
   assert.match(read('plugins/factory/agents/verifier.yaml'), /model_reasoning_effort: medium/)
 })
 
-test('routing.md: the policy table, the security-path list and the deviation rule', () => {
+test('routing.md: the policy table, the security-path list (in subagent-orchestration) and the deviation rule', () => {
   const text = read('plugins/factory/skills/ticket-run/references/routing.md')
-  for (const row of ['Haiku', 'Sonnet', 'Opus', 'Verify security or safety paths | Opus | `high`', 'Verify code | Opus (the `verifier` preset) | `medium`']) assert.ok(text.includes(row), `routing.md lacks ${row}`)
-  for (const path of ['input trust', 'auth and credentials', 'secrets and redaction', 'kill switch', 'merge and release gates', 'protected paths']) assert.ok(text.includes(path), `routing.md lacks ${path}`)
+  for (const row of ['Haiku', 'Sonnet', 'Opus', '| Verify security or safety paths | `factory:verifier`, `effort: high` on the spawn | Opus, `high` |', '| Verify code | `factory:verifier`, no override | Opus, `medium` |']) assert.ok(text.includes(row), `routing.md lacks ${row}`)
+  assert.match(text, /`subagent-orchestration`'s list plus any path in the repo's highest `risk` tier/)
+  const list = read('plugins/dev-tools/skills/subagent-orchestration/SKILL.md')
+  for (const path of ['input trust', 'auth and credentials', 'secrets and redaction', 'kill switch', 'merge and release gates', 'protected paths']) assert.ok(list.includes(path), `subagent-orchestration lacks ${path}`)
   assert.match(text, /records each deviation with a reason/)
 })
 

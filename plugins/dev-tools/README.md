@@ -20,18 +20,19 @@ General development tooling — git, GitHub/GitLab/Azure DevOps, conventional co
 | `standup` | Terse status: done, in flight, waiting on you, leftovers (`/standup`). |
 | `docs-sync` | Update docs and runbooks the diff made stale (`/docs-sync`). |
 | `secrets-handling` | Bitwarden (bw, bws), keyrings and encrypted config; secrets never printed or inlined. |
-| `subagent-orchestration` | Hub-and-spoke delegation, model tiers, effort levels, escalation and verification. |
+| `subagent-orchestration` | Which agent takes which work (judgement to `driver`, edits to `worker`, lookups to `scout`, review to `reviewer`), spawn rules, escalation and gotchas; tiers per harness and review rounds in its references. |
 
 ## Agents
 
 | Agent | Description |
 |---|---|
 | `scout` | Read-only search and summarization on a cheap model; reports findings with evidence. |
+| `worker` | Routine-tier engineer for edits whose every decision is made (a written plan, a rename, a rollout); stops on any unsettled choice. |
 | `driver` | Driver-tier engineer a hub hands judgement work to: investigates, plans, implements and integrates in its own worktree. |
 | `reviewer` | Driver-tier reviewer of a change it did not write; posts a verdict with severities, at most two rounds. |
-| `escalate` | Hard-problem solver on the strongest model, for work that stalled twice. |
+| `escalate` | Strongest-tier engineer for work a `driver` failed twice on; returns the user's decisions as open questions. |
 
-On pi, which has no subagents, `pi/subagent.mjs` runs these agents (and `api`'s `api-reviewer`, `factory`'s `verifier`) as a `subagent` tool, each in its own `pi -p` session.
+On pi, which has no subagents, `pi/subagent.mjs` runs these agents (and every other plugin's, such as `api`'s `api-reviewer`) as a `subagent` tool, each in its own `pi -p` session.
 
 ## Install
 

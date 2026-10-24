@@ -100,8 +100,7 @@ export function tiers({ agents }) {
 }
 
 // One agent, one tier everywhere. Claude names the tier with its model; the other harnesses take the session's
-// model (the driver tier by default, user settings per agent), so a model pinned in their files would drift from
-// it. Effort is per agent in Claude and Codex only, and must agree.
+// model or the user's per-agent settings, so a model pinned in their files would drift from it. Effort is per agent in Claude and Codex only, and must agree.
 export function tierGaps(defs) {
   const found = []
   for (const d of defs) {

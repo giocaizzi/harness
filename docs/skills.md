@@ -1,6 +1,6 @@
 # Writing skills
 
-The skills here follow [The new rules of context engineering for Claude 5 generation models](https://claude.dev/blog/the-new-rules-of-context-engineering-for-claude-5-generation-models/) (Thariq Shihipar, July 2026). The spec a `SKILL.md` must pass is [agentskills.io](https://agentskills.io/specification), checked by `make validate`.
+The skills and agents here follow two posts: [The new rules of context engineering for Claude 5 generation models](https://claude.dev/blog/the-new-rules-of-context-engineering-for-claude-5-generation-models/) (Thariq Shihipar, July 2026) and [Lessons from building Claude Code: How we use skills](https://claude.dev/blog/lessons-from-building-claude-code-how-we-use-skills/) (June 2026). The spec a `SKILL.md` must pass is [agentskills.io](https://agentskills.io/specification), checked by `make validate`.
 
 ## Rules
 
@@ -11,6 +11,10 @@ The skills here follow [The new rules of context engineering for Claude 5 genera
 - **Progressive disclosure.** Keep `SKILL.md` short and move detail to `references/` or `scripts/`, which the agent loads only when it needs them. A separate step, such as verification or review, gets its own skill.
 - **Say a thing once.** Usage instructions go in one place, such as the script or the skill description, and are not repeated elsewhere.
 - **Rich references.** Point to code, tests or a rubric instead of describing them in prose.
+- **A description is a trigger.** Write a skill's `description` for the model, saying when to load it, early enough to fire before the work starts; an agent's `description` is its interface: when to use it, when not, and what not to pass.
+- **One category per skill.** A skill that mixes reference, policy and process confuses the agent: split it, or move the other parts to `references/`.
+- **Gotchas.** Failure points go in a skill's `## Gotchas` section, one line per real failure, pruned once a model change makes a line obsolete: they are the highest-signal part of a skill.
+- **Goals over scripts.** State the goal and the constraints; don't railroad steps the agent can order itself.
 
 ## Evals
 

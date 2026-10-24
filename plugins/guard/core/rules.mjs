@@ -101,17 +101,22 @@ export const rules = {
     }
   ],
   // Subagent spawns that bypass the typed agents: a once-per-session hint per case, never a deny. `tools` are the
-  // spawn tools whose input names the agent type and model: Claude Code `Agent` (`Task` before 2.1.63, `subagent_type`)
-  // and Copilot CLI `task` (`agent_type`). `typed` are this marketplace's agents that carry their own model and effort;
-  // `factory:verifier` is left out, since its routing table sets its model per change.
+  // spawn tools whose input names the agent type and model: Claude Code `Agent` (`Task` before 2.1.63, `subagent_type`),
+  // Copilot CLI `task` and Codex `spawn_agent` (`agent_type`), VS Code `runSubagent` (`agentName`). `typed` are the agents that carry their own
+  // model and effort, as `plugin:name`. A bare name matches too (Codex and opencode drop the plugin), except a Codex
+  // built-in role (`codexBuiltin`) on `spawn_agent`; `aliases` are names an agent registers under elsewhere (Codex
+  // `dev-tools-worker`). `overrides` are the spawn values the `subagent-orchestration` and `ticket-run` routing tables
+  // allow them. `untyped` are the generic agents (Codex `default`).
   "routing": {
-    "tools": ["agent", "task"],
-    "plugin": "dev-tools",
-    "typed": ["scout", "driver", "reviewer", "escalate"],
-    "untyped": ["general-purpose", "claude", "task"],
+    "tools": ["agent", "task", "spawn_agent", "runsubagent"],
+    "typed": ["dev-tools:scout", "dev-tools:worker", "dev-tools:driver", "dev-tools:reviewer", "dev-tools:escalate", "api:api-reviewer", "factory:verifier"],
+    "aliases": { "dev-tools-worker": "dev-tools:worker" },
+    "codexBuiltin": ["default", "worker", "explorer"],
+    "overrides": { "factory:verifier": { "model": "sonnet|opus", "effort": ["medium", "high"] }, "dev-tools:reviewer": { "effort": ["medium", "high"] } },
+    "untyped": ["general-purpose", "claude", "task", "default"],
     "plan": ["plan"],
     "judgementModel": "opus|fable|\\bsol\\b|\\bastra\\b",
-    "why": "judgement work goes to `dev-tools:driver`, which carries its model and effort; see `subagent-orchestration`"
+    "skill": "subagent-orchestration"
   },
   "deny": [
     {

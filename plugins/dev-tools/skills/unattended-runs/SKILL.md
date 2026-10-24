@@ -34,7 +34,7 @@ A spoke's open question (a `driver` reports the user's decisions instead of gues
 - **Cheap to undo** (code on a branch, a doc, a default): take the recommended option and write it in the PR body as "assumed X because Y", so review can overrule it.
 - **Hard to undo** (data, a public interface or contract, a deploy or release, anything outward-facing): park that unit. Put the question in its PR or an issue and keep the other units going.
 
-A factory ticket parks on the ticket instead (`ticket-run`).
+A workflow skill with its own question channel or budget overrides this.
 
 ## Auto-approve modes do not disable guard
 

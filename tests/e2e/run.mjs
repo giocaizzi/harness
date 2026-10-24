@@ -139,21 +139,26 @@ const HARNESSES = {
 // prompt argv that runs a skill with an argument (Codex needs the plugin prefix: a bare `$wt` loads nothing);
 // `substitutes`: whether the harness replaces `$ARGUMENTS` in the skill body (pi and Codex append the text instead).
 const EXPECT = {
-  codex: { invoke: (skill, arg) => [`$dev-tools:${skill} ${arg}`], substitutes: false, skill: (s) => `- ${s.plugin}:${s.name}: `, agent: (a) => `${a.name}: {`, asked: /approval required by policy/ },
+  codex: { invoke: (skill, arg) => [`$dev-tools:${skill} ${arg}`], substitutes: false, skill: (s) => `- ${s.plugin}:${s.name}: `, agent: (a) => `${codexName(a)}: {`, asked: /approval required by policy/ },
   opencode: { invoke: (skill, arg) => ['--command', skill, arg], substitutes: true, skill: (s) => `<name>${s.name}</name>`, agent: (a) => `- ${a.name}: `, asked: /permission requested: bash \(git reset --hard/ },
   pi: { invoke: (skill, arg) => [`/skill:${skill} ${arg}`], substitutes: false, skill: (s) => `<name>${s.name}</name>`, agent: (a) => `- ${a.name}: `, asked: /Risky command/ },
 }
 const { skills: SKILLS, agents: AGENTS } = inventory()
+// The name a Codex agent registers under: its TOML `name`, which `<name>.yaml` may rename (dev-tools `worker`
+// would replace Codex's built-in role).
+function codexName({ plugin, name }) {
+  return /^name\s*=\s*"([^"]+)"/m.exec(readFileSync(join(REPO, 'plugins', plugin, '.generated', 'codex', `${name}.toml`), 'utf8'))?.[1] ?? name
+}
 const ARG = 'e2e-arg-4242'
 // A line of the wt skill's body, so the probe knows the skill itself (not just its listing) reached the model.
 const WT_BODY = 'There is no fixed cap on worktrees or agents'
 
 // Codex hook outputs only a live run can confirm: a failing stop check's block reaches the model (Codex rejects a
-// Stop output with keys it does not know), and a PreToolUse hint reaches it as context.
+// Stop output with keys it does not know), and a PreToolUse hint reaches it as context, on a shell call and a spawn.
 async function codexOnly(h, env, root) {
   const failures = []
-  const seen = async (command, cwd, runEnv, text) => {
-    const m = await mock(command, root)
+  const seen = async (command, cwd, runEnv, text, mockEnv) => {
+    const m = await mock(command, root, mockEnv)
     const out = h.run(runEnv, cwd, m.port)
     m.stop()
     const ok = m.entries().some((e) => e.prompt.includes(text))
@@ -170,6 +175,20 @@ async function codexOnly(h, env, root) {
   // block the bare `pytest` before the hint is sent.
   const hint = await seen('scripts/heavy.sh pytest -q', project(root), env, 'Skill hint (')
   if (hint) failures.push(`hint: the pytest skill hint did not reach the model\n${hint}`)
+  // Codex runs PreToolUse on spawn_agent too, so the routing hint reaches the model there.
+  const routing = await seen('echo hi', project(root), env, 'Routing hint: an untyped `default` spawn', { MOCK_SPAWN: JSON.stringify({ agent_type: 'default', message: 'look around' }) })
+  if (routing) failures.push(`routing: the spawn_agent routing hint did not reach the model\n${routing}`)
+  // A newer guard lands in the plugin cache while the session runs: the stale-plugin note reaches the model, which
+  // tells the user (`codex exec` prints no PreToolUse `systemMessage`). A newer version dir present at start is the one
+  // Codex loads.
+  const update = join(env.CODEX_HOME, 'plugins', 'cache', 'giocaizzi-harness', 'guard', '999.0.0')
+  const m = await mock('echo hi', root, { MOCK_PLUGIN_UPDATE: update })
+  const out = h.run(env, project(root), m.port)
+  m.stop()
+  const told = m.entries().some((e) => e.prompt.includes('Harness plugins updated (guard'))
+  rmSync(join(root, 'mock.jsonl'), { force: true })
+  rmSync(update, { recursive: true, force: true })
+  if (!told) failures.push(`stale: the stale-plugin note did not reach the model\n${out.stdout?.slice(-600)}\n${out.stderr?.slice(-600)}`)
   return failures
 }
 
@@ -213,6 +232,8 @@ async function check(name) {
       const prompt = m.entries().map((e) => e.prompt).join('\n')
       const seen = { body: prompt.includes(WT_BODY), arg: prompt.includes(ARG), literal: prompt.includes('$ARGUMENTS') }
       if (!seen.body || !seen.arg || seen.literal === EXPECT[name].substitutes) failures.push(`skill argument: ${JSON.stringify(seen)}\n${out.stdout?.slice(-600)}\n${out.stderr?.slice(-600)}`)
+      // An allowed call with nothing updated: no stale-plugin note.
+      if (prompt.includes('Harness plugins updated')) failures.push(`stale: a note without an update\n${prompt.slice(prompt.indexOf('Harness plugins updated'), prompt.indexOf('Harness plugins updated') + 200)}`)
       rmSync(join(root, 'mock.jsonl'), { force: true })
     }
     // sounds' Stop hook ran from the installed plugin: it keeps the session's alert levels in the plugin data dir.
