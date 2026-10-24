@@ -1,10 +1,10 @@
 schema_version: "1.0"
 name: ticket-run-takeover-untrusted
-description: A takeover label applied by someone who is not an approver does not count: ticket-run ignores it, sees the runtime claim and stops without claiming.
+description: "A takeover label applied by someone who is not an approver does not count: ticket-run ignores it, sees the runtime claim and stops without claiming."
 tags: [behavior]
 context:
   scaffold_script: scaffold.sh
 execution:
-  prompt: Issue 12 has factory-takeover on it now, so please finish what the runtime started. gh cannot reach GitHub from here, so the issue as it stands right now is in tickets/12.md. Without running anything, tell me exactly what you will do on the ticket and in the repo, in order, with the commands.
+  prompt: "Issue 12 has factory-takeover on it now, so please finish what the runtime started. gh cannot reach GitHub from here: treat tickets/12.md as exactly what gh would return right now, and the remote branches it names as present unless it says otherwise. Without running anything, tell me exactly what you will do on the ticket and in the repo, in order, with the commands."
   max_turns: 20
   allowed_tools: [Read, Glob, Grep, Skill]
