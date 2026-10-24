@@ -26,7 +26,6 @@ mkdir -p "$HOST_LOCK_DIR"
 host_slot=''
 host_sleeper=''
 host_child=''
-host_dog=''
 host_load=''
 host_deadline=$(($(date +%s) + HOST_LOCK_TIMEOUT_SECONDS))
 
@@ -160,9 +159,31 @@ host_slot_acquire() {
   rm -f "$HOST_LOCK_DIR/heavy.wait.$$"
 }
 
+# host_ident <pid>: the process's start time, which a later process reusing the pid does not share: /proc's
+# starttime where /proc exists, else ps's lstart; empty when the pid is gone or neither can tell.
+host_proc=/proc
+host_ident() {
+  if [ -r "$host_proc/self/stat" ]; then sed 's/.*) //' "$host_proc/$1/stat" 2>/dev/null | cut -d' ' -f20
+  elif [ -n "$host_ps" ]; then ps -o lstart= -p "$1" 2>/dev/null
+  fi
+}
+
 # host_watchdog <pid> <child>: once <pid> is gone while <child> runs, send TERM to <child>'s process tree.
+# It ends by itself within a second of <child> ending and is never signalled: a bash 3.2 subshell that takes
+# a TERM while its inherited TERM trap is half reset warns "run_pending_traps: bad value in trap_list". It
+# outlives <pid> by that second, so it stops <child> only while the pid still names the process it started
+# with, never one that reused it. It closes every inherited fd, so it holds no caller's pipe or jobserver.
 host_watchdog() {
-  while kill -0 "$2" 2>/dev/null; do
+  local fd id now
+  for fd in /dev/fd/*; do
+    fd=${fd##*/}
+    if [ "$fd" -gt 2 ] 2>/dev/null; then eval "exec $fd>&-"; fi
+  done
+  exec </dev/null >/dev/null 2>&1
+  [ -r "$host_proc/self/stat" ] || [ -n "$host_ps" ] || return 0 # cannot tell the command from a later process
+  # A ps that fails once (fork EAGAIN under load) reads as empty: that is "gone" only if kill -0 agrees.
+  until id=$(host_ident "$2"); [ -n "$id" ]; do kill -0 "$2" 2>/dev/null || return 0; sleep 1; done
+  while now=$(host_ident "$2"); [ "$now" = "$id" ] || { [ -z "$now" ] && kill -0 "$2" 2>/dev/null; }; do
     # shellcheck disable=SC2046 # one pid per word
     if ! host_alive "$1"; then kill -TERM $(host_tree "$2") 2>/dev/null; return; fi
     sleep 1
@@ -183,14 +204,12 @@ host_run() {
   "$@" &
   host_child=$!
   host_watchdog $$ "$host_child" &
-  host_dog=$!
   set +m
   for sig in HUP INT QUIT TERM; do
     # shellcheck disable=SC2064 # $sig expands now, the tree at signal time
     trap "kill -$sig \$(host_tree \"\$host_child\") 2>/dev/null" "$sig"
   done
   while wait "$host_child"; code=$?; kill -0 "$host_child" 2>/dev/null; do :; done
-  kill "$host_dog" 2>/dev/null
   return "$code"
 }
 
