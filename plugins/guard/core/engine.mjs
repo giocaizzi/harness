@@ -920,7 +920,8 @@ function ghBuildsLabelFlag(command) {
       if (val.startsWith('--')) {
         if (dynamicText(raw.split('=')[0])) return true;
       } else if (val.startsWith('-') && val.length > 1) {
-        if (dynamicText(raw.slice(1, 2)) || raw[1] === '$' || raw[1] === '`') return true;
+        // The flag letter as the shell joins it: `-"$X"` is `-$X`.
+        if (/[$`*?[{]/.test(raw.replace(/["']/g, '')[1] ?? '')) return true;
       } else {
         const prev = words[k - 1].val;
         if (!(prev.startsWith('-') && !prev.includes('=') && !GH_BOOLEAN.has(prev) && k - 1 > i + 1)) return true;

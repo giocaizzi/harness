@@ -282,5 +282,6 @@
   ["! gh issue edit 7 $F ship-it", "deny:factory-config", "G25", "review #247 round 2: a negated gh", {"factory": "unsure"}],
   ["F=\"y --la\"$'\\x62'\"el ship-it\"; gh issue create -t x -b $F", "deny:factory-config", "G25", "review #247 round 2: an unquoted value splits into a flag", {"factory": "unsure"}],
   ["gh issue edit 7 -b $(cat args.txt)", "deny:factory-config", "G25", "review #247 round 2: an unquoted substitution as a value", {"factory": "unsure"}],
-  ["gh issue edit 7 --body=$F", "deny:factory-config", "G25", "review #247 round 2: an unquoted value after =", {"factory": "unsure"}]
+  ["gh issue edit 7 --body=$F", "deny:factory-config", "G25", "review #247 round 2: an unquoted value after =", {"factory": "unsure"}],
+  ["X=l; gh issue create -t x -b y -\"$X\" ship-it", "deny:factory-config", "G25", "review #247 round 2: a quoted expansion as the short flag letter", {"factory": "unsure"}]
 ]
