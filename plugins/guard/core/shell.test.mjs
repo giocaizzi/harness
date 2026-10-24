@@ -1,5 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
 import { analyze, codeOf, commandWords, scan, units } from './shell.mjs'
 
 // Each unit as [depth, remote, injected, code].
@@ -11,6 +12,22 @@ test('scan: quoted text is blanked, heredoc bodies and comments dropped, operato
   assert.deepEqual(cat.heredocs, ["rm -rf / ; it's data"])
   assert.equal(ls.code.trim(), 'ls')
   assert.equal(codeOf('a && b | c'), 'a && b | c')
+})
+
+test('scan: a ( after =, @, ?, *, + or ! joins the word, closed or not; zsh =(cmd) is a substitution (G27)', () => {
+  // In a child with a timeout: the reader used to stop at the ( without moving on and fill memory.
+  const script = `import { scan } from ${JSON.stringify(new URL('./shell.mjs', import.meta.url).href)};
+    const read = (c) => scan(c).map((x) => [x.raw, x.words.map((w) => w.val), x.words.flatMap((w) => w.substs.map((s) => s.text))]);
+    console.log(JSON.stringify(['files=(a b); echo hi', 'x=(', 'ls @(a|b)', 'cat =(rm -rf src)', '=('].map(read)))`
+  const r = spawnSync(process.execPath, ['--max-old-space-size=200', '--input-type=module', '-e', script], { timeout: 10000, encoding: 'utf8' })
+  assert.equal(r.status, 0, r.stderr.slice(0, 300))
+  assert.deepEqual(JSON.parse(r.stdout), [
+    [['files=(a b)', ['files=(a b)'], []], ['echo hi', ['echo', 'hi'], []]],
+    [['x=(', ['x=('], []]],
+    [['ls @(a|b)', ['ls', '@(a|b)'], []]],
+    [['cat =(rm -rf src)', ['cat', '=(rm -rf src)'], ['rm -rf src']]],
+    [['=(', ['=('], ['']]],
+  ])
 })
 
 test('payloads: shell -c in every flag spelling, eval, heredoc and echo or printf piped into a shell', () => {
