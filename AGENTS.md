@@ -28,7 +28,7 @@ Everything is authored in place, in the plugin it ships with: skills, hooks, the
 The other three harnesses read the same sources differently (details in [docs/compatibility.md](docs/compatibility.md)):
 
 - **Codex** resolves `.claude-plugin/marketplace.json` and the plugins' skills as-is, but reads `.codex-plugin/plugin.json` first, rejects a hooks file with `modules`, and takes agents only as TOML in `~/.codex/agents`. So the build generates `.codex-plugin/plugin.json` (pointing at `.generated/codex/hooks.json`), `.generated/codex/hooks.json` (plus a plugin's Codex-only `hooks/codex-only.json`, e.g. sounds' Stop hook), and `.generated/codex/<name>.toml`, which `scripts/install.mjs` copies.
-- **opencode** has no plugin bundles or marketplace: `scripts/install.mjs` copies skills and the generated `.generated/opencode/<name>.md` agents and writes plugin stubs that load `plugins/guard/hooks/opencode.mjs` and `plugins/sounds/hooks/opencode.mjs`.
+- **opencode** has no plugin bundles or marketplace: `scripts/install.mjs` copies skills and the generated `.generated/opencode/<name>.md` agents and writes plugin stubs that load `plugins/guard/hooks/opencode.mjs` and `plugins/sounds/hooks/opencode.mjs`, and lists hud's TUI plugin (`plugins/hud/hooks/opencode-tui.mjs`) in `tui.json`, merged into the user's file.
 - **pi** installs the whole repo as a package from the root `package.json` (`pi` key: skills and the extensions `guard` and `sounds` `hooks/pi.mjs`, `hud` `hooks/pi-entry.mjs` and `dev-tools/pi/subagent.mjs`, which runs the Claude-format agents as a `subagent` tool).
 
 ---
@@ -64,7 +64,7 @@ The other three harnesses read the same sources differently (details in [docs/co
 │
 ├── scripts/
 │   ├── build_agents.py           agents/*.md (+ .yaml) and manifests → .generated/, .github/plugin/, .codex-plugin/
-│   ├── install.mjs               copies Codex agents / opencode skills, agents and guard/sounds stubs from a checkout
+│   ├── install.mjs               copies Codex agents / opencode skills, agents, guard/sounds stubs and hud's tui.json entry from a checkout
 │   ├── parity.mjs                every skill and agent reaches every harness (run by validate.py)
 │   └── validate.py               full repo invariant checks
 ├── tests/e2e/                    drives Copilot CLI, Codex, opencode and pi against a scripted model (`make e2e`)

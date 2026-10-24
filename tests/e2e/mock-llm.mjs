@@ -12,8 +12,9 @@ const log = (entry) => process.env.MOCK_LOG && appendFileSync(process.env.MOCK_L
 // The shell tool each harness offers, and the arguments it takes.
 function shellCall(tools = []) {
   const names = tools.map((t) => t.name ?? t.function?.name)
-  // MOCK_SUBAGENT=1: delegate to scout where a `subagent` tool exists (pi), so its child session runs too.
+  // MOCK_SUBAGENT=1: delegate to scout through pi's `subagent` tool or opencode's `task`, so its child session runs too.
   if (process.env.MOCK_SUBAGENT && names.includes('subagent')) return { name: 'subagent', args: { agent: 'scout', task: 'run the command' } }
+  if (process.env.MOCK_SUBAGENT && names.includes('task')) return { name: 'task', args: { description: 'run the command', prompt: 'run the command', subagent_type: 'scout' } }
   // MOCK_SPAWN='{"agent_type":…}': call Codex's spawn_agent (in its multi_agent namespace) with those arguments.
   const spawnNs = tools.find((t) => t.type === 'namespace' && t.tools?.some((f) => f.name === 'spawn_agent'))
   if (process.env.MOCK_SPAWN && spawnNs) return { name: 'spawn_agent', namespace: spawnNs.name, args: JSON.parse(process.env.MOCK_SPAWN) }
