@@ -8,6 +8,10 @@
   },
   "repository": "https://github.com/giocaizzi/harness",
   "license": "MIT",
+  "dependencies": [
+    "dev-tools",
+    "guard"
+  ],
   "keywords": [
     "github-issues",
     "workflow",

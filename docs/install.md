@@ -2,7 +2,7 @@
 
 Runbook for every supported harness. What each one gets: [compatibility.md](compatibility.md). The hooks need `node` 22+ on PATH; everything works on macOS, Linux and Windows.
 
-Plugins: `api`, `python`, `go`, `javascript`, `dev-tools`, `guard`, `hud`, `sounds`, `factory` (`hud` does something in Claude Code and pi, its status line also in Copilot CLI; `sounds` in Claude Code, pi, Codex and opencode).
+Plugins: `api`, `python`, `go`, `javascript`, `dev-tools`, `guard`, `hud`, `sounds`, `factory` (`hud` does something in Claude Code and pi, its status line also in Copilot CLI; `sounds` in Claude Code, pi, Codex and opencode). `factory` needs `dev-tools` and `guard`: Claude Code installs them with it, the other harnesses need them installed too.
 
 ## Claude Code
 
