@@ -37,6 +37,9 @@ jobs:
       - run: node tests/e2e/run.mjs # `make e2e`; called directly because Windows runners have no make
         env:
           E2E_REQUIRE: 1
+      # `make check` runs on Linux only: the host-hygiene .ps1 suite (named mutexes, CPU sampling) needs Windows.
+      - if: runner.os == 'Windows'
+        run: pwsh -NoProfile -File tests/host-hygiene.test.ps1
 
   # Required status check. `if: always()` so a failed `secrets` or `e2e` job fails
   # `check` instead of skipping it (a skipped required check counts as passing).
