@@ -37,7 +37,9 @@ test("opencode: hud's TUI plugin is merged into tui.json, keeping the user's set
   const fresh = mkdtempSync(join(tmpdir(), 'install-opencode-tui-'))
   install('opencode', fresh)
   assert.deepEqual(JSON.parse(readFileSync(join(fresh, 'tui.json'), 'utf8')).plugin.length, 1)
-  writeFileSync(join(fresh, 'tui.json'), '{ // mine\n}')
-  install('opencode', fresh)
-  assert.equal(readFileSync(join(fresh, 'tui.json'), 'utf8'), '{ // mine\n}')
+  for (const other of ['{ // mine\n}', '{"plugin":"x"}', 'null', '[]']) {
+    writeFileSync(join(fresh, 'tui.json'), other)
+    install('opencode', fresh)
+    assert.equal(readFileSync(join(fresh, 'tui.json'), 'utf8'), other)
+  }
 })

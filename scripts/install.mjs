@@ -39,7 +39,8 @@ export function plan(harness) {
 }
 
 // opencode lists TUI plugins in tui.json, which may hold the user's own settings, so hud's entry is merged in: added,
-// or pointed at this checkout, the rest left alone. A tui.json that is not plain JSON (comments) is not touched.
+// or pointed at this checkout, the rest left alone. A tui.json that is not plain JSON (comments), or not an object
+// with a `plugin` list, is not touched.
 export const TUI_PLUGIN = pathToFileURL(join(PLUGINS, 'hud', 'hooks', 'opencode-tui.mjs')).href
 export function addTuiPlugin(dir) {
   const file = join(dir, 'tui.json')
@@ -51,6 +52,8 @@ export function addTuiPlugin(dir) {
       return false
     }
   }
+  // Valid JSON of another shape (`null`, an array, a `plugin` that is no list) takes the same by-hand path.
+  if (!config || typeof config !== 'object' || Array.isArray(config) || (config.plugin !== undefined && !Array.isArray(config.plugin))) return false
   const ours = (p) => String(Array.isArray(p) ? p[0] : p).endsWith('/plugins/hud/hooks/opencode-tui.mjs')
   config.plugin = [...(config.plugin ?? []).filter((p) => !ours(p)), TUI_PLUGIN]
   writeFileSync(file, JSON.stringify(config, null, 2) + '\n')
@@ -81,7 +84,7 @@ export function install(harness, dir = targetDir(harness)) {
     else writeFileSync(dest, content)
   }
   writeFileSync(record, JSON.stringify(now, null, 2) + '\n')
-  if (harness === 'opencode' && !addTuiPlugin(dir)) console.error(`${join(dir, 'tui.json')} is not plain JSON: add ${TUI_PLUGIN} to its "plugin" list by hand`)
+  if (harness === 'opencode' && !addTuiPlugin(dir)) console.error(`${join(dir, 'tui.json')} is not a plain JSON object with a "plugin" list: add ${TUI_PLUGIN} to it by hand`)
   return now.map((rel) => relative(process.cwd(), join(dir, rel)))
 }
 
