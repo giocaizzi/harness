@@ -122,6 +122,28 @@ test('subagentRows adds model and effort to each agent-panel row', async () => {
   assert.match(effortOf(input.tasks[0], { forced: 'low', session: 'xhigh' }), /Sonnet 5.5 · low · /)
 })
 
+test('copilotAgents: running subagents from the session events, with model and effort', async () => {
+  const { copilotAgents } = await import('./statusline.mjs')
+  const ev = (type, data, timestamp = '2026-10-24T10:00:00.000Z') => JSON.stringify({ type, data, timestamp })
+  const started = (id, agentName, model) => ev('subagent.started', { toolCallId: id, agentName, agentDisplayName: agentName.split(':').pop(), agentDescription: 'd', ...(model && { model }) })
+  const settings = { subagents: { agents: { 'dev-tools:scout': { effortLevel: 'low' }, 'dev-tools:driver': { effortLevel: 'inherit' } } } }
+  const now = Date.parse('2026-10-24T10:03:49.000Z')
+  const events = [
+    ev('session.start', { reasoningEffort: 'medium' }),
+    started('a', 'dev-tools:scout', 'gpt-6-luna'),
+    started('b', 'dev-tools:driver', 'claude-opus-5-5'),
+    started('c', 'explore'),
+    ev('subagent.completed', { toolCallId: 'c', agentName: 'explore', agentDisplayName: 'explore' }),
+    ev('session.model_change', { newModel: 'gpt-5.4', reasoningEffort: 'high' }),
+    '{"type":"subagent.started","data":{', // a line still being written
+  ].join('\n')
+  assert.deepEqual(copilotAgents(events, settings, now), ['[\uf0c0 scout · gpt-6-luna · low · 3m 49s]', '[\uf0c0 driver · Opus 5.5 · high · 3m 49s]'])
+  // A failed one ends too; a resume ends them all; no settings and no session effort leave the effort out.
+  assert.deepEqual(copilotAgents([started('a', 'x'), ev('subagent.failed', { toolCallId: 'a', error: 'e' }), started('b', 'y')].join('\n'), undefined, now), ['[\uf0c0 y · 3m 49s]'])
+  assert.deepEqual(copilotAgents([started('a', 'x'), ev('session.resume', {})].join('\n'), undefined, now), [])
+  assert.deepEqual(copilotAgents('', undefined, now), [])
+})
+
 test('gcpProject reads the active gcloud configuration', async () => {
   const { gcpProject } = await import('./statusline.mjs')
   const { mkdtempSync, mkdirSync, writeFileSync } = await import('node:fs')

@@ -1,6 +1,6 @@
 // Status lines for both CLIs (`statusLine.command`), one script: `node statusline.mjs claude` for Claude Code's two-line
 // prompt (user, git, GCP, path, model, context, rate-limit windows, cost), `node statusline.mjs subagent` for Claude
-// Code's agent-panel rows (`subagentStatusLine.command`), no argument for Copilot CLI's token-weather line. Each CLI pipes its session status as JSON on stdin. Copilot's token totals are cumulative and include cache
+// Code's agent-panel rows (`subagentStatusLine.command`), no argument for Copilot CLI's token-weather line and its running subagents. Each CLI pipes its session status as JSON on stdin. Copilot's token totals are cumulative and include cache
 // reads and writes, so its hit rate is the session's, not the last turn's. No TTL: Copilot has none.
 import { execFileSync } from 'node:child_process'
 import { readFileSync, writeFileSync } from 'node:fs'
@@ -136,6 +136,35 @@ export function subagentRows(input, now, effort = {}) {
     .join('')
 }
 
+// Copilot's running subagents as `[icon name · model · effort · time]` parts. Its status JSON has none, so they come from
+// the session's events (`events.jsonl` in `transcript_path`): a `subagent.started` (name, the model it starts on, when
+// known) until its `subagent.completed` or `.failed`. The effort is the one set for the agent in `subagents.agents`
+// (`/subagents`, user settings); "inherit" or none is the session's, from its last `session.start`, `.resume` or
+// `.model_change`. A resume ends every subagent, since none is resumable.
+export function copilotAgents(events, settings, now) {
+  const running = new Map()
+  let session
+  for (const line of events.split('\n')) {
+    if (!line.includes('"type":"subagent.') && !line.includes('"type":"session.')) continue
+    let e
+    try {
+      e = JSON.parse(line)
+    } catch {
+      continue // a line still being written
+    }
+    if (['session.start', 'session.resume', 'session.model_change'].includes(e.type)) session = e.data?.reasoningEffort ?? session
+    if (e.type === 'session.resume') running.clear()
+    if (e.type === 'subagent.started') running.set(e.data?.toolCallId, e)
+    if (e.type === 'subagent.completed' || e.type === 'subagent.failed') running.delete(e.data?.toolCallId)
+  }
+  return [...running.values()].map(({ data, timestamp }) => {
+    const set = settings?.subagents?.agents?.[data.agentName]?.effortLevel
+    const at = Date.parse(timestamp)
+    const parts = [data.agentDisplayName ?? data.agentName, data.model ? modelName(data.model) : null, set && set !== 'inherit' ? set : session, Number.isNaN(at) ? null : elapsed(now - at)]
+    return `[${ICON.agents} ${parts.filter(Boolean).join(' · ')}]`
+  })
+}
+
 // The session's effort, as the main status line last saw it, for the agent-panel rows (their input has none).
 const effortFile = (session) => join(tmpdir(), `hud-effort-${String(session).replace(/[^\w-]/g, '')}`)
 
@@ -158,7 +187,22 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
       }
       process.stdout.write(subagentRows(status, Date.now(), { forced: process.env.CLAUDE_CODE_EFFORT_LEVEL || undefined, session: status.effort?.level ?? session }))
     } else {
-      process.stdout.write(copilotWeather(status))
+      // transcript_path is the session's state directory, under the config directory that holds settings.json.
+      const read = (...p) => {
+        try {
+          return readFileSync(join(status.transcript_path, ...p), 'utf8')
+        } catch {
+          return '' // no events yet, no settings
+        }
+      }
+      let settings
+      try {
+        settings = JSON.parse(read('..', '..', 'settings.json'))
+      } catch {
+        // none, or not JSON
+      }
+      const agents = status.transcript_path ? copilotAgents(read('events.jsonl'), settings, Date.now()) : []
+      process.stdout.write([copilotWeather(status), ...agents].filter(Boolean).join(' '))
     }
   } catch {
     // unreadable status: print nothing
