@@ -1,0 +1,10 @@
+schema_version: "1.0"
+name: react-negative
+description: The model does not load react for an endpoint in a plain Express API.
+tags: [trigger]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  prompt: Add a GET /health endpoint that returns the app version from package.json.
+  max_turns: 15
+  allowed_tools: [Read, Glob, Grep, Edit, Write, Skill]

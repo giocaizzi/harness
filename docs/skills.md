@@ -18,7 +18,9 @@ The skills and agents here follow two posts: [The new rules of context engineeri
 
 ## Evals
 
-Each skill that should fire without being named gets a case in `plugins/<plugin>/evals/<skill>-trigger/`: `case.yaml` (tag `trigger`, a realistic prompt that does not name the skill), `scaffold.sh` (a tiny git repo built in a throwaway dir) and `graders/skill-fired.md` (`tool_used: Skill` matching the skill). A case that does not fire is a gap in the skill description: improve the prompt once, then open an issue for the description rather than dropping the case.
+Each skill that should fire without being named gets at least one positive case, each in `plugins/<plugin>/evals/<skill>-trigger/` or `<skill>-<situation>/` (for example `react-effect-loop/`): `case.yaml` (tag `trigger`, a realistic prompt that does not name the skill), `scaffold.sh` (a tiny git repo built in a throwaway dir) and `graders/skill-fired.md` (`tool_used: Skill` matching the skill). A case that does not fire is a gap in the skill description: improve the prompt once, then open an issue for the description rather than dropping the case.
+
+A skill added or re-evaluated from now on gets at least two positive cases and a negative case, `plugins/<plugin>/evals/<skill>-negative/`: a nearby prompt it must stay quiet on, graded by the same `tool_used: Skill` grader with `min: 0` and `max: 0`. The count includes only calls matching `input_match`, so another skill firing does not fail it.
 
 A skill step that must hold in a given state gets a behavior case beside them, `plugins/<plugin>/evals/<skill>-<step>/` with tag `behavior`: the scaffold also writes the state the step reads (for example a ticket snapshot), and an `llm` grader lists what the answer must do.
 

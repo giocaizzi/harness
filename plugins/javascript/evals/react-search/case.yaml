@@ -1,0 +1,10 @@
+schema_version: "1.0"
+name: react-search
+description: The model loads react when asked to add a filter-as-you-type box to a component.
+tags: [trigger]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  prompt: Add a search box to UserList that filters the users by name as you type.
+  max_turns: 15
+  allowed_tools: [Read, Glob, Grep, Edit, Write, Skill]
