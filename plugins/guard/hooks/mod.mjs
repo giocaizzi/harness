@@ -71,7 +71,8 @@ export const ASK_TIMEOUT_MS = 60_000
 const PERSON_TOOLS = new Set(['AskUserQuestion', 'ExitPlanMode'])
 // The session's permission mode, as the last classic hook input carried it. ponytail: a mode switched with
 // shift+tab is seen at the next prompt or tool result, so one ask in between can go the old way. SessionStart carries
-// no `permission_mode` (Claude Code 2.1.310), so before the first prompt or tool result the mode is unknown.
+// no `permission_mode` (Claude Code 2.1.310), so before the first prompt or tool result the mode is unknown, and a
+// reload (`/reload-plugins`) starts the module over with it unknown again.
 let mode
 
 function trackMode($, e, next) {
@@ -138,7 +139,10 @@ export function register(on) {
   on('tool.check', async ($, e, next) => {
     const r = await next(e)
     if (r.decision !== 'ask' || !e.tool_use_id || r.decider || PERSON_TOOLS.has(e.tool)) return r
-    if (mode === 'auto' && !r.hook) return r
+    // Claude Code's own ask with the mode unknown (a session's first call, right after a reload): auto mode's classifier
+    // or dontAsk may own it, so it stays with Claude Code. Parking it denied every call of an auto session after a
+    // reload, and a denied call fires no PostToolUse to bring the mode back. A hook's ask (the guard's) is still parked.
+    if ((mode === 'auto' || mode === undefined) && !r.hook) return r
     // dontAsk denies anything not pre-approved itself; there is no one to ask.
     if (mode === 'dontAsk') return r
     if (await unattendedEnv($)) {
