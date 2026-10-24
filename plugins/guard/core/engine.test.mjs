@@ -543,6 +543,9 @@ test('a spawn that bypasses the typed agents gets one routing hint per case and 
   assert.equal(rule('factory:verifier', 'sonnet', fresh(), 'medium'), undefined);
   assert.equal(rule('factory:verifier', 'opus', fresh(), 'high'), undefined);
   assert.equal(rule('factory:verifier', 'haiku', fresh(), 'medium'), 'routing-override');
+  // Full model names: Copilot CLI, VS Code, a Claude id.
+  for (const m of ['claude-sonnet-4.6', 'Claude Sonnet 4.6 (copilot)', 'claude-opus-4.7']) assert.equal(rule('factory:verifier', m, fresh(), 'high'), undefined, m);
+  assert.equal(rule('factory:verifier', 'Claude Haiku 4.5 (copilot)'), 'routing-override');
   assert.equal(rule('dev-tools:reviewer', undefined, fresh(), 'high'), undefined);
   assert.equal(rule('Explore', 'opus'), undefined);
   assert.equal(rule('other:scout', 'opus'), undefined); // another plugin's agent
