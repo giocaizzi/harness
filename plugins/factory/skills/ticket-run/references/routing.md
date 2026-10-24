@@ -1,6 +1,6 @@
 # Models, effort and cost per phase
 
-Tiers, effort levels and escalation are `subagent-orchestration`'s; this is the fixed policy for a ticket. Set the model and effort explicitly on every spawn: a subagent with neither inherits the session's model, and its price.
+Tiers, effort levels and escalation are `subagent-orchestration`'s; this is the fixed policy for a ticket. An untyped spawn (a Sonnet worker) sets its model and effort: without them it inherits the session's model, and its price. A typed agent (`dev-tools:scout`, `dev-tools:driver`, `factory:verifier`) carries its own; override it on the spawn only where this table says so: the verifier on Sonnet for docs, config or XS changes, and at `high` on security or safety paths.
 
 ## Policy
 
@@ -17,11 +17,11 @@ Tiers, effort levels and escalation are `subagent-orchestration`'s; this is the 
 
 **Security and safety paths** are any change to: input trust (who may trigger or approve), auth and credentials, secrets and redaction, a kill switch or halt, merge and release gates, protected paths. A repo may list its own in `.factory/config.yaml` (the `risk` tiers); a path in its highest tier counts too. A change that touches any of these is verified at `high`, whatever its size. Where the harness fixes effort in the agent definition, see [done.md](done.md#verify). Never above `high`.
 
-The session running the ticket is the hub of the run (`subagent-orchestration`, Tiers): whatever its model, the Plan, split, integrate and M and larger rows go to a `dev-tools:driver` spawn with a written brief, and the session only routes and checks mechanically (commit, CI, closing keyword, verifier verdict). Pin the model on every untyped spawn; a typed agent (`dev-tools:driver`, `factory:verifier`) carries its own, overridden on the spawn only where this table says so.
+The session running the ticket is the hub of the run (`subagent-orchestration`, Tiers), and only it spawns: in Claude Code a subagent cannot spawn subagents, so a driver cannot run the workers itself. Whatever the session's model, a `dev-tools:driver` spawn plans and splits; the session spawns the Sonnet workers for the clear XS/S units it returns; a `dev-tools:driver` spawn integrates them and runs the checks; M and larger or unclear work stays with the driver. The session only routes and checks mechanically (commit, CI, closing keyword, verifier verdict). Brief every driver spawn on a ticket to assume nothing: its open questions go on the ticket and park it.
 
 ## Deviations
 
-The driver may deviate from the table, but records each deviation with a reason in the run's checklist and in `result.json` (`routing`, [done.md](done.md#record)). A deviation is any actual model or effort that differs from the policy's, including a harness that downgraded a spawn. Repeated deviations are a signal to change the policy, not to keep deviating.
+The run may deviate from the table, but records each deviation with a reason in the run's checklist and in `result.json` (`routing`, [done.md](done.md#record)). A deviation is any actual model or effort that differs from the policy's, including a harness that downgraded a spawn. Repeated deviations are a signal to change the policy, not to keep deviating.
 
 ## When a phase struggles
 
