@@ -71,6 +71,14 @@ test('report attributes subagent cost and lists unpinned spawns and model swaps'
   assert.match(md, /\| factory:verifier \| claude-opus-5-5 \| claude-opus-4-8 \| 1 \|/)
 })
 
+test('report breaks hook_prompt down by plugin', () => {
+  const data = empty()
+  data.hookPromptCost = [row({ plugin_name: 'next-steps', model: 'claude-opus-5-5' }, 2), row({ model: 'claude-opus-5-5' }, 5)]
+  const md = report(data, [], '7d')
+  assert.match(md, /\| \(unlabelled\) \| claude-opus-5-5 \| \$5\.00 \|/)
+  assert.match(md, /\| next-steps \| claude-opus-5-5 \| \$2\.00 \|/)
+})
+
 test('evalStubs targets skills the model never loads itself', () => {
   const data = empty()
   data.skillsClaude = [row({ skill_name: 'dev-tools:ship', invocation_trigger: 'claude-proactive' }, 1)]
