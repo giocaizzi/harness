@@ -29,6 +29,14 @@ check "two slots: runs overlap" "$(tr '\n' ' ' <"$tmp/log")" "start start end en
 
 "$heavy" sh -c 'exit 7'
 check "exit code propagates" "$?" 7
+# A clean run prints nothing on stderr: bash 3.2 warned "run_pending_traps: bad value in trap_list" when the
+# watchdog subshell was stopped with TERM while its inherited trap was half reset.
+for _ in $(seq 20); do "$heavy" true; done 2>"$tmp/err"
+check "a clean run leaves stderr empty" "$(cat "$tmp/err")" ""
+# Command substitution returns with the command: the watchdog's sleep must not hold the caller's pipe.
+start=$(date +%s)
+for _ in 1 2 3; do out=$("$heavy" sleep 0.3); done
+check "\$(heavy.sh ...) returns when the command ends" "$(($(date +%s) - start <= 2))$out" 1
 check "stdin reaches the command" "$(echo hi | "$heavy" cat)" hi
 "$heavy" sh -c 'echo fd3 >&3' 3>"$tmp/fd3"
 check "an inherited fd 3 reaches the command" "$(cat "$tmp/fd3")" fd3

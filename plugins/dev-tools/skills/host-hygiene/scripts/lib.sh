@@ -26,7 +26,6 @@ mkdir -p "$HOST_LOCK_DIR"
 host_slot=''
 host_sleeper=''
 host_child=''
-host_dog=''
 host_load=''
 host_deadline=$(($(date +%s) + HOST_LOCK_TIMEOUT_SECONDS))
 
@@ -161,6 +160,8 @@ host_slot_acquire() {
 }
 
 # host_watchdog <pid> <child>: once <pid> is gone while <child> runs, send TERM to <child>'s process tree.
+# It ends by itself within a second of <child> ending; it is never signalled, since a bash 3.2 subshell that
+# takes a TERM while its inherited TERM trap is half reset warns "run_pending_traps: bad value in trap_list".
 host_watchdog() {
   while kill -0 "$2" 2>/dev/null; do
     # shellcheck disable=SC2046 # one pid per word
@@ -182,15 +183,13 @@ host_run() {
   set -m
   "$@" &
   host_child=$!
-  host_watchdog $$ "$host_child" &
-  host_dog=$!
+  host_watchdog $$ "$host_child" </dev/null >/dev/null 2>&1 & # no stdio: it must not hold a caller's $(...) open
   set +m
   for sig in HUP INT QUIT TERM; do
     # shellcheck disable=SC2064 # $sig expands now, the tree at signal time
     trap "kill -$sig \$(host_tree \"\$host_child\") 2>/dev/null" "$sig"
   done
   while wait "$host_child"; code=$?; kill -0 "$host_child" 2>/dev/null; do :; done
-  kill "$host_dog" 2>/dev/null
   return "$code"
 }
 
