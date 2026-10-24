@@ -17,8 +17,8 @@ Heads-up display for Claude Code (a mod), a status line for Claude Code and Copi
 | `/ctx` pane | mod `Pane` | Claude | The context breakdown as a coloured grid with one row per category. |
 | Reply rewrites | mod `AssistantMessage`; pi `message_end` | Claude, pi | Each a setting, with its glyph and colour (no colour on pi): `#123` / `!45` / `owner/repo#12` / `AB#77` as links with their open, merged, closed or draft state; absolute paths as `<repo> › path` and `file:line` opening the editor (`editor`: vscode, cursor, zed, idea, sublime, file, custom); commit SHAs as links; long URLs as `owner/repo#12`; ISO times as `13 Oct 20:56 (5h ago)`; ✓ ✗ ⊘ statuses with counts; tokens and keys masked to their prefix. Settings and defaults: [docs/hud.md](../../docs/hud.md#reply-rewrites). |
 | `/refresh-refs` | mod `command.run`; pi command | Claude, pi | Forgets the looked-up states, files and commits so replies ask again (states also refresh by themselves after 5 minutes). |
-| pi footer | pi extension (`hooks/pi.mjs`) | pi | Context weather, model, PR with checks, unpushed and uncommitted work, after each run. |
-| Status line | `statusLine.command` | Claude, Copilot | Claude: `┌[ user@host] [ branch *] [ gcp] [ session]` and `└[ path] [ model] [ 55%] [ 5h 62% 2h15m] [ 7d 5% 3d4h] [ 1.84]`. Copilot: `[ 9%] [ 50%] [ 3 req]`. |
+| pi footer | pi extension (`hooks/pi.mjs`) | pi | Context weather, model, PR with checks, unpushed and uncommitted work, after each run; each running `subagent` call with its model: `[ scout · <model>]`. |
+| Status line | `statusLine.command` | Claude, Copilot | Claude: `┌[ user@host] [ branch *] [ gcp] [ session]` and `└[ path] [ model] [ 55%] [ 5h 62% 2h15m] [ 7d 5% 3d4h] [ 1.84]`. Copilot: `[ 9%] [ 50%] [ 3 req]`, and each running subagent with its model and effort: `[ scout · gpt-6-luna · low · 1m 3s]`. |
 | Agent-panel rows | `subagentStatusLine.command` | Claude | The default subagent row with the subagent's model and effort before the time: `ticket-103  Ticket-run #103  Sonnet 5.5 · high · 3m 49s · ↓ 286.1k tokens`. |
 
 ## Install
