@@ -44,7 +44,7 @@ export const GuardPlugin = async ({ client, directory }, deps) => {
   })
   const notes = new Map() // callID -> note for the tool output (the pip note outside uv repos)
   // A subagent runs in a child session (`parentID`): it belongs to the root session, as its own agent. Unreadable, or
-  // no answer within ROOT_TIMEOUT_MS (a hung server must not stall the tool call): its own.
+  // no answer within ROOT_TIMEOUT_MS (a hung server must not stall the tool call): its own, and the next call asks again.
   const roots = new Map()
   const rootOf = (id) => {
     if (!roots.has(id)) {
@@ -57,10 +57,14 @@ export const GuardPlugin = async ({ client, directory }, deps) => {
         }
         return cur
       })().catch(() => id)
+      const late = Symbol('late')
       let timer
-      const late = new Promise((resolve) => (timer = setTimeout(resolve, deps?.rootTimeoutMs ?? ROOT_TIMEOUT_MS, id)))
-      timer.unref?.()
-      roots.set(id, Promise.race([walk, late]).finally(() => clearTimeout(timer)))
+      const timeout = new Promise((resolve) => (timer = setTimeout(resolve, deps?.rootTimeoutMs ?? ROOT_TIMEOUT_MS, late)))
+      roots.set(id, Promise.race([walk, timeout]).then((root) => {
+        if (root !== late) return root
+        roots.delete(id)
+        return id
+      }).finally(() => clearTimeout(timer)))
     }
     return roots.get(id)
   }
