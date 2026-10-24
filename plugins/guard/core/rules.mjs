@@ -331,7 +331,8 @@ export const rules = {
     "approval": "agent-ok",
     "why": "A factory run must not touch the approval label: with an owner token the runtime would read it as the owner's approval.",
     "takeover": "factory-takeover",
-    "takeoverWhy": "A runtime run must not touch the takeover label: it hands the ticket from a runtime to an attended run, and only an approver sets it."
+    "takeoverWhy": "A runtime run must not touch the takeover label: it hands the ticket from a runtime to an attended run, and only an approver sets it.",
+    "unsureWhy": "The repo's .factory/config.yaml exists but could not be read, or its labels could not be parsed, so the guard cannot tell which labels a factory run must not touch."
   },
   "titles": {
     "types": ["feat", "fix", "perf", "refactor", "revert", "docs", "style", "test", "build", "ci", "chore"],

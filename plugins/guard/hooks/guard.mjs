@@ -243,17 +243,31 @@ export function existingDirs(command, env, cwd) {
 const PLAIN_DIR = /^[\w.@%+=:,\\/~-]+$/
 
 // The factory labels a run never touches, from `labels` in the nearest `.factory/config.yaml` above `cwd`, each else its default.
+// Fails closed: a config that exists but cannot be read, or whose `labels` cannot be parsed, returns the defaults with
+// `unsure` set and any names it can still find in `extra`, and the engine then denies every label change.
 export function factoryLabels(cwd) {
   const defaults = { approval: rules.factory.approval, takeover: rules.factory.takeover }
+  const keys = Object.keys(defaults)
   for (let dir = resolve(cwd || '.'); ; dir = dirname(dir)) {
+    let text
     try {
-      const labels = readFileSync(join(dir, '.factory', 'config.yaml'), 'utf8').replace(/\r/g, '').match(/^labels:[ \t]*\n((?:[ \t]+.*(?:\n|$)|[ \t]*\n)*)/m)
-      const named = (key) => {
-        const name = labels?.[1].match(new RegExp(`^[ \\t]+${key}:[ \\t]*(?:"([^"]+)"|'([^']+)'|([^\\s#]+))`, 'm'))
-        return name ? (name[1] ?? name[2] ?? name[3]) : defaults[key]
-      }
-      return { approval: named('approval'), takeover: named('takeover') }
-    } catch {}
+      text = readFileSync(join(dir, '.factory', 'config.yaml'), 'utf8').replace(/\r/g, '')
+    } catch (e) {
+      if (e?.code !== 'ENOENT' && e?.code !== 'ENOTDIR') return { ...defaults, unsure: true, extra: [] }
+    }
+    if (text !== undefined) {
+      if (!/^labels\b/m.test(text)) return defaults
+      const block = text.match(/^labels:[ \t]*\n((?:[ \t]+.*(?:\n|$)|[ \t]*\n)*)/m)?.[1]
+      const named = Object.fromEntries(keys.map((key) => {
+        if (block === undefined) return [key, null]
+        if (!new RegExp(`^[ \\t]+${key}[ \\t]*:`, 'm').test(block)) return [key, defaults[key]]
+        const name = block.match(new RegExp(`^[ \\t]+${key}:[ \\t]*(?:"([^"]+)"|'([^']+)'|([^\\s#]+))`, 'm'))
+        return [key, name ? (name[1] ?? name[2] ?? name[3]) : null]
+      }))
+      if (keys.every((key) => named[key] !== null)) return named
+      const extra = [...text.matchAll(/\b(?:approval|takeover)[ \t]*:[ \t]*["']?([^\s"',}\]#]+)/g)].map((m) => m[1])
+      return { ...defaults, unsure: true, extra }
+    }
     if (dirname(dir) === dir) return defaults
   }
 }
