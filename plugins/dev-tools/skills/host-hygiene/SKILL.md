@@ -23,7 +23,6 @@ In this skill's `scripts/`, `.sh` on macOS/Linux and `.ps1` on Windows. Env, def
 
 - **Disk first.** Below the floor (20 GB) don't start: clean your own leftovers. Never delete another session's files.
 - **Heavy work goes through the semaphore** and waits for a slot and for load; don't wrap it in your own retry loop. One heavy job per agent.
-- **Subagents aren't woken by a backgrounded job:** run `heavy.sh` in the foreground with `HOST_LOCK_TIMEOUT_SECONDS` under the tool timeout; on a timeout, check `--status` before re-running.
 - **Devices are leased:** slot first, then lease. Boot a simulator or emulator only inside a lease; a booted device with no lease is stale and anyone may shut it down.
 - **Release only what you hold.** Never delete a lock, lease or registry entry whose pid is not yours.
 - **Stop things precisely:** wait on a pid or a file. Never `pgrep -f` or `pkill` a pattern.
@@ -38,6 +37,7 @@ Why each rule exists, and the incidents behind it: [references/lessons.md](refer
 
 ## Gotchas
 
+- A subagent or teammate isn't woken when a backgrounded job exits: run `heavy.sh` in the foreground with `HOST_LOCK_TIMEOUT_SECONDS` under the tool timeout, and on a timeout check `--status` before re-running.
 - A running Claude Code session runs the plugin version it loaded, spawning hooks from that folder without holding it open, until the user types `/reload-plugins`; a reload does not restart the process, so the sweep cannot see it. Only once the user has reloaded every open session, run `--plugins --after-reload --apply`; never sweep plugins on a schedule.
 - Build tools that write read-only files into the worktree (the Go module cache, envtest binaries) make `git worktree remove` fail halfway and leave an unregistered dir that only the owner can delete: keep `GOMODCACHE` and envtest assets outside the worktree.
 
