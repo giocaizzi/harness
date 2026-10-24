@@ -9,7 +9,7 @@ Agents share one machine. Let its load and your plan's quota set how much runs a
 
 ## Scripts
 
-In this skill's `scripts/`, `.sh` on macOS/Linux and `.ps1` on Windows. Env, defaults and the lock-path contract are in the header of `lib.sh` / `lib.ps1`. Name them by `${CLAUDE_PLUGIN_ROOT}/skills/host-hygiene/scripts/`, which Claude Code renders as this session's install path; copy that into briefs, never a path remembered from an earlier session, since an upgrade prunes old versions. Where it shows unrendered, use the path this skill was loaded from. Don't give the plugin a `bin/` to put the scripts on PATH: claude.ai and Cowork skip any plugin that has one.
+In this skill's `scripts/`, `.sh` on macOS/Linux and `.ps1` on Windows. Env, defaults and the lock-path contract are in the header of `lib.sh` / `lib.ps1`. In a brief, name them by `${CLAUDE_PLUGIN_ROOT}/skills/host-hygiene/scripts/` as rendered here (unrendered: the path this skill was loaded from), never a remembered cache path: upgrades prune old versions.
 
 - `heavy.sh <cmd...>`: run a build, precommit or full suite in a machine-wide heavy slot; `--status` shows slots, waiters, leases and services.
 - `lease.sh <class> [--device <id>] -- <cmd...>`: heavy slot, then the one lease for a device class (simulator, emulator); shuts down a device it booted.
@@ -21,7 +21,8 @@ In this skill's `scripts/`, `.sh` on macOS/Linux and `.ps1` on Windows. Env, def
 ## Rules
 
 - **Disk first.** Below the floor (20 GB) don't start: clean your own leftovers. Never delete another session's files.
-- **Heavy work goes through the semaphore** and waits for a slot and for load; don't wrap it in your own retry loop. One heavy job per agent. Background it only where the harness wakes the same agent when it exits (Claude Code's main session); subagents and teammates are not woken, so they run it in the foreground with `HOST_LOCK_TIMEOUT_SECONDS` under the tool-call timeout. On a tool timeout, re-run once; never stack a second waiter (`--status`).
+- **Heavy work goes through the semaphore** and waits for a slot and for load; don't wrap it in your own retry loop. One heavy job per agent.
+- **Subagents aren't woken by a backgrounded job:** run `heavy.sh` in the foreground with `HOST_LOCK_TIMEOUT_SECONDS` under the tool timeout; on a timeout, check `--status` before re-running.
 - **Devices are leased:** slot first, then lease. Boot a simulator or emulator only inside a lease; a booted device with no lease is stale and anyone may shut it down.
 - **Release only what you hold.** Never delete a lock, lease or registry entry whose pid is not yours.
 - **Stop things precisely:** wait on a pid or a file. Never `pgrep -f` or `pkill` a pattern.

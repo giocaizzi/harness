@@ -163,6 +163,7 @@ These are load-bearing — the layout breaks if any of them slip.
 | No `.agent.md` files in `agents/`. | Claude scans `agents/` for any `*.md`; a `foo.agent.md` would be loaded and shadow `foo.md`. Empirically tested. Copilot's files live in `.generated/copilot/`. |
 | Marketplace.json sits at `.claude-plugin/marketplace.json` (repo root). | Claude reads here; Copilot CLI and VS Code fall back to `.claude-plugin/marketplace.json` when looking up marketplaces. |
 | No `.plugin/plugin.json` or root `plugin.json` in a plugin. | VS Code would detect another plugin format and skip the Claude layout. |
+| No `bin/` in a plugin. | claude.ai and Cowork (including account sync) don't install a plugin that has one; skills name their scripts by `${CLAUDE_PLUGIN_ROOT}` instead. |
 | Skill `name` is kebab-case and equals its directory. | VS Code skips any other skill silently. |
 | No Claude-only key (`modules`) reaches Codex. | Codex rejects the whole hooks file; `.generated/codex/hooks.json` is generated without it. |
 | `package.json` `pi.skills` is `["./plugins/*/skills"]` and `pi.extensions` loads `plugins/guard/hooks/pi.mjs`. | pi installs the repo from it. |
