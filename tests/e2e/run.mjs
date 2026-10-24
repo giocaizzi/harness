@@ -57,6 +57,9 @@ async function mock(command, root, extraEnv = {}) {
   throw new Error('mock LLM did not start')
 }
 
+const piModels = (env, port) =>
+  writeFileSync(join(env.PI_CODING_AGENT_DIR, 'models.json'), JSON.stringify({ providers: { mock: { baseUrl: `http://127.0.0.1:${port}/v1`, api: 'openai-completions', apiKey: 'mock', models: [{ id: 'mock' }] } } }))
+
 const project = (root) => {
   const dir = join(root, 'proj')
   mkdirSync(dir, { recursive: true })
@@ -104,9 +107,27 @@ const HARNESSES = {
       return env
     },
     run(env, cwd, port, prompt = ['run the command']) {
-      const models = { providers: { mock: { baseUrl: `http://127.0.0.1:${port}/v1`, api: 'openai-completions', apiKey: 'mock', models: [{ id: 'mock' }] } } }
-      writeFileSync(join(env.PI_CODING_AGENT_DIR, 'models.json'), JSON.stringify(models))
+      piModels(env, port)
       return sh('pi', ['-p', '--no-session', '--model', 'mock/mock', ...prompt], { env: { ...env, PWD: cwd }, cwd, input: '', allowFail: true })
+    },
+    // RPC mode, for what only a UI shows (an extension's `setStatus` arrives as an event): one prompt, stdin held
+    // open until the run ends, since pi exits on its end.
+    rpc(env, cwd, port, prompt = 'run the command') {
+      piModels(env, port)
+      const [exe, ...pre] = cli('pi')
+      return new Promise((resolve) => {
+        const child = spawn(exe, [...pre, '--mode', 'rpc', '--no-session', '--model', 'mock/mock'], { env: { ...env, PWD: cwd }, cwd, windowsHide: true })
+        let stdout = ''
+        let stderr = ''
+        const timer = setTimeout(() => child.kill(), 180_000)
+        child.stdout.on('data', (d) => {
+          stdout += d
+          if (stdout.includes('"type":"agent_end"')) child.stdin.end()
+        })
+        child.stderr.on('data', (d) => (stderr += d))
+        child.on('close', () => (clearTimeout(timer), resolve({ stdout, stderr })))
+        child.stdin.write(`${JSON.stringify({ type: 'prompt', message: prompt })}\n`)
+      })
     },
   },
 }
@@ -118,11 +139,16 @@ const HARNESSES = {
 // prompt argv that runs a skill with an argument (Codex needs the plugin prefix: a bare `$wt` loads nothing);
 // `substitutes`: whether the harness replaces `$ARGUMENTS` in the skill body (pi and Codex append the text instead).
 const EXPECT = {
-  codex: { invoke: (skill, arg) => [`$dev-tools:${skill} ${arg}`], substitutes: false, skill: (s) => `- ${s.plugin}:${s.name}: `, agent: (a) => `${a.name}: {`, asked: /approval required by policy/ },
+  codex: { invoke: (skill, arg) => [`$dev-tools:${skill} ${arg}`], substitutes: false, skill: (s) => `- ${s.plugin}:${s.name}: `, agent: (a) => `${codexName(a)}: {`, asked: /approval required by policy/ },
   opencode: { invoke: (skill, arg) => ['--command', skill, arg], substitutes: true, skill: (s) => `<name>${s.name}</name>`, agent: (a) => `- ${a.name}: `, asked: /permission requested: bash \(git reset --hard/ },
   pi: { invoke: (skill, arg) => [`/skill:${skill} ${arg}`], substitutes: false, skill: (s) => `<name>${s.name}</name>`, agent: (a) => `- ${a.name}: `, asked: /Risky command/ },
 }
 const { skills: SKILLS, agents: AGENTS } = inventory()
+// The name a Codex agent registers under: its TOML `name`, which `<name>.yaml` may rename (dev-tools `worker`
+// would replace Codex's built-in role).
+function codexName({ plugin, name }) {
+  return /^name\s*=\s*"([^"]+)"/m.exec(readFileSync(join(REPO, 'plugins', plugin, '.generated', 'codex', `${name}.toml`), 'utf8'))?.[1] ?? name
+}
 const ARG = 'e2e-arg-4242'
 // A line of the wt skill's body, so the probe knows the skill itself (not just its listing) reached the model.
 const WT_BODY = 'There is no fixed cap on worktrees or agents'
@@ -214,13 +240,16 @@ async function check(name) {
     if (name === 'codex' && !readdirSync(join(root, 'home'), { recursive: true }).some((f) => /sounds-codex-.*\.json$/.test(f))) failures.push('sounds: the Stop hook left no state')
     if (name === 'codex') failures.push(...(await codexOnly(h, env, root)))
     if (name === 'pi') {
-      // The subagent tool: the parent delegates to scout, whose own session runs the command and answers "done".
+      // The subagent tool: the parent delegates to scout, whose own session runs the command and answers "done";
+      // meanwhile hud's footer names the running subagent and its model.
       const m = await mock('echo from-scout', root, { MOCK_SUBAGENT: '1' })
-      const out = h.run(env, cwd, m.port)
+      const out = await h.rpc(env, cwd, m.port)
       m.stop()
       const results = m.entries().map((e) => e.result ?? '')
       if (!results.some((r) => r.includes('from-scout')) || !results.includes('done'))
         failures.push(`subagent: results ${JSON.stringify(results).slice(0, 300)}\n${out.stdout?.slice(-600)}\n${out.stderr?.slice(-600)}`)
+      const footer = out.stdout.split('\n').filter((l) => l.includes('"statusKey":"hud"')).map((l) => JSON.parse(l).statusText)
+      if (!footer.some((t) => t.includes('scout · mock'))) failures.push(`hud: no footer with the running subagent: ${JSON.stringify(footer).slice(0, 300)}\n${out.stderr?.slice(-600)}`)
     }
   } catch (err) {
     failures.push(String(err?.message ?? err))

@@ -1,7 +1,7 @@
 # Adopt the factory in a repo
 
 **When:** a repo with a GitHub issue board should have tickets worked by the `factory` plugin ([factory.md](factory.md)). Not for repos on other forges.
-**Preconditions:** admin or maintain access to the repo; `gh` authenticated as an account that can create labels; the `factory` plugin installed in your harness ([install.md](install.md)). Run the steps from the root of a checkout of the target repo, on a branch (the config lands through a PR like any other change).
+**Preconditions:** admin or maintain access to the repo; `gh` authenticated as an account that can create labels; the `factory` plugin installed in your harness with the `dev-tools` plugin, which it needs for its agents and its `wt`, `ship` and `land` skills, and the `guard` plugin, required for runtime runs and recommended attended ([install.md](install.md); Claude Code installs both with `factory`; elsewhere install them yourself). Run the steps from the root of a checkout of the target repo, on a branch (the config lands through a PR like any other change).
 
 ## Steps
 

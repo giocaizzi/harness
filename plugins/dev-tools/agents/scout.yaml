@@ -1,5 +1,5 @@
 # Overrides for the harnesses that do not read agents/scout.md as-is (make build).
-# Copilot: model left unset, it inherits the session model; choose the tier with /model.
+# Copilot: model left unset in the agent file; the dotfiles set it per agent under subagents.agents.
 copilot:
   tools:
     - read

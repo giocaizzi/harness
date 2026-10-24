@@ -14,7 +14,7 @@ API development — FastAPI, SQLAlchemy and Domain-Driven Design with Hexagonal 
 
 | Agent | Description |
 |---|---|
-| `api-reviewer` | Scans the API for vulnerabilities, RBAC leaks and compliance issues. |
+| `api-reviewer` | Read-only API security review (vulnerabilities, RBAC leaks, compliance) that posts a verdict with severities; a driver fixes what it finds. |
 
 ## Install
 

@@ -1,6 +1,5 @@
 # Overrides for the harnesses that do not read agents/verifier.md as-is (make build).
-# Copilot: model left unset, it inherits the session model; its effort is set per agent in user settings
-# (subagents.agents."factory:verifier".effortLevel), since Copilot agent files have no effort property.
+# Copilot: model left unset in the agent file; the dotfiles set it per agent under subagents.agents.
 copilot:
   tools:
     - read
