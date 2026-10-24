@@ -2,7 +2,8 @@
 // Install what a harness cannot take from the marketplace, from this checkout, on every OS (plain copies, no
 // symlinks). Re-run after `git pull`; files a previous run installed and this one no longer ships are removed.
 //   node scripts/install.mjs codex      agents (.generated/codex/*.toml) -> $CODEX_HOME/agents (default ~/.codex), guard prompt rules -> rules/
-//   node scripts/install.mjs opencode   skills, agents and the guard and sounds plugins -> $XDG_CONFIG_HOME/opencode (default ~/.config)
+//   node scripts/install.mjs opencode   skills, agents and the guard and sounds plugins -> $XDG_CONFIG_HOME/opencode (default ~/.config),
+//                                       hud's TUI plugin -> its tui.json
 // Claude Code, Copilot CLI and VS Code install from the marketplace, Codex its plugins too, pi with
 // `pi install git:github.com/giocaizzi/harness`: see docs/install.md.
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -37,6 +38,25 @@ export function plan(harness) {
   throw new Error(`unknown harness ${harness}: codex or opencode`)
 }
 
+// opencode lists TUI plugins in tui.json, which may hold the user's own settings, so hud's entry is merged in: added,
+// or pointed at this checkout, the rest left alone. A tui.json that is not plain JSON (comments) is not touched.
+export const TUI_PLUGIN = pathToFileURL(join(PLUGINS, 'hud', 'hooks', 'opencode-tui.mjs')).href
+export function addTuiPlugin(dir) {
+  const file = join(dir, 'tui.json')
+  let config = {}
+  if (existsSync(file)) {
+    try {
+      config = JSON.parse(readFileSync(file, 'utf8'))
+    } catch {
+      return false
+    }
+  }
+  const ours = (p) => String(Array.isArray(p) ? p[0] : p).endsWith('/plugins/hud/hooks/opencode-tui.mjs')
+  config.plugin = [...(config.plugin ?? []).filter((p) => !ours(p)), TUI_PLUGIN]
+  writeFileSync(file, JSON.stringify(config, null, 2) + '\n')
+  return true
+}
+
 export function targetDir(harness, env = process.env) {
   if (harness === 'codex') return env.CODEX_HOME || join(homedir(), '.codex')
   return join(env.XDG_CONFIG_HOME || join(homedir(), '.config'), 'opencode')
@@ -61,6 +81,7 @@ export function install(harness, dir = targetDir(harness)) {
     else writeFileSync(dest, content)
   }
   writeFileSync(record, JSON.stringify(now, null, 2) + '\n')
+  if (harness === 'opencode' && !addTuiPlugin(dir)) console.error(`${join(dir, 'tui.json')} is not plain JSON: add ${TUI_PLUGIN} to its "plugin" list by hand`)
   return now.map((rel) => relative(process.cwd(), join(dir, rel)))
 }
 
