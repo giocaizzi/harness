@@ -1,6 +1,6 @@
 // Status lines for both CLIs (`statusLine.command`), one script: `node statusline.mjs claude` for Claude Code's two-line
 // prompt (user, git, GCP, path, model, context, rate-limit windows, cost), `node statusline.mjs subagent` for Claude
-// Code's agent-panel rows (`subagentStatusLine.command`), no argument for Copilot CLI's token-weather line. Each CLI pipes its session status as JSON on stdin. Copilot's token totals are cumulative and include cache
+// Code's agent-panel rows (`subagentStatusLine.command`), no argument for Copilot CLI's token-weather line and its running subagents. Each CLI pipes its session status as JSON on stdin. Copilot's token totals are cumulative and include cache
 // reads and writes, so its hit rate is the session's, not the last turn's. No TTL: Copilot has none.
 import { execFileSync } from 'node:child_process'
 import { readFileSync, writeFileSync } from 'node:fs'
@@ -136,6 +136,41 @@ export function subagentRows(input, now, effort = {}) {
     .join('')
 }
 
+// Copilot's running subagents as `[icon agent · model · effort · time]` parts. Its status JSON has none, so they come
+// from the session's events (`events.jsonl` in `transcript_path`), keyed by `agentId`: a `subagent.started` (the agent,
+// the model it starts on) until its `subagent.completed` or `.failed`; `subagent.configured` gives the model and effort
+// it runs at. Without that, the effort set for the agent in `subagents.agents` (`/subagents`, user settings), else the
+// session's: its last `session.start`, `.resume` or `.model_change` of its own (a subagent's carries its `agentId`; a
+// null effort is none, as in `auto`). A session that starts, resumes or shuts down ends every subagent, since none is
+// resumable; a CLI killed mid-run is resumed or replaced before its line is drawn again.
+export function copilotAgents(events, settings, now) {
+  const running = new Map()
+  let session = null
+  for (const line of events.split('\n')) {
+    if (!line.includes('"type":"subagent.') && !line.includes('"type":"session.')) continue
+    let e
+    try {
+      e = JSON.parse(line)
+    } catch {
+      continue // a line still being written
+    }
+    const data = e.data
+    if (!data || typeof data !== 'object') continue
+    const id = e.agentId ?? data.toolCallId
+    if (['session.start', 'session.resume', 'session.model_change'].includes(e.type) && !e.agentId && 'reasoningEffort' in data) session = data.reasoningEffort
+    if (['session.start', 'session.resume', 'session.shutdown'].includes(e.type)) running.clear()
+    if (e.type === 'subagent.started' && id) running.set(id, { name: data.agentName, model: data.model, at: Date.parse(e.timestamp) })
+    if (e.type === 'subagent.configured' && running.has(id)) running.set(id, { ...running.get(id), model: data.model ?? running.get(id).model, effort: data.reasoningEffort })
+    if (e.type === 'subagent.completed' || e.type === 'subagent.failed') running.delete(id)
+  }
+  return [...running.values()].map((a) => {
+    const set = settings?.subagents?.agents?.[a.name]?.effortLevel
+    const effort = a.effort !== undefined ? a.effort : set && set !== 'inherit' ? set : session
+    const parts = [a.name?.split(':').pop(), a.model ? modelName(a.model) : null, effort, Number.isNaN(a.at) ? null : elapsed(now - a.at)]
+    return `[${ICON.agents} ${parts.filter(Boolean).join(' · ')}]`
+  })
+}
+
 // The session's effort, as the main status line last saw it, for the agent-panel rows (their input has none).
 const effortFile = (session) => join(tmpdir(), `hud-effort-${String(session).replace(/[^\w-]/g, '')}`)
 
@@ -158,7 +193,22 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
       }
       process.stdout.write(subagentRows(status, Date.now(), { forced: process.env.CLAUDE_CODE_EFFORT_LEVEL || undefined, session: status.effort?.level ?? session }))
     } else {
-      process.stdout.write(copilotWeather(status))
+      // transcript_path is the session's state directory, under the config directory that holds settings.json.
+      const read = (...p) => {
+        try {
+          return readFileSync(join(status.transcript_path, ...p), 'utf8')
+        } catch {
+          return '' // no events yet, no settings
+        }
+      }
+      let settings
+      try {
+        settings = JSON.parse(read('..', '..', 'settings.json'))
+      } catch {
+        // none, or not JSON
+      }
+      const agents = status.transcript_path ? copilotAgents(read('events.jsonl'), settings, Date.now()) : []
+      process.stdout.write([copilotWeather(status), ...agents].filter(Boolean).join(' '))
     }
   } catch {
     // unreadable status: print nothing
