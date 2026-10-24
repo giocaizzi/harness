@@ -7,6 +7,7 @@ import { nativeAsk, opencodeAsks } from '../core/engine.mjs'
 import { rules } from '../core/rules.mjs'
 
 const ASKS = opencodeAsks(rules)
+const ROOT_TIMEOUT_MS = 2000
 // A config key that rules on bash: `bash` or the `*` catch-all.
 const bashKeys = (perm) => (perm && typeof perm === 'object' ? Object.entries(perm).filter(([k]) => k === 'bash' || k === '*').map(([, v]) => v) : [perm])
 const denies = (perm) => bashKeys(perm).some((v) => v === 'deny' || (v && typeof v === 'object' && Object.values(v).includes('deny')))
@@ -42,11 +43,12 @@ export const GuardPlugin = async ({ client, directory }, deps) => {
     },
   })
   const notes = new Map() // callID -> note for the tool output (the pip note outside uv repos)
-  // A subagent runs in a child session (`parentID`): it belongs to the root session, as its own agent. Unreadable: its own.
+  // A subagent runs in a child session (`parentID`): it belongs to the root session, as its own agent. Unreadable, or
+  // no answer within ROOT_TIMEOUT_MS (a hung server must not stall the tool call): its own.
   const roots = new Map()
   const rootOf = (id) => {
-    if (!roots.has(id))
-      roots.set(id, (async () => {
+    if (!roots.has(id)) {
+      const walk = (async () => {
         let cur = id
         for (let depth = 0; depth < 5; depth++) {
           const parent = (await client.session?.get?.({ path: { id: cur } }).catch(() => null))?.data?.parentID
@@ -54,7 +56,12 @@ export const GuardPlugin = async ({ client, directory }, deps) => {
           cur = parent
         }
         return cur
-      })().catch(() => id))
+      })().catch(() => id)
+      let timer
+      const late = new Promise((resolve) => (timer = setTimeout(resolve, deps?.rootTimeoutMs ?? ROOT_TIMEOUT_MS, id)))
+      timer.unref?.()
+      roots.set(id, Promise.race([walk, late]).finally(() => clearTimeout(timer)))
+    }
     return roots.get(id)
   }
   const who = async (id) => {

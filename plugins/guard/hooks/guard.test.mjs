@@ -5,7 +5,7 @@ import { spawn, spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { tmpdir, userInfo } from 'node:os'
 import { join, resolve } from 'node:path'
-import { CODEX_RULES, codexAsks, codexReviewer, factoryLabels, handle, pythonManager, sessionStore, tail } from './guard.mjs'
+import { CODEX_RULES, codexAsks, codexReviewer, factoryLabels, handle, inWorkTree, pythonManager, sessionStore, tail } from './guard.mjs'
 import { fallbackDataDir } from './data.mjs'
 import { codexRules } from '../core/engine.mjs'
 import { rules } from '../core/rules.mjs'
@@ -522,7 +522,12 @@ test('a plain read of non-secret files is allowed outright, so no harness prompt
   mkdirSync(join(home, '.git'))
   mkdirSync(join(home, '.config'))
   assert.equal(decision(await inHome({ cwd: join(home, '.config'), ...pre('Bash', 'cat glab-cli/config.yml') }))?.permissionDecision, undefined, 'a dotfiles repo at $HOME')
-  assert.equal(decision(await h0(pre('Bash', 'cat a.txt')))?.permissionDecision, undefined, 'outside any work tree')
+  assert.equal(decision(await h0(pre('Bash', 'cat a.txt')))?.permissionDecision, undefined, 'no cwd')
+  const plain = mkdtempSync(join(tmpdir(), 'guard-plain-'))
+  assert.equal(decision(await inHome({ cwd: plain, ...pre('Bash', 'cat a.txt') }))?.permissionDecision, undefined, 'an existing dir outside any work tree')
+  // Windows: a home spelled in another case is still home.
+  assert.equal(inWorkTree(home, { HOME: home.toUpperCase() }, 'win32'), false)
+  assert.equal(inWorkTree(home, { HOME: home.toUpperCase() }, 'linux'), true)
 })
 
 test('without a session id nothing is kept, and the fallback data dir is per user', async () => {

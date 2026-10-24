@@ -434,12 +434,14 @@ function onStale(input, state, deps, out) {
 
 // Whether `cwd` is inside a git work tree other than the home directory's: a relative read there is project files.
 // From `$HOME`, or a dotfiles repo at `$HOME`, `cat .codex/auth.json` is a secret the path rules may not know (#208).
-export function inWorkTree(cwd, env = {}) {
+export function inWorkTree(cwd, env = {}, platform = process.platform) {
   if (typeof cwd !== 'string' || !cwd) return false
   const home = resolve(env.HOME || env.USERPROFILE || homedir())
+  // Windows paths are case-insensitive: `c:\Users\me` is still the home directory.
+  const isHome = (dir) => (platform === 'win32' ? dir.toLowerCase() === home.toLowerCase() : dir === home)
   for (let dir = resolve(cwd); ; dir = dirname(dir)) {
-    if (existsSync(join(dir, '.git'))) return dir !== home
-    if (dir === dirname(dir) || dir === home) return false
+    if (existsSync(join(dir, '.git'))) return !isHome(dir)
+    if (dir === dirname(dir) || isHome(dir)) return false
   }
 }
 

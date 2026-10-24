@@ -20,7 +20,8 @@ function shellCall(tools = []) {
   // MOCK_SKILL=<name>: load that skill through Copilot's `skill` tool (a slash prompt in `copilot -p` loads none).
   if (process.env.MOCK_SKILL && names.includes('skill')) return { name: 'skill', args: { skill: process.env.MOCK_SKILL } }
   if (names.includes('exec_command')) return { name: 'exec_command', args: { cmd: command } }
-  const bash = names.find((n) => /^bash$/i.test(n))
+  // Copilot CLI offers `powershell` instead of `bash` on Windows, with the same arguments.
+  const bash = names.find((n) => /^(bash|powershell)$/i.test(n))
   if (bash) return { name: bash, args: { command, description: 'run the command' } }
   return null
 }

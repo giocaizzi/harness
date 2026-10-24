@@ -257,6 +257,10 @@ test('opencode: a child session runs as its own agent of the root session; pi: a
   await before('child', { name: 'ship' })
   const facts = readFileSync(join(dataDir, 'sessions', 'root.jsonl'), 'utf8')
   assert.match(facts, /"loaded":"ship"/, "the child's skill counts for the root session")
+  // A server that never answers: the call goes on under the session's own id once the timeout passes.
+  const hung = await GuardPlugin({ client: { session: { get: () => new Promise(() => {}) } }, directory: dir() }, { ...deps(), dataDir, rootTimeoutMs: 20 })
+  await hung['tool.execute.before']({ tool: 'skill', sessionID: 'lone', callID: 'c' }, { args: { name: 'land' } })
+  assert.match(readFileSync(join(dataDir, 'sessions', 'lone.jsonl'), 'utf8'), /"loaded":"land"/)
   // pi: the child process reads the parent session and its own id from the environment.
   process.env.GUARD_PARENT_SESSION = 'p1'
   process.env.GUARD_AGENT_ID = 'scout-t1'
