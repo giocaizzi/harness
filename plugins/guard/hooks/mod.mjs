@@ -69,9 +69,9 @@ const askClass = (e) => (typeof e.input?.command === 'string' ? cmdClass(null, e
 export const ASK_TIMEOUT_MS = 60_000
 // Tools whose own dialog is the question (askUserQuestionTimeout covers AskUserQuestion); left to the engine.
 const PERSON_TOOLS = new Set(['AskUserQuestion', 'ExitPlanMode'])
-// The session's permission mode, as the last classic hook input carried it (SessionStart sets it before the first
-// call). ponytail: a mode switched with shift+tab is seen at the next prompt or tool result, so one ask in between can
-// go the old way.
+// The session's permission mode, as the last classic hook input carried it. ponytail: a mode switched with
+// shift+tab is seen at the next prompt or tool result, so one ask in between can go the old way. SessionStart carries
+// no `permission_mode` (Claude Code 2.1.310), so before the first prompt or tool result the mode is unknown.
 let mode
 
 function trackMode($, e, next) {
@@ -130,7 +130,6 @@ async function askWithTimeout($, e, reason, ms) {
 }
 
 export function register(on) {
-  on('classic.SessionStart', trackMode)
   on('classic.UserPromptSubmit', trackMode)
   on('classic.PostToolUse', trackMode)
 

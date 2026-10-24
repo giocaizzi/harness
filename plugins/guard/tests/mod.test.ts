@@ -110,14 +110,6 @@ test('dontAsk mode leaves the ask to the engine', async ($, on) => {
   expect((await $.tool.check(call)).decision).toBe('ask')
 })
 
-test("dontAsk from SessionStart holds on the session's first call, before any prompt", async ($, on) => {
-  on('env.get', (_$, e) => ({ value: e.name === 'GUARD_UNATTENDED' ? '1' : undefined }))
-  on('tool.check', { tool: 'Bash' }, ask)
-  on('classic.SessionStart', () => ({}))
-  await $.classic.SessionStart({ source: 'startup', permission_mode: 'dontAsk' } as never)
-  expect((await $.tool.check(call)).decision).toBe('ask')
-})
-
 // Records posted to the collector, by event name, with the attributes as a map.
 function collector(on: Parameters<Parameters<typeof test>[1]>[1], env: Record<string, string>) {
   on('env.get', (_$, e) => ({ value: env[e.name] }))

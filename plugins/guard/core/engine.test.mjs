@@ -1200,6 +1200,20 @@ test('factory run with a config the guard could not read: every label change is 
     'gh pr edit 7 --add-labe`printf l` x',
     'F=--add-label; gh issue edit 7 $F x',
     'gh pr create -t x --la${A}bel y',
+    // Review of #247: a subcommand the shell builds, a line continuation, a whole word on create, xargs, globs.
+    "F=--add-la$'\\x62'el; gh issue e$'d'it 7 $F ship-it",
+    "E=edit; F=--add-la$'\\x62'el; gh issue $E 7 $F ship-it",
+    "F=--add-la$'\\x62'el; gh issue \\\nedit 7 $F ship-it",
+    'gh issue edit 7 --add-la\\\nbel ship-it',
+    "F=--add-la$'\\x62'el; gh issue create -t x -b y \"$F\" ship-it",
+    "F=--add-la$'\\x62'el; gh pr create -t x --draft \"$F\"",
+    "gh pr create -t x -b \"$(cat body.md)\" $F",
+    "printf -- '--add-lab%sl' e | xargs -I{} gh issue edit 7 {} ship-it",
+    'echo 7 --add-labe | xargs gh issue edit',
+    'gh issue edit 7 --add-la*l ship-it',
+    'gh issue edit 7 --add-lab{e,}l ship-it',
+    "gh issue edit 7 -$'l' ship-it",
+    "gh -R o/r issue edit 7 --add-la$'\\x62'el ship-it",
   ]) {
     const d = run(c);
     assert.equal(d.action, 'deny', c);
@@ -1208,8 +1222,22 @@ test('factory run with a config the guard could not read: every label change is 
   for (const c of ['gh issue view 7 --json labels', 'gh issue list --label needs-owner --json number', 'git status', 'echo $HOME']) {
     assert.equal(run(c).action, 'allow', c);
   }
-  // An expansion in a value, outside an edit, is not a flag name: not this rule.
-  for (const c of ['gh pr create -t "fix: x" -b y', 'gh pr create -t "fix: x" -b "$(cat body.md)"', 'gh pr create -t "fix: x" --body="$(cat body.md)"']) {
+  assert.match(run('gh issue edit $N --body-file b.md').reason, /builds at run time.*literal `--body-file` path/, 'the reason says what to change');
+  assert.equal(run('gh issue edit 7 --add-label agent-o\\\nk', { approval: 'agent-ok', takeover: 'factory-takeover' }).rule, 'factory-approval', 'a line continuation joins the label');
+  // An expansion in a value, or in a gh command that cannot add labels: not this rule.
+  for (const c of [
+    'gh pr create -t "fix: x" -b y',
+    'gh pr create -t "fix: x" -b "$(cat body.md)"',
+    'gh pr create -t "fix: x" --body="$(cat body.md)"',
+    'gh pr create -t "fix: x" -b"$(cat body.md)"',
+    'gh pr create -t "$T" --body-file "$TMPDIR/b.md"',
+    'kill -$SIG 1; gh pr view 7',
+    'gh pr view 7 && git commit --amend --no-edit -m "$(cat m)"',
+    'gh pr edit 7 --body-file "$TMPDIR/b.md"',
+    'gh pr edit 7 --body "$(cat body.md)"',
+    'gh pr merge $PR --squash --auto',
+    'ls -la $HOME',
+  ]) {
     assert.notEqual(run(c).rule, 'factory-config', c);
   }
   assert.equal(run('gh issue edit 7 --add-label needs-owner', { approval: 'agent-ok', takeover: 'factory-takeover' }).action, 'allow', 'a readable config: other labels pass');
