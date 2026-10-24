@@ -1,6 +1,6 @@
 // pi extension: hud's status line in pi's footer (ctx.ui.setStatus): the context weather, the model, the branch's PR
-// with its checks, unpushed and uncommitted work. Same parts and icons as the Claude band; refreshed at session start
-// and after each turn. Also rewrites each reply (rewrite.mjs: links, paths, commits, secrets, ...). Loaded from the root
+// with its checks, unpushed and uncommitted work, and each running `subagent` call with its agent and model. Same parts
+// and icons as the Claude band; refreshed at session start, after each turn and as a subagent starts and ends. Also rewrites each reply (rewrite.mjs: links, paths, commits, secrets, ...). Loaded from the root
 // package.json.
 import { execFile } from 'node:child_process'
 import { readFileSync } from 'node:fs'
@@ -12,7 +12,7 @@ import { createFacts, FEATURES, fetchState, refsRule, rewrite, settings } from '
 import { azurePr, forgeOf, githubPr, gitlabMr, glyph, ICON, repoState } from './weather.mjs'
 
 // The footer text from the facts; a part is left out where its fact is missing.
-export function piStatus({ pct, model, repo }) {
+export function piStatus({ pct, model, repo, agents = [] }) {
   const parts = []
   if (pct != null) parts.push(`[${glyph(pct)} ctx:${Math.round(pct)}%]`)
   if (model) parts.push(`[${ICON.model} ${model}]`)
@@ -25,6 +25,7 @@ export function piStatus({ pct, model, repo }) {
   if (repo?.ahead || repo?.behind) parts.push(`[${ICON.sync} ↑${repo.ahead} ↓${repo.behind}]`)
   const c = repo?.changes
   if (c && (c.files || c.untracked)) parts.push(`[${ICON.changes} ${c.files + c.untracked} +${c.added} -${c.removed}]`)
+  for (const a of agents) parts.push(`[${ICON.agents} ${[a.agent, a.model].filter(Boolean).join(' · ')}]`)
   return parts.join(' ')
 }
 
@@ -102,11 +103,14 @@ const SETTLE_MS = 1500
 export default function hudExtension(pi, deps = {}) {
   let repo = null
   let facts = null
+  // The running `subagent` calls (dev-tools/pi/subagent.mjs) by tool call: the agent, and the session's model, which
+  // the call hands its child. No effort: the child is not given the session's thinking level, so it runs at its default.
+  const agents = new Map()
   const draw = (ctx) => {
     try {
       if (!ctx.hasUI) return
       const pct = ctx.getContextUsage?.()?.percent ?? null
-      ctx.ui.setStatus('hud', piStatus({ pct, model: ctx.model?.id, repo }))
+      ctx.ui.setStatus('hud', piStatus({ pct, model: ctx.model?.id, repo, agents: [...agents.values()] }))
     } catch {
       // the session ended while the repo was read (pi -p): its context is gone, nothing to draw
     }
@@ -121,9 +125,18 @@ export default function hudExtension(pi, deps = {}) {
   }
   pi.on('session_start', (_e, ctx) => {
     facts = null // a new session, maybe in another directory
+    agents.clear()
     void refresh(ctx)
   })
   pi.on('turn_end', (_e, ctx) => draw(ctx))
+  pi.on('tool_execution_start', (e, ctx) => {
+    if (e.toolName !== 'subagent') return
+    agents.set(e.toolCallId, { agent: e.args?.agent, model: ctx.model?.id })
+    draw(ctx)
+  })
+  pi.on('tool_execution_end', (e, ctx) => {
+    if (agents.delete(e.toolCallId)) draw(ctx)
+  })
   // /refresh-refs: forget every lookup, so the next replies ask again. A stored reply is not drawn again.
   pi.registerCommand?.('refresh-refs', {
     description: 'Look up the issue and PR states, files and commits in the next replies again',
