@@ -27,7 +27,7 @@ Works with [Claude Code](https://code.claude.com/), [GitHub Copilot CLI](https:/
 | [`javascript`](plugins/javascript/README.md) | JavaScript/TypeScript, React, Next.js. |
 | [`dev-tools`](plugins/dev-tools/README.md) | General development tooling — git, GitHub, conventional commits, semantic versioning. |
 | [`guard`](plugins/guard/README.md) | Guardrail hooks for every harness — skill enforcer, commit-title guard, host guard, pip deny, risky-command ask, `make check` on stop. |
-| [`hud`](plugins/hud/README.md) | Heads-up display — token-weather band and pane, PR and CI strip, tool-naming spinner (Claude Code); status line for Claude Code, Copilot CLI and pi; reply rewrites: clickable references, paths, commits and URLs, work-item states, pass/fail, masked secrets, local times (Claude Code in colour, pi). |
+| [`hud`](plugins/hud/README.md) | Heads-up display — token-weather band and pane, PR and CI strip, tool-naming spinner (Claude Code); status line for Claude Code, Copilot CLI and pi; running subagents in opencode's TUI; reply rewrites: clickable references, paths, commits and URLs, work-item states, pass/fail, masked secrets, local times (Claude Code in colour, pi). |
 | [`sounds`](plugins/sounds/README.md) | Toasts and configurable sounds for limits, context, cache expiry and every way a turn ends (Claude Code; pi, Codex and opencode with the default clips). |
 | [`factory`](plugins/factory/README.md) | Attended ticket runs on a GitHub issue board: owner-approved tickets worked end to end, scope and questions on the ticket, a fresh-context verifier, a result contract per run. |
 

@@ -2,7 +2,7 @@
 
 Runbook for every supported harness. What each one gets: [compatibility.md](compatibility.md). The hooks need `node` 22+ on PATH; everything works on macOS, Linux and Windows.
 
-Plugins: `api`, `python`, `go`, `javascript`, `dev-tools`, `guard`, `hud`, `sounds`, `factory` (`hud` does something in Claude Code and pi, its status line also in Copilot CLI; `sounds` in Claude Code, pi, Codex and opencode).
+Plugins: `api`, `python`, `go`, `javascript`, `dev-tools`, `guard`, `hud`, `sounds`, `factory` (`hud` does something in Claude Code and pi, its status line also in Copilot CLI, running subagents in opencode; `sounds` in Claude Code, pi, Codex and opencode).
 
 ## Claude Code
 
@@ -52,7 +52,7 @@ git clone https://github.com/giocaizzi/harness ~/.local/share/giocaizzi-harness
 make -C ~/.local/share/giocaizzi-harness install HARNESS=opencode
 ```
 
-That copies the skills to `~/.config/opencode/skills/`, the agents to `~/.config/opencode/agents/`, and writes `~/.config/opencode/plugins/giocaizzi-guard.js` and `giocaizzi-sounds.js`, stubs that load `plugins/guard/hooks/opencode.mjs` and `plugins/sounds/hooks/opencode.mjs` from the checkout (`$XDG_CONFIG_HOME` moves all of them). A skill or agent of the same name already there is replaced; the installer records what it wrote in `.giocaizzi-harness.json` and removes what a later run no longer ships.
+That copies the skills to `~/.config/opencode/skills/`, the agents to `~/.config/opencode/agents/`, and writes `~/.config/opencode/plugins/giocaizzi-guard.js` and `giocaizzi-sounds.js`, stubs that load `plugins/guard/hooks/opencode.mjs` and `plugins/sounds/hooks/opencode.mjs` from the checkout, and adds hud's TUI plugin (`plugins/hud/hooks/opencode-tui.mjs`) to the `plugin` list of `~/.config/opencode/tui.json`, keeping the rest of that file (one with comments is left alone, with the entry to add printed) (`$XDG_CONFIG_HOME` moves all of them). A skill or agent of the same name already there is replaced; the installer records what it wrote in `.giocaizzi-harness.json` and removes what a later run no longer ships.
 
 Update: `git pull` in the checkout (the guard updates with it), then the `make install` line again for skills and agents. Check: `opencode debug skill` lists `ship`; `opencode agent list` shows `scout`.
 
