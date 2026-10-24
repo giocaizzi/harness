@@ -142,8 +142,10 @@ if ($plugins) {
             if ($n) { "keep ${entry}: $n sessions started before the update; reload them first, then --after-reload"; continue }
         }
         if (@($procs | Where-Object { $_ -and ($_.Contains("$entry$sep") -or $_.Contains("$real$sep")) }).Count) { "keep ${entry}: named by a running command"; continue }
-        if ($dir.LinkType -and $onWindows) { "keep ${entry}: a link, so the rename probe cannot tell whether it is in use"; continue }
-        if (Test-Busy $real) { "keep ${entry}: in use by a process"; continue }
+        # A link holds no files, and removing it leaves its target and any handle open in it alone. On Windows the
+        # rename probe would rename the target, outside the cache, so a link skips it there; the session keep and
+        # the command-line check above still apply.
+        if (-not ($dir.LinkType -and $onWindows) -and (Test-Busy $real)) { "keep ${entry}: in use by a process"; continue }
         if ($apply) {
             if ($dir.LinkType) { [IO.Directory]::Delete($entry) } else { Remove-Item -LiteralPath $entry -Recurse -Force }
             if ($?) { "removed $entry" }
