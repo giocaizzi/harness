@@ -206,6 +206,8 @@ async function check(name) {
       const prompt = m.entries().map((e) => e.prompt).join('\n')
       const seen = { body: prompt.includes(WT_BODY), arg: prompt.includes(ARG), literal: prompt.includes('$ARGUMENTS') }
       if (!seen.body || !seen.arg || seen.literal === EXPECT[name].substitutes) failures.push(`skill argument: ${JSON.stringify(seen)}\n${out.stdout?.slice(-600)}\n${out.stderr?.slice(-600)}`)
+      // An allowed call with nothing updated: no stale-plugin note.
+      if (prompt.includes('Harness plugins updated')) failures.push(`stale: a note without an update\n${prompt.slice(prompt.indexOf('Harness plugins updated'), prompt.indexOf('Harness plugins updated') + 200)}`)
       rmSync(join(root, 'mock.jsonl'), { force: true })
     }
     // sounds' Stop hook ran from the installed plugin: it keeps the session's alert levels in the plugin data dir.
