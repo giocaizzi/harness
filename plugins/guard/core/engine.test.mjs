@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import { spawnSync } from 'node:child_process';
 import assert from 'node:assert/strict';
-import { touchesApprovalLabel, badTitle, branchFacts, cmdClass, branchTargets, codexRules, evaluateCommand, evaluateEdit, evaluateSpawn, nativeAsk, opencodeAsks, pureRead, refFacts, regenerableName, regenFacts, removalTargets, shellEdit, tagFacts, unattendedSet, usageLevel, worktreeFacts } from './engine.mjs';
+import { touchesApprovalLabel, badTitle, branchFacts, cmdClass, branchTargets, codexRules, evaluateCommand, evaluateEdit, evaluateRouting, evaluateSpawn, nativeAsk, opencodeAsks, pureRead, refFacts, regenerableName, regenFacts, removalTargets, shellEdit, tagFacts, unattendedSet, usageLevel, worktreeFacts } from './engine.mjs';
 import { rules } from './rules.mjs';
 
 const fresh = () => ({ reminded: new Set() });
@@ -507,6 +507,30 @@ test('an edit under docs/ or to README/AGENTS hints at docs-sync once', () => {
   assert.equal(evaluateEdit({ path: 'C:\\r\\AGENTS.md', state: fresh(), rules }).rule, 'docs');
   assert.equal(evaluateEdit({ path: '/r/src/docs.ts', state: fresh(), rules }).rule, undefined);
   assert.equal(evaluateEdit({ path: '/r/docs/x.md', loadedSkills: new Set(['dev-tools:docs-sync']), state: fresh(), rules }).rule, undefined);
+});
+
+test('a spawn that bypasses the typed agents gets one routing hint per case and session', () => {
+  const rule = (type, model, state = fresh()) => evaluateRouting({ type, model, state, rules }).rule;
+  assert.equal(rule('Plan'), 'routing-plan');
+  assert.equal(rule('general-purpose', 'opus'), 'routing-model');
+  assert.equal(rule(undefined, 'claude-opus-5-5'), 'routing-model');
+  assert.equal(rule('claude', 'fable'), 'routing-model');
+  assert.equal(rule('general-purpose', 'gpt-6.1-sol'), 'routing-model');
+  assert.equal(rule('dev-tools:driver', 'opus'), 'routing-override');
+  assert.equal(rule('scout', 'haiku'), 'routing-override');
+  // Routed as the skill says: a typed agent without a model, a routine unit on Sonnet, the verifier's per-change model.
+  assert.equal(rule('dev-tools:driver'), undefined);
+  assert.equal(rule('general-purpose', 'sonnet'), undefined);
+  assert.equal(rule('general-purpose'), undefined);
+  assert.equal(rule('factory:verifier', 'sonnet'), undefined);
+  assert.equal(rule('api:api-reviewer', 'opus'), undefined);
+  assert.equal(rule('Explore', 'opus'), undefined);
+  const state = fresh();
+  assert.equal(rule('Plan', undefined, state), 'routing-plan');
+  assert.equal(rule('Plan', undefined, state), undefined); // once
+  assert.equal(rule('general-purpose', 'opus', state), 'routing-model'); // another case still hints
+  assert.match(evaluateRouting({ type: 'Plan', state: fresh(), rules }).context, /dev-tools:driver.*plan-only brief/);
+  assert.match(evaluateRouting({ type: 'dev-tools:driver', model: 'opus', state: fresh(), rules }).context, /without a `model`/);
 });
 
 const outcome = (command, facts = {}) => {
