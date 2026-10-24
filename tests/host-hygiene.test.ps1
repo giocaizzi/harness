@@ -169,19 +169,29 @@ try {
     $c = Join-Path $cfg 'plugins/cache/mkt'
     foreach ($v in 'p/1.0', 'p/1.1', 'p/0.9', 'p/0.8', 'q/2.0') { New-Item -ItemType Directory -Force (Join-Path $c $v) | Out-Null }
     $c = (Resolve-Path $c).ProviderPath
-    @{ version = 2; plugins = @{ 'p@mkt' = @(@{ scope = 'user'; installPath = (Join-Path $c 'p/1.1'); version = '1.1' }) } } | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $cfg 'plugins/installed_plugins.json')
-    $pbusy = Invoke-Shell 'Start-Sleep 20' (Join-Path $c 'p/0.9')
-    $pargv = Invoke-Shell "Start-Sleep 20 # $(Join-Path $c 'p/0.8/hooks/run.mjs')"
+    # p was last updated at 2026-01-01T00:00:00Z = 1767225600; q has no entry left.
+    @{ version = 2; plugins = @{ 'p@mkt' = @(@{ scope = 'user'; installPath = (Join-Path $c 'p/1.1'); version = '1.1'; installedAt = '2025-06-01T00:00:00.000Z'; lastUpdated = '2026-01-01T00:00:00.000Z' }) } } | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $cfg 'plugins/installed_plugins.json')
+    $pbusy = Invoke-Shell 'Start-Sleep 120' (Join-Path $c 'p/0.9')
+    $pargv = Invoke-Shell "Start-Sleep 120 # $(Join-Path $c 'p/0.8/hooks/run.mjs')"
     Start-Sleep 2
     $env:CLAUDE_CONFIG_DIR = $cfg
-    $out = @(& $shell -NoProfile -File $sweep --plugins)
-    Test-Equal -Name 'plugin sweep lists only versions neither installed nor in use' -Got ((@($out | Where-Object { $_ -like 'would remove*' }) | ForEach-Object { ($_ -replace '\\', '/').Replace(($c -replace '\\', '/') + '/', '') } | Sort-Object) -join ';') -Want 'would remove p/1.0;would remove q/2.0'
+    function Invoke-PluginSweep([string]$Starts) { $env:SWEEP_SESSION_STARTS = $Starts; @(& $shell -NoProfile -File $sweep --plugins @args) }
+    function Get-Removable($Out) { (@($Out | Where-Object { $_ -like 'would remove*' }) | ForEach-Object { ($_ -replace '\\', '/').Replace(($c -replace '\\', '/') + '/', '') } | Sort-Object) -join ';' }
+    $out = Invoke-PluginSweep ''
+    Test-Equal -Name 'plugin sweep lists only versions neither installed nor in use' -Got (Get-Removable $out) -Want 'would remove p/1.0;would remove q/2.0'
     Test-Equal -Name 'plugin sweep keeps the installed, busy and running versions' -Got @($out | Where-Object { $_ -match 'p.1\.1: installed|p.0\.9: in use|p.0\.8: named by a running command' }).Count -Want 3
-    & $shell -NoProfile -File $sweep --plugins --apply | Out-Null
+    $out = Invoke-PluginSweep '1767225500'
+    Test-Equal -Name 'a session started before the update keeps the old versions' -Got "$(Get-Removable $out)$(@($out | Where-Object { $_ -match '(p.1\.0|q.2\.0): 1 sessions started before the update' }).Count)" -Want '2'
+    Test-Equal -Name 'a session started after the update keeps only a plugin with no entry' -Got (Get-Removable (Invoke-PluginSweep '1767225700')) -Want 'would remove p/1.0'
+    Test-Equal -Name '--after-reload drops the session keep' -Got (Get-Removable (Invoke-PluginSweep '1767225500' --after-reload)) -Want 'would remove p/1.0;would remove q/2.0'
+    Invoke-PluginSweep '1767225500' --apply | Out-Null
+    Test-Equal -Name '--apply leaves what a session may still run' -Got @(Get-ChildItem $c -Recurse -Depth 1 -Directory).Count -Want 7
+    Invoke-PluginSweep '' --apply | Out-Null
     Test-Equal -Name 'plugin --apply removes them and the emptied plugin dir' -Got ((Get-ChildItem $c -Recurse -Depth 1 -Directory | ForEach-Object { $_.Name } | Sort-Object) -join ' ') -Want '0.8 0.9 1.1 p'
     Set-Content (Join-Path $cfg 'plugins/installed_plugins.json') '{'
-    & $shell -NoProfile -File $sweep --plugins --apply 2>$null | Out-Null
+    Invoke-PluginSweep '' --apply 2>$null | Out-Null
     Test-Equal -Name 'unreadable installed_plugins.json removes nothing' -Got "$LASTEXITCODE $(@(Get-ChildItem (Join-Path $c 'p')).Count)" -Want '1 3'
+    Remove-Item Env:SWEEP_SESSION_STARTS
     Remove-Item Env:CLAUDE_CONFIG_DIR
     Stop-Process -Id $pbusy.Id, $pargv.Id -ErrorAction SilentlyContinue
 } finally {

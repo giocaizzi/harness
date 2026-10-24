@@ -150,20 +150,31 @@ unset SWEEP_OPEN_BRANCHES
 # sweep-stale.sh --plugins
 cfg=$tmp/claude c=$tmp/claude/plugins/cache/mkt
 for v in p/1.0 p/1.1 p/0.9 p/0.8 q/2.0; do mkdir -p "$c/$v"; done
-printf '{"version":2,"plugins":{"p@mkt":[{"scope":"user","installPath":"%s","version":"1.1"}]}}' "$c/p/1.1" >"$tmp/claude/plugins/installed_plugins.json"
-(cd "$c/p/0.9" && sleep 10) & pbusy=$!
-sh -c 'sleep 10; :' "$c/p/0.8/hooks/run.mjs" & pargv=$!
+# p was last updated at 2026-01-01T00:00:00Z = 1767225600; q has no entry left.
+printf '{"version":2,"plugins":{"p@mkt":[{"scope":"user","installPath":"%s","version":"1.1","installedAt":"2025-06-01T00:00:00.000Z","lastUpdated":"2026-01-01T00:00:00.000Z"}]}}' "$c/p/1.1" >"$tmp/claude/plugins/installed_plugins.json"
+(cd "$c/p/0.9" && sleep 60) & pbusy=$!
+sh -c 'sleep 60; :' "$c/p/0.8/hooks/run.mjs" & pargv=$!
 sleep 0.3
-out=$(CLAUDE_CONFIG_DIR=$cfg "$sweep" --plugins)
-check "plugin sweep lists only versions neither installed nor in use" \
-  "$(echo "$out" | grep '^would remove' | sed "s|$c/||" | sort | tr '\n' ' ')" "would remove p/1.0 would remove q/2.0 "
+psweep() { CLAUDE_CONFIG_DIR=$cfg "$sweep" --plugins "$@"; }
+removable() { echo "$1" | grep '^would remove' | sed "s|$c/||" | sort | tr '\n' ' '; }
+out=$(SWEEP_SESSION_STARTS='' psweep)
+check "plugin sweep lists only versions neither installed nor in use" "$(removable "$out")" "would remove p/1.0 would remove q/2.0 "
 check "plugin sweep keeps the installed, busy and running versions" \
   "$(echo "$out" | grep -c -e 'p/1.1: installed' -e 'p/0.9: in use' -e 'p/0.8: named by a running command')" 3
-CLAUDE_CONFIG_DIR=$cfg "$sweep" --plugins --apply >/dev/null
+out=$(SWEEP_SESSION_STARTS=1767225500 psweep)
+check "a session started before the update keeps the old versions" \
+  "$(removable "$out")$(echo "$out" | grep -c -e 'p/1.0: 1 sessions started before the update' -e 'q/2.0: 1 sessions started before the update')" 2
+out=$(SWEEP_SESSION_STARTS=1767225700 psweep)
+check "a session started after the update keeps only a plugin with no entry" "$(removable "$out")" "would remove p/1.0 "
+check "--after-reload drops the session keep" "$(removable "$(SWEEP_SESSION_STARTS=1767225500 psweep --after-reload)")" "would remove p/1.0 would remove q/2.0 "
+SWEEP_SESSION_STARTS=1767225500 psweep --apply >/dev/null
+check "--apply leaves what a session may still run" "$(cd "$c" && find . -mindepth 2 -maxdepth 2 | sort | tr '\n' ' ')" "./p/0.8 ./p/0.9 ./p/1.0 ./p/1.1 ./q/2.0 "
+SWEEP_SESSION_STARTS='' psweep --apply >/dev/null
 check "plugin --apply removes them and the emptied plugin dir" "$(cd "$c" && find . -mindepth 1 -maxdepth 2 | sort | tr '\n' ' ')" "./p ./p/0.8 ./p/0.9 ./p/1.1 "
 echo '{' >"$tmp/claude/plugins/installed_plugins.json"
-check "unreadable installed_plugins.json removes nothing" "$(CLAUDE_CONFIG_DIR=$cfg "$sweep" --plugins --apply 2>/dev/null; echo "$?"; find "$c/p" -mindepth 1 -maxdepth 1 | wc -l | tr -d ' ')" "$(printf '1\n3')"
+check "unreadable installed_plugins.json removes nothing" "$(SWEEP_SESSION_STARTS='' psweep --apply 2>/dev/null; echo "$?"; find "$c/p" -mindepth 1 -maxdepth 1 | wc -l | tr -d ' ')" "$(printf '1\n3')"
 check "--plugins and --branches together is a usage error" "$("$sweep" --plugins --branches 2>/dev/null; echo $?)" 2
+check "--after-reload without --plugins is a usage error" "$("$sweep" --after-reload 2>/dev/null; echo $?)" 2
 { kill "$pbusy" "$pargv"; wait "$pbusy" "$pargv"; } 2>/dev/null
 
 exit "$fails"

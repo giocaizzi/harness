@@ -17,7 +17,7 @@ In this skill's `scripts/`, `.sh` on macOS/Linux and `.ps1` on Windows. Env, def
 - `node memory-lint.mjs [--repo <path>] [<dir>...]`: report-only lint of Claude Code auto-memory (all projects by default).
 - `sweep-stale.sh [--apply]`: list (default) or remove worktrees idle for 24 h, unused by any process and clean. It also lists dirs under `.claude/worktrees/` that git no longer registers, with their size and the command the owner runs to reclaim them; it never removes those. Pass `SWEEP_WORKTREES_ROOT` when the repo's `AGENTS.md` puts worktrees elsewhere.
 - `sweep-stale.sh --branches [--apply]`: list (default) or delete remote branches with no open PR and local branches whose upstream is gone. Delete only when the user asks.
-- `sweep-stale.sh --plugins [--apply]`: list (default) or remove Claude Code plugin versions (`${CLAUDE_CONFIG_DIR:-~/.claude}/plugins/cache/<marketplace>/<plugin>/<version>`) that are not installed and that no process uses. The other harnesses keep no old versions: Codex replaces a plugin's cache dir on update, Copilot CLI keeps one unversioned copy, opencode and pi install from a checkout or package.
+- `sweep-stale.sh --plugins [--after-reload] [--apply]`: list (default) or remove Claude Code plugin versions (`${CLAUDE_CONFIG_DIR:-~/.claude}/plugins/cache/<marketplace>/<plugin>/<version>`) that are not installed and that nothing may still run; a version stays while a `claude` process started before that plugin's last update. The other harnesses keep no old versions: Codex replaces a plugin's cache dir on update, Copilot CLI keeps one unversioned copy, opencode and pi install from a checkout or package.
 
 ## Rules
 
@@ -37,7 +37,7 @@ Why each rule exists, and the incidents behind it: [references/lessons.md](refer
 
 ## Gotchas
 
-- A running Claude Code session keeps the plugin version it loaded until the user types `/reload-plugins`, and the sweep cannot see that: sweep plugins after the open sessions reloaded, never on a schedule.
+- A running Claude Code session runs the plugin version it loaded, spawning hooks from that folder without holding it open, until the user types `/reload-plugins`; a reload does not restart the process, so the sweep cannot see it. Only once the user has reloaded every open session, run `--plugins --after-reload --apply`; never sweep plugins on a schedule.
 - Build tools that write read-only files into the worktree (the Go module cache, envtest binaries) make `git worktree remove` fail halfway and leave an unregistered dir that only the owner can delete: keep `GOMODCACHE` and envtest assets outside the worktree.
 
 ## When the repo has no host tooling

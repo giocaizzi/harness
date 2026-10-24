@@ -1,12 +1,17 @@
 #!/usr/bin/env bash
-# sweep-stale.sh [--branches | --plugins] [--apply]   list (default) or remove stale git worktrees of the current repo
+# sweep-stale.sh [--branches | --plugins [--after-reload]] [--apply]   list (default) or remove stale git worktrees of the current repo
 #
 # --plugins sweeps the Claude Code plugin cache instead: version dirs under
 # ${CLAUDE_CONFIG_DIR:-~/.claude}/plugins/cache/<marketplace>/<plugin>/<version> that are not the
-# installPath of any entry in plugins/installed_plugins.json (any scope) and that no process uses
-# (lsof: an open file or cwd under it; ps: a command line naming it). An unreadable
-# installed_plugins.json, or no jq or lsof, removes nothing. --apply removes them (`rm -rf`).
-# A running session keeps the version it loaded until /reload-plugins, which the sweep cannot see.
+# installPath of any entry in plugins/installed_plugins.json (any scope) and that nothing may still
+# run. A running session loaded its plugins at start and spawns hooks from that path later without
+# holding it open, so a version is kept while any `claude` process started before the plugin's
+# newest lastUpdated (or while any runs, for a plugin with no entry left), besides lsof (an open
+# file or cwd under it) and ps (a command line naming it). /reload-plugins does not restart the
+# process, so only the user can tell the sweep that every session reloaded: --after-reload drops
+# that keep. Session start times come from ps, or SWEEP_SESSION_STARTS (epoch seconds, one per
+# line) when set. An unreadable installed_plugins.json, or no jq or lsof, removes nothing.
+# --apply removes them (`rm -rf`).
 #
 # --branches sweeps branches instead: remote branches with no open PR (branches of closed or
 # never-opened PRs; GitHub only deletes on merge) and local branches whose upstream is gone.
@@ -23,12 +28,13 @@
 # registers, typically a remove that failed on read-only build files, with their size and the
 # command that reclaims them. It never runs that command, even with --apply.
 set -u
-apply='' branches='' plugins=''
-usage() { echo "usage: sweep-stale.sh [--branches | --plugins] [--apply]" >&2; exit 2; }
+apply='' branches='' plugins='' after_reload=''
+usage() { echo "usage: sweep-stale.sh [--branches | --plugins [--after-reload]] [--apply]" >&2; exit 2; }
 for a in "$@"; do
-  case $a in --apply) apply=1 ;; --branches) branches=1 ;; --plugins) plugins=1 ;; *) usage ;; esac
+  case $a in --apply) apply=1 ;; --branches) branches=1 ;; --plugins) plugins=1 ;; --after-reload) after_reload=1 ;; *) usage ;; esac
 done
 [ -n "$branches" ] && [ -n "$plugins" ] && usage
+[ -n "$after_reload" ] && [ -z "$plugins" ] && usage
 
 sweep_branches() {
   git fetch -q --prune origin || { echo "sweep: fetch failed; nothing changed" >&2; return 1; }
@@ -55,9 +61,20 @@ sweep_plugins() {
   command -v jq >/dev/null || { echo "sweep: jq not found; nothing removed" >&2; return 1; }
   command -v lsof >/dev/null || { echo "sweep: lsof not found; cannot tell busy versions, nothing removed" >&2; return 1; }
   [ -d "$root/cache" ] || { echo "sweep: no plugin cache at $root/cache"; return 0; }
-  local installed procs real
+  local installed updated starts procs real key upd n
   installed=$(jq -r '.plugins[][] | .installPath // empty' "$root/installed_plugins.json") ||
     { echo "sweep: cannot read $root/installed_plugins.json; nothing removed" >&2; return 1; }
+  # <plugin>@<marketplace> TAB the newest lastUpdated (or installedAt) of its entries, as epoch seconds.
+  updated=$(jq -r '.plugins | to_entries[] | "\(.key)\t\([.value[] | (.lastUpdated // .installedAt // empty) | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601] | max // "")"' "$root/installed_plugins.json") ||
+    { echo "sweep: cannot read the update times in $root/installed_plugins.json; nothing removed" >&2; return 1; }
+  if [ -n "${SWEEP_SESSION_STARTS+x}" ]; then starts=$SWEEP_SESSION_STARTS
+  else
+    # etime is [[dd-]hh:]mm:ss on BSD and GNU ps alike; start = now - elapsed.
+    starts=$(ps -axo etime=,comm= | awk -v now="$(date +%s)" '$2 ~ /(^|\/)claude$/ {
+      d = 0; t = $1; if (index(t, "-")) { d = substr(t, 1, index(t, "-") - 1); t = substr(t, index(t, "-") + 1) }
+      n = split(t, p, ":"); s = p[n] + 60 * p[n - 1] + (n == 3 ? 3600 * p[1] : 0) + 86400 * d
+      print now - s }') || { echo "sweep: ps failed; cannot tell running sessions, nothing removed" >&2; return 1; }
+  fi
   # Compare resolved paths: the recorded installPath may go through a symlink (/tmp, a moved home).
   installed=$(printf '%s\n' "$installed" | while IFS= read -r p; do [ -d "$p" ] && (cd "$p" && pwd -P); done)
   procs=$(ps -axo command= 2>/dev/null)
@@ -68,6 +85,12 @@ sweep_plugins() {
     # lsof exits 1 for "nothing found" and also on harmless warnings: judge by output past the header.
     [ -n "$(lsof +D "$real" 2>/dev/null | tail -n +2)" ] && { echo "keep $real: in use by a process"; continue; }
     printf '%s\n' "$procs" | grep -q -F -- "$real/" && { echo "keep $real: named by a running command"; continue; }
+    if [ -z "$after_reload" ]; then
+      key="$(basename "$(dirname "$real")")@$(basename "$(dirname "$(dirname "$real")")")"
+      upd=$(printf '%s\n' "$updated" | awk -F '\t' -v k="$key" '$1 == k { print $2 }')
+      n=$(printf '%s\n' "$starts" | awk -v u="${upd:-}" 'NF && (u == "" || $1 < u) { c++ } END { print c + 0 }')
+      [ "$n" -gt 0 ] && { echo "keep $real: $n sessions started before the update; reload them first, then --after-reload"; continue; }
+    fi
     if [ -n "$apply" ]; then
       rm -rf -- "$real" && echo "removed $real"
       rmdir -- "$(dirname "$real")" 2>/dev/null

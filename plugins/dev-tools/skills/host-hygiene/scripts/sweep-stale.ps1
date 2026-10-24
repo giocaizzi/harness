@@ -1,11 +1,15 @@
-# sweep-stale.ps1 [--branches | --plugins] [--apply]   list (default) or remove stale git worktrees of the current repo
+# sweep-stale.ps1 [--branches | --plugins [--after-reload]] [--apply]   list (default) or remove stale git worktrees of the current repo
 #
 # --plugins sweeps the Claude Code plugin cache instead: version dirs under
 # $env:CLAUDE_CONFIG_DIR (default ~/.claude)/plugins/cache/<marketplace>/<plugin>/<version> that are
-# not the installPath of any entry in plugins/installed_plugins.json (any scope) and that no process
-# uses (busy check below; also a process command line naming it). An unreadable
-# installed_plugins.json removes nothing. --apply removes them. A running session keeps the version
-# it loaded until /reload-plugins, which the sweep cannot see.
+# not the installPath of any entry in plugins/installed_plugins.json (any scope) and that nothing may
+# still run. A running session loaded its plugins at start and spawns hooks from that path later
+# without holding it open, so a version is kept while any `claude` process started before the
+# plugin's newest lastUpdated (or while any runs, for a plugin with no entry left), besides the busy
+# check below and a process command line naming it. /reload-plugins does not restart the process,
+# so only the user can tell the sweep that every session reloaded: --after-reload drops that keep.
+# Session start times come from Get-Process, or SWEEP_SESSION_STARTS (epoch seconds, one per line)
+# when set. An unreadable installed_plugins.json removes nothing. --apply removes them.
 #
 # --branches sweeps branches instead: remote branches with no open PR (branches of closed or
 # never-opened PRs; GitHub only deletes on merge) and local branches whose upstream is gone.
@@ -27,8 +31,9 @@ $ErrorActionPreference = 'Continue' # native stderr must not throw (Windows Powe
 $apply = $args -contains '--apply'
 $branches = $args -contains '--branches'
 $plugins = $args -contains '--plugins'
-$unknown = @($args | Where-Object { $_ -notin '--apply', '--branches', '--plugins' })
-if ($unknown.Count -or ($branches -and $plugins)) { [Console]::Error.WriteLine('usage: sweep-stale.ps1 [--branches | --plugins] [--apply]'); exit 2 }
+$afterReload = $args -contains '--after-reload'
+$unknown = @($args | Where-Object { $_ -notin '--apply', '--branches', '--plugins', '--after-reload' })
+if ($unknown.Count -or ($branches -and $plugins) -or ($afterReload -and -not $plugins)) { [Console]::Error.WriteLine('usage: sweep-stale.ps1 [--branches | --plugins [--after-reload]] [--apply]'); exit 2 }
 if ($branches) {
     git fetch -q --prune origin
     if ($LASTEXITCODE) { [Console]::Error.WriteLine('sweep: fetch failed; nothing changed'); exit 1 }
@@ -89,6 +94,18 @@ if ($plugins) {
     $installed = @(foreach ($p in $doc.plugins.PSObject.Properties) {
         foreach ($e in @($p.Value)) { if ($e.installPath -and (Test-Path -LiteralPath $e.installPath)) { Resolve-Real $e.installPath } }
     })
+    # Plugin key (<plugin>@<marketplace>) -> the newest lastUpdated (or installedAt) of its entries, as epoch seconds.
+    function ConvertTo-Epoch($v) {
+        if ($v -is [datetime]) { return ([DateTimeOffset]$v).ToUnixTimeSeconds() }
+        [DateTimeOffset]::Parse([string]$v, [Globalization.CultureInfo]::InvariantCulture).ToUnixTimeSeconds()
+    }
+    $updated = @{}
+    foreach ($p in $doc.plugins.PSObject.Properties) {
+        $times = @(foreach ($e in @($p.Value)) { $t = if ($e.lastUpdated) { $e.lastUpdated } else { $e.installedAt }; if ($t) { ConvertTo-Epoch $t } })
+        if ($times.Count) { $updated[$p.Name] = ($times | Measure-Object -Maximum).Maximum }
+    }
+    $starts = if ($null -ne $env:SWEEP_SESSION_STARTS) { @($env:SWEEP_SESSION_STARTS -split "`r?`n" | Where-Object { $_ } | ForEach-Object { [long]$_ }) }
+        else { @(Get-Process -Name claude -ErrorAction SilentlyContinue | ForEach-Object { ([DateTimeOffset]$_.StartTime).ToUnixTimeSeconds() }) }
     $procs = if ($onWindows) { @(Get-CimInstance Win32_Process | ForEach-Object { $_.CommandLine }) } else { @(ps -axo command= 2>$null) }
     $sep = [IO.Path]::DirectorySeparatorChar
     foreach ($dir in @(Get-ChildItem -LiteralPath $cache -Directory | Get-ChildItem -Directory | Get-ChildItem -Directory)) {
@@ -97,6 +114,11 @@ if ($plugins) {
         if ($installed -contains $real) { "keep ${real}: installed"; continue }
         if (Test-Busy $real) { "keep ${real}: in use by a process"; continue }
         if (@($procs | Where-Object { $_ -and $_.Contains("$real$sep") }).Count) { "keep ${real}: named by a running command"; continue }
+        if (-not $afterReload) {
+            $key = "$($dir.Parent.Name)@$($dir.Parent.Parent.Name)"
+            $n = @($starts | Where-Object { -not $updated.ContainsKey($key) -or $_ -lt $updated[$key] }).Count
+            if ($n) { "keep ${real}: $n sessions started before the update; reload them first, then --after-reload"; continue }
+        }
         if ($apply) {
             Remove-Item -LiteralPath $real -Recurse -Force
             if ($?) { "removed $real" }
