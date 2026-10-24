@@ -288,5 +288,34 @@
   ["glab issue update 7 -l ship-it", "deny:factory-config", "G25", "review #247 round 2: -l on glab", {"factory": "unsure"}],
 
   ["files=(a b); printf '%s\\n' \"${files[@]}\"", "allow", "G27", "fuzz: a bash array hung the shell reader"],
-  ["cat =(rm -rf src)", "ask:rm", "G27", "fuzz: zsh =(cmd) runs its body"]
+  ["cat =(rm -rf src)", "ask:rm", "G27", "fuzz: zsh =(cmd) runs its body"],
+
+  ["echo \"RUN_ID=${FACTORY_RUN_ID:-unset} ...\"; gh api user --jq .login; git remote -v | head -2", "allow", "G26", "factory run: a gh api read in a chain was denied", {"factory": "readable"}],
+  ["echo hi; gh api repos/o/r/pulls --jq '.[].number'", "allow", "G26", "factory run: a gh api read in a chain", {"factory": "readable"}],
+  ["echo hi; gh api -X POST repos/o/r/issues/1/labels -f 'labels[]=agent-ok'", "deny:factory-approval", "G26", "control: a chained gh api write naming the label", {"factory": "readable"}],
+  ["echo hi; gh api repos/o/r/issues/1/labels --input body.json", "deny:factory-approval", "G26", "control: a chained gh api body the guard cannot read", {"factory": "readable"}],
+  ["echo hi; gh issue edit 1 --add-label agent-ok", "deny:factory-approval", "G26", "control: a chained label add", {"factory": "readable"}],
+  ["echo hi; gh $(echo api) repos/o/r/issues/1/labels", "deny:factory-approval", "G26", "control: a chained gh whose subcommand is built", {"factory": "readable"}],
+  ["echo hi; gh \"$CMD\" repos/o/r/issues/1/labels", "deny:factory-approval", "G26", "control: a chained gh whose subcommand is a variable", {"factory": "readable"}],
+  ["echo $(gh api -X POST repos/o/r/issues/1/labels --input b.json)", "deny:factory-approval", "G26", "control: a gh api body inside a substitution", {"factory": "readable"}],
+  ["cat > x.sh <<'EOF'\ngh api -X POST repos/o/r/issues/1/labels --inp${E}ut b.json\nEOF\nbash x.sh", "deny:factory-approval", "G26", "review #268: a heredoc script run by bash", {"factory": "readable"}],
+  ["cat > x.sh <<'EOF'\ngh api -X POST repos/o/r/issues/1/labels --inp${E}ut b.json\nEOF\nsh x.sh", "deny:factory-approval", "G26", "review #268: a heredoc script run by sh", {"factory": "readable"}],
+  ["cat > x.sh <<EOF\ngh api -X POST repos/o/r/issues/1/labels --inp${E}ut b.json\nEOF\nbash x.sh", "deny:factory-approval", "G26", "review #268: an unquoted heredoc script", {"factory": "readable"}],
+  ["cat > x.sh <<'EOF'\ngh api -X POST repos/o/r/issues/1/labels -F labels[]=$'\\x40'f\nEOF\nbash x.sh", "deny:factory-approval", "G26", "review #268: a heredoc script with a decoded =@", {"factory": "readable"}],
+  ["echo hi; source /dev/stdin <<'EOF'\ngh api -X POST repos/o/r/issues/1/labels --inp${E}ut b.json\nEOF", "deny:factory-approval", "G26", "review #268: a heredoc sourced from stdin", {"factory": "readable"}],
+  ["echo hi; . /dev/stdin <<'EOF'\ngh api -X POST repos/o/r/issues/1/labels --inp${E}ut b.json\nEOF", "deny:factory-approval", "G26", "review #268: a heredoc dotted from stdin", {"factory": "readable"}],
+  ["echo hi; bash /dev/stdin <<'EOF'\ngh api -X POST repos/o/r/issues/1/labels --inp${E}ut b.json\nEOF", "deny:factory-approval", "G26", "review #268: a heredoc read by bash /dev/stdin", {"factory": "readable"}],
+  ["echo hi; bash -s -- x <<'EOF'\ngh api -X POST repos/o/r/issues/1/labels --inp${E}ut b.json\nEOF", "deny:factory-approval", "G26", "review #268: a heredoc read by bash -s with arguments", {"factory": "readable"}],
+  ["cat > x.sh <<'EOF'\ngh api -X POST repos/o/r/issues/1/labels -f labels[]=agent-o${K}\nEOF\nK=k bash x.sh", "deny:factory-approval", "G26", "review #268: a heredoc script that builds the label", {"factory": "readable"}],
+  ["gh() { command \"$1\" \"$2\" -X POST repos/o/r/issues/1/labels --inp\"$3\"ut b.json; }; gh gh api ''", "deny:factory-approval", "G26", "review #268: a gh function whose body never spells gh", {"factory": "readable"}],
+  ["echo hi; function gh { command gh \"$@\"; }; gh api user", "deny:factory-approval", "G26", "review #268: a function gh", {"factory": "readable"}],
+  ["alias gh='gh api -X POST'; echo hi; gh api user", "deny:factory-approval", "G26", "review #268: an alias gh", {"factory": "readable"}],
+
+  ["echo hi; ${GH:-gh} api repos/o/r/issues/1/labels", "deny:factory-approval", "G28", "#270: gh as an expansion's default", {"factory": "readable"}],
+  ["${GH:=gh} api repos/o/r/issues/1/labels", "deny:factory-approval", "G28", "#270: gh as an expansion's assigned value", {"factory": "readable"}],
+  ["echo hi; ${GH:-/usr/local/bin/gh} api repos/o/r/issues/1/labels", "deny:factory-approval", "G28", "#270: a path to gh as an expansion's default", {"factory": "readable"}],
+  ["echo ${HOME}; gh api user --jq .login", "allow", "G28", "control: another expansion next to a plain gh read", {"factory": "readable"}],
+  ["gh alias set tag 'api -X POST repos/o/r/issues/1/labels --input b.json'; gh tag", "deny:factory-approval", "G26", "review #271 round 2: an alias set and run in a chain", {"factory": "readable"}],
+  ["echo hi; gh tag 1", "deny:factory-approval", "G26", "review #271 round 2: an alias or extension in a chain", {"factory": "readable"}],
+  ["echo hi; gh api -X POST repos/o/r/statuses/abc -f state=success", "deny:factory-approval", "G26", "review #271 round 2: a chained gh api write, even off the labels path", {"factory": "readable"}]
 ]
