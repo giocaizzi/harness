@@ -100,6 +100,36 @@ test('marked comments: the documented filter drops a spoofed one and keeps the w
   assert.deepEqual(answerRun.stdout.toString().trim().split('\n').map((l) => JSON.parse(l).id), [4])
 })
 
+test('runtime claim not from a writer: the gate names the login to add, stops with auth and acts on nothing', () => {
+  const text = read('plugins/factory/skills/ticket-run/references/comments.md')
+  const bullet = text.split('- **Runtime claim not from a writer:**')[1].split('\n- **')[0]
+  const program = bullet.split('```')[1].match(/--jq '([^']+)'/)[1].replace('<M>', JSON.stringify('<!-- factory -->'))
+  const comment = (id, login, body) => ({ id, user: { login }, body })
+  const comments = [
+    comment(1, 'example-bot[bot]', '<!-- factory -->\n<!-- factory:claim -->\nhost: runner-1\nrun id: rt-77\nrunner: runtime'),
+    comment(2, 'example-bot[bot]', '<!-- factory -->\n<!-- factory:plan -->\ngoal: x'),
+    comment(3, 'stranger', 'quoting <!-- factory:claim --> without the marker'),
+    comment(4, 'stranger', '<!-- factory -->\n<!-- factory:claim -->\nrun id: rt-99'),
+  ]
+  const run = spawnSync('jq', ['-c', program], { input: JSON.stringify(comments) })
+  assert.equal(run.status, 0, run.stderr.toString())
+  const listed = run.stdout.toString().trim().split('\n').map((l) => JSON.parse(l))
+  assert.deepEqual(listed.map((c) => c.login), ['example-bot[bot]', 'stranger'])
+  assert.match(listed[0].body, /run id: rt-77/)
+  assert.match(bullet, /FACTORY_RUN_ID/)
+  assert.match(bullet, /`reason_code: auth`/)
+  assert.match(bullet, /`\[bot\]` included/)
+  assert.match(bullet, /never edit it, claim over it or touch the claim label/)
+  const stops = read('plugins/factory/skills/ticket-run/references/done.md').split('**Gate stops.**')[1].split('\n\n')[0]
+  assert.match(stops, /`FACTORY_RUN_ID` set\) that stops at the gate still writes `result\.json`, with `end_state` `failed`/)
+  assert.match(stops, /`reason_code` `auth`/)
+  assert.match(doc.split('**Authors.**')[1].split('\n\n')[0], /`reason_code: auth`/)
+  const adopt = read('docs/adopt-factory.md')
+  assert.match(adopt, /keep `writers`[^\n]*`example-bot\[bot\]`[^\n]*never the bare slug/)
+  assert.match(adopt, /With a runtime: .*`reason_code: auth`/)
+  assert.match(read('plugins/factory/template/config.yaml'), /slug plus \[bot\]/)
+})
+
 test('marked comments: the one-read filters give what the old jq pipelines gave, on random comments', () => {
   // The pipelines these filters replaced: `gh api … --jq '.[]' | jq -c --argjson w "$W" --arg m "$M" '…'`.
   const oldTrusted = 'select(((.user.login | ascii_downcase) as $u | $w | map(ascii_downcase) | index($u)) and (.body | startswith($m))) | {id, login: .user.login, created_at, html_url, body}'
