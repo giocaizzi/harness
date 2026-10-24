@@ -93,7 +93,8 @@ export function knownSkills(here = dirname(fileURLToPath(import.meta.url))) {
 // gets its own hints, except the read and edit hints, which say the same to every agent and so come once per session.
 // Without a session id nothing is kept.
 const SESSION_HINTS = new Set(['read', 'edit'])
-export function sessionStore(dir, sessionId, agentId) {
+// `processId`: the harness process the facts belong to (the plugin versions it loaded).
+export function sessionStore(dir, sessionId, agentId, processId) {
   const file = sessionId ? join(dir, 'sessions', `${String(sessionId).replace(/[^\w-]/g, '_')}.jsonl`) : null
   const agent = agentId ? String(agentId) : undefined
   let seen = { reminded: [], loaded: [] }
@@ -101,6 +102,7 @@ export function sessionStore(dir, sessionId, agentId) {
     load() {
       seen = { reminded: [], loaded: [], unattended: undefined, plugins: {} }
       if (!file) return { reminded: [], loaded: [], plugins: {} }
+      const proc = String(processId ?? '')
       let text = ''
       try {
         text = readFileSync(file, 'utf8')
@@ -117,8 +119,9 @@ export function sessionStore(dir, sessionId, agentId) {
         if (typeof fact.loaded === 'string') seen.loaded.push(fact.loaded)
         if (typeof fact.reminded === 'string' && (fact.agent === agent || SESSION_HINTS.has(fact.reminded) || fact.reminded.startsWith('stale:'))) seen.reminded.push(fact.reminded)
         if (typeof fact.unattended === 'boolean') seen.unattended = fact.unattended
-        // The plugin versions the session started with: the first record of each wins.
-        if (typeof fact.plugin === 'string' && typeof fact.version === 'string') seen.plugins[fact.plugin] ??= fact.version
+        // The plugin versions this harness process loaded: the first record of each wins. A resumed or restarted session
+        // keeps its id but is a new process, which loaded what was installed then.
+        if (typeof fact.plugin === 'string' && typeof fact.version === 'string' && String(fact.process ?? '') === proc) seen.plugins[fact.plugin] ??= fact.version
       }
       return { reminded: [...new Set(seen.reminded)], loaded: [...new Set(seen.loaded)], unattended: seen.unattended, plugins: { ...seen.plugins } }
     },
@@ -129,7 +132,7 @@ export function sessionStore(dir, sessionId, agentId) {
         ...[...new Set(state.loaded)].filter((s) => !seen.loaded.includes(s)).map((s) => JSON.stringify({ loaded: s })),
         ...[...new Set(state.reminded)].filter((r) => !seen.reminded.includes(r)).map((r) => JSON.stringify({ reminded: r, agent })),
         ...(typeof state.unattended === 'boolean' && state.unattended !== seen.unattended ? [JSON.stringify({ unattended: state.unattended })] : []),
-        ...Object.entries(state.plugins ?? {}).filter(([p]) => !(p in seen.plugins)).map(([plugin, version]) => JSON.stringify({ plugin, version })),
+        ...Object.entries(state.plugins ?? {}).filter(([p]) => !(p in seen.plugins)).map(([plugin, version]) => JSON.stringify({ plugin, version, process: processId })),
       ]
       if (!lines.length) return
       mkdirSync(dirname(file), { recursive: true, mode: 0o700 })
@@ -405,7 +408,7 @@ function onSpawn(input, state, deps) {
 function onStale(input, state, deps, out) {
   const decided = out.stdout && JSON.parse(out.stdout).hookSpecificOutput?.permissionDecision
   const reminded = state.reminded.filter((r) => r.startsWith('stale:')).map((r) => r.slice(6))
-  const s = staleCheck({ root: deps.pluginRoot, loaded: state.plugins, reminded, harness: deps.harness })
+  const s = staleCheck({ root: deps.pluginRoot, cwd: input.cwd, loaded: state.plugins, reminded, harness: deps.harness })
   state.plugins = s.loaded
   if (!s.context || decided) return out
   state.reminded.push(...s.remind.map((r) => `stale:${r}`))
@@ -416,7 +419,8 @@ function onStale(input, state, deps, out) {
 
 // One hook event in, { stdout?, stderr?, code? } out. `deps` is injected so tests run without a host.
 export async function handle(input, deps) {
-  const store = sessionStore(deps.dataDir, input.session_id, input.agent_id)
+  // A command hook's parent is the harness process (one per session run: a resume or restart is a new one).
+  const store = sessionStore(deps.dataDir, input.session_id, input.agent_id, deps.processId ?? process.ppid)
   const state = { reminded: [], loaded: [], plugins: {}, ...store.load() }
   const loadedBefore = [...state.loaded]
   const event = input.hook_event_name
@@ -446,7 +450,11 @@ export async function handle(input, deps) {
       if (command) out = await onShell({ ...input, tool_input: { command } }, state, deps)
       else if (tool === 'run_task') out = note(`The guard could not read the command of task "${t.id ?? ''}" in .vscode/tasks.json, so it did not check it. If it deletes, force-pushes or reads secrets, confirm with the user first.`)
     }
-    out = onStale(input, state, deps, out)
+    try {
+      out = onStale(input, state, deps, out)
+    } catch {
+      // the note is a nicety: a decision already made stands
+    }
   }
   // One guard.skill per skill and session, in every harness: the same skill-usage figure everywhere. Names are kept
   // bare (`dev-tools:ship` is `ship`), so a skill loaded both ways counts once.

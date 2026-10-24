@@ -2,7 +2,7 @@
 // reloads. The guard compares what this session runs with what is installed now and says so once per newer version.
 // Never throws: anything unreadable reads as "nothing newer".
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
-import { basename, dirname, join, resolve } from 'node:path'
+import { basename, dirname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 export const PLUGIN_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -24,12 +24,21 @@ const attempt = (f) => {
 }
 const manifestVersion = (dir) => attempt(() => JSON.parse(readFileSync(join(dir, '.claude-plugin', 'plugin.json'), 'utf8')).version) ?? null
 
-// The plugin versions installed now, by plugin name, for the marketplace this plugin came from.
+// The registry entries of a plugin that apply to a session in `cwd`: a project or local install whose project holds
+// `cwd` wins over a user one; another project's install does not apply here.
+function scopedVersion(entries, cwd) {
+  const here = cwd ? resolve(cwd) : null
+  const project = entries.filter((e) => e?.projectPath && here && (here === resolve(e.projectPath) || here.startsWith(resolve(e.projectPath) + sep)))
+  return maxVersion((project.length ? project : entries.filter((e) => e && !e.projectPath)).map((e) => e.version))
+}
+
+// The plugin versions installed now for a session in `cwd`, by plugin name, for the marketplace this plugin came from.
 // - Versioned cache (`<cache>/<marketplace>/<plugin>/<version>`: Claude Code, Codex): Claude Code's
-//   `installed_plugins.json` beside the cache when it has the plugin, else the newest version dir.
+//   `installed_plugins.json` beside the cache when it has the plugin (the install of this session's scope), else the
+//   newest version dir.
 // - One dir per plugin, updated in place (Copilot CLI, VS Code, a checkout for opencode and pi): each sibling's manifest.
 // `self` is this plugin's own name and version: in a versioned cache, exactly what the session loaded.
-export function installedVersions(root = PLUGIN_ROOT) {
+export function installedVersions(root = PLUGIN_ROOT, cwd) {
   const out = {}
   const name = basename(root)
   const versioned = SEMVER.test(name)
@@ -39,7 +48,7 @@ export function installedVersions(root = PLUGIN_ROOT) {
   const registry = versioned ? attempt(() => JSON.parse(readFileSync(join(plugins, '..', '..', 'installed_plugins.json'), 'utf8')).plugins) : null
   for (const p of attempt(() => readdirSync(plugins)) ?? []) {
     const listed = registry?.[`${p}@${marketplace}`]
-    const v = Array.isArray(listed) ? maxVersion(listed.map((e) => e?.version)) : versioned ? maxVersion(attempt(() => readdirSync(join(plugins, p))) ?? []) : existsSync(join(plugins, p, '.claude-plugin')) ? manifestVersion(join(plugins, p)) : null
+    const v = Array.isArray(listed) ? scopedVersion(listed, cwd) : versioned ? maxVersion(attempt(() => readdirSync(join(plugins, p))) ?? []) : existsSync(join(plugins, p, '.claude-plugin')) ? manifestVersion(join(plugins, p)) : null
     if (v) out[p] = v
   }
   return { self, installed: out }
@@ -52,8 +61,8 @@ const RELOAD = { claude: 'run `/reload-plugins`', copilot: 'run `/restart`', pi:
 // `loaded`: the versions this session started with ({ name: version }, from the session's first check). Returns
 // { loaded, remind: [`name@version`], notice, context } with `loaded` grown by any plugin first seen now: `notice` for
 // the user, `context` for the agent, which cannot reload itself.
-export function staleCheck({ root = PLUGIN_ROOT, loaded = {}, reminded = [], harness } = {}) {
-  const r = attempt(() => installedVersions(root))
+export function staleCheck({ root = PLUGIN_ROOT, cwd, loaded = {}, reminded = [], harness } = {}) {
+  const r = attempt(() => installedVersions(root, cwd))
   if (!r) return { loaded, remind: [], notice: null, context: null }
   const { self, installed } = r
   const now = { ...installed, ...loaded }

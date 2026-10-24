@@ -82,3 +82,33 @@ test('the hook says it once per session, next to a call without a decision', asy
   assert.equal(ctx(await h({ hook_event_name: 'PreToolUse', tool_name: 'Skill', tool_input: { skill: 'land' } })).additionalContext, undefined)
   assert.equal(ctx(await h({ hook_event_name: 'PreToolUse', tool_name: 'Skill', tool_input: { skill: 'wt' } }, 'sub1')).additionalContext, undefined, 'a subagent of the session is not told again')
 })
+
+test('Claude Code: the install of this session scope counts, not another project', () => {
+  const plugins = join(mkdtempSync(join(tmpdir(), 'stale-')), 'plugins')
+  for (const v of ['0.52.0', '0.53.0']) plugin(join(plugins, 'cache', 'acme', 'guard', v), v)
+  const registry = { 'guard@acme': [{ scope: 'user', version: '0.52.0' }, { scope: 'project', projectPath: '/work/other', version: '0.53.0' }] }
+  writeFileSync(join(plugins, 'installed_plugins.json'), JSON.stringify({ version: 2, plugins: registry }))
+  const root = join(plugins, 'cache', 'acme', 'guard', '0.52.0')
+  assert.equal(staleCheck({ root, cwd: '/work/mine' }).context, null, 'another project')
+  assert.equal(staleCheck({ root }).context, null, 'no cwd: the user install')
+  assert.match(staleCheck({ root, cwd: '/work/other/sub' }).context, /guard 0\.52\.0 → 0\.53\.0/, 'inside that project')
+})
+
+test('a resumed or restarted session is a new process: it records what it loaded, and is not told to reload', async () => {
+  const plugins = mkdtempSync(join(tmpdir(), 'stale-'))
+  const pluginRoot = plugin(join(plugins, 'guard'), '1.0.0')
+  const dataDir = mkdtempSync(join(tmpdir(), 'guard-test-'))
+  const h = (processId) => handle({ session_id: 's1', cwd: '/', hook_event_name: 'PreToolUse', tool_name: 'Skill', tool_input: { skill: 'ship' } }, { dataDir, env: {}, harness: 'copilot', pluginRoot, processId, hostFacts: async () => ({ load1: 1, freeGb: 100 }), run: async () => null, pythonManager })
+  const note = (out) => (out.stdout ? JSON.parse(out.stdout).hookSpecificOutput?.additionalContext : undefined)
+  assert.equal(note(await h(100)), undefined)
+  plugin(pluginRoot, '1.1.0')
+  assert.equal(note(await h(200)), undefined, 'process 200 loaded 1.1.0')
+  assert.match(note(await h(100)), /guard 1\.0\.0 → 1\.1\.0/, 'process 100 still runs 1.0.0')
+})
+
+test('a stale step that throws leaves the decision standing', async () => {
+  const pluginRoot = claude({ guard: '0.53.0' }, { guard: ['0.52.0', '0.53.0'] })('guard', '0.52.0')
+  const harness = { toString: () => assert.fail('boom') }
+  const out = await handle({ session_id: 's1', cwd: '/', hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'gh pr create -t x -b y' } }, { dataDir: mkdtempSync(join(tmpdir(), 'guard-test-')), env: {}, harness, pluginRoot, hostFacts: async () => ({ load1: 1, freeGb: 100 }), run: async () => null, pythonManager })
+  assert.equal(JSON.parse(out.stdout).hookSpecificOutput.permissionDecision, 'deny')
+})

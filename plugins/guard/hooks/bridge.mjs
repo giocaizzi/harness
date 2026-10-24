@@ -27,6 +27,7 @@ export function createGuard({ harness, noAsk = false, dataDir = DATA_DIR, deps =
   const d = {
     dataDir,
     harness,
+    processId: process.pid,
     env: process.env,
     hostFacts,
     run,
