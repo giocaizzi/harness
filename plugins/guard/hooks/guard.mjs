@@ -8,7 +8,7 @@ import { statfs } from 'node:fs/promises'
 import { cpus, homedir, loadavg, platform } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { analysis, branchFacts, cdDirs, cmdClass, codexRules, deniedBy, deniedDir, evaluateCommand, evaluateEdit, hostJudged, isHeavy, isRisky, nativeAsk, previewCommand, pureRead, refFacts, tagFacts, tagTargets, regenFacts, unattendedSet, withPreview, worktreeFacts } from '../core/engine.mjs'
+import { analysis, branchFacts, cdDirs, cmdClass, codexRules, deniedBy, deniedDir, evaluateCommand, evaluateEdit, evaluateRouting, hostJudged, isHeavy, isRisky, nativeAsk, previewCommand, pureRead, refFacts, tagFacts, tagTargets, regenFacts, unattendedSet, withPreview, worktreeFacts } from '../core/engine.mjs'
 import { cpuPercentFrom } from '../core/host.mjs'
 import { commandWords, units } from '../core/shell.mjs'
 import { emit } from '../core/otel.mjs'
@@ -365,6 +365,17 @@ async function onEdit(input, state, deps) {
   return note(d.context)
 }
 
+// A subagent spawn (Claude Code `Agent`/`Task`, Copilot CLI `task`) that bypasses the typed agents: a hint, never a deny.
+function onSpawn(input, state, deps) {
+  const t = input.tool_input ?? {}
+  const reminded = new Set(state.reminded)
+  const d = evaluateRouting({ type: t.subagent_type ?? t.agent_type, model: t.model, state: { reminded }, rules })
+  state.reminded = [...reminded]
+  if (!d.remind) return {}
+  fire(deps, 'guard.reminder', { rule: d.rule, cmd_class: 'routing', tool: String(input.tool_name ?? ''), session_id: input.session_id, tool_use_id: input.tool_use_id }, input.cwd)
+  return note(d.context)
+}
+
 // One hook event in, { stdout?, stderr?, code? } out. `deps` is injected so tests run without a host.
 export async function handle(input, deps) {
   const store = sessionStore(deps.dataDir, input.session_id, input.agent_id)
@@ -391,6 +402,7 @@ export async function handle(input, deps) {
     if (tool === 'skill' && (t.skill || t.name)) state.loaded.push(String(t.skill || t.name))
     else if (SHELLS.has(tool)) out = await onShell(input, state, deps)
     else if (EDITS.has(tool)) out = await onEdit(input, state, deps)
+    else if (rules.routing.tools.includes(tool)) out = onSpawn(input, state, deps)
     else if (TASKS.has(tool)) {
       const command = taskCommand(tool, t, input.cwd)
       if (command) out = await onShell({ ...input, tool_input: { command } }, state, deps)
