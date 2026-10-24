@@ -26,8 +26,21 @@ A command that names the approval label stays one plain `gh` read, filtered with
 - **Not edited since:** the approval covers the ticket as the approver saw it, so any edit of the title or body afterwards, by anyone, an approver included, voids it ([below](#edited-after-approval)). Stop and say who edited.
 - **Not in grooming:** the grooming label is off. Otherwise stop: the owner removes it once the ticket is refined.
 - **Ready:** the body has acceptance criteria and a proof command (a command or observation that shows the ticket done). Without them, ask on the ticket, proposing both, instead of starting.
-- **Not claimed:** no claim label, or the newest trusted `factory:claim` comment is this run's own: a `runtime` claim only when its run id equals `FACTORY_RUN_ID` (the runtime claimed the ticket for this run); an `attended` claim from this host (a resume). Any other claim, including a runtime's on this host, is another run's. A claim by another run means stop: two runs never take one ticket. A stale claim is the owner's to clear.
+- **Not claimed:** no claim label, or the newest trusted `factory:claim` comment is this run's own: a `runtime` claim only when its run id equals `FACTORY_RUN_ID` (the runtime claimed the ticket for this run); an `attended` claim from this host (a resume). Any other claim, including a runtime's on this host, is another run's. A claim by another run means stop: two runs never take one ticket, except a `runtime` claim on a ticket under [takeover](#takeover), which you wait out. A stale claim is the owner's to clear.
 - **Claim:** add the claim label, then post `factory:claim` with the host name and run id. When `FACTORY_RUN_ID` is set, the runtime already did both: edit its claim comment (the newest trusted one with that run id) instead of posting a second, and use that id as the run id. Release it (remove the label) when the run ends, whatever the end state.
+
+## Takeover
+
+The takeover label (config `labels.takeover`, default `factory-takeover`) means an approver hands the ticket from a runtime to this attended run. Only an approver applies it; you remove it, once, as below, and never touch it in a run a runtime started (`FACTORY_RUN_ID` set: the guard denies it).
+
+1. **Wait for the release.** After the other gate checks, while the claim label is on and the newest trusted `factory:claim` says runner `runtime`, the runtime still holds the ticket: poll in the background every 30 s, for up to 30 minutes, and do nothing else on the ticket meanwhile. Still held after that: stop and tell the person, who can clear a dead runtime's claim by removing the claim label. Any other claim stops the run as at the gate.
+   ```bash
+   for i in $(seq 60); do gh issue view N --json labels --jq '.labels[].name' | grep -qx factory-claimed || exit 0; sleep 30; done; exit 1
+   ```
+2. **Claim** as at the gate, runner `attended`. Nothing to edit: the runtime's claim comment is not yours.
+3. **Check out the WIP branch** named by the `branch:` line of the newest trusted `factory:log` comment, in a worktree under the same rules as `wt` (`git fetch origin <branch>`, then `git worktree add .claude/worktrees/<slug> -b <branch> origin/<branch>`). With no `branch:` line, or no such branch on the remote, start from the default branch as usual and log it in the decision log.
+4. **Remove the label** once your claim comment is posted (the API returned its URL), not before, so the runtime never sees a ticket that is neither claimed nor under takeover: `gh issue edit N --remove-label factory-takeover`.
+5. **Continue from the plan step.** The runtime's plan and log comments are trusted when it is a writer: edit them in place rather than posting new ones, and re-check the plan against what the branch already holds. An M or larger plan the owner already OK'd needs no new OK unless you change it.
 
 ## Edited after approval
 

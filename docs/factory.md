@@ -7,7 +7,7 @@ The `factory` plugin works tickets from a GitHub issue board, one at a time and 
 - **The owner picks which tickets; the agent owns finishing them.** A ticket is worked only when an approver applied the approval label. Everything the ticket needs to be done is then in scope, and nothing else.
 - **The ticket is the shared record.** Plans, questions, scope decisions and evidence go on the issue as comments, so whoever runs the next step (a person, a subagent, a later headless process) starts from the same state.
 - **A contract, not code.** A run starts from a ticket and ends with a marked result comment on it and a `result.json`. Nothing else is assumed about what runs it, so a runtime can come later without changing the skills.
-- **Only declared identities instruct a run.** Text from anyone outside `approvers` and `writers` is untrusted data: it describes at most a problem and never changes scope, steps, permissions or the plan. A ticket whose title or body anyone, an approver included, edited after the approval is not approved, an owner-gated merge resumes the ticket only when an approver merged it, and any change under `.factory/` lands as `merge: owner`. While a run is active the `guard` plugin denies any command that adds the approval label, since a token that is also an approver would make it the owner's.
+- **Only declared identities instruct a run.** Text from anyone outside `approvers` and `writers` is untrusted data: it describes at most a problem and never changes scope, steps, permissions or the plan. A ticket whose title or body anyone, an approver included, edited after the approval is not approved, an owner-gated merge resumes the ticket only when an approver merged it, and any change under `.factory/` lands as `merge: owner`. While a run is active the `guard` plugin denies any command that adds the approval label, since a token that is also an approver would make it the owner's, and any command that names the takeover label.
 - **Never a decision by silence.** A question parks the ticket until an approver answers on it. The agent never closes, re-scopes or marks an issue not planned; only its own PR's `Closes #N` closes the ticket.
 
 ## Attended flow
@@ -32,6 +32,7 @@ The `ticket-run` skill carries one ticket through these steps; call it with the 
 | `labels.needs_grooming` | `needs-grooming` | the agent | Three parks: the ticket is under-specified and goes back to the owner for refinement. |
 | `labels.quarantine` | `factory-quarantine` | a runtime | Repeated failed or stalled runs: a runtime stops picking the ticket until an approver removes the label. |
 | `labels.halt` | `factory-halt` | an approver, an alert or a runtime | Set on an open issue (the halt issue): a runtime starts no run in the repo while any open issue carries it. |
+| `labels.takeover` | `factory-takeover` | an approver, only | Hand the ticket from a runtime to an attended run (see [Takeover](#takeover)). Removed only by the attended run that took the ticket over, once its claim is posted; in a runtime run the guard denies any command that names it. |
 
 When the repo has a project board (`board` in the config), the agent also sets its status field: in progress while working, blocked while parked.
 
@@ -44,7 +45,7 @@ Every comment the agent posts starts with two hidden lines: the marker (config `
 | `<!-- factory:claim -->` | when a run claims the ticket | Host, run id, runner (`attended`, `headless`, `runtime`). A runtime may add the approval it pinned (`approved by`, `approved at`, `revision`); these are informational, never read back to decide anything. |
 | `<!-- factory:plan -->` | once at the start, edited in place | Goal, acceptance checks, side effects in scope, planned fold-ins, size, risk tier. M and larger end by asking for the owner's OK. |
 | `<!-- factory:question Q<n> -->` | per question | One question, the options, a recommendation with its reason, and what is done so far. |
-| `<!-- factory:log -->` | once, edited in place | The decision log: one row per call the plan does not already cover. Mirrored as `## Scope` in the PR. |
+| `<!-- factory:log -->` | once, edited in place | The decision log: one row per call the plan does not already cover. Mirrored as `## Scope` in the PR. A runtime handing the ticket over adds a `branch: <name>` line naming the WIP branch ([Takeover](#takeover)). |
 | `<!-- factory:verdict <round> -->` | on the PR, once per verifier round | The verifier's verdict, verbatim from its verdict file; its first line names the head SHA it covers. |
 | `<!-- factory:result <end_state> -->` | at the end of each run | End state, PR, evidence links, follow-ups. The same facts as `result.json`. |
 | `<!-- factory:notify <kind> -->` | by a runtime only, when it must reach an approver | An @-mention of the approvers and one line on why, `<kind>` naming the event (for example `question`, `halt`, `quarantine`, `budget`). It carries the marker, so it is never read as an answer. |
@@ -62,6 +63,16 @@ Posting is idempotent: before posting, the agent looks for its own comment of th
 ## Claims
 
 A claim is visible on the forge, never only a local lock, so runs on different hosts never take the same ticket. A run claims a ticket by adding the claim label and posting a `factory:claim` comment with its host and run id (a run a runtime started finds both already there, under the run id in `FACTORY_RUN_ID`, and edits that comment instead of posting a second), and releases it by removing the label when it ends, in any end state. A run that finds the label with another run's claim stops; only a claim comment by a writer (see [Authors](#comments)) is a claim. A claim left by a run that died is cleared by the owner, by removing the label. A runtime on several hosts uses the same protocol; the race between two claims at the same moment is its to settle (for example by re-reading the newest claim comment after posting).
+
+## Takeover
+
+An approver who wants to finish a ticket a runtime is working, attended, applies the takeover label. The two sides never hold the ticket at once: the runtime releases it before the attended run claims it, and the label stays on until that claim is posted, so the runtime cannot claim in between.
+
+- **The runtime** that sees the label on a ticket it holds stops the run gracefully: the run commits and pushes its work to the ticket's WIP branch, the runtime records the trusted `factory:log` comment with a field line `branch: <name>` naming that branch (editing the existing log in place, or posting it when there is none), writes the result with `end_state: halted` and `reason_code: takeover`, and releases the claim. It never claims or starts a ticket while the label is on it.
+- **The attended run** (`ticket-run` on a ticket with the label) passes the usual gate, then waits while the claim label is on and the newest trusted claim is a `runtime` one, with a bound; any other claim stops it as usual. Once the claim is released it claims as runner `attended`, checks out the branch named in the newest trusted `factory:log` comment (a fresh branch from the default branch, logged in the decision log, when none is named or it is not on the remote), removes the takeover label, and continues from the plan step, editing the runtime's plan and log comments in place.
+- **Who touches the label.** Only an approver applies it. Only the attended run that took the ticket over removes it, after its claim. Inside a runtime run (`FACTORY_RUN_ID` set) the guard denies any command that names it, as for the approval label.
+
+`factory-status` lists a ticket under takeover under "Needs you" until the attended run removes the label.
 
 ## Readiness
 
@@ -100,9 +111,9 @@ Each run writes `.factory/runs/<number>/result.json` in the repo's main checkout
 | `schema` | integer | Contract version, `2` (`1` in older results). |
 | `ticket` | string | `<owner>/<repo>#<number>`. |
 | `run_id` | string | `FACTORY_RUN_ID` when a runtime started the run (it sets that variable, plus `FACTORY_DEV=1` in dev mode, and claims under it); else the main session's id where the harness exposes one, else `<host>-<number>-<UTC timestamp>`. Also in the claim comment. |
-| `end_state` | `done` \| `parked` \| `failed` \| `budget_reached` \| `halted` | `done`: merged, deployed and verified per the definition of done. `parked`: waiting on the owner (a question, the M+ plan, a merge, or three parks). `failed`: could not be finished for a reason the owner must look at. `budget_reached`: a budget cap stopped the run; a pause, not a failure. `halted`: a runtime stopped the run on a halt (kill switch or circuit breaker); written only by the runtime, never by the skills. |
+| `end_state` | `done` \| `parked` \| `failed` \| `budget_reached` \| `halted` | `done`: merged, deployed and verified per the definition of done. `parked`: waiting on the owner (a question, the M+ plan, a merge, or three parks). `failed`: could not be finished for a reason the owner must look at. `budget_reached`: a budget cap stopped the run; a pause, not a failure. `halted`: a runtime stopped the run on a halt (kill switch or circuit breaker) or for a [takeover](#takeover) (`reason_code: takeover`); written only by the runtime, never by the skills. |
 | `reason` | string | Why the run parked or failed; empty when done. |
-| `reason_code` | string \| null | Nullable machine-readable `reason` (the specific cause wins over `question` when a park also asks one): `question`, `plan_gate`, `merge_gate`, `grooming`, `verify_rounds`, `live_verify_failed`, `env_blocked`, `budget` or `auth`; `null` when done or none fits. |
+| `reason_code` | string \| null | Nullable machine-readable `reason` (the specific cause wins over `question` when a park also asks one): `question`, `plan_gate`, `merge_gate`, `grooming`, `verify_rounds`, `live_verify_failed`, `env_blocked`, `budget`, `auth` or `takeover` (written only by a runtime, for a run it stopped for a [takeover](#takeover), and added without a schema bump, so a consumer reads a code it does not know as none); `null` when done or none fits. |
 | `phases` | array | `{name, started_at, ended_at}` per run step, in order: `gate`, `plan`, `work`, `verify`, `ship`, `deploy`, `record`, only those the run reached. ISO 8601 timestamps; `ended_at` is `null` for a step the run stopped in. |
 | `verifier` | object \| null | `{verdict, rounds}`: the verifier's last verdict (`pass` or `fail`) and how many review rounds ran; `null` when the run stopped before verification. |
 | `routing` | array (optional) | `{phase, policy_model, policy_effort, model, effort, deviation_reason}` per spawned phase: what `references/routing.md` prescribes next to what ran. `deviation_reason` is required, non-empty, whenever `model` or `effort` differs from the policy's, else `null`. Absent in older results; a consumer that does not know it ignores it. |
@@ -136,7 +147,7 @@ Template with placeholders: [`plugins/factory/template/config.yaml`](../plugins/
 | `forge` | yes | `github`, the only forge implemented. The skills express each operation as an intent (read the timeline, label, comment, search issues, open a PR) mapped to the forge's CLI, so GitLab or Azure DevOps can be added the way `repo-standard` maps them. |
 | `approvers` | yes | GitHub logins whose label and comments count as the owner's. |
 | `writers` | no | GitHub logins whose marked comments are trusted (see [Comments](#comments)). Default: `approvers`. The login the session itself posts as always counts. Set it to add a runtime's bot or App login; it replaces the default, so list the approvers too. Optional, so the config format stays `1`. |
-| `labels` | no | `approval`, `claimed`, `needs_owner`, `needs_grooming`, `quarantine`, `halt`; defaults as in [Labels](#labels). |
+| `labels` | no | `approval`, `claimed`, `needs_owner`, `needs_grooming`, `quarantine`, `halt`, `takeover`; defaults as in [Labels](#labels). |
 | `marker` | no | Hidden first line of every agent comment; default `<!-- factory -->`. |
 | `size_label_prefix` | no | Label prefix that carries the ticket's size (`XS`, `S`, `M`, `L`, `XL`). Without it, the plan estimates the size. |
 | `board` | no | `owner`, `project` (number), `status_field` and the `status` option names for `in_progress`, `blocked` and `backlog`. Omit when there is no board. |
@@ -154,4 +165,4 @@ The factory has three layers:
 - **Contract:** the ticket, its labels, the marked comments and `result.json`.
 - **Runtime:** the execution layer that hosts runs on one or more hosts: polling and scheduling, claims, supervision, harness adapters, identity and tokens, permission and sandbox profiles, budgets, telemetry tagging, notifications and self-healing. Unattended overnight work ("drain") is one runtime policy.
 
-This slice ships the skills and the contract; no runtime ships here. The contract defines how one plugs in (`FACTORY_RUN_ID` and its claim, the quarantine and halt labels, `factory:notify`, `end_state: halted`), so a runtime can drive the same skills unchanged. Nothing here assumes a host: paths are relative to the repo or worktree, commands are the forge's CLI and `git`, and the contract records which host and runner made each run.
+This slice ships the skills and the contract; no runtime ships here. The contract defines how one plugs in (`FACTORY_RUN_ID` and its claim, the quarantine, halt and takeover labels, `factory:notify`, `end_state: halted`), so a runtime can drive the same skills unchanged. Nothing here assumes a host: paths are relative to the repo or worktree, commands are the forge's CLI and `git`, and the contract records which host and runner made each run.

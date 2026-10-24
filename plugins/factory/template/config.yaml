@@ -25,6 +25,8 @@ labels:
   # Set by a runtime, not by the attended skills: a ticket it stopped picking, and an issue that halts it.
   quarantine: factory-quarantine
   halt: factory-halt
+  # Set by an approver: hand a ticket a runtime holds to an attended run, which removes it once it claimed.
+  takeover: factory-takeover
 
 # Hidden first line of every comment the skills post, so agent comments made under the owner's account are told apart.
 marker: "<!-- factory -->"
