@@ -9,7 +9,7 @@ Agents share one machine. Let its load and your plan's quota set how much runs a
 
 ## Scripts
 
-In this skill's `scripts/`, `.sh` on macOS/Linux and `.ps1` on Windows. Env, defaults and the lock-path contract are in the header of `lib.sh` / `lib.ps1`.
+In this skill's `scripts/`, `.sh` on macOS/Linux and `.ps1` on Windows. Env, defaults and the lock-path contract are in the header of `lib.sh` / `lib.ps1`. In a brief, name them by `${CLAUDE_PLUGIN_ROOT}/skills/host-hygiene/scripts/` as rendered here (unrendered: the path this skill was loaded from), never a remembered cache path: upgrades prune old versions.
 
 - `heavy.sh <cmd...>`: run a build, precommit or full suite in a machine-wide heavy slot; `--status` shows slots, waiters, leases and services.
 - `lease.sh <class> [--device <id>] -- <cmd...>`: heavy slot, then the one lease for a device class (simulator, emulator); shuts down a device it booted.
@@ -37,6 +37,7 @@ Why each rule exists, and the incidents behind it: [references/lessons.md](refer
 
 ## Gotchas
 
+- A subagent or teammate isn't woken when a backgrounded job exits: run `heavy.sh` in the foreground with `HOST_LOCK_TIMEOUT_SECONDS` under the tool timeout, and on a timeout check `--status` before re-running.
 - A running Claude Code session runs the plugin version it loaded, spawning hooks from that folder without holding it open, until the user types `/reload-plugins`; a reload does not restart the process, so the sweep cannot see it. Only once the user has reloaded every open session, run `--plugins --after-reload --apply`; never sweep plugins on a schedule.
 - Build tools that write read-only files into the worktree (the Go module cache, envtest binaries) make `git worktree remove` fail halfway and leave an unregistered dir that only the owner can delete: keep `GOMODCACHE` and envtest assets outside the worktree.
 

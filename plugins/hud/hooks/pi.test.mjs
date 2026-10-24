@@ -141,3 +141,17 @@ test('footer: each running subagent call with its agent and model, gone when it 
   assert.equal(drawn.length, 3)
   assert.equal(piStatus({ agents: [{ agent: 'scout' }] }), '[\uf0c0 scout]')
 })
+
+test('footer: the effort a subagent call reports for its child, none before', () => {
+  const handlers = {}
+  const drawn = []
+  hudExtension({ on: (e, f) => (handlers[e] = f) }, { readRepo: async () => null, options: {} })
+  const ctx = { hasUI: true, cwd: '/r', model: { provider: 'p', id: 'm-1' }, getContextUsage: () => null, ui: { setStatus: (_k, t) => drawn.push(t) } }
+  handlers.tool_execution_start({ toolCallId: 'a', toolName: 'subagent', args: { agent: 'scout', task: 't' } }, ctx)
+  handlers.tool_execution_update({ toolCallId: 'a', toolName: 'subagent', partialResult: { content: [] } }, ctx)
+  assert.equal(drawn.at(-1), '[\uf2db m-1] [\uf0c0 scout · m-1]')
+  handlers.tool_execution_update({ toolCallId: 'a', toolName: 'subagent', partialResult: { content: [], details: { model: 'p/m-2', thinking: 'high' } } }, ctx)
+  assert.equal(drawn.at(-1), '[\uf2db m-1] [\uf0c0 scout · m-2 · high]')
+  handlers.tool_execution_update({ toolCallId: 'b', toolName: 'bash', partialResult: { details: { thinking: 'x' } } }, ctx)
+  assert.equal(drawn.length, 2)
+})

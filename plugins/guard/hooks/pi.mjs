@@ -7,10 +7,12 @@ export default function guardExtension(pi, deps) {
   const guard = createGuard({ harness: 'pi', deps })
   const notes = new Map() // toolCallId -> note for the tool result
   let blocked = false // the last settle already sent a make check failure back
-  const sessionOf = (ctx) => ctx.sessionManager?.getSessionId?.()
+  // A dev-tools `subagent` child runs with `--no-session`: it names the parent session and itself in its environment.
+  const sessionOf = (ctx) => process.env.GUARD_PARENT_SESSION || ctx.sessionManager?.getSessionId?.()
+  const agentId = process.env.GUARD_PARENT_SESSION ? process.env.GUARD_AGENT_ID || 'subagent' : undefined
 
   pi.on('tool_call', async (event, ctx) => {
-    const d = await guard.preTool({ sessionId: sessionOf(ctx), cwd: ctx.cwd, tool: String(event.toolName).toLowerCase(), input: event.input ?? {} })
+    const d = await guard.preTool({ sessionId: sessionOf(ctx), agentId, cwd: ctx.cwd, tool: String(event.toolName).toLowerCase(), input: event.input ?? {} })
     if (d.decision === 'deny') return { block: true, reason: d.reason }
     if (d.decision === 'ask') {
       const ask = { sessionId: sessionOf(ctx), cwd: ctx.cwd, tool: String(event.toolName), command: event.input?.command }
@@ -24,6 +26,14 @@ export default function guardExtension(pi, deps) {
       if (!ok) return { block: true, reason: `The user denied this command. Do not retry it or a respelling of it; ask the user what they want instead.\n${d.reason}` }
     }
     if (d.context) notes.set(event.toolCallId, d.context)
+    // pi blocks a call whose handler throws: a notice must never cost the call.
+    if (d.notice && ctx.hasUI) {
+      try {
+        ctx.ui.notify(d.notice, 'info')
+      } catch {
+        // no notification: the agent still has the note
+      }
+    }
   })
 
   pi.on('tool_result', async (event, ctx) => {
@@ -33,7 +43,7 @@ export default function guardExtension(pi, deps) {
   })
 
   pi.on('input', async (event, ctx) => {
-    await guard.prompt({ sessionId: sessionOf(ctx), cwd: ctx.cwd, prompt: event.text ?? '' })
+    await guard.prompt({ sessionId: sessionOf(ctx), agentId, cwd: ctx.cwd, prompt: event.text ?? '' })
     return { action: 'continue' }
   })
 

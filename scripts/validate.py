@@ -12,7 +12,7 @@ Checks:
   2. The Copilot manifest (.github/plugin/plugin.json) matches the Claude
      manifest's version and sets `agents: ["./.generated/copilot/"]`.
   3. The Claude plugin.json does not declare `skills` or `agents` fields
-     (repo policy: both must be auto-discovered).
+     (repo policy: both must be auto-discovered), and no plugin has a `bin/` (claude.ai and Cowork skip it).
   4. marketplace.json lists every plugins/<dir> with matching versions and source paths.
   5. The root README links to every plugin, and each plugin's README lists all its skills and agents.
   6. Generated files are in sync with agents/*.md, their .yaml overrides and the manifests (delegates to build_agents.py --check).
@@ -111,6 +111,8 @@ def check_repo_specific_manifests(r: Reporter) -> None:
     for plugin_dir in _discover_plugins():
         manifest = plugin_dir / ".claude-plugin" / "plugin.json"
         rel = manifest.relative_to(REPO_ROOT)
+        if (plugin_dir / "bin").exists():
+            r.fail(f"{plugin_dir.relative_to(REPO_ROOT)}/bin exists: claude.ai and Cowork do not install a plugin with a bin/; name scripts by ${{CLAUDE_PLUGIN_ROOT}} in the skill")
         if not manifest.exists():
             continue
         try:

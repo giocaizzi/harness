@@ -5,7 +5,7 @@ import { spawn, spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { tmpdir, userInfo } from 'node:os'
 import { join, resolve } from 'node:path'
-import { CODEX_RULES, codexAsks, codexReviewer, factoryLabels, handle, pythonManager, sessionStore, tail } from './guard.mjs'
+import { CODEX_RULES, codexAsks, codexReviewer, factoryLabels, handle, inWorkTree, pythonManager, sessionStore, tail } from './guard.mjs'
 import { fallbackDataDir } from './data.mjs'
 import { codexRules } from '../core/engine.mjs'
 import { rules } from '../core/rules.mjs'
@@ -352,6 +352,9 @@ test('a spawn that bypasses the typed agents gets a routing hint, never a decisi
   assert.match(decision(await setup()(spawn('task', { agent_type: 'dev-tools:driver', model: 'claude-opus-4.7' }))).additionalContext, /overrides it/)
   assert.equal(decision(await setup()(spawn('Agent', { subagent_type: 'dev-tools:driver' }))), undefined)
   assert.equal(decision(await setup()(spawn('task', { subagent_type: 'general' }))), undefined) // opencode: no model on a spawn
+  assert.match(decision(await setup()(spawn('spawn_agent', { agent_type: 'default', model: 'gpt-6-astra' }))).additionalContext, /untyped spawn on gpt-6-astra/) // Codex
+  assert.match(decision(await setup()(spawn('runSubagent', { agentName: 'driver', model: 'Claude Opus 4.7 (copilot)' }))).additionalContext, /overrides it/) // VS Code
+  assert.equal(decision(await setup()(spawn('runSubagent', {}))), undefined) // VS Code: no agentName runs a copy of the current agent
   assert.deepEqual(events, [['guard.reminder', 'routing-plan', 'routing'], ['guard.reminder', 'routing-model', 'routing']])
 })
 
@@ -480,6 +483,17 @@ test('skills count for the whole session, reminders per agent; the read and edit
   }
 })
 
+test('Copilot CLI: a subagent hook names its own session and the parent in parent_agent_id; skills are shared, reminders its own (#172)', async () => {
+  const h = setup()
+  const child = { session_id: 'c1', agent_id: 'c1', parent_agent_id: 's1' }
+  await h({ hook_event_name: 'PreToolUse', tool_name: 'Skill', tool_input: { skill: 'ship' }, ...child })
+  assert.equal(decision(await h(pre('Bash', 'git commit -m "fix: x"'))), undefined, "the subagent's skill load covers the main agent")
+  const hinted = async (extra) => Boolean(decision(await h({ ...pre('Bash', 'pytest -q'), ...extra }))?.additionalContext)
+  assert.equal(await hinted(child), true)
+  assert.equal(await hinted(child), false, 'once for the subagent')
+  assert.equal(await hinted({}), true, 'the main agent gets its own')
+})
+
 test('auto mode, which tells the agent to read and edit through the shell, gets no read or edit hint (G24)', async () => {
   const h = setup()
   const ctx = async (command, permission_mode) => decision(await h({ ...pre('Bash', command), permission_mode }))?.additionalContext
@@ -490,14 +504,30 @@ test('auto mode, which tells the agent to read and edit through the shell, gets 
 })
 
 test('a plain read of non-secret files is allowed outright, so no harness prompt stalls it (G24)', async () => {
-  const h = setup()
+  const repoDir = mkdtempSync(join(tmpdir(), 'guard-repo-'))
+  mkdirSync(join(repoDir, '.git'))
+  const h0 = setup()
+  const h = (input) => h0({ cwd: repoDir, ...input })
   for (const c of ['sed -n 36,56p internal/contract/testdata/harness/factory.md', 'cd sub && sed -n 36,56p internal/contract/x.md', 'head -n 20 README.md', 'cat a.txt b.txt', 'tail -50 log/app.log']) {
     const d = decision(await h(pre('Bash', c)))
     assert.equal(d?.permissionDecision, 'allow', c)
   }
   for (const c of ['cat .env', 'cat ~/.ssh/config', 'head internal/token/token.go', 'cat secrets.yaml', 'cat a.txt > b.txt', 'cat $F', "sed -n '1w out' f", 'sed -n 1,5p f | sh', 'cat a; rm -rf b', 'cat /dev/stdin', 'less ~/.aws/config', 'cat id_ed25519', 'cd /r/.claude/worktrees/m4 && sed -n 36,56p x.md', 'cat /etc/hosts', 'cat env:GH_PAT', 'cat C:/Users/me/AppData/Roaming/gh/hosts.yml'])
     assert.notEqual(decision(await h(pre('Bash', c)))?.permissionDecision, 'allow', c)
-  assert.equal(decision(await setup({ noAsk: true })(pre('Bash', 'cat a.txt')))?.permissionDecision, undefined, 'Codex: no allow, it has no prompt for this')
+  assert.equal(decision(await setup({ noAsk: true })({ cwd: repoDir, ...pre('Bash', 'cat a.txt') }))?.permissionDecision, undefined, 'Codex: no allow, it has no prompt for this')
+  // #208: only inside a work tree that is not the home directory's.
+  const home = mkdtempSync(join(tmpdir(), 'guard-home-'))
+  const inHome = setup({ env: { HOME: home } })
+  assert.equal(decision(await inHome({ cwd: home, ...pre('Bash', 'cat .codex/auth2.json') }))?.permissionDecision, undefined, 'cwd at $HOME')
+  mkdirSync(join(home, '.git'))
+  mkdirSync(join(home, '.config'))
+  assert.equal(decision(await inHome({ cwd: join(home, '.config'), ...pre('Bash', 'cat glab-cli/config.yml') }))?.permissionDecision, undefined, 'a dotfiles repo at $HOME')
+  assert.equal(decision(await h0(pre('Bash', 'cat a.txt')))?.permissionDecision, undefined, 'no cwd')
+  const plain = mkdtempSync(join(tmpdir(), 'guard-plain-'))
+  assert.equal(decision(await inHome({ cwd: plain, ...pre('Bash', 'cat a.txt') }))?.permissionDecision, undefined, 'an existing dir outside any work tree')
+  // Windows: a home spelled in another case is still home.
+  assert.equal(inWorkTree(home, { HOME: home.toUpperCase() }, 'win32'), false)
+  assert.equal(inWorkTree(home, { HOME: home.toUpperCase() }, 'linux'), true)
 })
 
 test('without a session id nothing is kept, and the fallback data dir is per user', async () => {

@@ -1,7 +1,7 @@
 // The in-process adapters (opencode, pi) over a fake harness API: the guard's decisions reach the harness.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { GuardPlugin } from './opencode.mjs'
@@ -202,4 +202,81 @@ test('opencode and pi: the takeover label is denied while FACTORY_RUN_ID is set,
   const blocked = await handlers.tool_call({ toolName: 'bash', toolCallId: 'c', input: { command } }, { cwd: dir(), sessionManager: { getSessionId: () => 'p1' } })
   assert.equal(blocked?.block, true)
   assert.match(blocked.reason, /takeover label/)
+})
+
+test('opencode and pi: a stale-plugin notice reaches the user (toast, notify) and the agent (the tool output)', async () => {
+  // An in-place layout whose guard was updated after the session recorded it.
+  const plugins = dir()
+  const root = join(plugins, 'guard')
+  const manifest = (v) => {
+    mkdirSync(join(root, '.claude-plugin'), { recursive: true })
+    writeFileSync(join(root, '.claude-plugin', 'plugin.json'), JSON.stringify({ version: v }))
+  }
+  manifest('1.0.0')
+  const toasts = []
+  const oc = await GuardPlugin({ client: { tui: { showToast: async ({ body }) => toasts.push(body.message) } }, directory: dir() }, { ...deps(), pluginRoot: root })
+  const ocCall = async (id) => {
+    await oc['tool.execute.before']({ tool: 'bash', sessionID: 'oc', callID: id }, { args: { command: 'ls' } })
+    const out = { output: '' }
+    await oc['tool.execute.after']({ tool: 'bash', sessionID: 'oc', callID: id, args: {} }, out)
+    return out.output
+  }
+  await ocCall('c1')
+  const { handlers, api } = fakePi()
+  const notified = []
+  guardExtension(api, { ...deps(), pluginRoot: root })
+  const ctx = { cwd: dir(), hasUI: true, ui: { confirm: async () => true, notify: (t) => notified.push(t) }, sessionManager: { getSessionId: () => 'pi' } }
+  await handlers.tool_call({ toolName: 'bash', toolCallId: 't1', input: { command: 'ls' } }, ctx)
+  manifest('1.1.0')
+  assert.match(await ocCall('c2'), /guard 1\.0\.0 → 1\.1\.0\): restart the session to load them\. Only the user can do this/)
+  await new Promise((r) => setImmediate(r))
+  assert.deepEqual(toasts, ['Harness plugins updated (guard 1.0.0 → 1.1.0): restart the session to load them.'])
+  await handlers.tool_call({ toolName: 'bash', toolCallId: 't2', input: { command: 'ls' } }, ctx)
+  assert.deepEqual(notified, ['Harness plugins updated (guard 1.0.0 → 1.1.0): run `/reload` to load them.'])
+})
+
+test('pi: a notify that throws does not block the call', async () => {
+  const plugins = dir()
+  const root = join(plugins, 'guard')
+  mkdirSync(join(root, '.claude-plugin'), { recursive: true })
+  writeFileSync(join(root, '.claude-plugin', 'plugin.json'), JSON.stringify({ version: '1.0.0' }))
+  const { handlers, api } = fakePi()
+  guardExtension(api, { ...deps(), pluginRoot: root })
+  const ctx = { cwd: dir(), hasUI: true, ui: { confirm: async () => true, notify: () => assert.fail('no UI') }, sessionManager: { getSessionId: () => 'pi2' } }
+  await handlers.tool_call({ toolName: 'bash', toolCallId: 't1', input: { command: 'ls' } }, ctx)
+  writeFileSync(join(root, '.claude-plugin', 'plugin.json'), JSON.stringify({ version: '1.1.0' }))
+  assert.equal(await handlers.tool_call({ toolName: 'bash', toolCallId: 't2', input: { command: 'ls' } }, ctx), undefined)
+})
+
+test('opencode: a child session runs as its own agent of the root session; pi: a subagent child as its own agent of the parent (#172)', async () => {
+  const sessions = { child: { parentID: 'root' }, root: {} }
+  const client = { session: { get: async ({ path }) => ({ data: sessions[path.id] }) } }
+  const dataDir = dir()
+  const oc = await GuardPlugin({ client, directory: dir() }, { ...deps(), dataDir })
+  const before = (sessionID, args) => oc['tool.execute.before']({ tool: 'skill', sessionID, callID: 'c' }, { args })
+  await before('child', { name: 'ship' })
+  const facts = readFileSync(join(dataDir, 'sessions', 'root.jsonl'), 'utf8')
+  assert.match(facts, /"loaded":"ship"/, "the child's skill counts for the root session")
+  // A server that never answers: the call goes on under the session's own id once the timeout passes.
+  // Once it answers again, the next call asks again instead of keeping the timed-out answer.
+  let answer = () => new Promise(() => {})
+  const hung = await GuardPlugin({ client: { session: { get: (q) => answer(q) } }, directory: dir() }, { ...deps(), dataDir, rootTimeoutMs: 20 })
+  await hung['tool.execute.before']({ tool: 'skill', sessionID: 'lone', callID: 'c' }, { args: { name: 'land' } })
+  assert.match(readFileSync(join(dataDir, 'sessions', 'lone.jsonl'), 'utf8'), /"loaded":"land"/)
+  answer = async ({ path }) => ({ data: path.id === 'lone' ? { parentID: 'root' } : {} })
+  await hung['tool.execute.before']({ tool: 'skill', sessionID: 'lone', callID: 'c2' }, { args: { name: 'wt' } })
+  assert.match(readFileSync(join(dataDir, 'sessions', 'root.jsonl'), 'utf8'), /"loaded":"wt"/, 'retried after the server recovered')
+  // pi: the child process reads the parent session and its own id from the environment.
+  process.env.GUARD_PARENT_SESSION = 'p1'
+  process.env.GUARD_AGENT_ID = 'scout-t1'
+  try {
+    const { handlers, api } = fakePi()
+    const piData = dir()
+    guardExtension(api, { ...deps(), dataDir: piData })
+    await handlers.tool_call({ toolName: 'skill', toolCallId: 't', input: { name: 'land' } }, { cwd: dir(), hasUI: false, sessionManager: { getSessionId: () => undefined } })
+    assert.match(readFileSync(join(piData, 'sessions', 'p1.jsonl'), 'utf8'), /"loaded":"land"/)
+  } finally {
+    delete process.env.GUARD_PARENT_SESSION
+    delete process.env.GUARD_AGENT_ID
+  }
 })
