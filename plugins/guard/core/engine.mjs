@@ -827,10 +827,27 @@ function opaqueGh(flat) {
   return false;
 }
 
+// Whether every `gh` command opaqueGh flags in a line is a plain `gh` command (plainGh) at its top level, in a line the
+// shell reader splits cleanly: `echo …; gh api user; git remote -v` is three commands, not an opaque `gh` (G26). A `gh`
+// inside a substitution or another command's payload stays opaque.
+function plainGhCalls(command) {
+  const a = analyze(command);
+  return !a.opaque && units(a).every(({ cmd, depth }) => !opaqueGh(cmd.raw.replace(/['"\\]/g, '')) || (depth === 0 && !cmd.payloads.length && plainGh(cmd.raw) !== null));
+}
+
+// Whether one plain `gh` command sends a body the guard cannot read to a labels or issues endpoint.
+function unreadableBody(args) {
+  const action = ghAction(args);
+  if (!action || action === 'read') return action !== 'read';
+  const path = action.write.split('?')[0].replace(/\/+$/, '');
+  return !(/\/comments(?:\/\d+)?$/.test(path) || (path && !/(?:^|\/)(?:labels|issues)(?:\/|$)/.test(path)));
+}
+
 // Fail closed while a factory run is active. A command that names the label, approval or takeover (in any quoting or case, as
 // GitHub compares), is denied unless it is one plain `gh` read; adding and removing alike are the owner's. A `gh` command with a
 // body the guard cannot read (`--input`, a `key=@file` field) is denied unless it is one plain `gh api` call writing to
-// a `/comments` endpoint or a path outside `/labels` and `/issues`; so is any other line running `gh api` (opaqueGh). A label the shell builds (`$L`) stays out of sight
+// a `/comments` endpoint or a path outside `/labels` and `/issues`; so is any other line running `gh api` (opaqueGh) unless
+// each such call in it is a plain command (plainGhCalls). A label the shell builds (`$L`) stays out of sight
 // (docs/guard.md).
 export function touchesApprovalLabel(command, label) {
   const want = String(label).trim().toLowerCase();
@@ -844,12 +861,11 @@ export function touchesApprovalLabel(command, label) {
   // A glued short flag is read without its flag (`-lagent-ok`).
   if (named.test(command) || flat.split(/\s+/).some((w) => named.test(w) || named.test(w.replace(/^-[A-Za-z]=?/, '')))) return action !== 'read';
   // A Windows path to gh (`C:\…\gh.exe`) loses its backslashes in `flat`: deny it outright.
-  if (!args && (opaqueGh(flat) || /\\gh(?:\.exe)?(?![\w-])/i.test(command))) return true;
-  if (/\bgh\b/.test(flat) && /--input\b|=@/.test(flat)) {
-    if (!action || action === 'read') return action !== 'read';
-    const path = action.write.split('?')[0].replace(/\/+$/, '');
-    return !(/\/comments(?:\/\d+)?$/.test(path) || (path && !/(?:^|\/)(?:labels|issues)(?:\/|$)/.test(path)));
-  }
+  if (!args && /\\gh(?:\.exe)?(?![\w-])/i.test(command)) return true;
+  // A line of several commands passes when each `gh api` call in it is plain; the label and body checks cover the line.
+  if (!args && opaqueGh(flat) && !plainGhCalls(command)) return true;
+  // A body in a line of several commands is not matched to its call: denied, as before.
+  if (/\bgh\b/.test(flat) && /--input\b|=@/.test(flat)) return args ? unreadableBody(args) : true;
   return false;
 }
 

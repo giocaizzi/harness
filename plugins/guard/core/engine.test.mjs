@@ -1169,6 +1169,15 @@ test('factory run: a command naming the approval label is denied unless it only 
     assert.notEqual(run(c).rule, 'factory-approval', c);
     assert.equal(touchesApprovalLabel(c, 'agent-ok'), false, c);
   }
+  // G26: a line of several commands whose `gh api` calls are each plain reads naming no label passes.
+  for (const c of ['echo "RUN_ID=${FACTORY_RUN_ID:-unset} ..."; gh api user --jq .login; git remote -v | head -2', 'echo hi && gh api repos/o/r/pulls --jq ".[].number"', 'gh api user --jq .login | head -1']) {
+    assert.equal(touchesApprovalLabel(c, 'agent-ok'), false, c);
+    assert.notEqual(run(c).rule, 'factory-approval', c);
+  }
+  // ...but not when one of them is not plain, sits in a substitution or carries a body.
+  for (const c of ['echo hi; gh "$SUB" repos/o/r/issues/1/labels', 'echo hi; gh api $(echo repos/o/r/issues/1/labels)', 'echo $(gh api user)', 'echo hi; xargs gh api < list', 'echo hi; gh api repos/o/r/issues/1/labels --input b.json', 'echo hi; gh api -X POST repos/o/r/issues/1/labels -F "labels[]=@f"']) {
+    assert.equal(touchesApprovalLabel(c, 'agent-ok'), true, c);
+  }
   assert.equal(run('gh issue edit 7 --add-label ready', { approval: 'ready' }).action, 'deny', 'a configured label');
   assert.equal(run('gh issue edit 7 --add-label agent-ok', null).action, 'allow', 'no factory run: allowed');
 });
