@@ -377,8 +377,8 @@ async function onShell(input, state, deps) {
     }
     if (set !== null) state.unattended = set
     // A plain read of non-secret files never waits on the harness's prompt (Claude Code, Copilot CLI, VS Code; Codex
-    // and the in-process harnesses do not prompt for it).
-    if (!deps.noAsk && pureRead(command)) {
+    // and the in-process harnesses do not prompt for it), inside a project's work tree only.
+    if (!deps.noAsk && pureRead(command) && inWorkTree(input.cwd, deps.env)) {
       allowed('read')
       return { stdout: JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow', permissionDecisionReason: 'guard: a plain read of non-secret files', ...(d.context ? { additionalContext: d.context } : {}) } }) }
     }
@@ -432,10 +432,26 @@ function onStale(input, state, deps, out) {
   return note(context ? `${context}\n${s.context}` : s.context, s.notice)
 }
 
+// Whether `cwd` is inside a git work tree other than the home directory's: a relative read there is project files.
+// From `$HOME`, or a dotfiles repo at `$HOME`, `cat .codex/auth.json` is a secret the path rules may not know (#208).
+export function inWorkTree(cwd, env = {}, platform = process.platform) {
+  if (typeof cwd !== 'string' || !cwd) return false
+  const home = resolve(env.HOME || env.USERPROFILE || homedir())
+  // Windows paths are case-insensitive: `c:\Users\me` is still the home directory.
+  const isHome = (dir) => (platform === 'win32' ? dir.toLowerCase() === home.toLowerCase() : dir === home)
+  for (let dir = resolve(cwd); ; dir = dirname(dir)) {
+    if (existsSync(join(dir, '.git'))) return !isHome(dir)
+    if (dir === dirname(dir) || isHome(dir)) return false
+  }
+}
+
 // One hook event in, { stdout?, stderr?, code? } out. `deps` is injected so tests run without a host.
 export async function handle(input, deps) {
   // A command hook's parent is the harness process (one per session run: a resume or restart is a new one).
-  const store = sessionStore(deps.dataDir, input.session_id, input.agent_id, deps.processId ?? process.ppid)
+  // A subagent keeps its own reminders (`agent_id`) and shares the session's skills: Claude Code and Codex send the
+  // parent's `session_id`, Copilot CLI the subagent's own with `parent_agent_id` naming the parent session.
+  const session = input.agent_id && input.parent_agent_id ? input.parent_agent_id : input.session_id
+  const store = sessionStore(deps.dataDir, session, input.agent_id, deps.processId ?? process.ppid)
   const state = { reminded: [], loaded: [], plugins: {}, ...store.load() }
   const loadedBefore = [...state.loaded]
   const event = input.hook_event_name

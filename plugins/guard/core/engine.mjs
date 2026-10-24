@@ -499,10 +499,12 @@ export async function tagFacts(command, rules, run, env = {}) {
   const facts = await Promise.all(targets.map((t) => tagFact(t.dir, t.name, run)));
   return Object.fromEntries(targets.map((t, i) => [branchKey(t), facts[i]]));
 }
-// Never with a push or a release in the same command: `git tag -f foo && git push origin foo` publishes it.
+// Never with a push, a release or a `gh api` write in the same command: `git tag -f foo && git push origin foo`
+// publishes it, and a ref write can sit in a quoted field or an `--input` file the text does not show (#208).
+const GH_API_WRITE = /\bgh\s+api\b[^|;&]*(?:(?:-X|--method)\s*=?\s*(?:POST|PATCH|PUT|DELETE)\b|(?:^|\s)(?:-[fF]|--field|--raw-field|--input)(?:[\s=]|\S)|refs\/tags)/i;
 const localTagsOnly = (command, rules, tags, env) => {
   const targets = tagTargets(command, rules, env);
-  if (segments(command, env).some(({ seg }) => /\bgit\b[^|;&]*\bpush\b|\bgh\s+release\b|\bgh\s+api\b[^|;&]*refs\/tags/.test(seg))) return false;
+  if (segments(command, env).some(({ seg }) => /\bgit\b[^|;&]*\bpush\b|\bgh\s+release\b/.test(seg) || GH_API_WRITE.test(seg.replace(/['"\\]/g, '')))) return false;
   return targets.length > 0 && targets.every((t) => tags[branchKey(t)]?.local === true);
 };
 

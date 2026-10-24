@@ -46,7 +46,7 @@ else
 	@if command -v pwsh >/dev/null; then pwsh -NoProfile -File tests/host-hygiene.test.ps1; else echo "pwsh not found, host-hygiene .ps1 tests skipped"; fi
 endif
 
-e2e: ## Drive each installed harness CLI (Codex, opencode, pi) against a scripted model in a throwaway home.
+e2e: ## Drive each installed harness CLI (Copilot CLI, Codex, opencode, pi) against a scripted model in a throwaway home.
 	@node tests/e2e/run.mjs
 
 eval: ## Run the plugins' skill evals (calls a model, costs money, not part of check or CI).  Usage: make eval [PLUGIN=<plugin>] [TAG=trigger|routing] [MODEL=<model>] [MAX_COST=<usd>]

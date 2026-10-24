@@ -76,17 +76,17 @@ pi install "$PWD"                                        # pi, loads the checkou
 
 VS Code: `"chat.pluginLocations": { "/abs/path/plugins/guard": true }`.
 
-To try one without touching your own config, give the harness a throwaway home: `CODEX_HOME`, `COPILOT_HOME`, `XDG_CONFIG_HOME` (opencode), `PI_CODING_AGENT_DIR` (pi). `make e2e` does exactly that for Codex, opencode and pi.
+To try one without touching your own config, give the harness a throwaway home: `CODEX_HOME`, `COPILOT_HOME`, `XDG_CONFIG_HOME` (opencode), `PI_CODING_AGENT_DIR` (pi). `make e2e` does exactly that for Copilot CLI, Codex, opencode and pi.
 
 ## Verify
 
 ```bash
 make check   # manifests, generated files, skills, README sync, harness parity, node tests, `claude plugin test`
-make e2e     # Codex, opencode, pi against a scripted model; no login needed
+make e2e     # Copilot CLI, Codex, opencode, pi against a scripted model; no login needed
 ```
 
-`make e2e` skips a CLI that is not on `PATH`. To run all three without a global install, let `npx` fetch them into its cache and put them on `PATH` for one run:
+`make e2e` skips a CLI that is not on `PATH`. To run all four without a global install, let `npx` fetch them into its cache and put them on `PATH` for one run:
 
 ```bash
-npx -y -p @openai/codex -p opencode-ai -p @earendil-works/pi-coding-agent -c "make e2e"
+npx -y -p @github/copilot -p @openai/codex -p opencode-ai -p @earendil-works/pi-coding-agent -c "make e2e"
 ```
