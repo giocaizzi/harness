@@ -1169,6 +1169,18 @@ test('factory run: a command naming the approval label is denied unless it only 
     assert.notEqual(run(c).rule, 'factory-approval', c);
     assert.equal(touchesApprovalLabel(c, 'agent-ok'), false, c);
   }
+  // G26: a line of several commands whose `gh api` calls are each plain reads naming no label passes.
+  for (const c of ['echo "RUN_ID=${FACTORY_RUN_ID:-unset} ..."; gh api user --jq .login; git remote -v | head -2', 'echo hi && gh api repos/o/r/pulls --jq ".[].number"', 'gh api user --jq .login | head -1']) {
+    assert.equal(touchesApprovalLabel(c, 'agent-ok'), false, c);
+    assert.notEqual(run(c).rule, 'factory-approval', c);
+  }
+  // ...but not when one of them is not plain, sits in a substitution or carries a body.
+  for (const c of ['echo hi; gh "$SUB" repos/o/r/issues/1/labels', 'echo hi; gh api $(echo repos/o/r/issues/1/labels)', 'echo $(gh api user)', 'echo hi; xargs gh api < list', 'echo hi; gh api repos/o/r/issues/1/labels --input b.json', 'echo hi; gh api -X POST repos/o/r/issues/1/labels -F "labels[]=@f"',
+    // A gh call the units do not account for: a heredoc body run later, a defined gh, gh out of an expansion (#270).
+    "cat > x.sh <<'EOF'\ngh api -X POST repos/o/r/issues/1/labels --inp${E}ut b.json\nEOF\nbash x.sh",
+    'gh() { command "$1" "$2" repos/o/r/issues/1/labels; }; gh gh api', 'alias gh=x; gh api user', 'function gh { :; }; gh api user', 'echo hi; ${G:-gh} api repos/o/r/issues/1/labels']) {
+    assert.equal(touchesApprovalLabel(c, 'agent-ok'), true, c);
+  }
   assert.equal(run('gh issue edit 7 --add-label ready', { approval: 'ready' }).action, 'deny', 'a configured label');
   assert.equal(run('gh issue edit 7 --add-label agent-ok', null).action, 'allow', 'no factory run: allowed');
 });
@@ -1297,7 +1309,7 @@ test('factory run: the label check never throws and fails fast on a hang', () =>
     }
     if (lengths.size !== 40) throw new Error('the generator skipped lengths: ' + lengths.size);
     if (seen.size !== parts.length) throw new Error('the generator skipped parts: ' + parts.filter((p) => !seen.has(p)).join(' '));
-    for (const odd of ['gh "x', "gh 'x", 'gh issue view "agent-ok', "gh api '", 'gh \\\\', '"'.repeat(100000) + 'agent-ok', "'".repeat(100001) + 'agent-ok', '$(gh '.repeat(20000) + 'agent-ok']) touchesApprovalLabel(odd, 'agent-ok');
+    for (const odd of ['gh "x', "gh 'x", 'gh issue view "agent-ok', "gh api '", 'gh \\\\', '"'.repeat(100000) + 'agent-ok', "'".repeat(100001) + 'agent-ok', '$(gh '.repeat(20000) + 'agent-ok', 'echo; ' + 'gh x '.repeat(20000), 'echo; gh ' + '-R x '.repeat(20000), '$\\{'.repeat(20000) + 'gh', 'echo hi; ' + 'gh api user; '.repeat(5000)]) touchesApprovalLabel(odd, 'agent-ok');
   `;
   const r = spawnSync(process.execPath, ['--input-type=module', '-e', script], { timeout: 10000, encoding: 'utf8' });
   assert.equal(r.signal, null, 'timed out');

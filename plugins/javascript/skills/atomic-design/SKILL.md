@@ -1,6 +1,6 @@
 ---
 name: atomic-design
-description: Atomic design (atoms, molecules, organisms, templates, pages) in React, Next.js, Vue, Svelte or React Native, and enforcing component architecture with lint (import direction, layers, cycles, chokepoints). Use when structuring a UI kit or component folders, deciding where a component goes, or setting up or fixing architecture lint rules.
+description: "Atomic design (atoms, molecules, organisms, templates, pages) for a UI kit in React, Next.js, Vue, Svelte or React Native, and enforcing component architecture with lint. Use when structuring a UI kit or component folders, deciding where a component goes, or adding or fixing lint rules for import boundaries (a feature importing another feature, the UI kit importing features, layers, cycles, chokepoints)."
 ---
 
 # Atomic design

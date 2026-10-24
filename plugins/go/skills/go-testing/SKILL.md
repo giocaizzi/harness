@@ -1,6 +1,6 @@
 ---
 name: go-testing
-description: "Go test conventions: the standard testing package with go-cmp instead of testify, table tests with t.Run and t.Parallel, fakes over mocks, golden files, httptest, testing/synctest for time and concurrency, fuzzing, b.Loop benchmarks, the race detector and integration tests behind a build tag. Use when writing, reviewing or debugging Go tests."
+description: "Go test rules: the standard testing package with go-cmp instead of testify, table tests with t.Parallel, fakes over mocks, golden files, httptest, testing/synctest for time and concurrency, fuzzing, b.Loop benchmarks, the race detector. Use whenever you write, fix, review or debug Go tests (_test.go), including flaky, slow or hanging tests and tests that sleep or use testify."
 ---
 
 # Go Testing
