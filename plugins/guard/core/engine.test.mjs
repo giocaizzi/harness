@@ -1182,15 +1182,24 @@ test('factory run with a config the guard could not read: every label change is 
     "gh issue edit 7 --add-lab''el x",
     'gh issue edit 7 --add-lab"e"l x',
     'gh issue edit 7 --add-lab\\el x',
+    "gh issue edit 7 --add-la$'\\x62'el x",
+    'A=lab; gh issue edit 7 --add-${A}el x',
+    'gh issue edit 7 --add-labe$(printf l) x',
+    'gh pr edit 7 --add-labe`printf l` x',
+    'F=--add-label; gh issue edit 7 $F x',
+    'gh pr create -t x --la${A}bel y',
   ]) {
     const d = run(c);
     assert.equal(d.action, 'deny', c);
     assert.equal(d.rule, 'factory-config', c);
   }
-  for (const c of ['gh issue view 7 --json labels', 'gh issue list --label needs-owner --json number', 'git status']) {
+  for (const c of ['gh issue view 7 --json labels', 'gh issue list --label needs-owner --json number', 'git status', 'echo $HOME']) {
     assert.equal(run(c).action, 'allow', c);
   }
-  assert.notEqual(run('gh pr create -t "fix: x" -b y').rule, 'factory-config', 'no label: not this rule');
+  // An expansion in a value, outside an edit, is not a flag name: not this rule.
+  for (const c of ['gh pr create -t "fix: x" -b y', 'gh pr create -t "fix: x" -b "$(cat body.md)"', 'gh pr create -t "fix: x" --body="$(cat body.md)"']) {
+    assert.notEqual(run(c).rule, 'factory-config', c);
+  }
   assert.equal(run('gh issue edit 7 --add-label needs-owner', { approval: 'agent-ok', takeover: 'factory-takeover' }).action, 'allow', 'a readable config: other labels pass');
 });
 
