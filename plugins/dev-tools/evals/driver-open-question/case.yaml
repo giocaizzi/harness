@@ -7,4 +7,4 @@ context:
 execution:
   prompt: Design how the notes app should store notes so they sync between devices. Plan it with the driver and give me the design.
   max_turns: 15
-  allowed_tools: [Read, Glob, Grep, Skill]
+  allowed_tools: [Read, Glob, Grep, Skill, Agent]

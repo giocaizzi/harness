@@ -7,4 +7,4 @@ context:
 execution:
   prompt: Before anyone touches code, I need a design and a rollout plan for moving every service under services/ off legacy_log onto the standard logging module, with structured fields and a way to roll back per service. Get it planned properly and give me the plan.
   max_turns: 15
-  allowed_tools: [Read, Glob, Grep, Skill]
+  allowed_tools: [Read, Glob, Grep, Skill, Agent]

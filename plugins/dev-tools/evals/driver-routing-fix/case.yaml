@@ -7,4 +7,4 @@ context:
 execution:
   prompt: Users say the last page of search results is sometimes empty and sometimes repeats items from the page before. Find the root cause in pager.py and fix it, with a test that would have caught it.
   max_turns: 15
-  allowed_tools: [Read, Glob, Grep, Edit, Write, Skill]
+  allowed_tools: [Read, Glob, Grep, Edit, Write, Skill, Agent]
