@@ -833,6 +833,8 @@ function opaqueGh(flat) {
 export function touchesApprovalLabel(command, label) {
   const want = String(label).trim().toLowerCase();
   if (!want) return false;
+  // A backslash-newline is a line continuation: the shell joins the word (`agent-o\⏎k`).
+  command = command.replace(/\\\r?\n/g, '');
   const named = new RegExp(`(?<![\\w-])${want.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w-])`, 'i');
   const flat = command.replace(/['"\\]/g, '');
   const args = plainGh(command);
@@ -849,14 +851,64 @@ export function touchesApprovalLabel(command, label) {
   return false;
 }
 
-// A command that may change a label: it mentions one (`--add-label`, `/labels`, `gh label`) or passes `-l`, read with
-// quotes and backslashes removed as the shell joins them (`--add-lab''el`), and is not one plain `gh` read. A flag name
-// the shell builds by expansion (`--add-la$'\x62'el`, `--add-${A}el`, `--add-labe$(printf l)`) is not in the text, so
-// a `gh issue|pr edit` with any expansion, or a flag whose name holds one, counts too.
+// Whether a word's text changes at run time: a parameter or command substitution, or an unquoted glob or brace
+// list. `$'…'` is not: the reader already decoded it into the word's value.
+function dynamicText(raw) {
+  for (let i = 0, q = null; i < raw.length; i++) {
+    const c = raw[i];
+    if (q === "'") q = c === "'" ? null : q;
+    else if (c === '\\') i++;
+    else if (c === '`' || (c === '$' && /[\w{(@*#?!$-]/.test(raw[i + 1] ?? ''))) return true;
+    else if (q === '"') q = c === '"' ? null : q;
+    else if (c === "$" && raw[i + 1] === "'") i = raw.indexOf("'", i + 2) < 0 ? raw.length : raw.indexOf("'", i + 2);
+    else if (c === "'" || c === '"') q = c;
+    else if (/[*?[]/.test(c) || (c === '{' && /^\{[^}]*(?:,|\.\.)[^}]*\}/.test(raw.slice(i)))) return true;
+  }
+  return false;
+}
+// `gh issue|pr create|edit` flags that take no value: a word after one of them is not its value.
+const GH_BOOLEAN = new Set(['-d', '--draft', '--dry-run', '-f', '--fill', '--fill-first', '--fill-verbose', '--no-maintainer-edit', '-w', '--web', '-e', '--editor']);
+
+// A `gh issue|pr create|edit` whose flags the text cannot show (owner decision on #246): a non-literal subcommand, a
+// flag name that expands (`--add-${A}el`), a whole word that expands where no value-taking flag precedes it (`"$F"`),
+// or arguments added by xargs. Values pass (`-b "$(cat body.md)"`, `--body-file "$TMPDIR/b.md"`); so does a gh
+// command that cannot add labels (`gh pr view $N`). Also any word naming a label flag once the reader decoded it
+// (`-$'l'`). Read with the shell reader, so `$'…'` and line continuations are already resolved.
+function ghBuildsLabelFlag(command) {
+  for (const u of units(analyze(command))) {
+    const words = commandWords(u.cmd.words);
+    if (words[0]?.val.split(/[\\/]/).pop().replace(/\.exe$/i, '') !== 'gh') continue;
+    let i = 1;
+    while (words[i] && words[i].val.startsWith('-') && !dynamicText(words[i].raw)) i += ['-R', '--repo', '--hostname'].includes(words[i].val) ? 2 : 1;
+    const [group, verb] = [words[i], words[i + 1]];
+    if (!group) continue;
+    if (dynamicText(group.raw) || (['issue', 'pr'].includes(group.val) && (!verb || dynamicText(verb.raw)))) return true;
+    if (!['issue', 'pr'].includes(group.val) || !['create', 'edit'].includes(verb.val)) continue;
+    if (u.cmd.words.some((w) => w.val === 'xargs')) return true;
+    for (let k = i + 2; k < words.length; k++) {
+      const { val, raw } = words[k];
+      if (/label/i.test(val.split('=')[0]) || /^-l/.test(val)) return true;
+      if (!dynamicText(raw)) continue;
+      if (val.startsWith('--')) {
+        if (dynamicText(raw.split('=')[0])) return true;
+      } else if (val.startsWith('-') && val.length > 1) {
+        if (dynamicText(raw.slice(1, 2)) || raw[1] === '$' || raw[1] === '`') return true;
+      } else {
+        const prev = words[k - 1].val;
+        if (!(prev.startsWith('-') && !prev.includes('=') && !GH_BOOLEAN.has(prev) && k - 1 > i + 1)) return true;
+      }
+    }
+  }
+  return false;
+}
+
+// A command that may change a label: it mentions one (`--add-label`, `/labels`, `gh label`) or a gh line passes `-l`, read with
+// line continuations joined and quotes and backslashes removed as the shell joins them (`--add-lab''el`), and is not
+// one plain `gh` read.
 function changesLabels(command) {
+  command = command.replace(/\\\r?\n/g, '');
   const flat = command.replace(/['"\\]/g, '');
-  if (/\bgh\b/.test(flat) && ((/\b(?:issue|pr)\b.*\bedit\b/.test(flat) && /\$|`/.test(flat)) || /(?:^|\s)-[^\s=]*[$`]/.test(flat))) return true;
-  if (!/label|(?:^|\s)-l/i.test(flat)) return false;
+  if (!/label/i.test(flat) && !(/\bgh\b/.test(flat) && /(?:^|\s)-l/.test(flat))) return false;
   const args = plainGh(command);
   return !args || ghAction(args) !== 'read';
 }
@@ -870,6 +922,7 @@ export function evaluateCommand({ command, loadedSkills = new Set(), state, host
   if (factory?.takeover && touchesApprovalLabel(command, factory.takeover)) return { action: 'deny', rule: 'factory-takeover', reason: `${rules.factory.takeoverWhy} The \`${factory.takeover}\` label is the owner's to apply; ask on the ticket instead.` }
   // A config the guard could not read fails closed: every label change is denied, and so is any name it could still find.
   if (factory?.unsure && (changesLabels(command) || (factory.extra ?? []).some((name) => touchesApprovalLabel(command, name)))) return { action: 'deny', rule: 'factory-config', reason: `${rules.factory.unsureWhy} Every label change is denied in this run until the config is fixed; ask on the ticket instead.` }
+  if (factory?.unsure && ghBuildsLabelFlag(command)) return { action: 'deny', rule: 'factory-config', reason: `${rules.factory.unsureWhy} This \`gh issue|pr create|edit\` has a subcommand or flag the shell builds at run time, which could add a label. Spell the subcommand and flags literally, and pass a body as a value or with a literal \`--body-file\` path.` }
   // Hard denies come first and fire every time, like the title guard. A `when` rule denies only in a repo
   // that adopted that manager; elsewhere it lets the command through with a once-per-session note.
   const denied = deniedBy(command, rules)
