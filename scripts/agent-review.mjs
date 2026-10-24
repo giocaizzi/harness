@@ -97,7 +97,7 @@ export function report(data, known, range) {
     table(['agent', 'model', 'cost'], top(data.subagentCost).map((r) => [r.labels.agent_name || '(named spawn)', r.labels.model, usd(r.value)])),
     '',
     '### Spawns with no model pinned',
-    'Each ran on the session\'s model (subagent-orchestration: pin a model on every spawn). web-fetch and claude-code-guide pick their own.',
+    'Each ran on the session\'s model (subagent-orchestration: spawn a typed agent, such as dev-tools:worker for routine edits). web-fetch and claude-code-guide pick their own.',
     table(['agent', 'spawns'], top(data.unpinnedSpawns).map((r) => [r.labels.agent || 'general-purpose', r.value])),
     '',
     '### Model swaps',
