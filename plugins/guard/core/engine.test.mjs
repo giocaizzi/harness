@@ -1213,6 +1213,14 @@ test('factory run with a config the guard could not read: every label change is 
     "for i in 1; do gh issue e$'d'it 7 $F ship-it; done",
     'for i in 1; do gh issue edit 7 --add-la*l ship-it; done',
     "for f in --add-la$'\\x62'el; do gh issue edit 7 $f ship-it; done",
+    // Review round 2: an unquoted expansion after a value flag splits into more words.
+    'F="y --label ship-it"; gh issue create -t x -b $F',
+    "F=\"y --la\"$'\\x62'\"el ship-it\"; gh issue create -t x -b $F",
+    'gh issue create -t x --body=$F',
+    'gh issue create -t x -b $(cat args.txt)',
+    'gh issue edit 7 -b $(cat args.txt)',
+    'gh issue edit 7 --body=$F',
+    'gh issue create -t x --body=$(printf "y --label ship-it")',
   ]) {
     const d = run(c);
     assert.equal(d.action, 'deny', c);
