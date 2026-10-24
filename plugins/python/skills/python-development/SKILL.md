@@ -54,3 +54,9 @@ Read [references/TYPING.md](./references/TYPING.md) for the version-feature tabl
 Read [references/PATTERNS.md](./references/PATTERNS.md) for dataclass vs Pydantic vs TypedDict guidance, DI, Result pattern, exception hierarchy, async and module-organization examples.
 
 Read [references/PROJECT_STRUCTURE.md](./references/PROJECT_STRUCTURE.md) when scaffolding a project: directory layout, `pyproject.toml` template, uv workflows, Makefile, py.typed, workspaces.
+
+## Gotchas
+
+- `uv pip install` is still pip: it changes the environment without touching `pyproject.toml` or `uv.lock`, so the next `uv sync` undoes it. Use `uv add`.
+- A Pydantic model resolves its annotations at runtime, so a type imported only under `TYPE_CHECKING` leaves it "not fully defined". Import model field types for real.
+- In an existing repo, its own ruff and mypy settings win: don't switch on `select = ["ALL"]` or `--strict` in a change that is about something else.

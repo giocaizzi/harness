@@ -39,3 +39,9 @@ Do not use `any`, `eslint-disable`, or type assertions/casts (`as`, `as const` f
 
 - Use ES modules and the `node:` prefix for built-ins (`import { readFile } from 'node:fs/promises'`).
 - Register a `process.on('unhandledRejection')` handler that logs and exits non-zero, so failures crash loudly instead of leaving a half-working process.
+
+## Gotchas
+
+- `noUncheckedIndexedAccess` types `arr[i]` and `record[key]` as `T | undefined`. Narrow with a check or use `.at()` plus a guard; a `!` to silence it is the banned escape hatch.
+- The baseline's `moduleResolution: "bundler"` suits code a bundler builds. Code Node runs straight from `tsc` output needs `module` and `moduleResolution` set to `NodeNext` and a `.js` extension on every relative import in the `.ts` source; without them it compiles and then fails at runtime with `ERR_MODULE_NOT_FOUND`.
+- `catch (e)` gives `unknown` under `strict`: narrow with `instanceof Error` before reading `.message`.
