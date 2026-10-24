@@ -136,14 +136,16 @@ export function subagentRows(input, now, effort = {}) {
     .join('')
 }
 
-// Copilot's running subagents as `[icon name · model · effort · time]` parts. Its status JSON has none, so they come from
-// the session's events (`events.jsonl` in `transcript_path`): a `subagent.started` (name, the model it starts on, when
-// known) until its `subagent.completed` or `.failed`. The effort is the one set for the agent in `subagents.agents`
-// (`/subagents`, user settings); "inherit" or none is the session's, from its last `session.start`, `.resume` or
-// `.model_change`. A resume ends every subagent, since none is resumable.
+// Copilot's running subagents as `[icon agent · model · effort · time]` parts. Its status JSON has none, so they come
+// from the session's events (`events.jsonl` in `transcript_path`), keyed by `agentId`: a `subagent.started` (the agent,
+// the model it starts on) until its `subagent.completed` or `.failed`; `subagent.configured` gives the model and effort
+// it runs at. Without that, the effort set for the agent in `subagents.agents` (`/subagents`, user settings), else the
+// session's: its last `session.start`, `.resume` or `.model_change` of its own (a subagent's carries its `agentId`; a
+// null effort is none, as in `auto`). A session that starts, resumes or shuts down ends every subagent, since none is
+// resumable; a CLI killed mid-run is resumed or replaced before its line is drawn again.
 export function copilotAgents(events, settings, now) {
   const running = new Map()
-  let session
+  let session = null
   for (const line of events.split('\n')) {
     if (!line.includes('"type":"subagent.') && !line.includes('"type":"session.')) continue
     let e
@@ -152,15 +154,19 @@ export function copilotAgents(events, settings, now) {
     } catch {
       continue // a line still being written
     }
-    if (['session.start', 'session.resume', 'session.model_change'].includes(e.type)) session = e.data?.reasoningEffort ?? session
-    if (e.type === 'session.resume') running.clear()
-    if (e.type === 'subagent.started') running.set(e.data?.toolCallId, e)
-    if (e.type === 'subagent.completed' || e.type === 'subagent.failed') running.delete(e.data?.toolCallId)
+    const data = e.data
+    if (!data || typeof data !== 'object') continue
+    const id = e.agentId ?? data.toolCallId
+    if (['session.start', 'session.resume', 'session.model_change'].includes(e.type) && !e.agentId && 'reasoningEffort' in data) session = data.reasoningEffort
+    if (['session.start', 'session.resume', 'session.shutdown'].includes(e.type)) running.clear()
+    if (e.type === 'subagent.started' && id) running.set(id, { name: data.agentName, model: data.model, at: Date.parse(e.timestamp) })
+    if (e.type === 'subagent.configured' && running.has(id)) running.set(id, { ...running.get(id), model: data.model ?? running.get(id).model, effort: data.reasoningEffort })
+    if (e.type === 'subagent.completed' || e.type === 'subagent.failed') running.delete(id)
   }
-  return [...running.values()].map(({ data, timestamp }) => {
-    const set = settings?.subagents?.agents?.[data.agentName]?.effortLevel
-    const at = Date.parse(timestamp)
-    const parts = [data.agentDisplayName ?? data.agentName, data.model ? modelName(data.model) : null, set && set !== 'inherit' ? set : session, Number.isNaN(at) ? null : elapsed(now - at)]
+  return [...running.values()].map((a) => {
+    const set = settings?.subagents?.agents?.[a.name]?.effortLevel
+    const effort = a.effort !== undefined ? a.effort : set && set !== 'inherit' ? set : session
+    const parts = [a.name?.split(':').pop(), a.model ? modelName(a.model) : null, effort, Number.isNaN(a.at) ? null : elapsed(now - a.at)]
     return `[${ICON.agents} ${parts.filter(Boolean).join(' · ')}]`
   })
 }

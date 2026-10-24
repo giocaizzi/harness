@@ -124,23 +124,43 @@ test('subagentRows adds model and effort to each agent-panel row', async () => {
 
 test('copilotAgents: running subagents from the session events, with model and effort', async () => {
   const { copilotAgents } = await import('./statusline.mjs')
-  const ev = (type, data, timestamp = '2026-10-24T10:00:00.000Z') => JSON.stringify({ type, data, timestamp })
-  const started = (id, agentName, model) => ev('subagent.started', { toolCallId: id, agentName, agentDisplayName: agentName.split(':').pop(), agentDescription: 'd', ...(model && { model }) })
-  const settings = { subagents: { agents: { 'dev-tools:scout': { effortLevel: 'low' }, 'dev-tools:driver': { effortLevel: 'inherit' } } } }
+  const at = '2026-10-24T10:00:00.000Z'
   const now = Date.parse('2026-10-24T10:03:49.000Z')
+  const ev = (type, data, agentId) => JSON.stringify({ type, data, ...(agentId && { agentId }), timestamp: at })
+  // As Copilot 1.0.103 writes them: agentDisplayName on `started` is the task's label, the agent is agentName.
+  const started = (id, agentName, model) => ev('subagent.started', { toolCallId: `call_${id}`, agentName, agentDisplayName: 'git-status', agentDescription: 'd', ...(model && { model }), agentType: agentName }, id)
+  const configured = (id, model, reasoningEffort) => ev('subagent.configured', { model, reasoningEffort, multiTurn: true }, id)
+  const agentModel = (id, reasoningEffort) => ev('session.model_change', { source: 'agent', newModel: 'm', reasoningEffort }, id)
+  const settings = { subagents: { agents: { 'dev-tools:scout': { effortLevel: 'low' }, 'dev-tools:driver': { effortLevel: 'inherit' } } } }
   const events = [
     ev('session.start', { reasoningEffort: 'medium' }),
-    started('a', 'dev-tools:scout', 'gpt-6-luna'),
-    started('b', 'dev-tools:driver', 'claude-opus-5-5'),
-    started('c', 'explore'),
-    ev('subagent.completed', { toolCallId: 'c', agentName: 'explore', agentDisplayName: 'explore' }),
-    ev('session.model_change', { newModel: 'gpt-5.4', reasoningEffort: 'high' }),
+    ev('session.model_change', { source: 'startup', newModel: 'auto', reasoningEffort: null }),
+    // Two at once, each configured: each shows its own effort, and their own model_change leaves the session's alone.
+    started('a', 'task', 'gpt-6-luna'),
+    configured('a', 'gpt-6-luna', 'high'),
+    agentModel('a', 'high'),
+    started('b', 'explore', 'gpt-5.6-luna'),
+    configured('b', 'gpt-5.6-luna', 'low'),
+    agentModel('b', 'low'),
+    // Not configured: the settings' effort, else (inherit) the session's, which `auto` cleared.
+    started('c', 'dev-tools:scout', 'gpt-6-luna'),
+    started('d', 'dev-tools:driver', 'claude-opus-5-5'),
+    started('e', 'explore'),
+    ev('subagent.completed', { toolCallId: 'call_e', agentName: 'explore', agentDisplayName: 'git-status' }, 'e'),
+    ev('subagent.started', undefined, 'f'), // no data: skipped
     '{"type":"subagent.started","data":{', // a line still being written
   ].join('\n')
-  assert.deepEqual(copilotAgents(events, settings, now), ['[\uf0c0 scout · gpt-6-luna · low · 3m 49s]', '[\uf0c0 driver · Opus 5.5 · high · 3m 49s]'])
-  // A failed one ends too; a resume ends them all; no settings and no session effort leave the effort out.
-  assert.deepEqual(copilotAgents([started('a', 'x'), ev('subagent.failed', { toolCallId: 'a', error: 'e' }), started('b', 'y')].join('\n'), undefined, now), ['[\uf0c0 y · 3m 49s]'])
-  assert.deepEqual(copilotAgents([started('a', 'x'), ev('session.resume', {})].join('\n'), undefined, now), [])
+  assert.deepEqual(copilotAgents(events, settings, now), [
+    '[\uf0c0 task · gpt-6-luna · high · 3m 49s]',
+    '[\uf0c0 explore · gpt-5.6-luna · low · 3m 49s]',
+    '[\uf0c0 scout · gpt-6-luna · low · 3m 49s]',
+    '[\uf0c0 driver · Opus 5.5 · 3m 49s]',
+  ])
+  // An unset effort is the session's while it has one.
+  assert.deepEqual(copilotAgents([ev('session.start', { reasoningEffort: 'medium' }), started('a', 'x')].join('\n'), undefined, now), ['[\uf0c0 x · medium · 3m 49s]'])
+  // A failed one ends; a shutdown, start or resume ends them all (a killed CLI writes nothing).
+  assert.deepEqual(copilotAgents([started('a', 'x'), ev('subagent.failed', { toolCallId: 'call_a', error: 'e' }, 'a'), started('b', 'y')].join('\n'), undefined, now), ['[\uf0c0 y · 3m 49s]'])
+  for (const end of ['session.shutdown', 'session.start', 'session.resume']) assert.deepEqual(copilotAgents([started('a', 'x'), ev(end, {})].join('\n'), undefined, now), [])
   assert.deepEqual(copilotAgents('', undefined, now), [])
 })
 
