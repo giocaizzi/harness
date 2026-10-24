@@ -14,6 +14,7 @@ import { commandWords, units } from '../core/shell.mjs'
 import { emit } from '../core/otel.mjs'
 import { rules } from '../core/rules.mjs'
 import { pluginDataDir } from './data.mjs'
+import { staleCheck } from './stale.mjs'
 import { appendDecision, commandHash, harnessName, recordAttrs } from './telemetry.mjs'
 
 // Claude Bash/PowerShell, Copilot bash/powershell, VS Code run_in_terminal. VS Code ignores matchers, so every
@@ -98,8 +99,8 @@ export function sessionStore(dir, sessionId, agentId) {
   let seen = { reminded: [], loaded: [] }
   return {
     load() {
-      seen = { reminded: [], loaded: [], unattended: undefined }
-      if (!file) return { reminded: [], loaded: [] }
+      seen = { reminded: [], loaded: [], unattended: undefined, plugins: {} }
+      if (!file) return { reminded: [], loaded: [], plugins: {} }
       let text = ''
       try {
         text = readFileSync(file, 'utf8')
@@ -114,10 +115,12 @@ export function sessionStore(dir, sessionId, agentId) {
           continue
         }
         if (typeof fact.loaded === 'string') seen.loaded.push(fact.loaded)
-        if (typeof fact.reminded === 'string' && (fact.agent === agent || SESSION_HINTS.has(fact.reminded))) seen.reminded.push(fact.reminded)
+        if (typeof fact.reminded === 'string' && (fact.agent === agent || SESSION_HINTS.has(fact.reminded) || fact.reminded.startsWith('stale:'))) seen.reminded.push(fact.reminded)
         if (typeof fact.unattended === 'boolean') seen.unattended = fact.unattended
+        // The plugin versions the session started with: the first record of each wins.
+        if (typeof fact.plugin === 'string' && typeof fact.version === 'string') seen.plugins[fact.plugin] ??= fact.version
       }
-      return { reminded: [...new Set(seen.reminded)], loaded: [...new Set(seen.loaded)], unattended: seen.unattended }
+      return { reminded: [...new Set(seen.reminded)], loaded: [...new Set(seen.loaded)], unattended: seen.unattended, plugins: { ...seen.plugins } }
     },
     // Appends the facts `state` adds to what load() read.
     save(state) {
@@ -126,6 +129,7 @@ export function sessionStore(dir, sessionId, agentId) {
         ...[...new Set(state.loaded)].filter((s) => !seen.loaded.includes(s)).map((s) => JSON.stringify({ loaded: s })),
         ...[...new Set(state.reminded)].filter((r) => !seen.reminded.includes(r)).map((r) => JSON.stringify({ reminded: r, agent })),
         ...(typeof state.unattended === 'boolean' && state.unattended !== seen.unattended ? [JSON.stringify({ unattended: state.unattended })] : []),
+        ...Object.entries(state.plugins ?? {}).filter(([p]) => !(p in seen.plugins)).map(([plugin, version]) => JSON.stringify({ plugin, version })),
       ]
       if (!lines.length) return
       mkdirSync(dirname(file), { recursive: true, mode: 0o700 })
@@ -395,10 +399,24 @@ function onSpawn(input, state, deps) {
   return note(d.context)
 }
 
+// Plugins updated since the session loaded them: one note per newer version, next to a call that has no decision
+// (a decision's reason is the agent's to read alone), so the next call carries it instead.
+function onStale(input, state, deps, out) {
+  const decided = out.stdout && JSON.parse(out.stdout).hookSpecificOutput?.permissionDecision
+  const reminded = state.reminded.filter((r) => r.startsWith('stale:')).map((r) => r.slice(6))
+  const s = staleCheck({ root: deps.pluginRoot, loaded: state.plugins, reminded, harness: deps.harness })
+  state.plugins = s.loaded
+  if (!s.context || decided) return out
+  state.reminded.push(...s.remind.map((r) => `stale:${r}`))
+  fire(deps, 'guard.reminder', { rule: 'stale-plugins', cmd_class: 'hint', tool: String(input.tool_name ?? ''), session_id: input.session_id, tool_use_id: input.tool_use_id }, input.cwd)
+  const context = out.stdout ? JSON.parse(out.stdout).hookSpecificOutput?.additionalContext : null
+  return note(context ? `${context}\n${s.context}` : s.context)
+}
+
 // One hook event in, { stdout?, stderr?, code? } out. `deps` is injected so tests run without a host.
 export async function handle(input, deps) {
   const store = sessionStore(deps.dataDir, input.session_id, input.agent_id)
-  const state = { reminded: [], loaded: [], ...store.load() }
+  const state = { reminded: [], loaded: [], plugins: {}, ...store.load() }
   const loadedBefore = [...state.loaded]
   const event = input.hook_event_name
   let out = {}
@@ -427,6 +445,7 @@ export async function handle(input, deps) {
       if (command) out = await onShell({ ...input, tool_input: { command } }, state, deps)
       else if (tool === 'run_task') out = note(`The guard could not read the command of task "${t.id ?? ''}" in .vscode/tasks.json, so it did not check it. If it deletes, force-pushes or reads secrets, confirm with the user first.`)
     }
+    out = onStale(input, state, deps, out)
   }
   // One guard.skill per skill and session, in every harness: the same skill-usage figure everywhere. Names are kept
   // bare (`dev-tools:ship` is `ship`), so a skill loaded both ways counts once.
@@ -498,7 +517,7 @@ async function main() {
   // `--no-ask` comes from the Codex hooks file (.generated/codex/hooks.json), which build_agents.py generates.
   const noAsk = process.argv.includes('--no-ask')
   // Codex (`--no-ask`) is the one harness without a file-read tool.
-  const out = await handle(input, { dataDir, env: process.env, hostFacts, run, pythonManager, noAsk, readTool: !noAsk, nativeAsk: noAsk ? (command, rule) => codexAsks(process.env, input.transcript_path)?.(command, rule) ?? false : null, emit: (event, attrs, cwd) => new Promise((r) => setImmediate(r)).then(() => emit(process.env, event, recordAttrs(attrs, cwd, noAsk ? 'codex' : harnessName()))) }).catch(() => ({}))
+  const out = await handle(input, { dataDir, harness: noAsk ? 'codex' : harnessName(), env: process.env, hostFacts, run, pythonManager, noAsk, readTool: !noAsk, nativeAsk: noAsk ? (command, rule) => codexAsks(process.env, input.transcript_path)?.(command, rule) ?? false : null, emit: (event, attrs, cwd) => new Promise((r) => setImmediate(r)).then(() => emit(process.env, event, recordAttrs(attrs, cwd, noAsk ? 'codex' : harnessName()))) }).catch(() => ({}))
   if (out.stdout) process.stdout.write(out.stdout)
   if (out.stderr) process.stderr.write(out.stderr)
 }

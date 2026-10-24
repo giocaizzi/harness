@@ -26,6 +26,7 @@ const launchDetached = (argv) => {
 export function createGuard({ harness, noAsk = false, dataDir = DATA_DIR, deps = {} }) {
   const d = {
     dataDir,
+    harness,
     env: process.env,
     hostFacts,
     run,

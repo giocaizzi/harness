@@ -1,0 +1,81 @@
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { installedVersions, newer, staleCheck } from './stale.mjs'
+import { handle, pythonManager } from './guard.mjs'
+
+const plugin = (dir, version) => {
+  mkdirSync(join(dir, '.claude-plugin'), { recursive: true })
+  writeFileSync(join(dir, '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'x', version }))
+  return dir
+}
+// Claude Code: <config>/plugins/cache/<marketplace>/<plugin>/<version>, installed_plugins.json in <config>/plugins.
+function claude(installed, dirs) {
+  const plugins = join(mkdtempSync(join(tmpdir(), 'stale-')), 'plugins')
+  for (const [p, vs] of Object.entries(dirs)) for (const v of vs) plugin(join(plugins, 'cache', 'acme', p, v), v)
+  const registry = Object.fromEntries(Object.entries(installed).map(([p, v]) => [`${p}@acme`, [{ scope: 'user', version: v }]]))
+  writeFileSync(join(plugins, 'installed_plugins.json'), JSON.stringify({ version: 2, plugins: registry }))
+  return (p, v) => join(plugins, 'cache', 'acme', p, v)
+}
+
+test('newer compares versions numerically', () => {
+  assert.equal(newer('0.10.0', '0.9.9'), true)
+  assert.equal(newer('1.0.0', '1.0.0'), false)
+  assert.equal(newer('0.52.0', '0.53.0'), false)
+})
+
+test('Claude Code: the registry gives the installed versions, the cache path what this session loaded', () => {
+  const root = claude({ guard: '0.53.0', hud: '0.9.0' }, { guard: ['0.52.0', '0.53.0'], hud: ['0.9.0'] })('guard', '0.52.0')
+  assert.deepEqual(installedVersions(root), { self: { name: 'guard', version: '0.52.0', versioned: true }, installed: { guard: '0.53.0', hud: '0.9.0' } })
+  const r = staleCheck({ root, loaded: { hud: '0.8.0' }, harness: 'claude' })
+  assert.equal(r.context, 'Harness plugins updated (guard 0.52.0 → 0.53.0, hud 0.8.0 → 0.9.0): ask the user to run `/reload-plugins`.')
+  assert.deepEqual(r.remind, ['guard@0.53.0', 'hud@0.9.0'])
+  // Once per newer version.
+  assert.equal(staleCheck({ root, loaded: r.loaded, reminded: r.remind, harness: 'claude' }).context, null)
+})
+
+test('a cache dir newer than the registry is not installed', () => {
+  const root = claude({ guard: '0.52.0' }, { guard: ['0.52.0', '0.53.0'] })('guard', '0.52.0')
+  assert.equal(staleCheck({ root }).context, null)
+})
+
+test('Codex: no registry, the newest version dir is installed', () => {
+  const plugins = join(mkdtempSync(join(tmpdir(), 'stale-')), 'cache', 'acme')
+  plugin(join(plugins, 'guard', '0.52.0'), '0.52.0')
+  plugin(join(plugins, 'guard', '0.53.0'), '0.53.0')
+  assert.match(staleCheck({ root: join(plugins, 'guard', '0.52.0'), harness: 'codex' }).context, /guard 0\.52\.0 → 0\.53\.0\): ask the user to restart the session/)
+})
+
+test('updated in place (Copilot CLI, a checkout): the versions the session started with are the loaded ones', () => {
+  const plugins = mkdtempSync(join(tmpdir(), 'stale-'))
+  const root = plugin(join(plugins, 'guard'), '0.52.0')
+  plugin(join(plugins, 'hud'), '0.9.0')
+  mkdirSync(join(plugins, 'not-a-plugin'))
+  const first = staleCheck({ root })
+  assert.deepEqual(first.loaded, { guard: '0.52.0', hud: '0.9.0' })
+  assert.equal(first.context, null)
+  plugin(root, '0.53.0')
+  assert.match(staleCheck({ root, loaded: first.loaded, harness: 'copilot' }).context, /^Harness plugins updated \(guard 0\.52\.0 → 0\.53\.0\)/)
+})
+
+test('an unreadable layout reads as nothing newer', () => {
+  assert.deepEqual(staleCheck({ root: join(tmpdir(), 'no-such-dir', 'guard') }), { loaded: {}, remind: [], context: null })
+  const plugins = join(mkdtempSync(join(tmpdir(), 'stale-')), 'plugins')
+  plugin(join(plugins, 'cache', 'acme', 'guard', '0.52.0'), '0.52.0')
+  writeFileSync(join(plugins, 'installed_plugins.json'), '{not json')
+  assert.equal(staleCheck({ root: join(plugins, 'cache', 'acme', 'guard', '0.52.0') }).context, null)
+})
+
+test('the hook says it once per session, next to a call without a decision', async () => {
+  const pluginRoot = claude({ guard: '0.53.0' }, { guard: ['0.52.0', '0.53.0'] })('guard', '0.52.0')
+  const dataDir = mkdtempSync(join(tmpdir(), 'guard-test-'))
+  const h = (input, agent_id) => handle({ session_id: 's1', cwd: '/', agent_id, ...input }, { dataDir, env: {}, harness: 'claude', pluginRoot, hostFacts: async () => ({ load1: 1, freeGb: 100 }), run: async () => null, pythonManager })
+  const ctx = (out) => (out.stdout ? JSON.parse(out.stdout).hookSpecificOutput : {})
+  // A deny keeps its own reason; the note waits for the next call.
+  assert.doesNotMatch(ctx(await h({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'gh pr create -t x -b y' } })).permissionDecisionReason, /plugins updated/)
+  assert.match(ctx(await h({ hook_event_name: 'PreToolUse', tool_name: 'Skill', tool_input: { skill: 'ship' } })).additionalContext, /guard 0\.52\.0 → 0\.53\.0/)
+  assert.equal(ctx(await h({ hook_event_name: 'PreToolUse', tool_name: 'Skill', tool_input: { skill: 'land' } })).additionalContext, undefined)
+  assert.equal(ctx(await h({ hook_event_name: 'PreToolUse', tool_name: 'Skill', tool_input: { skill: 'wt' } }, 'sub1')).additionalContext, undefined, 'a subagent of the session is not told again')
+})
