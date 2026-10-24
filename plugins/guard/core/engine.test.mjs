@@ -510,7 +510,7 @@ test('an edit under docs/ or to README/AGENTS hints at docs-sync once', () => {
 });
 
 test('a spawn that bypasses the typed agents gets one routing hint per case and session', () => {
-  const rule = (type, model, state = fresh(), effort) => evaluateRouting({ type, model, effort, state, rules }).rule;
+  const rule = (type, model, state = fresh(), effort, tool) => evaluateRouting({ type, model, effort, tool, state, rules }).rule;
   assert.equal(rule('Plan'), 'routing-plan');
   assert.equal(rule('general-purpose', 'opus'), 'routing-model');
   assert.equal(rule(undefined, 'claude-opus-5-5'), 'routing-model');
@@ -520,7 +520,7 @@ test('a spawn that bypasses the typed agents gets one routing hint per case and 
   // An untyped spawn without a model inherits the session's: use a typed agent.
   assert.equal(rule('general-purpose'), 'routing-untyped');
   assert.equal(rule('default'), 'routing-untyped');
-  assert.match(evaluateRouting({ type: 'general-purpose', state: fresh(), rules }).context, /scout` for lookups, `dev-tools:worker` for edits, `dev-tools:driver` for judgement/);
+  assert.match(evaluateRouting({ type: 'general-purpose', state: fresh(), rules }).context, /runs on `CLAUDE_CODE_SUBAGENT_MODEL` or the session's model.*scout` for lookups, `dev-tools:worker` for routine edits, `dev-tools:driver` for judgement/);
   // A typed agent's model or effort override, in any plugin, bare names included.
   assert.equal(rule('dev-tools:driver', 'opus'), 'routing-override');
   assert.equal(rule('scout', 'haiku'), 'routing-override');
@@ -528,12 +528,21 @@ test('a spawn that bypasses the typed agents gets one routing hint per case and 
   assert.equal(rule('factory:verifier', 'haiku'), 'routing-override');
   assert.equal(rule('dev-tools:driver', undefined, fresh(), 'high'), 'routing-override');
   assert.equal(rule('dev-tools:reviewer', undefined, fresh(), 'max'), 'routing-override');
-  assert.match(evaluateRouting({ type: 'scout', model: 'opus', effort: 'high', state: fresh(), rules }).context, /`model: opus` and `effort: high` overrides it/);
+  assert.match(evaluateRouting({ type: 'scout', model: 'opus', effort: 'high', state: fresh(), rules }).context, /`model: opus` and `effort: high` overrides it\. Drop them from the spawn/);
+  assert.match(evaluateRouting({ type: 'scout', model: 'opus', state: fresh(), rules }).context, /Drop it from the spawn \(/);
+  // Codex: dev-tools worker registers as dev-tools-worker; the bare `worker` there is Codex's built-in role.
+  assert.equal(rule('dev-tools-worker', 'gpt-6-luna', fresh(), undefined, 'spawn_agent'), 'routing-override');
+  assert.equal(rule('worker', 'gpt-6-luna', fresh(), undefined, 'spawn_agent'), undefined);
+  assert.equal(rule('worker', 'opus', fresh(), undefined, 'task'), 'routing-override'); // opencode's bare name is ours
   // Routed as the skill says: a typed agent without overrides, the two allowed ones, an untyped unit on Sonnet.
   assert.equal(rule('dev-tools:driver'), undefined);
   assert.equal(rule('general-purpose', 'sonnet'), undefined);
   assert.equal(rule('factory:verifier', 'sonnet'), undefined);
   assert.equal(rule('factory:verifier', undefined, fresh(), 'high'), undefined);
+  // The ticket-run routing table: docs, config or XS on Sonnet at medium, security paths on Opus at high.
+  assert.equal(rule('factory:verifier', 'sonnet', fresh(), 'medium'), undefined);
+  assert.equal(rule('factory:verifier', 'opus', fresh(), 'high'), undefined);
+  assert.equal(rule('factory:verifier', 'haiku', fresh(), 'medium'), 'routing-override');
   assert.equal(rule('dev-tools:reviewer', undefined, fresh(), 'high'), undefined);
   assert.equal(rule('Explore', 'opus'), undefined);
   assert.equal(rule('other:scout', 'opus'), undefined); // another plugin's agent

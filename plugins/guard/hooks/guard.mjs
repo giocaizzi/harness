@@ -393,7 +393,7 @@ async function onEdit(input, state, deps) {
 function onSpawn(input, state, deps) {
   const t = input.tool_input ?? {}
   const reminded = new Set(state.reminded)
-  const d = evaluateRouting({ type: t.subagent_type ?? t.agent_type ?? t.agentName, model: t.model, effort: t.effort, state: { reminded }, rules })
+  const d = evaluateRouting({ type: t.subagent_type ?? t.agent_type ?? t.agentName, model: t.model, effort: t.effort, tool: String(input.tool_name ?? '').toLowerCase(), state: { reminded }, rules })
   state.reminded = [...reminded]
   if (!d.remind) return {}
   fire(deps, 'guard.reminder', { rule: d.rule, cmd_class: 'routing', tool: String(input.tool_name ?? ''), session_id: input.session_id, tool_use_id: input.tool_use_id }, input.cwd)
