@@ -218,6 +218,20 @@ async function check(name) {
     // sounds' Stop hook ran from the installed plugin: it keeps the session's alert levels in the plugin data dir.
     if (name === 'codex' && !readdirSync(join(root, 'home'), { recursive: true }).some((f) => /sounds-codex-.*\.json$/.test(f))) failures.push('sounds: the Stop hook left no state')
     if (name === 'codex') failures.push(...(await codexOnly(h, env, root)))
+    if (name === 'opencode') {
+      // hud's TUI plugin is listed in tui.json and exists; `task` runs scout as a child session, whose events the
+      // plugin draws (opencode-agents.mjs; `opencode run` has no TUI, so the drawing itself is not checked here).
+      const tui = JSON.parse(readFileSync(join(env.XDG_CONFIG_HOME, 'opencode', 'tui.json'), 'utf8'))
+      const plugin = (tui.plugin ?? []).find((p) => String(p).endsWith('/plugins/hud/hooks/opencode-tui.mjs'))
+      if (!plugin || !existsSync(new URL(plugin))) failures.push(`hud: tui.json lists no TUI plugin: ${JSON.stringify(tui)}`)
+      const m = await mock('echo from-scout', root, { MOCK_SUBAGENT: '1' })
+      const out = h.run(env, cwd, m.port)
+      m.stop()
+      const results = m.entries().map((e) => e.result ?? '')
+      if (!results.some((r) => r.includes('from-scout')) || !results.some((r) => /<task id="ses_/.test(r)))
+        failures.push(`task: results ${JSON.stringify(results).slice(0, 300)}\n${out.stdout?.slice(-600)}\n${out.stderr?.slice(-600)}`)
+      rmSync(join(root, 'mock.jsonl'), { force: true })
+    }
     if (name === 'pi') {
       // The subagent tool: the parent delegates to scout, whose own session runs the command and answers "done";
       // meanwhile hud's footer names the running subagent and its model.
