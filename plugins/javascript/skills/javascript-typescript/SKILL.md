@@ -1,6 +1,6 @@
 ---
 name: javascript-typescript
-description: House conventions for JavaScript/TypeScript and Node.js (strict typing, banned escape hatches, tooling, tsconfig baseline). Use when writing or reviewing JS/TS code.
+description: "House rules for TypeScript, JavaScript and Node.js: strict typing, no any, casts, non-null assertions or eslint-disable, the tsconfig baseline, ES modules and node: imports. Use whenever you write, change or review .ts or .js code, whether adding a function or feature, fixing a bug, refactoring or reviewing before a merge, even when the user does not mention conventions."
 ---
 
 # JavaScript/TypeScript

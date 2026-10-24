@@ -1,6 +1,6 @@
 ---
 name: nextjs
-description: Next.js (App Router, v16) conventions and gotchas - server/client boundaries, async request APIs, Cache Components, route handlers, env vars. Use when working in a Next.js project.
+description: "Next.js 16 App Router rules and gotchas: server and client components, async params and cookies, Cache Components, route handlers, env vars. Use whenever you work in a project that depends on next (an app/ directory, next.config), such as adding a page or dynamic route, an API endpoint, a Server Action or caching, or fixing a build error, even when the user does not say Next.js."
 ---
 
 # Next.js
