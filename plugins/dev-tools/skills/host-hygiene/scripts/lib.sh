@@ -3,7 +3,8 @@
 #
 # Contract (stable; other tools interoperate through these paths, so never rename them):
 #   $HOST_LOCK_DIR/heavy.lock.<n>/pid      heavy slot n (1..HOST_HEAVY_SLOTS), dir made with mkdir; cmd and cap beside pid
-#   $HOST_LOCK_DIR/heavy.wait.<pid>        a waiter's place in the queue, served oldest mtime first
+#   $HOST_LOCK_DIR/heavy.wait.<pid>        a waiter's place in the queue, "<load cap> <owner> <cmd>", served oldest
+#                                          mtime first among the waiters whose cap the current load meets
 #   $HOST_LOCK_DIR/<class>.lease           device lease, "<owner> <pid> [device]", made with noclobber
 #   $HOST_LOCK_DIR/host-services/<pid>     service registry entry, removed on exit
 # Env: HOST_LOCK_DIR (/tmp: machine-wide, cleared on reboot), HOST_HEAVY_SLOTS (2),
@@ -24,6 +25,7 @@ HOST_OWNER=${HOST_OWNER// /_}
 mkdir -p "$HOST_LOCK_DIR"
 host_slot=''
 host_sleeper=''
+host_child=''
 host_load=''
 host_deadline=$(($(date +%s) + HOST_LOCK_TIMEOUT_SECONDS))
 
@@ -65,10 +67,9 @@ host_disk_check() {
   fi
 }
 
-host_pidfile() { if [ -d "$1" ]; then echo "$1/pid"; else echo "$1"; fi; }
 # host_abandoned <lock> <pid>: its holder is gone, or it has had no pid for 60 s (holder killed before writing it).
 host_abandoned() {
-  if [ -n "$2" ]; then ! host_alive "$2" "$(host_pidfile "$1")"; else [ "$(host_age "$1")" -ge 60 ] 2>/dev/null; fi
+  if [ -n "$2" ]; then ! host_alive "$2" "$1"; else [ "$(host_age "$1")" -ge 60 ] 2>/dev/null; fi
 }
 
 # host_reclaim <path> <pid> <reader>: move an abandoned lock aside, then re-read it. If it changed hands in between
@@ -98,13 +99,16 @@ host_slot_free() {
   done
 }
 
-# Live waiters queued before this one: an older wait file, or the same mtime and a lower pid.
+# Live waiters queued before this one (an older wait file, or the same mtime and a lower pid) whose own
+# load cap the current load meets: a waiter held back by a lower cap does not hold up the queue.
 host_ahead() {
-  local me=$HOST_LOCK_DIR/heavy.wait.$$ w p n=0
+  local me=$HOST_LOCK_DIR/heavy.wait.$$ w p cap n=0
   for w in "$HOST_LOCK_DIR"/heavy.wait.*; do
     p=${w##*.}
     [ -f "$w" ] && [ "$p" != $$ ] || continue
-    { [ "$w" -ot "$me" ] || { ! [ "$w" -nt "$me" ] && [ "$p" -lt $$ ]; }; } && host_alive "$p" "$w" && n=$((n + 1))
+    { [ "$w" -ot "$me" ] || { ! [ "$w" -nt "$me" ] && [ "$p" -lt $$ ]; }; } || continue
+    read -r cap _ <"$w" 2>/dev/null || continue
+    awk -v l="$host_load" -v m="$cap" 'BEGIN { exit !(l <= m) }' && host_alive "$p" "$w" && n=$((n + 1))
   done
   echo "$n"
 }
@@ -114,11 +118,11 @@ host_ahead() {
 # fill the slots and a quiet machine is used within one poll.
 host_slot_acquire() {
   local i n said='' free ahead
-  echo "$HOST_OWNER $*" >"$HOST_LOCK_DIR/heavy.wait.$$"
+  echo "$HOST_LOAD_CAP $HOST_OWNER $*" >"$HOST_LOCK_DIR/heavy.wait.$$"
   while :; do
     if host_over_cap; then
-      host_timed_out && { host_say "gave up waiting for load to drop under $HOST_LOAD_CAP after ${HOST_LOCK_TIMEOUT_SECONDS}s"; exit 124; }
       [ "$said" = load ] || { said=load; host_say "waiting for load $host_load to drop under $HOST_LOAD_CAP (HOST_LOAD_CAP)"; }
+      host_timed_out && { host_say "gave up waiting for load to drop under $HOST_LOAD_CAP after ${HOST_LOCK_TIMEOUT_SECONDS}s"; exit 124; }
       host_sleep "$HOST_POLL_SECONDS"
       continue
     fi
@@ -140,11 +144,26 @@ host_slot_acquire() {
       rm -rf "$host_slot"; host_slot=''
       continue
     fi
-    host_timed_out && { host_say "gave up waiting for a heavy slot after ${HOST_LOCK_TIMEOUT_SECONDS}s"; exit 124; }
     [ "$said" = slot ] || { said=slot; host_say "waiting for a heavy slot ($(cat "$HOST_LOCK_DIR"/heavy.lock.*/cmd 2>/dev/null | head -1))"; }
+    host_timed_out && { host_say "gave up waiting for a heavy slot after ${HOST_LOCK_TIMEOUT_SECONDS}s"; exit 124; }
     host_sleep $((HOST_POLL_SECONDS < 2 ? HOST_POLL_SECONDS : 2))
   done
   rm -f "$HOST_LOCK_DIR/heavy.wait.$$"
+}
+
+# host_run <cmd...>: run the command and return its exit code. It runs in the background, so a TERM or INT is
+# forwarded at once (a trap waits for a foreground command, and the KILL that follows an unanswered TERM
+# would leak the slot and orphan it), to its whole process tree: without a terminal, set -m gives it no
+# process group of its own. fd 3 keeps stdin, which a background command would otherwise get as /dev/null.
+host_run() {
+  local code
+  { exec 3<&0; } 2>/dev/null || exec 3</dev/null
+  "$@" <&3 3<&- &
+  host_child=$!
+  trap 'kill -INT $(host_tree "$host_child") 2>/dev/null' INT
+  trap 'kill -TERM $(host_tree "$host_child") 2>/dev/null' TERM
+  while wait "$host_child"; code=$?; kill -0 "$host_child" 2>/dev/null; do :; done
+  return "$code"
 }
 
 # Release only what this process holds: a waiter that gave up must never free the holder's slot.
@@ -163,16 +182,16 @@ host_services() {
 }
 
 host_status() {
-  local d w p state
+  local d w p state cap rest
   for d in "$HOST_LOCK_DIR"/heavy.lock.*; do
     case $d in *.stale.*) continue ;; esac
     [ -d "$d" ] || continue
     p=$(host_slot_pid "$d")
-    case ${p:+$(host_holder "$p" "$d/pid")} in alive) state='' ;; gone) state=', holder dead' ;; reused) state=', pid reused' ;; *) state=', no pid' ;; esac
-    echo "slot ${d##*.}: pid ${p:-none} $(cat "$d/cmd" 2>/dev/null) ($(cat "$d/cap" 2>/dev/null || echo 'cap unknown'), $(host_age "$(host_pidfile "$d")")s$state)"
+    case ${p:+$(host_holder "$p" "$d")} in alive) state='' ;; gone) state=', holder dead' ;; reused) state=', pid reused' ;; *) state=', no pid' ;; esac
+    echo "slot ${d##*.}: pid ${p:-none} $(cat "$d/cmd" 2>/dev/null) ($(cat "$d/cap" 2>/dev/null || echo 'cap unknown'), $(host_age "$d")s$state)"
   done
   for w in "$HOST_LOCK_DIR"/heavy.wait.*; do
-    [ -f "$w" ] && host_alive "${w##*.}" "$w" && echo "waiting: pid ${w##*.} $(cat "$w") ($(host_age "$w")s)"
+    [ -f "$w" ] && host_alive "${w##*.}" "$w" && read -r cap rest <"$w" && echo "waiting: pid ${w##*.} $rest (load cap $cap, $(host_age "$w")s)"
   done
   for d in "$HOST_LOCK_DIR"/*.lease; do
     [ -f "$d" ] && echo "lease ${d##*/}: $(cat "$d")$(host_alive "$(host_lease_pid "$d")" "$d" || echo ' (stale)')"

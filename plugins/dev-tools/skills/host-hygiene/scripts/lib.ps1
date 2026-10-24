@@ -4,7 +4,8 @@
 # Contract (stable; never rename these, a second path is a second, parallel semaphore):
 #   heavy slot n     named mutex 'Global\host-heavy<HOST_LOCK_DIR>-<n>'; the OS hands an abandoned
 #                    one (dead holder) to the next waiter. Holder info: $HOST_LOCK_DIR/heavy.slot.<n>
-#   heavy waiter     $HOST_LOCK_DIR/heavy.wait.<pid>, a waiter's place in the queue, served oldest first
+#   heavy waiter     $HOST_LOCK_DIR/heavy.wait.<pid>, a waiter's place in the queue, "<cpu cap> <owner> <cmd>",
+#                    served oldest first among the waiters whose cap the current CPU meets
 #   device lease     $HOST_LOCK_DIR/<class>.lease, "<owner> <pid> [device]", created exclusively
 #   service entry    $HOST_LOCK_DIR/host-services/<pid>, removed on exit
 # Env: HOST_LOCK_DIR (Windows %ProgramData%\host-locks, machine-wide; elsewhere /tmp),
@@ -90,12 +91,16 @@ function Get-HostFreeSlot {
     [Math]::Max(0, $script:HostHeavySlots - $held)
 }
 
-# Live waiters queued before this one: an older wait file, or the same time and a lower pid.
-function Get-HostAhead {
+# Live waiters queued before this one (an older wait file, or the same time and a lower pid) whose own CPU
+# cap $Cpu meets: a waiter held back by a lower cap does not hold up the queue.
+function Get-HostAhead([double]$Cpu) {
     $mine = (Get-Item -LiteralPath $script:HostWaitFile).LastWriteTime
     @(Get-ChildItem -LiteralPath $script:HostLockDir -Filter 'heavy.wait.*' | Where-Object {
             $p = $_.Extension.TrimStart('.')
-            $p -ne "$PID" -and ($_.LastWriteTime -lt $mine -or ($_.LastWriteTime -eq $mine -and [int]$p -lt $PID)) -and (Test-HostAlive $p $_.LastWriteTime)
+            $cap = 0.0
+            $p -ne "$PID" -and ($_.LastWriteTime -lt $mine -or ($_.LastWriteTime -eq $mine -and [int]$p -lt $PID)) -and
+            [double]::TryParse(((Get-Content -LiteralPath $_.FullName -Raw -ErrorAction SilentlyContinue) -split '\s+')[0], 'Float', [Globalization.CultureInfo]::InvariantCulture, [ref]$cap) -and
+            $Cpu -le $cap -and (Test-HostAlive $p $_.LastWriteTime)
         }).Count
 }
 
@@ -105,16 +110,16 @@ function Get-HostAhead {
 function Enter-HostSlot([string]$Command) {
     $said = ''
     $script:HostWaitFile = Join-Path $script:HostLockDir "heavy.wait.$PID"
-    Set-Content -LiteralPath $script:HostWaitFile -Value "$($script:HostOwner) $Command"
+    Set-Content -LiteralPath $script:HostWaitFile -Value "$($script:HostCpuCap) $($script:HostOwner) $Command"
     while ($true) {
         $cpu = Get-HostCpu
         if ($cpu -gt $script:HostCpuCap) {
-            if (Test-HostTimedOut) { Write-HostSay "gave up waiting for cpu to drop under $($script:HostCpuCap)% after $($script:HostLockTimeoutSeconds)s"; exit 124 }
             if ($said -ne 'cpu') { Write-HostSay "waiting for cpu $cpu% to drop under $($script:HostCpuCap)% (HOST_CPU_CAP)"; $said = 'cpu' }
+            if (Test-HostTimedOut) { Write-HostSay "gave up waiting for cpu to drop under $($script:HostCpuCap)% after $($script:HostLockTimeoutSeconds)s"; exit 124 }
             Start-Sleep -Seconds $script:HostPollSeconds
             continue
         }
-        if ((Get-HostAhead) -lt (Get-HostFreeSlot)) {
+        if ((Get-HostAhead $cpu) -lt (Get-HostFreeSlot)) {
             for ($i = 1; $i -le $script:HostHeavySlots -and -not $script:HostMutex; $i++) {
                 $m = New-Object Threading.Mutex($false, "$($script:HostMutexPrefix)-$i")
                 try { $got = $m.WaitOne(0) } catch [Threading.AbandonedMutexException] {
@@ -128,8 +133,8 @@ function Enter-HostSlot([string]$Command) {
             $script:HostMutex.ReleaseMutex(); $script:HostMutex.Dispose(); $script:HostMutex = $null; $script:HostSlotInfo = $null
             continue
         }
-        if (Test-HostTimedOut) { Write-HostSay "gave up waiting for a heavy slot after $($script:HostLockTimeoutSeconds)s"; exit 124 }
         if ($said -ne 'slot') { Write-HostSay 'waiting for a heavy slot'; $said = 'slot' }
+        if (Test-HostTimedOut) { Write-HostSay "gave up waiting for a heavy slot after $($script:HostLockTimeoutSeconds)s"; exit 124 }
         Start-Sleep -Seconds ([Math]::Min(2, $script:HostPollSeconds))
     }
     Set-Content -LiteralPath $script:HostSlotInfo -Value "$($script:HostOwner) $PID $Command (cpu cap $($script:HostCpuCap)%, $($script:HostHeavySlots) slots)"
@@ -154,7 +159,8 @@ function Get-HostStatus {
         "slot $($_.Extension.TrimStart('.')): $((Get-Content $_.FullName -Raw).Trim()) ($(Get-HostAge $_)s$state)"
     }
     Get-ChildItem -LiteralPath $script:HostLockDir -Filter 'heavy.wait.*' | Where-Object { Test-HostAlive $_.Extension.TrimStart('.') $_.LastWriteTime } | ForEach-Object {
-        "waiting: pid $($_.Extension.TrimStart('.')) $((Get-Content $_.FullName -Raw).Trim()) ($(Get-HostAge $_)s)"
+        $cap, $rest = (Get-Content $_.FullName -Raw).Trim() -split ' ', 2
+        "waiting: pid $($_.Extension.TrimStart('.')) $rest (cpu cap $cap%, $(Get-HostAge $_)s)"
     }
     Get-ChildItem -LiteralPath $script:HostLockDir -Filter '*.lease' | ForEach-Object {
         "lease $($_.Name): $((Get-Content $_.FullName -Raw).Trim())$(if (-not (Test-HostLeaseAlive $_.FullName)) { ' (stale)' })"

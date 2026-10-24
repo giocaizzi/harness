@@ -128,19 +128,30 @@ try { Enter-HostSlot job; Set-Content $env:TEST_GOT (Get-Date).ToString('o') } f
     Remove-Item $trace
     & $shell -NoProfile -File $waiter 2>$null
     Test-Equal -Name 'cpu rose after the slot was taken: slot given back, then retaken' -Got "$LASTEXITCODE $((Get-Content $trace) -join ' ')" -Want '0 0 1 0 0 1'
+    # A slow start can pass the deadline before the first check: the wait still says what it waited for.
+    $env:HOST_LOCK_TIMEOUT_SECONDS = '0'
+    $err = Join-Path $tmp 'err'
+    Set-Content $cpu 99
+    & $shell -NoProfile -File $waiter 2>$err
+    Test-Equal -Name 'a wait past its deadline still reports itself' -Got "$LASTEXITCODE $(@(Select-String -Path $err -Pattern '^host: waiting for cpu').Count)" -Want '124 1'
     $env:HOST_CPU_CAP = '100'; Remove-Item Env:HOST_POLL_SECONDS
 
-    # FIFO: a free slot goes to the oldest live waiter; a dead waiter's entry does not block.
+    # FIFO: a free slot goes to the oldest live waiter whose CPU cap is met; a dead waiter's entry, or one held
+    # back by its own lower cap, does not block.
     $older = Invoke-Shell 'Start-Sleep 20'
-    Set-Content (Join-Path $L "heavy.wait.$($older.Id)") 'other'
+    $lower = Invoke-Shell 'Start-Sleep 20'
+    Set-Content (Join-Path $L "heavy.wait.$($older.Id)") '100 other'
+    Set-Content (Join-Path $L "heavy.wait.$($lower.Id)") '-1 low-cap'
     Start-Sleep -Milliseconds 1100
     $env:HOST_LOCK_TIMEOUT_SECONDS = '1'
     & $shell -NoProfile -File $heavy $shell -NoProfile -Command 'exit 0' 2>$null
     Test-Equal -Name 'a newer waiter leaves a free slot to an older one' -Got $LASTEXITCODE -Want 124
+    Test-Equal -Name '--status shows waiters and their cap' -Got @(& $shell -NoProfile -File $heavy --status | Where-Object { $_ -match "^waiting: pid ($($older.Id) other \(cpu cap 100%|$($lower.Id) low-cap \(cpu cap -1%), \d+s\)$" }).Count -Want 2
     Stop-Process -Id $older.Id; $older | Wait-Process
     $env:HOST_LOCK_TIMEOUT_SECONDS = '10'
     & $shell -NoProfile -File $heavy $shell -NoProfile -Command 'exit 0' 2>$null
-    Test-Equal -Name 'a dead waiter''s entry does not block the queue' -Got $LASTEXITCODE -Want 0
+    Test-Equal -Name 'a dead or lower-cap waiter''s entry does not block the queue' -Got $LASTEXITCODE -Want 0
+    Stop-Process -Id $lower.Id; $lower | Wait-Process
     Remove-Item (Join-Path $L 'heavy.wait.*')
     $env:HOST_LOCK_TIMEOUT_SECONDS = '1800'
 

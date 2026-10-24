@@ -41,6 +41,9 @@ check "low disk refuses" "$?:$([ -e "$tmp/ran" ] && echo ran)" "1:"
 HOST_LOAD_CAP=-1 HOST_LOCK_TIMEOUT_SECONDS=1 HOST_POLL_SECONDS=1 "$heavy" touch "$tmp/ran" 2>"$tmp/err"
 check "load cap waits, then times out" "$?:$([ -e "$tmp/ran" ] && echo ran)" "124:"
 check "one status line per wait" "$(grep -c '^host: waiting for load' "$tmp/err")" 1
+# A slow start can pass the deadline before the first check: the wait still says what it waited for.
+HOST_LOAD_CAP=-1 HOST_LOCK_TIMEOUT_SECONDS=0 "$heavy" true 2>"$tmp/err"
+check "a wait past its deadline still reports itself" "$?:$(grep -c '^host: waiting for load' "$tmp/err")" 124:1
 
 "$heavy" sleep 2 & sleep 0.3
 check "--status shows the holder and its cap" "$("$heavy" --status | grep -c 'slot 1: pid .* sleep 2 (load cap 100000, 1 slots, [0-9]*s)')" 1
@@ -101,21 +104,26 @@ printf '1\n99\n99\n1\n' >"$tmp/load"; rm -f "$tmp/trace"
 acquire FAKE_LOAD=1 HOST_LOAD_CAP=10 HOST_POLL_SECONDS=1 HOST_LOCK_TIMEOUT_SECONDS=10
 check "load rose after the slot was taken: slot given back, then retaken" "$?:$(cat "$tmp/trace")" "0:0 1 0 0 1 "
 
-# FIFO: a free slot goes to the oldest live waiter; a dead waiter's entry does not block.
+# FIFO: a free slot goes to the oldest live waiter whose load cap is met; a dead waiter's entry, or one
+# held back by its own lower cap, does not block.
 sleep 5 & older=$!
-echo other >"$L/heavy.wait.$older"
+sleep 5 & lower=$!
+echo "100000 other" >"$L/heavy.wait.$older"
+echo "-1 low-cap" >"$L/heavy.wait.$lower"
 sleep 1.1 # wait-file mtimes are whole seconds on some systems
 acquire HOST_POLL_SECONDS=1 HOST_LOCK_TIMEOUT_SECONDS=1
 check "a newer waiter leaves a free slot to an older one" "$?" 124
+check "--status shows waiters and their cap" "$("$heavy" --status | grep -c -e "^waiting: pid $older other (load cap 100000, [0-9]*s)" -e "^waiting: pid $lower low-cap (load cap -1, [0-9]*s)")" 2
 { kill "$older"; wait "$older"; } 2>/dev/null
 HOST_LOCK_TIMEOUT_SECONDS=3 "$heavy" true 2>/dev/null
-check "a dead waiter's entry does not block the queue" "$?" 0
+check "a dead or lower-cap waiter's entry does not block the queue" "$?" 0
+{ kill "$lower"; wait "$lower"; } 2>/dev/null
 rm -f "$L"/heavy.wait.*
 
 # Liveness: a holder whose pid now belongs to a process started after the lock is gone; a live
 # process of another user (kill -0 says EPERM) is alive.
 sleep 5 & reused=$!
-mkdir -p "$L/heavy.lock.1"; echo "$reused" >"$L/heavy.lock.1/pid"; touch -t 202001010000 "$L/heavy.lock.1/pid"
+mkdir -p "$L/heavy.lock.1"; echo "$reused" >"$L/heavy.lock.1/pid"; touch -t 202001010000 "$L/heavy.lock.1"
 check "--status flags a reused pid" "$("$heavy" --status | grep -c 'slot 1: .*pid reused')" 1
 HOST_LOCK_TIMEOUT_SECONDS=3 "$heavy" true 2>/dev/null
 check "a reused pid's slot is reclaimed" "$?:$(count "$L"/heavy.lock.*)" "0:0"
@@ -154,7 +162,14 @@ kill -TERM "$w"; sleep 0.5; kill -KILL "$w" 2>/dev/null; wait "$w" 2>/dev/null
 sleep 0.2
 check "TERM then KILL: command stopped, slot released" \
   "$(ps -o stat= -p "$(cat "$tmp/grandchild")" | grep -v Z | sed 's/.*/orphan/')$(count "$L"/heavy.lock.*)" 0
-kill "$(cat "$tmp/grandchild")" 2>/dev/null; rm -rf "$L"/heavy.lock.*
+kill "$(cat "$tmp/grandchild")" 2>/dev/null; rm -rf "$L"/heavy.lock.* "$tmp/grandchild"
+"$lease" sim -- sh -c "sleep 30 & echo \$! >'$tmp/grandchild'; wait" 2>/dev/null & w=$!
+for _ in $(seq 50); do [ -s "$tmp/grandchild" ] && break; sleep 0.1; done
+kill -TERM "$w"; sleep 0.5; kill -KILL "$w" 2>/dev/null; wait "$w" 2>/dev/null
+sleep 0.2
+check "lease.sh: TERM then KILL stops the command, releases lease and slot" \
+  "$(ps -o stat= -p "$(cat "$tmp/grandchild")" | grep -v Z | sed 's/.*/orphan/')$(count "$L"/heavy.lock.* "$L"/*.lease)" 0
+kill "$(cat "$tmp/grandchild")" 2>/dev/null; rm -rf "$L"/heavy.lock.* "$L"/*.lease
 
 # lease.sh
 "$lease" sim -- sh -c "cat '$L/heavy.lock.1/pid' '$L/sim.lease' >'$tmp/held'" 2>/dev/null

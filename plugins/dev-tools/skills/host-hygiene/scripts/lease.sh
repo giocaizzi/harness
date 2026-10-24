@@ -46,9 +46,9 @@ until (set -C; echo "$HOST_OWNER $$${device:+ $device}" >"$lease") 2>/dev/null; 
   if [ -n "$p" ] && ! host_alive "$p" "$lease" && host_reclaim "$lease" "$p" host_lease_pid; then continue; fi
   host_timed_out && { host_say "gave up waiting for the $class lease after ${HOST_LOCK_TIMEOUT_SECONDS}s"; exit 124; }
   [ -z "$said" ] && said=1 && host_say "waiting for the $class lease (held by $(cat "$lease" 2>/dev/null))"
-  sleep 2
+  host_sleep 2
 done
 held=1
 if [ -n "$device" ] && ! device_cmd "$HOST_DEVICE_RUNNING_CMD" >/dev/null 2>&1; then booted=1; fi
 
-"$@"
+host_run "$@"
