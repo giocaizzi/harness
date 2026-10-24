@@ -2,7 +2,8 @@
 // (Codex) and Chat Completions (opencode, pi). The first turn of a conversation calls the harness's shell tool
 // with MOCK_COMMAND; once the request carries that call's result, it records the result in MOCK_LOG and answers
 // "done". Usage: MOCK_COMMAND='pip install x' MOCK_LOG=/tmp/log.jsonl node mock-llm.mjs <port>
-import { appendFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { basename, join } from 'node:path'
 import { createServer } from 'node:http'
 
 const command = process.env.MOCK_COMMAND ?? 'echo hello'
@@ -66,6 +67,11 @@ createServer((req, res) => {
     if (req.method === 'GET') {
       res.writeHead(200, { 'content-type': 'application/json' })
       return res.end(JSON.stringify({ object: 'list', data: [{ id: 'mock', object: 'model' }] }))
+    }
+    // MOCK_PLUGIN_UPDATE=<dir>: a plugin version that appears once the session runs (a manifest only), as an update would.
+    if (process.env.MOCK_PLUGIN_UPDATE && !existsSync(process.env.MOCK_PLUGIN_UPDATE)) {
+      mkdirSync(join(process.env.MOCK_PLUGIN_UPDATE, '.claude-plugin'), { recursive: true })
+      writeFileSync(join(process.env.MOCK_PLUGIN_UPDATE, '.claude-plugin', 'plugin.json'), JSON.stringify({ version: basename(process.env.MOCK_PLUGIN_UPDATE) }))
     }
     const result = toolResult(body)
     const call = result === null ? shellCall(body.tools) : null

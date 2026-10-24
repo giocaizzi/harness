@@ -30,7 +30,8 @@ test('Claude Code: the registry gives the installed versions, the cache path wha
   const root = claude({ guard: '0.53.0', hud: '0.9.0' }, { guard: ['0.52.0', '0.53.0'], hud: ['0.9.0'] })('guard', '0.52.0')
   assert.deepEqual(installedVersions(root), { self: { name: 'guard', version: '0.52.0', versioned: true }, installed: { guard: '0.53.0', hud: '0.9.0' } })
   const r = staleCheck({ root, loaded: { hud: '0.8.0' }, harness: 'claude' })
-  assert.equal(r.context, 'Harness plugins updated (guard 0.52.0 → 0.53.0, hud 0.8.0 → 0.9.0): ask the user to run `/reload-plugins`.')
+  assert.equal(r.notice, 'Harness plugins updated (guard 0.52.0 → 0.53.0, hud 0.8.0 → 0.9.0): run `/reload-plugins` to load them.')
+  assert.equal(r.context, `${r.notice} Only the user can do this: mention it to them once.`)
   assert.deepEqual(r.remind, ['guard@0.53.0', 'hud@0.9.0'])
   // Once per newer version.
   assert.equal(staleCheck({ root, loaded: r.loaded, reminded: r.remind, harness: 'claude' }).context, null)
@@ -45,7 +46,7 @@ test('Codex: no registry, the newest version dir is installed', () => {
   const plugins = join(mkdtempSync(join(tmpdir(), 'stale-')), 'cache', 'acme')
   plugin(join(plugins, 'guard', '0.52.0'), '0.52.0')
   plugin(join(plugins, 'guard', '0.53.0'), '0.53.0')
-  assert.match(staleCheck({ root: join(plugins, 'guard', '0.52.0'), harness: 'codex' }).context, /guard 0\.52\.0 → 0\.53\.0\): ask the user to restart the session/)
+  assert.match(staleCheck({ root: join(plugins, 'guard', '0.52.0'), harness: 'codex' }).context, /guard 0\.52\.0 → 0\.53\.0\): restart the session to load them/)
 })
 
 test('updated in place (Copilot CLI, a checkout): the versions the session started with are the loaded ones', () => {
@@ -61,7 +62,7 @@ test('updated in place (Copilot CLI, a checkout): the versions the session start
 })
 
 test('an unreadable layout reads as nothing newer', () => {
-  assert.deepEqual(staleCheck({ root: join(tmpdir(), 'no-such-dir', 'guard') }), { loaded: {}, remind: [], context: null })
+  assert.deepEqual(staleCheck({ root: join(tmpdir(), 'no-such-dir', 'guard') }), { loaded: {}, remind: [], notice: null, context: null })
   const plugins = join(mkdtempSync(join(tmpdir(), 'stale-')), 'plugins')
   plugin(join(plugins, 'cache', 'acme', 'guard', '0.52.0'), '0.52.0')
   writeFileSync(join(plugins, 'installed_plugins.json'), '{not json')
@@ -75,7 +76,9 @@ test('the hook says it once per session, next to a call without a decision', asy
   const ctx = (out) => (out.stdout ? JSON.parse(out.stdout).hookSpecificOutput : {})
   // A deny keeps its own reason; the note waits for the next call.
   assert.doesNotMatch(ctx(await h({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'gh pr create -t x -b y' } })).permissionDecisionReason, /plugins updated/)
-  assert.match(ctx(await h({ hook_event_name: 'PreToolUse', tool_name: 'Skill', tool_input: { skill: 'ship' } })).additionalContext, /guard 0\.52\.0 → 0\.53\.0/)
+  const told = await h({ hook_event_name: 'PreToolUse', tool_name: 'Skill', tool_input: { skill: 'ship' } })
+  assert.match(ctx(told).additionalContext, /guard 0\.52\.0 → 0\.53\.0/)
+  assert.equal(JSON.parse(told.stdout).systemMessage, 'Harness plugins updated (guard 0.52.0 → 0.53.0): run `/reload-plugins` to load them.', 'the user sees it')
   assert.equal(ctx(await h({ hook_event_name: 'PreToolUse', tool_name: 'Skill', tool_input: { skill: 'land' } })).additionalContext, undefined)
   assert.equal(ctx(await h({ hook_event_name: 'PreToolUse', tool_name: 'Skill', tool_input: { skill: 'wt' } }, 'sub1')).additionalContext, undefined, 'a subagent of the session is not told again')
 })

@@ -197,7 +197,8 @@ const preToolUse = (decision, reason) => ({
   stdout: JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: decision, permissionDecisionReason: reason } }),
 })
 // No decision: the harness's normal permission flow runs, the note reaches the agent next to the tool result.
-const note = (context) => ({ stdout: JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', additionalContext: context } }) })
+// `notice`: a line the user sees (`systemMessage`), for what only the user can act on.
+const note = (context, notice) => ({ stdout: JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', additionalContext: context }, ...(notice ? { systemMessage: notice } : {}) }) })
 
 // Telemetry never holds a decision back: records are sent without waiting, and a command hook's process stays up
 // until they are out, after its answer is written.
@@ -410,7 +411,7 @@ function onStale(input, state, deps, out) {
   state.reminded.push(...s.remind.map((r) => `stale:${r}`))
   fire(deps, 'guard.reminder', { rule: 'stale-plugins', cmd_class: 'hint', tool: String(input.tool_name ?? ''), session_id: input.session_id, tool_use_id: input.tool_use_id }, input.cwd)
   const context = out.stdout ? JSON.parse(out.stdout).hookSpecificOutput?.additionalContext : null
-  return note(context ? `${context}\n${s.context}` : s.context)
+  return note(context ? `${context}\n${s.context}` : s.context, s.notice)
 }
 
 // One hook event in, { stdout?, stderr?, code? } out. `deps` is injected so tests run without a host.

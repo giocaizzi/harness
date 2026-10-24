@@ -45,20 +45,22 @@ export function installedVersions(root = PLUGIN_ROOT) {
   return { self, installed: out }
 }
 
-// How the user reloads plugins in a running session: a built-in command the agent cannot run itself. Codex,
-// opencode and VS Code have none, so the session restarts (Codex: `codex resume --last`).
-const RELOAD = { claude: 'ask the user to run `/reload-plugins`', copilot: 'ask the user to run `/restart`', pi: 'ask the user to run `/reload`', default: 'ask the user to restart the session' }
+// How the user reloads plugins in a running session. Only the user can: `/reload-plugins` and the others are built-in
+// commands no tool reaches. Codex, opencode and VS Code have none, so the session restarts (Codex: `codex resume --last`).
+const RELOAD = { claude: 'run `/reload-plugins`', copilot: 'run `/restart`', pi: 'run `/reload`', default: 'restart the session' }
 
 // `loaded`: the versions this session started with ({ name: version }, from the session's first check). Returns
-// { loaded, remind: [`name@version`], context } with `loaded` grown by any plugin first seen now.
+// { loaded, remind: [`name@version`], notice, context } with `loaded` grown by any plugin first seen now: `notice` for
+// the user, `context` for the agent, which cannot reload itself.
 export function staleCheck({ root = PLUGIN_ROOT, loaded = {}, reminded = [], harness } = {}) {
   const r = attempt(() => installedVersions(root))
-  if (!r) return { loaded, remind: [], context: null }
+  if (!r) return { loaded, remind: [], notice: null, context: null }
   const { self, installed } = r
   const now = { ...installed, ...loaded }
   if (self.versioned && self.version) now[self.name] = self.version
   const changes = Object.keys(installed).filter((p) => now[p] && newer(installed[p], now[p]) && !reminded.includes(`${p}@${installed[p]}`))
-  if (!changes.length) return { loaded: now, remind: [], context: null }
+  if (!changes.length) return { loaded: now, remind: [], notice: null, context: null }
   const list = changes.map((p) => `${p} ${now[p]} → ${installed[p]}`).join(', ')
-  return { loaded: now, remind: changes.map((p) => `${p}@${installed[p]}`), context: `Harness plugins updated (${list}): ${RELOAD[harness] ?? RELOAD.default}.` }
+  const notice = `Harness plugins updated (${list}): ${RELOAD[harness] ?? RELOAD.default} to load them.`
+  return { loaded: now, remind: changes.map((p) => `${p}@${installed[p]}`), notice, context: `${notice} Only the user can do this: mention it to them once.` }
 }

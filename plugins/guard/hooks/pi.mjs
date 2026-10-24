@@ -24,6 +24,7 @@ export default function guardExtension(pi, deps) {
       if (!ok) return { block: true, reason: `The user denied this command. Do not retry it or a respelling of it; ask the user what they want instead.\n${d.reason}` }
     }
     if (d.context) notes.set(event.toolCallId, d.context)
+    if (d.notice && ctx.hasUI) ctx.ui.notify(d.notice, 'info')
   })
 
   pi.on('tool_result', async (event, ctx) => {

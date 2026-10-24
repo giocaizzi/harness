@@ -1,7 +1,7 @@
 // The in-process adapters (opencode, pi) over a fake harness API: the guard's decisions reach the harness.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { GuardPlugin } from './opencode.mjs'
@@ -202,4 +202,35 @@ test('opencode and pi: the takeover label is denied while FACTORY_RUN_ID is set,
   const blocked = await handlers.tool_call({ toolName: 'bash', toolCallId: 'c', input: { command } }, { cwd: dir(), sessionManager: { getSessionId: () => 'p1' } })
   assert.equal(blocked?.block, true)
   assert.match(blocked.reason, /takeover label/)
+})
+
+test('opencode and pi: a stale-plugin notice reaches the user (toast, notify) and the agent (the tool output)', async () => {
+  // An in-place layout whose guard was updated after the session recorded it.
+  const plugins = dir()
+  const root = join(plugins, 'guard')
+  const manifest = (v) => {
+    mkdirSync(join(root, '.claude-plugin'), { recursive: true })
+    writeFileSync(join(root, '.claude-plugin', 'plugin.json'), JSON.stringify({ version: v }))
+  }
+  manifest('1.0.0')
+  const toasts = []
+  const oc = await GuardPlugin({ client: { tui: { showToast: async ({ body }) => toasts.push(body.message) } }, directory: dir() }, { ...deps(), pluginRoot: root })
+  const ocCall = async (id) => {
+    await oc['tool.execute.before']({ tool: 'bash', sessionID: 'oc', callID: id }, { args: { command: 'ls' } })
+    const out = { output: '' }
+    await oc['tool.execute.after']({ tool: 'bash', sessionID: 'oc', callID: id, args: {} }, out)
+    return out.output
+  }
+  await ocCall('c1')
+  const { handlers, api } = fakePi()
+  const notified = []
+  guardExtension(api, { ...deps(), pluginRoot: root })
+  const ctx = { cwd: dir(), hasUI: true, ui: { confirm: async () => true, notify: (t) => notified.push(t) }, sessionManager: { getSessionId: () => 'pi' } }
+  await handlers.tool_call({ toolName: 'bash', toolCallId: 't1', input: { command: 'ls' } }, ctx)
+  manifest('1.1.0')
+  assert.match(await ocCall('c2'), /guard 1\.0\.0 → 1\.1\.0\): restart the session to load them\. Only the user can do this/)
+  await new Promise((r) => setImmediate(r))
+  assert.deepEqual(toasts, ['Harness plugins updated (guard 1.0.0 → 1.1.0): restart the session to load them.'])
+  await handlers.tool_call({ toolName: 'bash', toolCallId: 't2', input: { command: 'ls' } }, ctx)
+  assert.deepEqual(notified, ['Harness plugins updated (guard 1.0.0 → 1.1.0): run `/reload` to load them.'])
 })

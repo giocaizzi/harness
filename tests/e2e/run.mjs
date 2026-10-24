@@ -152,6 +152,17 @@ async function codexOnly(h, env, root) {
   // Codex runs PreToolUse on spawn_agent too, so the routing hint reaches the model there.
   const routing = await seen('echo hi', project(root), env, 'Routing hint: an untyped `default` spawn', { MOCK_SPAWN: JSON.stringify({ agent_type: 'default', message: 'look around' }) })
   if (routing) failures.push(`routing: the spawn_agent routing hint did not reach the model\n${routing}`)
+  // A newer guard lands in the plugin cache while the session runs: the stale-plugin note reaches the model, which
+  // tells the user (`codex exec` prints no PreToolUse `systemMessage`). A newer version dir present at start is the one
+  // Codex loads.
+  const update = join(env.CODEX_HOME, 'plugins', 'cache', 'giocaizzi-harness', 'guard', '999.0.0')
+  const m = await mock('echo hi', root, { MOCK_PLUGIN_UPDATE: update })
+  const out = h.run(env, project(root), m.port)
+  m.stop()
+  const told = m.entries().some((e) => e.prompt.includes('Harness plugins updated (guard'))
+  rmSync(join(root, 'mock.jsonl'), { force: true })
+  rmSync(update, { recursive: true, force: true })
+  if (!told) failures.push(`stale: the stale-plugin note did not reach the model\n${out.stdout?.slice(-600)}\n${out.stderr?.slice(-600)}`)
   return failures
 }
 
