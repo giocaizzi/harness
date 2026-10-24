@@ -24,7 +24,14 @@ export default function guardExtension(pi, deps) {
       if (!ok) return { block: true, reason: `The user denied this command. Do not retry it or a respelling of it; ask the user what they want instead.\n${d.reason}` }
     }
     if (d.context) notes.set(event.toolCallId, d.context)
-    if (d.notice && ctx.hasUI) ctx.ui.notify(d.notice, 'info')
+    // pi blocks a call whose handler throws: a notice must never cost the call.
+    if (d.notice && ctx.hasUI) {
+      try {
+        ctx.ui.notify(d.notice, 'info')
+      } catch {
+        // no notification: the agent still has the note
+      }
+    }
   })
 
   pi.on('tool_result', async (event, ctx) => {

@@ -234,3 +234,16 @@ test('opencode and pi: a stale-plugin notice reaches the user (toast, notify) an
   await handlers.tool_call({ toolName: 'bash', toolCallId: 't2', input: { command: 'ls' } }, ctx)
   assert.deepEqual(notified, ['Harness plugins updated (guard 1.0.0 → 1.1.0): run `/reload` to load them.'])
 })
+
+test('pi: a notify that throws does not block the call', async () => {
+  const plugins = dir()
+  const root = join(plugins, 'guard')
+  mkdirSync(join(root, '.claude-plugin'), { recursive: true })
+  writeFileSync(join(root, '.claude-plugin', 'plugin.json'), JSON.stringify({ version: '1.0.0' }))
+  const { handlers, api } = fakePi()
+  guardExtension(api, { ...deps(), pluginRoot: root })
+  const ctx = { cwd: dir(), hasUI: true, ui: { confirm: async () => true, notify: () => assert.fail('no UI') }, sessionManager: { getSessionId: () => 'pi2' } }
+  await handlers.tool_call({ toolName: 'bash', toolCallId: 't1', input: { command: 'ls' } }, ctx)
+  writeFileSync(join(root, '.claude-plugin', 'plugin.json'), JSON.stringify({ version: '1.1.0' }))
+  assert.equal(await handlers.tool_call({ toolName: 'bash', toolCallId: 't2', input: { command: 'ls' } }, ctx), undefined)
+})
