@@ -962,6 +962,29 @@ export function evaluateEdit({ path, loadedSkills = new Set(), state, rules }) {
   return { action: 'allow', rule: rule.id, remind: true, context: hint(rule) };
 }
 
+// A subagent spawn that bypasses the typed agents: the built-in Plan agent, an untyped spawn on a judgement-tier model,
+// or a typed agent whose model the spawn overrides. A once-per-session hint per case, never a deny.
+export function evaluateRouting({ type, model, state, rules }) {
+  const r = rules.routing;
+  const t = String(type ?? '').trim().toLowerCase();
+  const m = String(model ?? '').trim();
+  const [plugin, name] = t.includes(':') ? [t.slice(0, t.indexOf(':')), t.slice(t.indexOf(':') + 1)] : [null, t];
+  let rule, say;
+  if (r.plan.includes(t)) {
+    rule = 'routing-plan';
+    say = `the built-in ${type} agent runs on the session's model. Planning, design and investigation go to a \`${r.plugin}:driver\` spawn with a plan-only brief`;
+  } else if (m && (!t || r.untyped.includes(t)) && new RegExp(r.judgementModel, 'i').test(m)) {
+    rule = 'routing-model';
+    say = `an untyped spawn on ${m} does judgement work outside the typed agents. Give it to \`${r.plugin}:driver\` (\`${r.plugin}:escalate\` after two failures) without a \`model\`; a routine, well-specified unit goes to a general-purpose spawn on Sonnet`;
+  } else if (m && r.typed.includes(name) && (!plugin || plugin === r.plugin)) {
+    rule = 'routing-override';
+    say = `\`${type}\` carries its model and effort in its definition, and this spawn's \`model: ${m}\` overrides it. Spawn it without a \`model\``;
+  }
+  if (!rule || state.reminded.has(rule)) return { action: 'allow' };
+  state.reminded.add(rule);
+  return { action: 'allow', rule, remind: true, context: `Routing hint (${r.why}): ${say}.` };
+}
+
 export function usageLevel(percent, rules) {
   if (percent == null) return 'unknown';
   if (percent >= rules.usage.throttlePercent) return 'throttle';
@@ -1057,6 +1080,7 @@ const RULE_FAMILY = {
   secrets: 'secrets', 'secrets-env': 'secrets', opaque: 'opaque', title: 'title', host: 'host', pip: 'python', poetry: 'python',
   commit: 'skill', pr: 'skill', ruleset: 'skill', worktree: 'skill', release: 'skill',
   'pr-fix': 'hint', pytest: 'hint', 'go-test': 'hint', 'go-lint': 'hint', read: 'hint', edit: 'hint', docs: 'hint', 'guard-error': 'guard-error',
+  'routing-plan': 'routing', 'routing-model': 'routing', 'routing-override': 'routing',
 };
 const PROGRAM_FAMILY = {
   git: 'git', gh: 'github', glab: 'gitlab', az: 'cloud', gcloud: 'cloud', make: 'build', npm: 'node', npx: 'node', node: 'node', pnpm: 'node', yarn: 'node', bun: 'node',

@@ -340,6 +340,21 @@ test('telemetry: guard.skill once per loaded skill (typed /name only for marketp
   assert.deepEqual(events, [['guard.skill', 'ship', 'prompt'], ['guard.skill', 'land', 'tool'], ['guard.reminder', 'docs', undefined]])
 })
 
+test('a spawn that bypasses the typed agents gets a routing hint, never a decision (Claude Agent and Task, Copilot task)', async () => {
+  const spawn = (tool_name, tool_input) => ({ hook_event_name: 'PreToolUse', tool_name, tool_input: { prompt: 'p', description: 'd', ...tool_input } })
+  const events = []
+  const h = setup({ emit: async (event, attrs) => events.push([event, attrs.rule, attrs.cmd_class]) })
+  const plan = decision(await h(spawn('Agent', { subagent_type: 'Plan' })))
+  assert.equal(plan.permissionDecision, undefined)
+  assert.match(plan.additionalContext, /Routing hint.*dev-tools:driver/)
+  assert.equal(decision(await h(spawn('Task', { subagent_type: 'Plan' }))), undefined) // once per session
+  assert.match(decision(await h(spawn('Task', { subagent_type: 'general-purpose', model: 'opus' }))).additionalContext, /untyped spawn on opus/)
+  assert.match(decision(await setup()(spawn('task', { agent_type: 'dev-tools:driver', model: 'claude-opus-4.7' }))).additionalContext, /overrides it/)
+  assert.equal(decision(await setup()(spawn('Agent', { subagent_type: 'dev-tools:driver' }))), undefined)
+  assert.equal(decision(await setup()(spawn('task', { subagent_type: 'general' }))), undefined) // opencode: no model on a spawn
+  assert.deepEqual(events, [['guard.reminder', 'routing-plan', 'routing'], ['guard.reminder', 'routing-model', 'routing']])
+})
+
 test('Codex has no read tool, so a shell read gets no hint there', async () => {
   assert.equal(decision(await setup({ readTool: false, noAsk: true })(pre('Bash', 'cat a.txt'))), undefined)
   assert.match(decision(await setup()(pre('Bash', 'cat a.txt'))).additionalContext, /read tool/)

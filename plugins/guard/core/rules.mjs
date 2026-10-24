@@ -100,6 +100,19 @@ export const rules = {
       "why": "docs, runbooks, README and AGENTS.md follow the change in the same PR"
     }
   ],
+  // Subagent spawns that bypass the typed agents: a once-per-session hint per case, never a deny. `tools` are the
+  // spawn tools whose input names the agent type and model: Claude Code `Agent` (`Task` before 2.1.63, `subagent_type`)
+  // and Copilot CLI `task` (`agent_type`). `typed` are this marketplace's agents that carry their own model and effort;
+  // `factory:verifier` is left out, since its routing table sets its model per change.
+  "routing": {
+    "tools": ["agent", "task"],
+    "plugin": "dev-tools",
+    "typed": ["scout", "driver", "reviewer", "escalate"],
+    "untyped": ["general-purpose", "claude", "task"],
+    "plan": ["plan"],
+    "judgementModel": "opus|fable|\\bsol\\b|\\bastra\\b",
+    "why": "judgement work goes to `dev-tools:driver`, which carries its model and effort; see `subagent-orchestration`"
+  },
   "deny": [
     {
       "id": "pip",
