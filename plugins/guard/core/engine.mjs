@@ -866,6 +866,18 @@ function dynamicText(raw) {
   }
   return false;
 }
+// Words that open a compound command or negate one: the reader keeps them in front of the command they hold
+// (`{ gh …`, `then gh …`, `! gh …`, `function f { gh …`).
+const RESERVED = new Set(['{', '(', '!', 'do', 'then', 'else', 'elif', 'if', 'while', 'until', 'time']);
+function dropReserved(words) {
+  let i = 0;
+  while (i < words.length) {
+    if (RESERVED.has(words[i].val) && !dynamicText(words[i].raw)) i++;
+    else if (words[i].val === 'function') i += 2;
+    else break;
+  }
+  return words.slice(i);
+}
 // `gh issue|pr create|edit` flags that take no value: a word after one of them is not its value.
 const GH_BOOLEAN = new Set(['-d', '--draft', '--dry-run', '-f', '--fill', '--fill-first', '--fill-verbose', '--no-maintainer-edit', '-w', '--web', '-e', '--editor']);
 
@@ -876,7 +888,7 @@ const GH_BOOLEAN = new Set(['-d', '--draft', '--dry-run', '-f', '--fill', '--fil
 // (`-$'l'`). Read with the shell reader, so `$'…'` and line continuations are already resolved.
 function ghBuildsLabelFlag(command) {
   for (const u of units(analyze(command))) {
-    const words = commandWords(u.cmd.words);
+    const words = commandWords(dropReserved(u.cmd.words));
     if (words[0]?.val.split(/[\\/]/).pop().replace(/\.exe$/i, '') !== 'gh') continue;
     let i = 1;
     while (words[i] && words[i].val.startsWith('-') && !dynamicText(words[i].raw)) i += ['-R', '--repo', '--hostname'].includes(words[i].val) ? 2 : 1;

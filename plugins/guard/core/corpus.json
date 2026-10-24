@@ -273,5 +273,11 @@
   ["gh issue edit 7 --add-la*l ship-it", "deny:factory-config", "G25", "review #247 probe: a glob builds the flag", {"factory": "unsure"}],
   ["gh issue edit 7 -$'l' ship-it", "deny:factory-config", "G25", "review #247 probe: an ANSI-C quoted -l", {"factory": "unsure"}],
   ["kill -$SIG 1; gh pr view 7", "allow", "G25", "control: review #247 false deny", {"factory": "unsure"}],
-  ["ls -la $HOME", "allow", "G25", "control: -l outside gh", {"factory": "unsure"}]
+  ["ls -la $HOME", "allow", "G25", "control: -l outside gh", {"factory": "unsure"}],
+  ["F=--add-la$'\\x62'el; for i in 1; do gh issue edit 7 $F ship-it; done", "deny:factory-config", "G25", "review #247 round 2: gh inside a loop", {"factory": "unsure"}],
+  ["F=--add-la$'\\x62'el; if true; then gh issue edit 7 $F ship-it; fi", "deny:factory-config", "G25", "review #247 round 2: gh inside if", {"factory": "unsure"}],
+  ["F=--add-la$'\\x62'el; { gh issue edit 7 $F ship-it; }", "deny:factory-config", "G25", "review #247 round 2: gh inside a group", {"factory": "unsure"}],
+  ["F=--add-la$'\\x62'el; true && { gh issue edit 7 \"$F\" ship-it; }", "deny:factory-config", "G25", "review #247 round 2: a group after &&", {"factory": "unsure"}],
+  ["F=--add-la$'\\x62'el; f() { gh issue edit 7 \"$F\" ship-it; }; f", "deny:factory-config", "G25", "review #247 round 2: gh inside a function", {"factory": "unsure"}],
+  ["! gh issue edit 7 $F ship-it", "deny:factory-config", "G25", "review #247 round 2: a negated gh", {"factory": "unsure"}]
 ]
