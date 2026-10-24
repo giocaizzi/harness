@@ -5,6 +5,6 @@ tags: [trigger]
 context:
   scaffold_script: scaffold.sh
 execution:
-  prompt: Start a small command-line tool in this repo that counts the words in the files it is given. Set up the project so it is ready for CI.
+  prompt: Start a small Python command-line tool in this repo that counts the words in the files it is given. Set up the project so it is ready for CI.
   max_turns: 15
   allowed_tools: [Read, Glob, Grep, Edit, Write, Skill]
