@@ -1,0 +1,10 @@
+schema_version: "1.0"
+name: python-development-config
+description: The model loads python-development when asked to add a typed settings loader with clear errors.
+tags: [trigger]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  prompt: Add a function that loads settings.toml into a typed settings object, and raise a clear error naming the key when one is missing.
+  max_turns: 15
+  allowed_tools: [Read, Glob, Grep, Edit, Write, Skill]

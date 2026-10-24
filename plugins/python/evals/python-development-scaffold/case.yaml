@@ -1,0 +1,10 @@
+schema_version: "1.0"
+name: python-development-scaffold
+description: The model loads python-development when asked to start a Python CLI project in an empty repo.
+tags: [trigger]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  prompt: Start a small command-line tool in this repo that counts the words in the files it is given. Set up the project so it is ready for CI.
+  max_turns: 15
+  allowed_tools: [Read, Glob, Grep, Edit, Write, Skill]
