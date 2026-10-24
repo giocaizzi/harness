@@ -1,0 +1,12 @@
+# Overrides for the harnesses that do not read agents/worker.md as-is (make build).
+# Copilot: model left unset in the agent file; the dotfiles will pin it per agent under subagents.agents.
+copilot:
+  tools:
+    - read
+    - edit
+    - execute
+    - search
+codex:
+  model_reasoning_effort: medium
+  # Codex ships a built-in `worker` role, and a user agent with a built-in's name replaces it.
+  name: dev-tools-worker

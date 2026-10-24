@@ -84,6 +84,9 @@ test('an ask nobody answers is parked after the timeout, never called a user den
   expect(r.reason).toContain('No answer')
   expect(r.reason).toContain('not a refusal')
   expect(r.reason).not.toContain('denied')
+  // The call, not the tool: "Bash was not run" read as "Bash is unavailable".
+  expect(r.reason).toContain('this call (rm -r build) was not run; other calls still run')
+  expect(r.reason).not.toContain('Bash')
 })
 
 test('an ask whose dialog cannot show (headless, dismissed) is parked, not called a user deny', async ($, on) => {
@@ -105,6 +108,23 @@ test('dontAsk mode leaves the ask to the engine', async ($, on) => {
   on('classic.UserPromptSubmit', () => ({}))
   await $.classic.UserPromptSubmit({ prompt: 'x', permission_mode: 'dontAsk' } as never)
   expect((await $.tool.check(call)).decision).toBe('ask')
+})
+
+test("with the mode unknown (a reload, a first call), Claude Code's own ask stays with it, even unattended", async ($, on) => {
+  on('env.get', (_$, e) => ({ value: e.name === 'GUARD_UNATTENDED' ? '1' : undefined }))
+  on('tool.check', () => ({ decision: 'ask' as const, reason: 'core' }))
+  on('tool.call', { tool: 'AskUserQuestion' }, () => {
+    throw new Error('must not ask')
+  })
+  expect((await $.tool.check(call)).decision).toBe('ask')
+})
+
+test("with the mode unknown, the guard's own ask is still parked unattended", async ($, on) => {
+  on('env.get', (_$, e) => ({ value: e.name === 'GUARD_UNATTENDED' ? '1' : undefined }))
+  on('tool.check', { tool: 'Bash' }, ask)
+  const r = await $.tool.check(call)
+  expect(r.decision).toBe('deny')
+  expect(r.reason).toContain('unattended run')
 })
 
 // Records posted to the collector, by event name, with the attributes as a map.

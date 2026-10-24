@@ -125,3 +125,19 @@ test('the footer is drawn at session start, and a dead context is ignored', asyn
   const dead = { get hasUI() { throw new Error('stale') } }
   assert.doesNotThrow(() => handlers.turn_end({}, dead))
 })
+
+test('footer: each running subagent call with its agent and model, gone when it ends', () => {
+  const handlers = {}
+  const drawn = []
+  hudExtension({ on: (e, f) => (handlers[e] = f) }, { readRepo: async () => null, options: {} })
+  const ctx = { hasUI: true, cwd: '/r', model: { provider: 'p', id: 'm-1' }, getContextUsage: () => null, ui: { setStatus: (_k, t) => drawn.push(t) } }
+  handlers.tool_execution_start({ toolCallId: 'a', toolName: 'subagent', args: { agent: 'scout', task: 't' } }, ctx)
+  handlers.tool_execution_start({ toolCallId: 'b', toolName: 'bash', args: {} }, ctx)
+  handlers.tool_execution_start({ toolCallId: 'c', toolName: 'subagent', args: { agent: 'escalate', task: 't' } }, ctx)
+  assert.equal(drawn.at(-1), '[\uf2db m-1] [\uf0c0 scout · m-1] [\uf0c0 escalate · m-1]')
+  handlers.tool_execution_end({ toolCallId: 'a', toolName: 'subagent', isError: false }, ctx)
+  handlers.tool_execution_end({ toolCallId: 'b', toolName: 'bash', isError: false }, ctx)
+  assert.equal(drawn.at(-1), '[\uf2db m-1] [\uf0c0 escalate · m-1]')
+  assert.equal(drawn.length, 3)
+  assert.equal(piStatus({ agents: [{ agent: 'scout' }] }), '[\uf0c0 scout]')
+})

@@ -1,6 +1,6 @@
 ---
 name: reviewer
-description: Fresh-context code reviewer at the driver tier - reads a diff or PR it did not write, runs its checks and posts a verdict with severities where the waiting side can read it. Use to review a change before it merges; never on your own change, and not for a factory ticket (that is the factory verifier).
+description: Fresh-context code reviewer at the driver tier - reads a diff or PR it did not write, runs its checks and posts a verdict with severities where the waiting side can read it. Use to review a change before it merges; spawn it without a `model`. Never on your own change, and not where a workflow names its own gate.
 tools:
 - read
 - search

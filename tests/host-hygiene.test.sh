@@ -277,6 +277,13 @@ check "dry run removes nothing" "$(git -C "$repo" worktree list | wc -l | tr -d 
 check "--apply removes it" "$([ -d "$tmp/wt-old" ] && echo kept)$(git -C "$repo" worktree list | wc -l | tr -d ' ')" 4
 check "sweep never touches the current worktree" "$(cd "$tmp/wt-recent" && "$sweep" | grep -c 'wt-recent: current')" 1
 { kill "$busy"; wait "$busy"; } 2>/dev/null
+git -C "$repo" worktree add -q "$repo/.claude/worktrees/live" -b live 2>/dev/null
+mkdir -p "$repo/.claude/worktrees/orphan/pkg/mod" && echo x >"$repo/.claude/worktrees/orphan/pkg/mod/f"
+chmod 0444 "$repo/.claude/worktrees/orphan/pkg/mod/f" && chmod 0555 "$repo/.claude/worktrees/orphan/pkg/mod"
+out=$(cd "$repo" && "$sweep" --apply)
+check "sweep lists an unregistered worktree dir with the owner's command and leaves it" \
+  "$(echo "$out" | grep -c "^unregistered $repo/.claude/worktrees/orphan (.*): the owner runs chmod -R u+w '$repo/.claude/worktrees/orphan' && rm -rf '$repo/.claude/worktrees/orphan'$")$(echo "$out" | grep -c '^unregistered .*worktrees/live')$([ -f "$repo/.claude/worktrees/orphan/pkg/mod/f" ] && echo kept)" 10kept
+chmod -R u+w "$repo/.claude/worktrees/orphan"
 
 # sweep-stale.sh --branches
 git init -q --bare -b main "$tmp/origin.git"
@@ -294,5 +301,53 @@ check "branch dry run deletes nothing" "$(git -C "$tmp/origin.git" branch | wc -
 check "branch --apply deletes them, keeps open and default" \
   "$(git -C "$tmp/origin.git" branch | tr -d ' *' | sort | tr '\n' ' ')$(git -C "$br" branch | tr -d ' *' | sort | tr '\n' ' ')" "main open main open "
 unset SWEEP_OPEN_BRANCHES
+
+# sweep-stale.sh --plugins
+cfg=$tmp/claude c=$tmp/claude/plugins/cache/mkt
+for v in p/1.0 p/1.1 p/0.9 p/0.8 q/2.0; do mkdir -p "$c/$v"; done
+# p was last updated at 2026-01-01T00:00:00Z = 1767225600; q has no entry left.
+printf '{"version":2,"plugins":{"p@mkt":[{"scope":"user","installPath":"%s","version":"1.1","installedAt":"2025-06-01T00:00:00.000Z","lastUpdated":"2026-01-01T00:00:00.000Z"}]}}' "$c/p/1.1" >"$tmp/claude/plugins/installed_plugins.json"
+(cd "$c/p/0.9" && sleep 60) & pbusy=$!
+sh -c 'sleep 60; :' "$c/p/0.8/hooks/run.mjs" & pargv=$!
+sleep 0.3
+psweep() { CLAUDE_CONFIG_DIR=$cfg "$sweep" --plugins "$@"; }
+removable() { echo "$1" | grep '^would remove' | sed "s|$c/||" | sort | tr '\n' ' '; }
+out=$(SWEEP_SESSION_STARTS='' psweep)
+check "plugin sweep lists only versions neither installed nor in use" "$(removable "$out")" "would remove p/1.0 would remove q/2.0 "
+check "plugin sweep keeps the installed, busy and running versions" \
+  "$(echo "$out" | grep -c -e 'p/1.1: installed' -e 'p/0.9: in use' -e 'p/0.8: named by a running command')" 3
+out=$(SWEEP_SESSION_STARTS=1767225500 psweep)
+check "a session started before the update keeps the old versions" \
+  "$(removable "$out")$(echo "$out" | grep -c -e 'p/1.0: 1 sessions started before the update' -e 'q/2.0: 1 sessions started before the update')" 2
+out=$(SWEEP_SESSION_STARTS=1767225700 psweep)
+check "a session started after the update keeps only a plugin with no entry" "$(removable "$out")" "would remove p/1.0 "
+check "--after-reload drops the session keep" "$(removable "$(SWEEP_SESSION_STARTS=1767225500 psweep --after-reload)")" "would remove p/1.0 would remove q/2.0 "
+SWEEP_SESSION_STARTS=1767225500 psweep --apply >/dev/null
+check "--apply leaves what a session may still run" "$(cd "$c" && find . -mindepth 2 -maxdepth 2 | sort | tr '\n' ' ')" "./p/0.8 ./p/0.9 ./p/1.0 ./p/1.1 ./q/2.0 "
+SWEEP_SESSION_STARTS='' psweep --apply >/dev/null
+check "plugin --apply removes them and the emptied plugin dir" "$(cd "$c" && find . -mindepth 1 -maxdepth 2 | sort | tr '\n' ' ')" "./p ./p/0.8 ./p/0.9 ./p/1.1 "
+echo '{' >"$tmp/claude/plugins/installed_plugins.json"
+check "unreadable installed_plugins.json removes nothing" "$(SWEEP_SESSION_STARTS='' psweep --apply 2>/dev/null; echo "$?"; find "$c/p" -mindepth 1 -maxdepth 1 | wc -l | tr -d ' ')" "$(printf '1\n3')"
+check "--plugins and --branches together is a usage error" "$("$sweep" --plugins --branches 2>/dev/null; echo $?)" 2
+check "--after-reload without --plugins is a usage error" "$("$sweep" --after-reload 2>/dev/null; echo $?)" 2
+# The real ps branch: sessions started by a `claude` binary, a versioned binary and an npm install all count.
+cfg2=$tmp/claude2 c2=$tmp/claude2/plugins/cache/mkt
+mkdir -p "$c2/r/1.0" "$c2/r/2.0" "$tmp/fake/bin" "$tmp/fake/claude/versions" "$tmp/precious"
+echo keep >"$tmp/precious/file" && ln -s "$tmp/precious" "$c2/r/0.5"
+printf '{"version":2,"plugins":{"r@mkt":[{"scope":"user","installPath":"%s","version":"2.0","lastUpdated":"2099-01-01T00:00:00.000Z"}]}}' "$c2/r/2.0" >"$tmp/claude2/plugins/installed_plugins.json"
+ln -s "$(command -v sleep)" "$tmp/fake/bin/claude" && ln -s "$(command -v sleep)" "$tmp/fake/claude/versions/9.9.9"
+"$tmp/fake/bin/claude" 60 & s1=$!
+"$tmp/fake/claude/versions/9.9.9" 60 & s2=$!
+sh -c 'sleep 60; :' "$tmp/fake/node_modules/@anthropic-ai/claude-code/cli.js" & s3=$!
+sleep 0.3
+sessions() { (unset SWEEP_SESSION_STARTS; CLAUDE_CONFIG_DIR=$cfg2 "$sweep" --plugins) | sed -n 's|.*r/1.0: \([0-9]*\) sessions started before the update.*|\1|p'; }
+n1=$(sessions)
+{ kill "$s1" "$s2" "$s3"; wait "$s1" "$s2" "$s3"; } 2>/dev/null
+n0=$(sessions)
+# The host's own sessions count in both runs; the three fakes only in the first.
+check "ps finds sessions by binary, versioned path and npm install" "$(( ${n1:-0} - ${n0:-0} ))" 3
+SWEEP_SESSION_STARTS='' CLAUDE_CONFIG_DIR=$cfg2 "$sweep" --plugins --after-reload --apply >/dev/null
+check "a symlinked version loses its link, never its target" "$([ -L "$c2/r/0.5" ] && echo link)$(cat "$tmp/precious/file")" keep
+{ kill "$pbusy" "$pargv"; wait "$pbusy" "$pargv"; } 2>/dev/null
 
 exit "$fails"

@@ -489,6 +489,7 @@ async function main() {
   } catch {
     return // unreadable payload: nothing to judge
   }
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return // no harness sends one; a throw would deny
   // argv[2] names the event when a harness leaves hook_event_name out.
   if (!input.hook_event_name && process.argv[2]) input.hook_event_name = process.argv[2]
   const dataDir = pluginDataDir()
