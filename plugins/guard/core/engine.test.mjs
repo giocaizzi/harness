@@ -1214,6 +1214,30 @@ test('factory run with a config the guard could not read: every label change is 
     'gh issue edit 7 --add-lab{e,}l ship-it',
     "gh issue edit 7 -$'l' ship-it",
     "gh -R o/r issue edit 7 --add-la$'\\x62'el ship-it",
+    // Review round 2: a gh command inside a compound command.
+    'for i in 1; do gh issue edit 7 $F ship-it; done',
+    'if true; then gh issue edit 7 $F ship-it; fi',
+    '{ gh issue edit 7 $F ship-it; }',
+    'true && { gh issue edit 7 "$F" ship-it; }',
+    'f() { gh issue edit 7 "$F" ship-it; }; f',
+    'function f { gh issue edit 7 $F ship-it; }',
+    '! gh issue edit 7 $F ship-it',
+    "for i in 1; do gh issue e$'d'it 7 $F ship-it; done",
+    'for i in 1; do gh issue edit 7 --add-la*l ship-it; done',
+    "for f in --add-la$'\\x62'el; do gh issue edit 7 $f ship-it; done",
+    // Review round 2: an unquoted expansion after a value flag splits into more words.
+    'F="y --label ship-it"; gh issue create -t x -b $F',
+    "F=\"y --la\"$'\\x62'\"el ship-it\"; gh issue create -t x -b $F",
+    'gh issue create -t x --body=$F',
+    'gh issue create -t x -b $(cat args.txt)',
+    'gh issue edit 7 -b $(cat args.txt)',
+    'gh issue edit 7 --body=$F',
+    'gh issue create -t x --body=$(printf "y --label ship-it")',
+    // Review round 2: a short flag whose letter is a quoted expansion.
+    'gh issue create -t x -b y -"$X" ship-it',
+    // Review round 2: -l on the other forge CLIs.
+    'hub issue update 7 -l ship-it',
+    'glab issue update 7 -l ship-it',
   ]) {
     const d = run(c);
     assert.equal(d.action, 'deny', c);

@@ -866,17 +866,44 @@ function dynamicText(raw) {
   }
   return false;
 }
+// Whether a word holds an expansion outside double quotes, which the shell splits into more words: a value can then
+// carry a flag (`-b $F` with F='y --label x').
+function unquotedExpansion(raw) {
+  for (let i = 0, q = null; i < raw.length; i++) {
+    const c = raw[i];
+    if (q === "'") q = c === "'" ? null : q;
+    else if (c === '\\') i++;
+    else if (q === '"') q = c === '"' ? null : q;
+    else if (c === '`' || (c === '$' && /[\w{(@*#?!$-]/.test(raw[i + 1] ?? ''))) return true;
+    else if (c === '$' && raw[i + 1] === "'") i = raw.indexOf("'", i + 2) < 0 ? raw.length : raw.indexOf("'", i + 2);
+    else if (c === "'" || c === '"') q = c;
+  }
+  return false;
+}
+// Words that open a compound command or negate one: the reader keeps them in front of the command they hold
+// (`{ gh …`, `then gh …`, `! gh …`, `function f { gh …`).
+const RESERVED = new Set(['{', '(', '!', 'do', 'then', 'else', 'elif', 'if', 'while', 'until', 'time']);
+function dropReserved(words) {
+  let i = 0;
+  while (i < words.length) {
+    if (RESERVED.has(words[i].val) && !dynamicText(words[i].raw)) i++;
+    else if (words[i].val === 'function') i += 2;
+    else break;
+  }
+  return words.slice(i);
+}
 // `gh issue|pr create|edit` flags that take no value: a word after one of them is not its value.
 const GH_BOOLEAN = new Set(['-d', '--draft', '--dry-run', '-f', '--fill', '--fill-first', '--fill-verbose', '--no-maintainer-edit', '-w', '--web', '-e', '--editor']);
 
-// A `gh issue|pr create|edit` whose flags the text cannot show (owner decision on #246): a non-literal subcommand, a
+// A `gh issue|pr create|edit` whose flags the text cannot show (#246): a non-literal subcommand, a
 // flag name that expands (`--add-${A}el`), a whole word that expands where no value-taking flag precedes it (`"$F"`),
-// or arguments added by xargs. Values pass (`-b "$(cat body.md)"`, `--body-file "$TMPDIR/b.md"`); so does a gh
+// an unquoted expansion anywhere (the shell splits it into words, flags included), or arguments added by xargs. Quoted
+// values pass (`-b "$(cat body.md)"`, `--body-file "$TMPDIR/b.md"`); so does a gh
 // command that cannot add labels (`gh pr view $N`). Also any word naming a label flag once the reader decoded it
 // (`-$'l'`). Read with the shell reader, so `$'…'` and line continuations are already resolved.
 function ghBuildsLabelFlag(command) {
   for (const u of units(analyze(command))) {
-    const words = commandWords(u.cmd.words);
+    const words = commandWords(dropReserved(u.cmd.words));
     if (words[0]?.val.split(/[\\/]/).pop().replace(/\.exe$/i, '') !== 'gh') continue;
     let i = 1;
     while (words[i] && words[i].val.startsWith('-') && !dynamicText(words[i].raw)) i += ['-R', '--repo', '--hostname'].includes(words[i].val) ? 2 : 1;
@@ -889,10 +916,12 @@ function ghBuildsLabelFlag(command) {
       const { val, raw } = words[k];
       if (/label/i.test(val.split('=')[0]) || /^-l/.test(val)) return true;
       if (!dynamicText(raw)) continue;
+      if (unquotedExpansion(raw)) return true;
       if (val.startsWith('--')) {
         if (dynamicText(raw.split('=')[0])) return true;
       } else if (val.startsWith('-') && val.length > 1) {
-        if (dynamicText(raw.slice(1, 2)) || raw[1] === '$' || raw[1] === '`') return true;
+        // The flag letter as the shell joins it: `-"$X"` is `-$X`.
+        if (/[$`*?[{]/.test(raw.replace(/["']/g, '')[1] ?? '')) return true;
       } else {
         const prev = words[k - 1].val;
         if (!(prev.startsWith('-') && !prev.includes('=') && !GH_BOOLEAN.has(prev) && k - 1 > i + 1)) return true;
@@ -902,13 +931,13 @@ function ghBuildsLabelFlag(command) {
   return false;
 }
 
-// A command that may change a label: it mentions one (`--add-label`, `/labels`, `gh label`) or a gh line passes `-l`, read with
-// line continuations joined and quotes and backslashes removed as the shell joins them (`--add-lab''el`), and is not
-// one plain `gh` read.
+// A command that may change a label: it mentions one (`--add-label`, `/labels`, `gh label`) or a gh, hub or glab line
+// passes `-l`, read with line continuations joined and quotes and backslashes removed as the shell joins them
+// (`--add-lab''el`), and is not one plain `gh` read.
 function changesLabels(command) {
   command = command.replace(/\\\r?\n/g, '');
   const flat = command.replace(/['"\\]/g, '');
-  if (!/label/i.test(flat) && !(/\bgh\b/.test(flat) && /(?:^|\s)-l/.test(flat))) return false;
+  if (!/label/i.test(flat) && !(/\b(?:gh|hub|glab)\b/.test(flat) && /(?:^|\s)-l/.test(flat))) return false;
   const args = plainGh(command);
   return !args || ghAction(args) !== 'read';
 }
@@ -922,7 +951,7 @@ export function evaluateCommand({ command, loadedSkills = new Set(), state, host
   if (factory?.takeover && touchesApprovalLabel(command, factory.takeover)) return { action: 'deny', rule: 'factory-takeover', reason: `${rules.factory.takeoverWhy} The \`${factory.takeover}\` label is the owner's to apply; ask on the ticket instead.` }
   // A config the guard could not read fails closed: every label change is denied, and so is any name it could still find.
   if (factory?.unsure && (changesLabels(command) || (factory.extra ?? []).some((name) => touchesApprovalLabel(command, name)))) return { action: 'deny', rule: 'factory-config', reason: `${rules.factory.unsureWhy} Every label change is denied in this run until the config is fixed; ask on the ticket instead.` }
-  if (factory?.unsure && ghBuildsLabelFlag(command)) return { action: 'deny', rule: 'factory-config', reason: `${rules.factory.unsureWhy} This \`gh issue|pr create|edit\` has a subcommand or flag the shell builds at run time, which could add a label. Spell the subcommand and flags literally, and pass a body as a value or with a literal \`--body-file\` path.` }
+  if (factory?.unsure && ghBuildsLabelFlag(command)) return { action: 'deny', rule: 'factory-config', reason: `${rules.factory.unsureWhy} This \`gh issue|pr create|edit\` has a subcommand or flag the shell builds at run time, which could add a label. Spell the subcommand and flags literally, quote every value, and pass a body as a value or with a literal \`--body-file\` path.` }
   // Hard denies come first and fire every time, like the title guard. A `when` rule denies only in a repo
   // that adopted that manager; elsewhere it lets the command through with a once-per-session note.
   const denied = deniedBy(command, rules)
