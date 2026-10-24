@@ -533,6 +533,12 @@ test('a spawn that bypasses the typed agents gets one routing hint per case and 
   assert.match(evaluateRouting({ type: 'dev-tools:driver', model: 'opus', state: fresh(), rules }).context, /without a `model`/);
 });
 
+test('a malformed spawn (non-string type or model) never throws and gets no decision', () => {
+  for (const [type, model] of [[null, null], [42, {}], [{}, 7], [[], ['opus']], [true, false]]) {
+    assert.equal(evaluateRouting({ type, model, state: fresh(), rules }).action, 'allow', JSON.stringify([type, model]));
+  }
+});
+
 const outcome = (command, facts = {}) => {
   const d = evaluateCommand({ command, state: fresh(), host: calm, readTool: true, rules, ...facts });
   return d.remind ? `remind:${d.rule}` : d.rule ? `${d.action}:${d.rule}` : d.action;
@@ -1176,15 +1182,76 @@ test('factory run with a config the guard could not read: every label change is 
     "gh issue edit 7 --add-lab''el x",
     'gh issue edit 7 --add-lab"e"l x',
     'gh issue edit 7 --add-lab\\el x',
+    "gh issue edit 7 --add-la$'\\x62'el x",
+    'A=lab; gh issue edit 7 --add-${A}el x',
+    'gh issue edit 7 --add-labe$(printf l) x',
+    'gh pr edit 7 --add-labe`printf l` x',
+    'F=--add-label; gh issue edit 7 $F x',
+    'gh pr create -t x --la${A}bel y',
+    // Review of #247: a subcommand the shell builds, a line continuation, a whole word on create, xargs, globs.
+    "F=--add-la$'\\x62'el; gh issue e$'d'it 7 $F ship-it",
+    "E=edit; F=--add-la$'\\x62'el; gh issue $E 7 $F ship-it",
+    "F=--add-la$'\\x62'el; gh issue \\\nedit 7 $F ship-it",
+    'gh issue edit 7 --add-la\\\nbel ship-it',
+    "F=--add-la$'\\x62'el; gh issue create -t x -b y \"$F\" ship-it",
+    "F=--add-la$'\\x62'el; gh pr create -t x --draft \"$F\"",
+    "gh pr create -t x -b \"$(cat body.md)\" $F",
+    "printf -- '--add-lab%sl' e | xargs -I{} gh issue edit 7 {} ship-it",
+    'echo 7 --add-labe | xargs gh issue edit',
+    'gh issue edit 7 --add-la*l ship-it',
+    'gh issue edit 7 --add-lab{e,}l ship-it',
+    "gh issue edit 7 -$'l' ship-it",
+    "gh -R o/r issue edit 7 --add-la$'\\x62'el ship-it",
+    // Review round 2: a gh command inside a compound command.
+    'for i in 1; do gh issue edit 7 $F ship-it; done',
+    'if true; then gh issue edit 7 $F ship-it; fi',
+    '{ gh issue edit 7 $F ship-it; }',
+    'true && { gh issue edit 7 "$F" ship-it; }',
+    'f() { gh issue edit 7 "$F" ship-it; }; f',
+    'function f { gh issue edit 7 $F ship-it; }',
+    '! gh issue edit 7 $F ship-it',
+    "for i in 1; do gh issue e$'d'it 7 $F ship-it; done",
+    'for i in 1; do gh issue edit 7 --add-la*l ship-it; done',
+    "for f in --add-la$'\\x62'el; do gh issue edit 7 $f ship-it; done",
+    // Review round 2: an unquoted expansion after a value flag splits into more words.
+    'F="y --label ship-it"; gh issue create -t x -b $F',
+    "F=\"y --la\"$'\\x62'\"el ship-it\"; gh issue create -t x -b $F",
+    'gh issue create -t x --body=$F',
+    'gh issue create -t x -b $(cat args.txt)',
+    'gh issue edit 7 -b $(cat args.txt)',
+    'gh issue edit 7 --body=$F',
+    'gh issue create -t x --body=$(printf "y --label ship-it")',
+    // Review round 2: a short flag whose letter is a quoted expansion.
+    'gh issue create -t x -b y -"$X" ship-it',
+    // Review round 2: -l on the other forge CLIs.
+    'hub issue update 7 -l ship-it',
+    'glab issue update 7 -l ship-it',
   ]) {
     const d = run(c);
     assert.equal(d.action, 'deny', c);
     assert.equal(d.rule, 'factory-config', c);
   }
-  for (const c of ['gh issue view 7 --json labels', 'gh issue list --label needs-owner --json number', 'git status']) {
+  for (const c of ['gh issue view 7 --json labels', 'gh issue list --label needs-owner --json number', 'git status', 'echo $HOME']) {
     assert.equal(run(c).action, 'allow', c);
   }
-  assert.notEqual(run('gh pr create -t "fix: x" -b y').rule, 'factory-config', 'no label: not this rule');
+  assert.match(run('gh issue edit $N --body-file b.md').reason, /builds at run time.*literal `--body-file` path/, 'the reason says what to change');
+  assert.equal(run('gh issue edit 7 --add-label agent-o\\\nk', { approval: 'agent-ok', takeover: 'factory-takeover' }).rule, 'factory-approval', 'a line continuation joins the label');
+  // An expansion in a value, or in a gh command that cannot add labels: not this rule.
+  for (const c of [
+    'gh pr create -t "fix: x" -b y',
+    'gh pr create -t "fix: x" -b "$(cat body.md)"',
+    'gh pr create -t "fix: x" --body="$(cat body.md)"',
+    'gh pr create -t "fix: x" -b"$(cat body.md)"',
+    'gh pr create -t "$T" --body-file "$TMPDIR/b.md"',
+    'kill -$SIG 1; gh pr view 7',
+    'gh pr view 7 && git commit --amend --no-edit -m "$(cat m)"',
+    'gh pr edit 7 --body-file "$TMPDIR/b.md"',
+    'gh pr edit 7 --body "$(cat body.md)"',
+    'gh pr merge $PR --squash --auto',
+    'ls -la $HOME',
+  ]) {
+    assert.notEqual(run(c).rule, 'factory-config', c);
+  }
   assert.equal(run('gh issue edit 7 --add-label needs-owner', { approval: 'agent-ok', takeover: 'factory-takeover' }).action, 'allow', 'a readable config: other labels pass');
 });
 
