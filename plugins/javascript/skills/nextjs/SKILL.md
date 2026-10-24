@@ -18,7 +18,8 @@ Assume the App Router and Next.js 16. The APIs move fast: check the current Next
 
 - Server Components by default; `'use client'` only for interactivity, state or browser APIs, on the smallest component that needs it.
 - Route handlers live in `app/api/**/route.ts`, export verb-named functions and use Web `Request`/`Response`. Validate every input (for example with `zod`), return the right status, and authorize on the server in every route handler and Server Action.
-- Secrets in `.env.local`, never committed.
+- Secrets in `.env.local`, never committed. HTTPS in production, with secure HTTP headers.
+- Tests with Jest, React Testing Library or Playwright, covering all critical logic.
 
 ## Gotchas
 

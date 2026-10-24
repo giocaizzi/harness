@@ -29,7 +29,7 @@ Target React 19+ with function components, hooks and TypeScript.
 
 ## Styling, testing, docs
 
-- Tailwind v4, configured in CSS: tokens in `globals.css` under `@theme` and custom utilities under `@utility`. There is no `tailwind.config.js` unless the project already has one.
+- Tailwind v4, configured in CSS: tokens in `globals.css` under `@theme` and custom utilities under `@utility`. There is no `tailwind.config.js` unless the project already has one. Mobile-first responsive; a consistent spacing, type and color scale.
 - React Testing Library + Jest: test what the user sees and does, including keyboard use; mock the network, not components.
 - Storybook: `*.stories.tsx` beside the component, using `@storybook/react`.
 - React Router for client-side routing in apps without a framework.
