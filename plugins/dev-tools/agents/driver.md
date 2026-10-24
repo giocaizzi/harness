@@ -1,6 +1,6 @@
 ---
 name: driver
-description: Driver-tier engineer for the judgement work a mid-tier hub hands off - investigates, plans, splits, implements and integrates in its own worktree, and reports evidence back. Use for features, debugging, design and planning that need judgement; not for lookups (scout) or well-specified mechanical edits (a Sonnet worker).
+description: Driver-tier engineer for judgement work - investigates, plans, designs, splits, implements and integrates in its own worktree, reports evidence back, and returns the user's decisions as open questions. Use proactively, whatever the session's model, when a task needs a plan, a design or rollout, an investigation, a root-cause fix or a feature; hand it a written brief instead of planning in the main session or in a Plan or general-purpose agent. Not for lookups (scout) or well-specified mechanical edits (a Sonnet worker).
 effort: medium
 model: opus
 ---
