@@ -1,6 +1,6 @@
 ---
 name: go-development
-description: Go 1.26+ conventions for modules and toolchain, go tool dependencies, golangci-lint v2 with every linter on, errors, context, slog, concurrency, process supervision, cross-builds and goreleaser releases, with make targets. Use when writing, reviewing or scaffolding Go code, a go.mod, a .golangci.yml or a .goreleaser.yaml.
+description: "House rules for Go 1.26+ code: errors, context, slog, goroutines and worker pools, os/exec process supervision, go tool dependencies, golangci-lint v2, cross-builds and goreleaser. Use whenever you write or change Go (.go) code, a go.mod, a .golangci.yml or a .goreleaser.yaml, whether adding a feature, fixing a bug, refactoring, reviewing or scaffolding, even when the user does not mention conventions."
 ---
 
 # Go Development (1.26+)
