@@ -931,13 +931,13 @@ function ghBuildsLabelFlag(command) {
   return false;
 }
 
-// A command that may change a label: it mentions one (`--add-label`, `/labels`, `gh label`) or a gh line passes `-l`, read with
-// line continuations joined and quotes and backslashes removed as the shell joins them (`--add-lab''el`), and is not
-// one plain `gh` read.
+// A command that may change a label: it mentions one (`--add-label`, `/labels`, `gh label`) or a gh, hub or glab line
+// passes `-l`, read with line continuations joined and quotes and backslashes removed as the shell joins them
+// (`--add-lab''el`), and is not one plain `gh` read.
 function changesLabels(command) {
   command = command.replace(/\\\r?\n/g, '');
   const flat = command.replace(/['"\\]/g, '');
-  if (!/label/i.test(flat) && !(/\bgh\b/.test(flat) && /(?:^|\s)-l/.test(flat))) return false;
+  if (!/label/i.test(flat) && !(/\b(?:gh|hub|glab)\b/.test(flat) && /(?:^|\s)-l/.test(flat))) return false;
   const args = plainGh(command);
   return !args || ghAction(args) !== 'read';
 }

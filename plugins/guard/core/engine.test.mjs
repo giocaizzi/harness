@@ -1223,6 +1223,9 @@ test('factory run with a config the guard could not read: every label change is 
     'gh issue create -t x --body=$(printf "y --label ship-it")',
     // Review round 2: a short flag whose letter is a quoted expansion.
     'gh issue create -t x -b y -"$X" ship-it',
+    // Review round 2: -l on the other forge CLIs.
+    'hub issue update 7 -l ship-it',
+    'glab issue update 7 -l ship-it',
   ]) {
     const d = run(c);
     assert.equal(d.action, 'deny', c);
