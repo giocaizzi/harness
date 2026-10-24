@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtempSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { tmpdir, userInfo } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -353,6 +353,27 @@ test('a spawn that bypasses the typed agents gets a routing hint, never a decisi
   assert.equal(decision(await setup()(spawn('Agent', { subagent_type: 'dev-tools:driver' }))), undefined)
   assert.equal(decision(await setup()(spawn('task', { subagent_type: 'general' }))), undefined) // opencode: no model on a spawn
   assert.deepEqual(events, [['guard.reminder', 'routing-plan', 'routing'], ['guard.reminder', 'routing-model', 'routing']])
+})
+
+test('a malformed spawn input gets no decision and keeps the session state', async () => {
+  const h = setup()
+  await h({ hook_event_name: 'PreToolUse', tool_name: 'Skill', tool_input: { skill: 'ship' } })
+  for (const tool_input of [undefined, null, 'Plan', ['Plan'], { subagent_type: 42, model: {} }, { subagent_type: null, model: ['opus'] }]) {
+    const out = await h({ hook_event_name: 'PreToolUse', tool_name: 'Agent', tool_input })
+    assert.equal(decision(out)?.permissionDecision, undefined, JSON.stringify(tool_input))
+  }
+  // The state was saved through each: the skill still counts, and a well-formed hint still fires.
+  assert.equal(decision(await h(pre('Bash', 'git commit -m "fix: x"'))), undefined)
+  assert.match(decision(await h({ hook_event_name: 'PreToolUse', tool_name: 'Agent', tool_input: { subagent_type: 'Plan' } })).additionalContext, /Routing hint/)
+})
+
+test('a payload that is not an object exits 0 with no output', async () => {
+  const script = fileURLToPath(new URL('./guard.mjs', import.meta.url))
+  for (const payload of ['null', '42', '"x"', '[]', 'true']) {
+    const r = spawnSync(process.execPath, [script, 'PreToolUse'], { input: payload, encoding: 'utf8', env: { ...process.env, CLAUDE_PLUGIN_DATA: mkdtempSync(join(tmpdir(), 'guard-test-')), GUARD_OTEL: 'off' } })
+    assert.equal(r.status, 0, `${payload}: ${r.stderr}`)
+    assert.equal(r.stdout, '', payload)
+  }
 })
 
 test('Codex has no read tool, so a shell read gets no hint there', async () => {
