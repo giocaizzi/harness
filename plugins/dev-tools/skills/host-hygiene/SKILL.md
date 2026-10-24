@@ -21,7 +21,7 @@ In this skill's `scripts/`, `.sh` on macOS/Linux and `.ps1` on Windows. Env, def
 ## Rules
 
 - **Disk first.** Below the floor (20 GB) don't start: clean your own leftovers. Never delete another session's files.
-- **Heavy work goes through the semaphore** and waits for a slot and for load; don't wrap it in your own retry loop. One heavy job per agent.
+- **Heavy work goes through the semaphore** and waits for a slot and for load; don't wrap it in your own retry loop. One heavy job per agent. Start it as a background command and wait for it: a foreground tool timeout backgrounds it anyway, and a retry queues a second, hidden waiter.
 - **Devices are leased:** slot first, then lease. Boot a simulator or emulator only inside a lease; a booted device with no lease is stale and anyone may shut it down.
 - **Release only what you hold.** Never delete a lock, lease or registry entry whose pid is not yours.
 - **Stop things precisely:** wait on a pid or a file. Never `pgrep -f` or `pkill` a pattern.
