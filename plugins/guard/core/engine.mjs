@@ -849,10 +849,10 @@ export function touchesApprovalLabel(command, label) {
   return false;
 }
 
-// A command that may change a label: it mentions one (`--add-label`, `/labels`, `gh label`) or passes `-l`, and is not
-// one plain `gh` read.
+// A command that may change a label: it mentions one (`--add-label`, `/labels`, `gh label`) or passes `-l`, read with
+// quotes and backslashes removed as the shell joins them (`--add-lab''el`), and is not one plain `gh` read.
 function changesLabels(command) {
-  if (!/label|(?:^|\s)-l/i.test(command)) return false;
+  if (!/label|(?:^|\s)-l/i.test(command.replace(/['"\\]/g, ''))) return false;
   const args = plainGh(command);
   return !args || ghAction(args) !== 'read';
 }

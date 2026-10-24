@@ -1149,6 +1149,9 @@ test('factory run with a config the guard could not read: every label change is 
     'gh api repos/o/r/issues/7/labels -f labels=x',
     'gh label edit x --name y',
     'L=go-ahead; gh issue edit 7 --add-label "$L"',
+    "gh issue edit 7 --add-lab''el x",
+    'gh issue edit 7 --add-lab"e"l x',
+    'gh issue edit 7 --add-lab\\el x',
   ]) {
     const d = run(c);
     assert.equal(d.action, 'deny', c);
