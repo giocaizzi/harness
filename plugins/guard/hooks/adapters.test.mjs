@@ -7,8 +7,10 @@ import { join } from 'node:path'
 import { GuardPlugin } from './opencode.mjs'
 import guardExtension from './pi.mjs'
 
-// These tests expect the stop check to run; a developer's own GUARD_STOP_CHECK=off must not leak in.
+// These tests expect the stop check to run and risky commands to ask; a developer's own GUARD_STOP_CHECK=off or an
+// unattended session's GUARD_UNATTENDED=1 must not leak in. The unattended case passes its env explicitly.
 delete process.env.GUARD_STOP_CHECK
+delete process.env.GUARD_UNATTENDED
 
 const dir = (files = {}) => {
   const d = mkdtempSync(join(tmpdir(), 'adapter-test-'))
@@ -119,6 +121,18 @@ test('pi: deny blocks, ask confirms through the UI and blocks without one', asyn
   assert.equal(await call('rm -rf ~/x', ctx(true)), undefined)
   assert.equal((await call('rm -rf ~/x', ctx(false))).block, true)
   assert.equal((await call('rm -rf ~/x', ctx())).block, true)
+})
+
+test('opencode and pi: GUARD_UNATTENDED turns a risky ask into a deny, even with a UI that would confirm', async () => {
+  const env = { GUARD_UNATTENDED: '1' }
+  const oc = await GuardPlugin({ client: {}, directory: dir() }, { ...deps(), env })
+  await assert.rejects(oc['tool.execute.before']({ tool: 'bash', sessionID: 's', callID: 'c' }, { args: { command: 'rm -rf ~/x' } }), /Unattended run/)
+  const { handlers, api } = fakePi()
+  guardExtension(api, { ...deps(), env })
+  const ctx = { cwd: dir(), hasUI: true, ui: { confirm: async () => true }, sessionManager: { getSessionId: () => 's' } }
+  const blocked = await handlers.tool_call({ toolName: 'bash', toolCallId: 't', input: { command: 'rm -rf ~/x' } }, ctx)
+  assert.equal(blocked?.block, true)
+  assert.match(blocked.reason, /Unattended run/)
 })
 
 test('pi: every ask outcome is logged as guard.ask_result with its class; no UI is unavailable via no-ui', async () => {
