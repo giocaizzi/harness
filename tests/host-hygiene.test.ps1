@@ -97,6 +97,62 @@ try {
     & $shell -NoProfile -File $lease sim --device dev-3 -- $shell -NoProfile -Command 'exit 0' 2>$null
     Test-Equal -Name '--device without device commands is refused' -Got $LASTEXITCODE -Want 2
 
+    # CPU first, slot second: a waiter holds no slot while CPU is over the cap, takes one within a poll once
+    # it drops, and gives it back if CPU rose by the time it got it. CPU is simulated: Get-HostCpu pops the
+    # next value from a file (the last one repeats) and traces whether a slot is held.
+    $cpu = Join-Path $tmp 'cpu'; $trace = Join-Path $tmp 'trace'; $got = Join-Path $tmp 'got'
+    $waiter = Join-Path $tmp 'waiter.ps1'
+    Set-Content $waiter @'
+. (Join-Path $env:TEST_SCRIPTS 'lib.ps1')
+function Get-HostCpu {
+    $v = @(Get-Content $env:TEST_CPU)
+    if ($v.Count -gt 1) { Set-Content $env:TEST_CPU $v[1..($v.Count - 1)] }
+    Add-Content $env:TEST_TRACE ([int][bool]$script:HostMutex)
+    [double]$v[0]
+}
+try { Enter-HostSlot job; Set-Content $env:TEST_GOT (Get-Date).ToString('o') } finally { Exit-HostSlot }
+'@
+    $env:TEST_SCRIPTS = $scripts; $env:TEST_CPU = $cpu; $env:TEST_TRACE = $trace; $env:TEST_GOT = $got
+    $env:HOST_CPU_CAP = '10'; $env:HOST_POLL_SECONDS = '1'; $env:HOST_LOCK_TIMEOUT_SECONDS = '15'
+    Set-Content $cpu 99
+    $w = Start-Process $shell -ArgumentList "-NoProfile -File `"$waiter`"" @windowStyle -PassThru
+    Start-Sleep 3
+    $m = New-Object Threading.Mutex($false, $mutex1)
+    $free = $m.WaitOne(0); if ($free) { $m.ReleaseMutex() }; $m.Dispose()
+    Test-Equal -Name 'cpu over the cap: the waiter holds no slot' -Got $free -Want $true
+    Set-Content $cpu 1; $dropped = Get-Date
+    $w | Wait-Process
+    # One 1 s poll, plus pwsh's own overhead on a slow runner.
+    Test-Equal -Name 'cpu drops: the waiter takes a slot within one poll' -Got (([datetime](Get-Content $got) - $dropped).TotalSeconds -le 3) -Want $true
+    Set-Content $cpu 1, 99, 99, 1
+    Remove-Item $trace
+    & $shell -NoProfile -File $waiter 2>$null
+    Test-Equal -Name 'cpu rose after the slot was taken: slot given back, then retaken' -Got "$LASTEXITCODE $((Get-Content $trace) -join ' ')" -Want '0 0 1 0 0 1'
+    $env:HOST_CPU_CAP = '100'; Remove-Item Env:HOST_POLL_SECONDS
+
+    # FIFO: a free slot goes to the oldest live waiter; a dead waiter's entry does not block.
+    $older = Invoke-Shell 'Start-Sleep 20'
+    Set-Content (Join-Path $L "heavy.wait.$($older.Id)") 'other'
+    Start-Sleep -Milliseconds 1100
+    $env:HOST_LOCK_TIMEOUT_SECONDS = '1'
+    & $shell -NoProfile -File $heavy $shell -NoProfile -Command 'exit 0' 2>$null
+    Test-Equal -Name 'a newer waiter leaves a free slot to an older one' -Got $LASTEXITCODE -Want 124
+    Stop-Process -Id $older.Id; $older | Wait-Process
+    $env:HOST_LOCK_TIMEOUT_SECONDS = '10'
+    & $shell -NoProfile -File $heavy $shell -NoProfile -Command 'exit 0' 2>$null
+    Test-Equal -Name 'a dead waiter''s entry does not block the queue' -Got $LASTEXITCODE -Want 0
+    Remove-Item (Join-Path $L 'heavy.wait.*')
+    $env:HOST_LOCK_TIMEOUT_SECONDS = '1800'
+
+    # --status: each holder's cap and age, and dead holders flagged.
+    $a = Invoke-Heavy 'Start-Sleep 4'
+    for ($i = 0; $i -lt 50 -and -not (Test-Path (Join-Path $L 'heavy.slot.1')); $i++) { Start-Sleep -Milliseconds 200 }
+    Test-Equal -Name '--status shows the holder''s cap' -Got @(& $shell -NoProfile -File $heavy --status | Where-Object { $_ -match '^slot 1: .* Start-Sleep 4 \(cpu cap 100%, 1 slots\) \(\d+s\)$' }).Count -Want 1
+    $a | Wait-Process
+    Set-Content (Join-Path $L 'heavy.slot.1') "other $(Get-DeadPid) make"
+    Test-Equal -Name '--status flags a dead holder' -Got @(& $shell -NoProfile -File $heavy --status | Where-Object { $_ -match '^slot 1: other \d+ make \(\d+s, holder dead\)$' }).Count -Want 1
+    Remove-Item (Join-Path $L 'heavy.slot.1')
+
     # register-service.ps1
     $w = Start-Process $shell -ArgumentList "-NoProfile -File `"$reg`" db -- `"$shell`" -NoProfile -Command `"Start-Sleep 3`"" @windowStyle -PassThru
     Start-Sleep 2
