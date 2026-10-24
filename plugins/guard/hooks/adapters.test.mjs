@@ -190,3 +190,16 @@ test('opencode and pi: the approval label is denied while FACTORY_RUN_ID is set,
   assert.equal(blocked?.block, true)
   assert.match(blocked.reason, /approval label/)
 })
+
+test('opencode and pi: the takeover label is denied while FACTORY_RUN_ID is set, allowed without', async () => {
+  const command = 'gh issue edit 70 --add-label factory-takeover'
+  const oc = await GuardPlugin({ client: {}, directory: dir() }, { ...deps(), env: { FACTORY_RUN_ID: 'r1' } })
+  await assert.rejects(oc['tool.execute.before']({ tool: 'bash', sessionID: 's', callID: 'c' }, { args: { command } }), /takeover label/)
+  const free = await GuardPlugin({ client: {}, directory: dir() }, { ...deps(), env: {} })
+  await free['tool.execute.before']({ tool: 'bash', sessionID: 's', callID: 'c' }, { args: { command } })
+  const { handlers, api } = fakePi()
+  guardExtension(api, { ...deps(), env: { FACTORY_RUN_ID: 'r1' } })
+  const blocked = await handlers.tool_call({ toolName: 'bash', toolCallId: 'c', input: { command } }, { cwd: dir(), sessionManager: { getSessionId: () => 'p1' } })
+  assert.equal(blocked?.block, true)
+  assert.match(blocked.reason, /takeover label/)
+})

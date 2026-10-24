@@ -1141,6 +1141,53 @@ test('factory run: a command naming the approval label is denied unless it only 
   assert.equal(run('gh issue edit 7 --add-label agent-ok', null).action, 'allow', 'no factory run: allowed');
 });
 
+test('factory run: the takeover label is denied like the approval label, reads pass', () => {
+  const run = (command, factory = { approval: 'agent-ok', takeover: 'factory-takeover' }) => evaluateCommand({ command, state: fresh(), host: calm, factory, rules });
+  for (const c of [
+    'gh issue edit 7 --add-label factory-takeover',
+    'gh issue edit 7 --remove-label Factory-Takeover',
+    "gh issue edit 7 --add-label 'factory-take'over",
+    'gh api repos/o/r/issues/7/labels -f labels=factory-takeover',
+    'gh api -X DELETE repos/o/r/issues/7/labels/factory-takeover',
+    'gh issue list --label factory-takeover | head -1',
+  ]) {
+    const d = run(c);
+    assert.equal(d.action, 'deny', c);
+    assert.equal(d.rule, 'factory-takeover', c);
+    assert.match(d.reason, /takeover label/, c);
+  }
+  for (const c of ['gh issue list --label factory-takeover --json number', 'gh issue view 7 --json labels', 'gh issue edit 7 --add-label factory-claimed']) {
+    assert.equal(run(c).action, 'allow', c);
+  }
+  assert.equal(run('gh issue edit 7 --add-label hand-over', { approval: 'agent-ok', takeover: 'hand-over' }).rule, 'factory-takeover', 'a configured label');
+  assert.equal(run('gh issue edit 7 --add-label factory-takeover', null).action, 'allow', 'no factory run: allowed');
+});
+
+test('factory run with a config the guard could not read: every label change is denied, reads pass', () => {
+  const unsure = { approval: 'agent-ok', takeover: 'factory-takeover', unsure: true, extra: ['go-ahead'] };
+  const run = (command, factory = unsure) => evaluateCommand({ command, state: fresh(), host: calm, factory, rules });
+  for (const c of [
+    'gh issue edit 7 --add-label go-ahead',
+    'gh issue edit 7 --add-label needs-owner',
+    'gh issue create -t x -l anything',
+    'gh api repos/o/r/issues/7/labels -f labels=x',
+    'gh label edit x --name y',
+    'L=go-ahead; gh issue edit 7 --add-label "$L"',
+    "gh issue edit 7 --add-lab''el x",
+    'gh issue edit 7 --add-lab"e"l x',
+    'gh issue edit 7 --add-lab\\el x',
+  ]) {
+    const d = run(c);
+    assert.equal(d.action, 'deny', c);
+    assert.equal(d.rule, 'factory-config', c);
+  }
+  for (const c of ['gh issue view 7 --json labels', 'gh issue list --label needs-owner --json number', 'git status']) {
+    assert.equal(run(c).action, 'allow', c);
+  }
+  assert.notEqual(run('gh pr create -t "fix: x" -b y').rule, 'factory-config', 'no label: not this rule');
+  assert.equal(run('gh issue edit 7 --add-label needs-owner', { approval: 'agent-ok', takeover: 'factory-takeover' }).action, 'allow', 'a readable config: other labels pass');
+});
+
 test('factory run: the label check never throws and fails fast on a hang', () => {
   // In a child with a timeout, so a check that loops forever fails here in seconds instead of hanging the suite.
   const script = `

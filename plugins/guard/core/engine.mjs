@@ -825,8 +825,8 @@ function opaqueGh(flat) {
   return false;
 }
 
-// Fail closed while a factory run is active. A command that names the approval label (in any quoting or case, as GitHub
-// compares) is denied unless it is one plain `gh` read; adding and removing alike are the owner's. A `gh` command with a
+// Fail closed while a factory run is active. A command that names the label, approval or takeover (in any quoting or case, as
+// GitHub compares), is denied unless it is one plain `gh` read; adding and removing alike are the owner's. A `gh` command with a
 // body the guard cannot read (`--input`, a `key=@file` field) is denied unless it is one plain `gh api` call writing to
 // a `/comments` endpoint or a path outside `/labels` and `/issues`; so is any other line running `gh api` (opaqueGh). A label the shell builds (`$L`) stays out of sight
 // (docs/guard.md).
@@ -849,11 +849,23 @@ export function touchesApprovalLabel(command, label) {
   return false;
 }
 
+// A command that may change a label: it mentions one (`--add-label`, `/labels`, `gh label`) or passes `-l`, read with
+// quotes and backslashes removed as the shell joins them (`--add-lab''el`), and is not one plain `gh` read.
+function changesLabels(command) {
+  if (!/label|(?:^|\s)-l/i.test(command.replace(/['"\\]/g, ''))) return false;
+  const args = plainGh(command);
+  return !args || ghAction(args) !== 'read';
+}
+
 // `readTool`: the harness has a file-read tool (all but Codex), so a shell read gets a once-per-session hint.
 // `worktrees`, `branches`, `regenerable`: facts the adapters gather (worktreeFacts, branchFacts, regenFacts).
 export function evaluateCommand({ command, loadedSkills = new Set(), state, host = {}, env = {}, worktrees = {}, branches = {}, regenerable = {}, refs = {}, tags = {}, python = null, readTool = false, factory = null, rules }) {
   // While a factory run is active the agent never touches the approval label: with an owner token it would count as the owner's.
   if (factory && touchesApprovalLabel(command, factory.approval)) return { action: 'deny', rule: 'factory-approval', reason: `${rules.factory.why} The \`${factory.approval}\` label is the owner's to apply or remove; ask on the ticket instead.` }
+  // Nor the takeover label: an approver sets it to hand the ticket to an attended run, which removes it once it claimed.
+  if (factory?.takeover && touchesApprovalLabel(command, factory.takeover)) return { action: 'deny', rule: 'factory-takeover', reason: `${rules.factory.takeoverWhy} The \`${factory.takeover}\` label is the owner's to apply; ask on the ticket instead.` }
+  // A config the guard could not read fails closed: every label change is denied, and so is any name it could still find.
+  if (factory?.unsure && (changesLabels(command) || (factory.extra ?? []).some((name) => touchesApprovalLabel(command, name)))) return { action: 'deny', rule: 'factory-config', reason: `${rules.factory.unsureWhy} Every label change is denied in this run until the config is fixed; ask on the ticket instead.` }
   // Hard denies come first and fire every time, like the title guard. A `when` rule denies only in a repo
   // that adopted that manager; elsewhere it lets the command through with a once-per-session note.
   const denied = deniedBy(command, rules)
