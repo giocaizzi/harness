@@ -9,7 +9,8 @@
 # check below and a process command line naming it. /reload-plugins does not restart the process,
 # so only the user can tell the sweep that every session reloaded: --after-reload drops that keep.
 # Session start times come from ps (Win32_Process on Windows), or SWEEP_SESSION_STARTS (epoch seconds, one per line)
-# when set. An unreadable installed_plugins.json removes nothing. --apply removes them.
+# when set. An unreadable installed_plugins.json or process list removes nothing. A linked marketplace or
+# plugin dir is kept whole; a linked version dir loses only its link. --apply removes them.
 #
 # --branches sweeps branches instead: remote branches with no open PR (branches of closed or
 # never-opened PRs; GitHub only deletes on merge) and local branches whose upstream is gone.
@@ -108,9 +109,10 @@ if ($plugins) {
     # A session is any process whose command line is Claude Code: a `claude` executable, a versioned binary under
     # .../claude/versions/, or an npm install run by node. Doubt keeps the version: an unreadable start time counts
     # as 0 (before every update), and on Windows a node process whose command line cannot be read counts too.
+    # Throws when the process list cannot be read, which stops the sweep instead of reading as "no sessions".
     function Get-SessionStart {
         if ($onWindows) {
-            foreach ($p in @(Get-CimInstance Win32_Process)) {
+            foreach ($p in @(Get-CimInstance Win32_Process -ErrorAction Stop)) {
                 $exe = "$($p.ExecutablePath)"; $cmd = "$($p.CommandLine)"
                 $hit = $p.Name -eq 'claude.exe' -or $exe -match '[\\/]claude[\\/]versions[\\/]' -or $cmd -match '@anthropic-ai[\\/]claude-code' -or ($p.Name -eq 'node.exe' -and -not $cmd)
                 if ($hit) { if ($p.CreationDate) { ([DateTimeOffset]$p.CreationDate).ToUnixTimeSeconds() } else { 0 } }
@@ -118,18 +120,38 @@ if ($plugins) {
             return
         }
         $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
-        foreach ($line in @(ps -axo etime=,command= 2>$null)) {
+        $table = @(ps -axo etime=,command= 2>$null)
+        if ($LASTEXITCODE) { throw 'ps failed' }
+        foreach ($line in $table) {
             $f = -split $line
             if ($f.Count -lt 2) { continue }
-            if (-not ($f[1] -match '(^|/)claude$' -or $f[1] -match '/claude/versions/' -or $line -match '@anthropic-ai/claude-code')) { continue }
+            # The whole command line, since argv[0] may hold spaces; a false match only keeps a version longer.
+            $c = $line.Substring($line.IndexOf($f[0]) + $f[0].Length)
+            if (-not ($c -match '(^|[ /])claude( |$)' -or $c -match '/claude/versions/' -or $c -match '@anthropic-ai/claude-code')) { continue }
             if ($f[0] -notmatch '^(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+)$') { 0; continue }
             $now - ([long]$Matches[1] * 86400 + [long]$Matches[2] * 3600 + [long]$Matches[3] * 60 + [long]$Matches[4])
         }
     }
-    $starts = if ($null -ne $env:SWEEP_SESSION_STARTS) { @($env:SWEEP_SESSION_STARTS -split "`r?`n" | Where-Object { $_ } | ForEach-Object { [long]$_ }) } else { @(Get-SessionStart) }
-    $procs = if ($onWindows) { @(Get-CimInstance Win32_Process | ForEach-Object { $_.CommandLine }) } else { @(ps -axo command= 2>$null) }
+    if (-not $onWindows -and -not (Get-Command ps -CommandType Application -ErrorAction SilentlyContinue)) {
+        [Console]::Error.WriteLine('sweep: ps not found; cannot tell running sessions, nothing removed'); exit 1
+    }
+    try {
+        $starts = if ($null -ne $env:SWEEP_SESSION_STARTS) { @($env:SWEEP_SESSION_STARTS -split "`r?`n" | Where-Object { $_ } | ForEach-Object { [long]$_ }) } else { @(Get-SessionStart) }
+        $procs = if ($onWindows) { @(Get-CimInstance Win32_Process -ErrorAction Stop | ForEach-Object { $_.CommandLine }) }
+            else { $out = @(ps -axo command= 2>$null); if ($LASTEXITCODE) { throw 'ps failed' }; $out }
+    } catch { [Console]::Error.WriteLine('sweep: cannot read the process list; cannot tell running sessions, nothing removed'); exit 1 }
     $sep = [IO.Path]::DirectorySeparatorChar
-    foreach ($dir in @(Get-ChildItem -LiteralPath $cache -Directory | Get-ChildItem -Directory | Get-ChildItem -Directory)) {
+    # Never descend through a link: a linked marketplace or plugin dir is kept whole, since its grandchildren live
+    # outside the cache.
+    $versions = foreach ($m in @(Get-ChildItem -LiteralPath $cache -Directory)) {
+        if ($m.LinkType) { Write-Output "keep $(Get-FullPath $m.FullName): a link; the sweep never follows links above a version"; continue }
+        foreach ($p in @(Get-ChildItem -LiteralPath $m.FullName -Directory)) {
+            if ($p.LinkType) { Write-Output "keep $(Get-FullPath $p.FullName): a link; the sweep never follows links above a version"; continue }
+            Get-ChildItem -LiteralPath $p.FullName -Directory
+        }
+    }
+    foreach ($dir in @($versions)) {
+        if ($dir -is [string]) { $dir; continue }
         # $entry is the cache path, which is what gets removed: a symlinked version dir loses its link, never its
         # target. $real is only for comparing and probing.
         $entry = Get-FullPath $dir.FullName
