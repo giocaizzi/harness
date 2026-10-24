@@ -37,7 +37,7 @@ Sections in this order, one line per ticket with its link; leave a section out w
 |---|---|---|
 | Halted | halt label | `#N title · halted` |
 | Needs you | `needs-owner` | `#N title · Q<n>: <the question, one line> · since <date>` |
-| Needs you | takeover label | `#N title · takeover · runtime still holds it` while the claim label is on and the newest claim is a `runtime` one, else `#N title · takeover · ready to run attended` |
+| Needs you | takeover label, last applied by an approver (issue timeline; `ticket-run`'s `references/comments.md` has the filter) | `#N title · takeover · runtime still holds it` while the claim label is on and the newest claim is a `runtime` one, else `#N title · takeover · ready to run attended`; applied by anyone else: `#N title · takeover label not from an approver, ignored` |
 | In progress | claim label | `#N title · <host> · PR #<pr> <checks green/red/pending>` or `no PR yet` |
 | Paused | last result `budget_reached` | `#N title · budget reached` |
 | Grooming | `needs-grooming` | `#N title · parked three times` |

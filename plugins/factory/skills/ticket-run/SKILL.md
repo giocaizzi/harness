@@ -15,7 +15,7 @@ The repo's `.factory/config.yaml` holds what is particular to it: forge, approve
 
 One ticket, one session, one worktree.
 
-1. **Gate and claim:** approved by an approver, not in grooming, ready (acceptance criteria and a proof command), not claimed by another run; then claim it ([comments.md](references/comments.md#gate)). A ticket with the takeover label is handed from a runtime to you: wait for its release, claim, check out its WIP branch, then remove the label ([comments.md](references/comments.md#takeover)).
+1. **Gate and claim:** approved by an approver, not in grooming, ready (acceptance criteria and a proof command), not claimed by another run; then claim it ([comments.md](references/comments.md#gate)). A ticket with the takeover label, applied by an approver, is handed from a runtime to you: wait for its release, gate again, claim, remove the label, then check out its WIP branch ([comments.md](references/comments.md#takeover)).
 2. **Resume** a parked ticket only on an approver's answer ([comments.md](references/comments.md#answers)), or, for a merge gate, an approver's merge ([done.md](references/done.md#ship-and-land)).
 3. **Plan comment** first. XS and S start right after it; M and larger wait for the owner's OK.
 4. **Work** in a worktree (`wt`), committing as you go and keeping the run's checklist current ([done.md](references/done.md#checklist)). Decide what belongs to the ticket with the [fold-in test](references/fold-in-test.md), and log the calls the plan does not cover. When the plan splits into clear, testable units, hand each to a fresh Sonnet worker with that unit's plan as the brief; you integrate and run the checks, and a unit that fails twice comes back to you.
