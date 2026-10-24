@@ -1,6 +1,6 @@
 // pi extension: the plugins' agents (scout, escalate, api-reviewer, verifier) as a `subagent` tool, since pi has no subagents.
 // Each call runs the agent in its own `pi -p --no-session` process with the agent's prompt appended and its tools
-// narrowed, on the session's model; the final text comes back as the tool result. Loaded from the root package.json.
+// narrowed, on the session's model at the agent's effort; the final text comes back as the tool result. Loaded from the root package.json.
 import { spawn } from 'node:child_process'
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -10,9 +10,11 @@ import { fileURLToPath } from 'node:url'
 const PLUGINS = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 
 // Claude tool names in an agent's `tools` -> pi's built-in tools. No `tools` key: pi's defaults.
+// pi's thinking levels: a Claude `effort` (low … max) is one of them as is.
+const THINKING = new Set(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'])
 const TOOLS = { read: ['read'], grep: ['grep'], glob: ['find', 'ls'], bash: ['bash'], powershell: ['powershell'], edit: ['edit'], multiedit: ['edit'], write: ['write'] }
 
-// The Claude-format agents every plugin ships (agents/*.md): name, description, pi tools, prompt body.
+// The Claude-format agents every plugin ships (agents/*.md): name, description, pi tools, thinking level, prompt body.
 export function loadAgents(root = PLUGINS) {
   const agents = []
   for (const plugin of readdirSync(root)) {
@@ -23,7 +25,8 @@ export function loadAgents(root = PLUGINS) {
       if (!m) continue
       const fm = Object.fromEntries([...m[1].matchAll(/^(\w+):\s*(.*)$/gm)].map(([, k, v]) => [k, v.trim()]))
       const tools = fm.tools ? [...new Set(fm.tools.split(',').flatMap((t) => TOOLS[t.trim().toLowerCase()] ?? []))] : null
-      agents.push({ name: fm.name || basename(file, '.md'), description: fm.description ?? '', tools, prompt: m[2].trim() })
+      const thinking = THINKING.has(fm.effort) ? fm.effort : undefined
+      agents.push({ name: fm.name || basename(file, '.md'), description: fm.description ?? '', tools, thinking, prompt: m[2].trim() })
     }
   }
   return agents
@@ -31,7 +34,7 @@ export function loadAgents(root = PLUGINS) {
 
 // argv for one run, after the pi entry point.
 export function piArgs(agent, task, promptFile, model) {
-  return ['-p', '--no-session', ...(model ? ['--model', model] : []), ...(agent.tools?.length ? ['--tools', agent.tools.join(',')] : []), '--append-system-prompt', promptFile, `Task: ${task}`]
+  return ['-p', '--no-session', ...(model ? ['--model', model] : []), ...(agent.thinking ? ['--thinking', agent.thinking] : []), ...(agent.tools?.length ? ['--tools', agent.tools.join(',')] : []), '--append-system-prompt', promptFile, `Task: ${task}`]
 }
 
 // How to start pi again: the running entry point under the same node, else `pi` on PATH.
@@ -67,7 +70,7 @@ export default function subagentExtension(pi, deps = {}) {
       properties: { agent: { type: 'string', enum: agents.map((a) => a.name), description: 'Agent name' }, task: { type: 'string', description: 'Self-contained brief: goal, scope, what to report' } },
       required: ['agent', 'task'],
     },
-    async execute(id, params, signal, _onUpdate, ctx) {
+    async execute(id, params, signal, onUpdate, ctx) {
       const agent = agents.find((a) => a.name === params.agent)
       if (!agent) throw new Error(`Unknown agent ${params.agent}; one of ${agents.map((a) => a.name).join(', ')}`)
       const dir = mkdtempSync(join(tmpdir(), 'pi-subagent-'))
@@ -75,6 +78,8 @@ export default function subagentExtension(pi, deps = {}) {
         const file = join(dir, `${agent.name}.md`)
         writeFileSync(file, agent.prompt)
         const model = ctx?.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined
+        // The child's model and thinking level, before it starts, for extensions that show them (hud).
+        onUpdate?.({ content: [], details: { model, ...(agent.thinking ? { thinking: agent.thinking } : {}) } })
         const session = process.env.GUARD_PARENT_SESSION || ctx?.sessionManager?.getSessionId?.()
         const r = await (deps.run ?? run)([...piCommand(), ...piArgs(agent, params.task, file, model)], ctx?.cwd, signal, { session, agent: `${agent.name}-${id}` })
         if (r.code !== 0) throw new Error(`${agent.name} failed (exit ${r.code}): ${(r.err || r.out).trim().slice(-2000)}`)
