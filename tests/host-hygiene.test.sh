@@ -29,10 +29,13 @@ check "two slots: runs overlap" "$(tr '\n' ' ' <"$tmp/log")" "start start end en
 
 "$heavy" sh -c 'exit 7'
 check "exit code propagates" "$?" 7
+check "stdin reaches the command" "$(echo hi | "$heavy" cat)" hi
+"$heavy" sh -c 'echo fd3 >&3' 3>"$tmp/fd3"
+check "an inherited fd 3 reaches the command" "$(cat "$tmp/fd3")" fd3
 
 mkdir -p "$L/heavy.lock.1"; dead_pid >"$L/heavy.lock.1/pid"
-"$heavy" true 2>/dev/null
-check "stale slot recovered" "$?" 0
+"$heavy" true 2>"$tmp/err"
+check "stale slot recovered" "$?:$(grep -c 'recovered stale heavy.lock.1 (pid [0-9]* is gone)$' "$tmp/err")" 0:1
 check "slot released" "$(count "$L"/heavy.lock.*)" 0
 
 HOST_DISK_FLOOR_GB=999999999 "$heavy" touch "$tmp/ran" 2>/dev/null
@@ -117,6 +120,14 @@ check "--status shows waiters and their cap" "$("$heavy" --status | grep -c -e "
 { kill "$older"; wait "$older"; } 2>/dev/null
 HOST_LOCK_TIMEOUT_SECONDS=3 "$heavy" true 2>/dev/null
 check "a dead or lower-cap waiter's entry does not block the queue" "$?" 0
+# The stopped waiter is xargs's child: a bash parent without job control resumes a child that stops.
+echo 5 | xargs sleep & parent=$!
+for _ in $(seq 20); do stopped=$(ps -A -o pid=,ppid= | awk -v p="$parent" '$2 == p { print $1 }'); [ -n "$stopped" ] && break; sleep 0.1; done
+kill -STOP "$stopped"; echo "100000 stopped" >"$L/heavy.wait.$stopped"
+sleep 1.1
+acquire HOST_POLL_SECONDS=1 HOST_LOCK_TIMEOUT_SECONDS=1
+check "a stopped waiter does not block the queue" "$?" 0
+{ kill -CONT "$stopped"; kill "$stopped"; wait "$parent"; } 2>/dev/null
 { kill "$lower"; wait "$lower"; } 2>/dev/null
 rm -f "$L"/heavy.wait.*
 
@@ -170,6 +181,37 @@ sleep 0.2
 check "lease.sh: TERM then KILL stops the command, releases lease and slot" \
   "$(ps -o stat= -p "$(cat "$tmp/grandchild")" | grep -v Z | sed 's/.*/orphan/')$(count "$L"/heavy.lock.* "$L"/*.lease)" 0
 kill "$(cat "$tmp/grandchild")" 2>/dev/null; rm -rf "$L"/heavy.lock.* "$L"/*.lease
+
+# Ctrl+C: INT to the process group stops the command and exits 130, slot (and lease) released. Started with
+# set -m so the script under test gets INT at its default, as from a terminal.
+interrupt() { # interrupt <script> <args...>: rc of the script after an INT to its group; the command's state
+  rm -f "$tmp/cmd"
+  set -m; "$@" sh -c "echo \$\$ >'$tmp/cmd'; exec sleep 30" 2>/dev/null & w=$!; set +m
+  for _ in $(seq 50); do [ -s "$tmp/cmd" ] && break; sleep 0.1; done
+  kill -INT -- "-$w"
+  for _ in $(seq 30); do kill -0 "$w" 2>/dev/null || break; sleep 0.1; done
+  kill -KILL "$w" 2>/dev/null; wait "$w"; echo "$?$(ps -o stat= -p "$(cat "$tmp/cmd")" | grep -v Z | sed 's/.*/ running/')"
+  kill "$(cat "$tmp/cmd")" 2>/dev/null
+}
+check "heavy.sh: INT stops the command, exits 130, frees the slot" "$(interrupt "$heavy"):$(count "$L"/heavy.lock.*)" 130:0
+check "lease.sh: INT stops the command, exits 130, frees lease and slot" "$(interrupt "$lease" sim --):$(count "$L"/heavy.lock.* "$L"/*.lease)" 130:0
+rm -rf "$L"/heavy.lock.* "$L"/*.lease
+
+# Without a ps that takes -p (slim images, BusyBox), liveness falls back to kill -0: a live holder keeps its slot.
+sleep 5 & holder=$!
+mkdir -p "$L/heavy.lock.1"; echo "$holder" >"$L/heavy.lock.1/pid"
+(
+  # shellcheck disable=SC2317,SC2329 # called by heavy.sh through export -f
+  ps() { return 127; }
+  export -f ps
+  HOST_LOCK_TIMEOUT_SECONDS=1 "$heavy" true 2>/dev/null
+  check "no usable ps: a live holder keeps its slot" "$?:$(cat "$L/heavy.lock.1/pid")" "124:$holder"
+  { kill "$holder"; wait "$holder"; } 2>/dev/null
+  HOST_LOCK_TIMEOUT_SECONDS=3 "$heavy" true 2>/dev/null
+  check "no usable ps: a dead holder's slot is reclaimed" "$?" 0
+  exit "$fails"
+); fails=$((fails + $?))
+rm -rf "$L"/heavy.lock.*
 
 # lease.sh
 "$lease" sim -- sh -c "cat '$L/heavy.lock.1/pid' '$L/sim.lease' >'$tmp/held'" 2>/dev/null

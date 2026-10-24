@@ -34,23 +34,31 @@ host_load1() {
 }
 if stat -c %Y / >/dev/null 2>&1; then host_mtime() { stat -c %Y "$1" 2>/dev/null; }; else host_mtime() { stat -f %m "$1" 2>/dev/null; }; fi
 host_age() { local m; m=$(host_mtime "$1") && [ -n "$m" ] && echo $(($(date +%s) - m)); }
-# host_holder <pid> [<file it wrote>]: alive, gone or reused. `kill -0` alone reads a reused pid as alive and a
-# live process of another user (EPERM) as gone. A zombie is gone; a pid that started after its file is reused.
+# Without a ps that takes -p (none in slim images, BusyBox's does not), host_holder falls back to kill -0.
+if ps -o etime=,stat= -p $$ >/dev/null 2>&1; then host_ps=1; else host_ps=''; fi
+# host_holder <pid> [<file it wrote>]: alive, stopped, gone or reused. `kill -0` alone reads a reused pid as alive
+# and a live process of another user (EPERM) as gone. A zombie is gone; a pid that started after its file is reused.
 host_holder() {
   local info since
-  info=$(ps -o etime=,stat= -p "${1:-x}" 2>/dev/null | awk '{ n = split($1, t, /[-:]/); s = t[n] + 60 * t[n - 1]
+  case ${1:-} in '' | *[!0-9]*) echo gone; return ;; esac
+  if [ -z "$host_ps" ]; then
+    if kill -0 "$1" 2>/dev/null || kill -0 "$1" 2>&1 | grep -qi 'not permitted'; then echo alive; else echo gone; fi
+    return
+  fi
+  info=$(ps -o etime=,stat= -p "$1" 2>/dev/null | awk '{ n = split($1, t, /[-:]/); s = t[n] + 60 * t[n - 1]
     if (n > 2) s += 3600 * t[n - 2]; if (n > 3) s += 86400 * t[n - 3]; print s, $2 }')
-  case $info in '' | *' Z'*) echo gone; return ;; esac
+  case $info in '' | *' Z'*) echo gone; return ;; *' T'*) echo stopped; return ;; esac
   since=$([ -n "${2:-}" ] && host_mtime "$2")
   # etime and mtime are whole seconds: allow 2 s of rounding.
   if [ -n "$since" ] && [ $(($(date +%s) - ${info% *})) -gt $((since + 2)) ]; then echo reused; else echo alive; fi
 }
 # host_tree <pid>: the pid and its descendants.
 host_tree() {
-  ps -A -o pid=,ppid= | awk -v root="$1" '{ up[$1] = $2 } END { t[root] = 1
+  ps -A -o pid=,ppid= 2>/dev/null | awk -v root="$1" '{ up[$1] = $2 } END { t[root] = 1
     do { n = 0; for (p in up) if (!(p in t) && (up[p] in t)) { t[p] = 1; n++ } } while (n); for (p in t) print p }'
 }
-host_alive() { [ "$(host_holder "$1" "${2:-}")" = alive ]; }
+# A stopped holder still holds its slot or lease: it may be resumed.
+host_alive() { case $(host_holder "$1" "${2:-}") in alive | stopped) return 0 ;; *) return 1 ;; esac; }
 host_say() { echo "host: $*" >&2; }
 host_timed_out() { [ "$(date +%s)" -ge "$host_deadline" ]; }
 host_over_cap() { host_load=$(host_load1); awk -v l="$host_load" -v m="$HOST_LOAD_CAP" 'BEGIN { exit !(l > m) }'; }
@@ -83,7 +91,7 @@ host_reclaim() {
     [ -e "$path" ] || mv "$aside" "$path"
     return 1
   fi
-  host_say "recovered stale ${path##*/} (${pid:+pid $pid is gone}${pid:-no pid for 60s})"
+  if [ -n "$pid" ]; then host_say "recovered stale ${path##*/} (pid $pid is gone)"; else host_say "recovered stale ${path##*/} (no pid for 60s)"; fi
   rm -rf "$aside"
 }
 host_slot_pid() { cat "$1/pid" 2>/dev/null; }
@@ -99,16 +107,16 @@ host_slot_free() {
   done
 }
 
-# Live waiters queued before this one (an older wait file, or the same mtime and a lower pid) whose own
-# load cap the current load meets: a waiter held back by a lower cap does not hold up the queue.
+# Running waiters queued before this one (an older wait file, or the same mtime and a lower pid) whose own
+# load cap the current load meets: a waiter held back by a lower cap, or stopped, does not hold up the queue.
 host_ahead() {
   local me=$HOST_LOCK_DIR/heavy.wait.$$ w p cap n=0
   for w in "$HOST_LOCK_DIR"/heavy.wait.*; do
     p=${w##*.}
-    [ -f "$w" ] && [ "$p" != $$ ] || continue
-    { [ "$w" -ot "$me" ] || { ! [ "$w" -nt "$me" ] && [ "$p" -lt $$ ]; }; } || continue
+    if [ ! -f "$w" ] || [ "$p" = $$ ]; then continue; fi
+    if [ "$w" -nt "$me" ] || { ! [ "$w" -ot "$me" ] && [ "$p" -gt $$ ]; }; then continue; fi
     read -r cap _ <"$w" 2>/dev/null || continue
-    awk -v l="$host_load" -v m="$cap" 'BEGIN { exit !(l <= m) }' && host_alive "$p" "$w" && n=$((n + 1))
+    if awk -v l="$host_load" -v m="$cap" 'BEGIN { exit !(l <= m) }' && [ "$(host_holder "$p" "$w")" = alive ]; then n=$((n + 1)); fi
   done
   echo "$n"
 }
@@ -152,14 +160,17 @@ host_slot_acquire() {
 }
 
 # host_run <cmd...>: run the command and return its exit code. It runs in the background, so a TERM or INT is
-# forwarded at once (a trap waits for a foreground command, and the KILL that follows an unanswered TERM
-# would leak the slot and orphan it), to its whole process tree: without a terminal, set -m gives it no
-# process group of its own. fd 3 keeps stdin, which a background command would otherwise get as /dev/null.
+# forwarded at once to its whole process tree (a trap waits for a foreground command, and the KILL that follows
+# an unanswered TERM would leak the slot and orphan it). set -m around the start keeps INT and QUIT at their
+# defaults and stdin as is: without job control, bash starts a background command with both ignored and
+# stdin from /dev/null. The command gets its own process group, so a terminal's Ctrl+C reaches it through
+# the forward.
 host_run() {
   local code
-  { exec 3<&0; } 2>/dev/null || exec 3</dev/null
-  "$@" <&3 3<&- &
+  set -m
+  "$@" &
   host_child=$!
+  set +m
   trap 'kill -INT $(host_tree "$host_child") 2>/dev/null' INT
   trap 'kill -TERM $(host_tree "$host_child") 2>/dev/null' TERM
   while wait "$host_child"; code=$?; kill -0 "$host_child" 2>/dev/null; do :; done
@@ -187,7 +198,7 @@ host_status() {
     case $d in *.stale.*) continue ;; esac
     [ -d "$d" ] || continue
     p=$(host_slot_pid "$d")
-    case ${p:+$(host_holder "$p" "$d")} in alive) state='' ;; gone) state=', holder dead' ;; reused) state=', pid reused' ;; *) state=', no pid' ;; esac
+    case ${p:+$(host_holder "$p" "$d")} in alive) state='' ;; gone) state=', holder dead' ;; reused) state=', pid reused' ;; stopped) state=', holder stopped' ;; *) state=', no pid' ;; esac
     echo "slot ${d##*.}: pid ${p:-none} $(cat "$d/cmd" 2>/dev/null) ($(cat "$d/cap" 2>/dev/null || echo 'cap unknown'), $(host_age "$d")s$state)"
   done
   for w in "$HOST_LOCK_DIR"/heavy.wait.*; do

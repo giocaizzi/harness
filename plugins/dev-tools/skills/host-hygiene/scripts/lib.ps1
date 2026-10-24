@@ -30,15 +30,20 @@ New-Item -ItemType Directory -Force -Path $script:HostLockDir | Out-Null
 
 function Write-HostSay([string]$Message) { [Console]::Error.WriteLine("host: $Message") }
 
-# alive, gone, or reused (the pid belongs to a process started after $Since).
+# alive, stopped (every thread suspended), gone, or reused (the pid belongs to a process started after $Since).
 function Get-HostHolder([string]$ProcessId, $Since) {
     if (-not ($ProcessId -match '^[1-9][0-9]*$')) { return 'gone' }
     try { $p = Get-Process -Id ([int]$ProcessId) -ErrorAction Stop } catch { return 'gone' }
+    try {
+        $running = @($p.Threads | Where-Object { $_.ThreadState -ne 'Wait' -or $_.WaitReason -ne 'Suspended' }).Count
+        if ($p.Threads.Count -and -not $running) { return 'stopped' }
+    } catch { Write-Verbose 'thread states unavailable (non-Windows): never stopped' }
     if (-not $Since) { return 'alive' }
     try { if ($p.StartTime -le $Since) { 'alive' } else { 'reused' } } catch { 'alive' } # no access to StartTime: assume alive
 }
 
-function Test-HostAlive([string]$ProcessId, $Since) { (Get-HostHolder $ProcessId $Since) -eq 'alive' }
+# A stopped holder still holds its slot or lease: it may be resumed.
+function Test-HostAlive([string]$ProcessId, $Since) { (Get-HostHolder $ProcessId $Since) -in 'alive', 'stopped' }
 
 function Get-HostLeasePid([string]$Path) {
     try { ((Get-Content -LiteralPath $Path -Raw -ErrorAction Stop) -split '\s+')[1] } catch { $null }
@@ -91,8 +96,8 @@ function Get-HostFreeSlot {
     [Math]::Max(0, $script:HostHeavySlots - $held)
 }
 
-# Live waiters queued before this one (an older wait file, or the same time and a lower pid) whose own CPU
-# cap $Cpu meets: a waiter held back by a lower cap does not hold up the queue.
+# Running waiters queued before this one (an older wait file, or the same time and a lower pid) whose own CPU
+# cap $Cpu meets: a waiter held back by a lower cap, or stopped, does not hold up the queue.
 function Get-HostAhead([double]$Cpu) {
     $mine = (Get-Item -LiteralPath $script:HostWaitFile).LastWriteTime
     @(Get-ChildItem -LiteralPath $script:HostLockDir -Filter 'heavy.wait.*' | Where-Object {
@@ -100,7 +105,7 @@ function Get-HostAhead([double]$Cpu) {
             $cap = 0.0
             $p -ne "$PID" -and ($_.LastWriteTime -lt $mine -or ($_.LastWriteTime -eq $mine -and [int]$p -lt $PID)) -and
             [double]::TryParse(((Get-Content -LiteralPath $_.FullName -Raw -ErrorAction SilentlyContinue) -split '\s+')[0], 'Float', [Globalization.CultureInfo]::InvariantCulture, [ref]$cap) -and
-            $Cpu -le $cap -and (Test-HostAlive $p $_.LastWriteTime)
+            $Cpu -le $cap -and (Get-HostHolder $p $_.LastWriteTime) -eq 'alive'
         }).Count
 }
 
@@ -155,7 +160,7 @@ function Exit-HostSlot {
 function Get-HostStatus {
     Get-ChildItem -LiteralPath $script:HostLockDir -Filter 'heavy.slot.*' | ForEach-Object {
         $p = Get-HostLeasePid $_.FullName
-        $state = switch (Get-HostHolder $p $_.LastWriteTime) { 'alive' { '' } 'reused' { ', pid reused' } default { if ($p) { ', holder dead' } else { ', no pid' } } }
+        $state = switch (Get-HostHolder $p $_.LastWriteTime) { 'alive' { '' } 'reused' { ', pid reused' } 'stopped' { ', holder stopped' } default { if ($p) { ', holder dead' } else { ', no pid' } } }
         "slot $($_.Extension.TrimStart('.')): $((Get-Content $_.FullName -Raw).Trim()) ($(Get-HostAge $_)s$state)"
     }
     Get-ChildItem -LiteralPath $script:HostLockDir -Filter 'heavy.wait.*' | Where-Object { Test-HostAlive $_.Extension.TrimStart('.') $_.LastWriteTime } | ForEach-Object {
