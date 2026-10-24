@@ -192,7 +192,8 @@ try {
     Invoke-PluginSweep '' --apply 2>$null | Out-Null
     Test-Equal -Name 'unreadable installed_plugins.json removes nothing' -Got "$LASTEXITCODE $(@(Get-ChildItem (Join-Path $c 'p')).Count)" -Want '1 3'
     Remove-Item Env:SWEEP_SESSION_STARTS
-    # The real process scan: sessions started by a `claude` binary, a versioned binary and an npm install all count.
+    # The real process scan: sessions started by a `claude` binary (also under a path with a space), a versioned
+    # binary and an npm install all count.
     $cfg2 = Join-Path $tmp 'claude2'
     $c2 = Join-Path $cfg2 'plugins/cache/mkt'
     foreach ($v in 'r/1.0', 'r/2.0') { New-Item -ItemType Directory -Force (Join-Path $c2 $v) | Out-Null }
@@ -209,12 +210,14 @@ try {
     }
     if ($env:OS -ne 'Windows_NT') {
         $sleep = (Get-Command sleep -CommandType Application | Select-Object -First 1).Source
-        foreach ($d in 'fake/bin', 'fake/claude/versions') { New-Item -ItemType Directory -Force (Join-Path $tmp $d) | Out-Null }
+        foreach ($d in 'fake/bin', 'fake/claude/versions', 'fake/Application Support') { New-Item -ItemType Directory -Force (Join-Path $tmp $d) | Out-Null }
+        New-Item -ItemType SymbolicLink -Path (Join-Path $tmp 'fake/Application Support/claude') -Target $sleep | Out-Null
         New-Item -ItemType SymbolicLink -Path (Join-Path $tmp 'fake/bin/claude') -Target $sleep | Out-Null
         New-Item -ItemType SymbolicLink -Path (Join-Path $tmp 'fake/claude/versions/9.9.9') -Target $sleep | Out-Null
         $fakes = @(
             Start-Process (Join-Path $tmp 'fake/bin/claude') -ArgumentList 60 -PassThru
             Start-Process (Join-Path $tmp 'fake/claude/versions/9.9.9') -ArgumentList 60 -PassThru
+            Start-Process (Join-Path $tmp 'fake/Application Support/claude') -ArgumentList 60 -PassThru
             Start-Process sh -ArgumentList "-c `"sleep 60; :`" $(Join-Path $tmp 'fake/node_modules/@anthropic-ai/claude-code/cli.js')" -PassThru
         )
         Start-Sleep 1
@@ -222,11 +225,25 @@ try {
         $fakes | Stop-Process -ErrorAction SilentlyContinue
         Start-Sleep 1
         $n0 = Get-SessionCount
-        Test-Equal -Name 'the process scan finds sessions by binary, versioned path and npm install' -Got ($n1 - $n0) -Want 3
+        Test-Equal -Name 'the process scan finds sessions by binary, path with a space, versioned path and npm install' -Got ($n1 - $n0) -Want 4
+        $badps = Join-Path $tmp 'badps'
+        New-Item -ItemType Directory -Force $badps | Out-Null
+        Set-Content (Join-Path $badps 'ps') "#!/bin/sh`nexit 1"
+        chmod +x (Join-Path $badps 'ps')
+        $savedPath = $env:PATH
+        $env:PATH = "${badps}$([IO.Path]::PathSeparator)$savedPath"
+        & $shell -NoProfile -File $sweep --plugins --apply 2>$null | Out-Null
+        $code = $LASTEXITCODE
+        $env:PATH = $savedPath
+        Test-Equal -Name 'a failing ps removes nothing' -Got "$code $(Test-Path (Join-Path $c2 'r/1.0'))" -Want '1 True'
     }
+    foreach ($d in 'outside/a/b', 'outside2/1.0') { New-Item -ItemType Directory -Force (Join-Path $tmp $d) | Out-Null }
+    New-Item -ItemType SymbolicLink -Path (Join-Path $cfg2 'plugins/cache/linked') -Target (Join-Path $tmp 'outside') | Out-Null
+    New-Item -ItemType SymbolicLink -Path (Join-Path $c2 'linkedp') -Target (Join-Path $tmp 'outside2') | Out-Null
     $env:SWEEP_SESSION_STARTS = ''
-    & $shell -NoProfile -File $sweep --plugins --after-reload --apply | Out-Null
+    $out = @(& $shell -NoProfile -File $sweep --plugins --after-reload --apply)
     Remove-Item Env:SWEEP_SESSION_STARTS
+    Test-Equal -Name 'a linked marketplace or plugin dir is kept whole' -Got "$(@($out | Where-Object { $_ -match 'cache.linked: a link|mkt.linkedp: a link' }).Count) $(Test-Path (Join-Path $tmp 'outside/a/b')) $(Test-Path (Join-Path $tmp 'outside2/1.0'))" -Want '2 True True'
     Test-Equal -Name 'a symlinked version loses its link, never its target' -Got "$(Test-Path (Join-Path $c2 'r/0.5'))$(Get-Content (Join-Path $precious 'file'))" -Want 'Falsekeep'
     Remove-Item Env:CLAUDE_CONFIG_DIR
     Stop-Process -Id $pbusy.Id, $pargv.Id -ErrorAction SilentlyContinue

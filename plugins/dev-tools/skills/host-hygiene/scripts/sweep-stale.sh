@@ -10,7 +10,8 @@
 # file or cwd under it) and ps (a command line naming it). /reload-plugins does not restart the
 # process, so only the user can tell the sweep that every session reloaded: --after-reload drops
 # that keep. Session start times come from ps, or SWEEP_SESSION_STARTS (epoch seconds, one per
-# line) when set. An unreadable installed_plugins.json, or no jq or lsof, removes nothing.
+# line) when set. An unreadable installed_plugins.json, no jq, lsof or ps, or a failing ps removes
+# nothing. A linked marketplace or plugin dir is kept whole; a linked version dir loses only its link.
 # --apply removes them (`rm -rf`).
 #
 # --branches sweeps branches instead: remote branches with no open PR (branches of closed or
@@ -60,8 +61,9 @@ sweep_plugins() {
   local root=${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins
   command -v jq >/dev/null || { echo "sweep: jq not found; nothing removed" >&2; return 1; }
   command -v lsof >/dev/null || { echo "sweep: lsof not found; cannot tell busy versions, nothing removed" >&2; return 1; }
+  command -v ps >/dev/null || { echo "sweep: ps not found; cannot tell running sessions, nothing removed" >&2; return 1; }
   [ -d "$root/cache" ] || { echo "sweep: no plugin cache at $root/cache"; return 0; }
-  local installed updated starts procs entry real key upd n
+  local installed updated starts procs table entry real key upd n m p
   installed=$(jq -r '.plugins[][] | .installPath // empty' "$root/installed_plugins.json") ||
     { echo "sweep: cannot read $root/installed_plugins.json; nothing removed" >&2; return 1; }
   # <plugin>@<marketplace> TAB the newest lastUpdated (or installedAt) of its entries, as epoch seconds.
@@ -69,41 +71,56 @@ sweep_plugins() {
     { echo "sweep: cannot read the update times in $root/installed_plugins.json; nothing removed" >&2; return 1; }
   if [ -n "${SWEEP_SESSION_STARTS+x}" ]; then starts=$SWEEP_SESSION_STARTS
   else
-    # A session is any process whose command line is Claude Code: argv[0] named `claude`, a versioned binary
-    # under .../claude/versions/ (comm is then just the version), or an npm install run by node. etime is
-    # [[dd-]hh:]mm:ss on BSD and GNU ps alike; start = now - elapsed, and an unreadable etime counts as 0
-    # (started before every update), so doubt keeps the version.
-    starts=$(ps -axo etime=,command= | awk -v now="$(date +%s)" '$2 ~ /(^|\/)claude$/ || $2 ~ /\/claude\/versions\// || /@anthropic-ai\/claude-code/ {
+    # A session is any process whose command line is Claude Code: a `claude` executable, a versioned binary
+    # under .../claude/versions/ (comm is then just the version), or an npm install run by node. The patterns
+    # run on the whole command line, since argv[0] may hold spaces; a false match only keeps a version longer.
+    # etime is [[dd-]hh:]mm:ss on BSD and GNU ps alike; start = now - elapsed, and an unreadable etime counts
+    # as 0 (started before every update), so doubt keeps the version. ps runs on its own, so its failure
+    # (busybox ps rejects -axo) stops the sweep instead of reading as "no sessions".
+    table=$(ps -axo etime=,command=) || { echo "sweep: ps failed; cannot tell running sessions, nothing removed" >&2; return 1; }
+    starts=$(printf '%s\n' "$table" | awk -v now="$(date +%s)" '{ c = substr($0, index($0, $1) + length($1)) }
+      c ~ /(^|[ \/])claude( |$)/ || c ~ /\/claude\/versions\// || c ~ /@anthropic-ai\/claude-code/ {
       d = 0; t = $1; if (index(t, "-")) { d = substr(t, 1, index(t, "-") - 1); t = substr(t, index(t, "-") + 1) }
       n = split(t, p, ":"); s = p[n] + 60 * p[n - 1] + (n == 3 ? 3600 * p[1] : 0) + 86400 * d
-      print ($1 ~ /^([0-9]+-)?[0-9:]+$/ && n >= 2) ? now - s : 0 }') || { echo "sweep: ps failed; cannot tell running sessions, nothing removed" >&2; return 1; }
+      print ($1 ~ /^([0-9]+-)?[0-9:]+$/ && n >= 2) ? now - s : 0 }')
   fi
   # Compare resolved paths: the recorded installPath may go through a symlink (/tmp, a moved home).
   installed=$(printf '%s\n' "$installed" | while IFS= read -r p; do [ -d "$p" ] && (cd "$p" && pwd -P); done)
-  procs=$(ps -axo command= 2>/dev/null)
-  for dir in "$root"/cache/*/*/*/; do
-    [ -d "$dir" ] || continue
-    # entry is the cache path, which is what gets removed: a symlinked version dir loses its link, never
-    # its target. real is only for comparing and probing.
-    entry=${dir%/}
-    real=$(cd "$entry" && pwd -P) || continue
-    printf '%s\n' "$installed" | grep -q -x -F -- "$real" && { echo "keep $entry: installed"; continue; }
-    if [ -z "$after_reload" ]; then
-      key="$(basename "$(dirname "$entry")")@$(basename "$(dirname "$(dirname "$entry")")")"
-      upd=$(printf '%s\n' "$updated" | awk -F '\t' -v k="$key" '$1 == k { print $2 }')
-      n=$(printf '%s\n' "$starts" | awk -v u="${upd:-}" 'NF && (u == "" || $1 < u) { c++ } END { print c + 0 }')
-      [ "$n" -gt 0 ] && { echo "keep $entry: $n sessions started before the update; reload them first, then --after-reload"; continue; }
-    fi
-    printf '%s\n' "$procs" | grep -q -F -e "$entry/" -e "$real/" && { echo "keep $entry: named by a running command"; continue; }
-    # lsof exits 1 for "nothing found" and also on harmless warnings: judge by output past the header.
-    [ -n "$(lsof +D "$real" 2>/dev/null | tail -n +2)" ] && { echo "keep $entry: in use by a process"; continue; }
-    if [ -n "$apply" ]; then
-      rm -rf -- "$entry" && echo "removed $entry"
-      rmdir -- "$(dirname "$entry")" 2>/dev/null
-    else
-      echo "would remove $entry"
-    fi
+  procs=$(ps -axo command=) || { echo "sweep: ps failed; cannot tell running commands, nothing removed" >&2; return 1; }
+  # Never descend through a link: a linked marketplace or plugin dir is kept whole, since its grandchildren
+  # live outside the cache.
+  for m in "$root"/cache/*/; do
+    [ -L "${m%/}" ] && { echo "keep ${m%/}: a link; the sweep never follows links above a version"; continue; }
+    for p in "$m"*/; do
+      [ -L "${p%/}" ] && { echo "keep ${p%/}: a link; the sweep never follows links above a version"; continue; }
+      for dir in "$p"*/; do
+        sweep_plugin_version "${dir%/}"
+      done
+    done
   done
+}
+# One version dir: entry is the cache path, which is what gets removed (a symlinked version dir loses its
+# link, never its target); real is only for comparing and probing.
+sweep_plugin_version() {
+  entry=$1
+  [ -d "$entry" ] || return 0
+  real=$(cd "$entry" && pwd -P) || return 0
+  printf '%s\n' "$installed" | grep -q -x -F -- "$real" && { echo "keep $entry: installed"; return 0; }
+  if [ -z "$after_reload" ]; then
+    key="$(basename "$(dirname "$entry")")@$(basename "$(dirname "$(dirname "$entry")")")"
+    upd=$(printf '%s\n' "$updated" | awk -F '\t' -v k="$key" '$1 == k { print $2 }')
+    n=$(printf '%s\n' "$starts" | awk -v u="${upd:-}" 'NF && (u == "" || $1 < u) { c++ } END { print c + 0 }')
+    [ "$n" -gt 0 ] && { echo "keep $entry: $n sessions started before the update; reload them first, then --after-reload"; return 0; }
+  fi
+  printf '%s\n' "$procs" | grep -q -F -e "$entry/" -e "$real/" && { echo "keep $entry: named by a running command"; return 0; }
+  # lsof exits 1 for "nothing found" and also on harmless warnings: judge by output past the header.
+  [ -n "$(lsof +D "$real" 2>/dev/null | tail -n +2)" ] && { echo "keep $entry: in use by a process"; return 0; }
+  if [ -n "$apply" ]; then
+    rm -rf -- "$entry" && echo "removed $entry"
+    rmdir -- "$(dirname "$entry")" 2>/dev/null
+  else
+    echo "would remove $entry"
+  fi
 }
 if [ -n "$branches" ]; then sweep_branches; exit $?; fi
 if [ -n "$plugins" ]; then sweep_plugins; exit $?; fi
