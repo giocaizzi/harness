@@ -1,6 +1,6 @@
 ---
 name: python-development
-description: Python 3.12+ conventions for typing, project layout, error handling, uv/ruff/mypy tooling and make targets. Use when writing, reviewing or scaffolding Python code.
+description: "House rules for Python 3.12+ code: typing, errors, data classes, project layout, uv/ruff/mypy and make targets. Use whenever you write or change Python (.py) code, whether adding a function or feature, fixing a bug, refactoring, reviewing, or setting up a new Python project, even when the user does not mention conventions."
 ---
 
 # Python Development (3.12+)
