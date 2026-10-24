@@ -118,11 +118,16 @@ const HARNESSES = {
 // prompt argv that runs a skill with an argument (Codex needs the plugin prefix: a bare `$wt` loads nothing);
 // `substitutes`: whether the harness replaces `$ARGUMENTS` in the skill body (pi and Codex append the text instead).
 const EXPECT = {
-  codex: { invoke: (skill, arg) => [`$dev-tools:${skill} ${arg}`], substitutes: false, skill: (s) => `- ${s.plugin}:${s.name}: `, agent: (a) => `${a.name}: {`, asked: /approval required by policy/ },
+  codex: { invoke: (skill, arg) => [`$dev-tools:${skill} ${arg}`], substitutes: false, skill: (s) => `- ${s.plugin}:${s.name}: `, agent: (a) => `${codexName(a)}: {`, asked: /approval required by policy/ },
   opencode: { invoke: (skill, arg) => ['--command', skill, arg], substitutes: true, skill: (s) => `<name>${s.name}</name>`, agent: (a) => `- ${a.name}: `, asked: /permission requested: bash \(git reset --hard/ },
   pi: { invoke: (skill, arg) => [`/skill:${skill} ${arg}`], substitutes: false, skill: (s) => `<name>${s.name}</name>`, agent: (a) => `- ${a.name}: `, asked: /Risky command/ },
 }
 const { skills: SKILLS, agents: AGENTS } = inventory()
+// The name a Codex agent registers under: its TOML `name`, which `<name>.yaml` may rename (dev-tools `worker`
+// would replace Codex's built-in role).
+function codexName({ plugin, name }) {
+  return /^name\s*=\s*"([^"]+)"/m.exec(readFileSync(join(REPO, 'plugins', plugin, '.generated', 'codex', `${name}.toml`), 'utf8'))?.[1] ?? name
+}
 const ARG = 'e2e-arg-4242'
 // A line of the wt skill's body, so the probe knows the skill itself (not just its listing) reached the model.
 const WT_BODY = 'There is no fixed cap on worktrees or agents'
