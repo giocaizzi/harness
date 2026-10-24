@@ -17,6 +17,10 @@
 # A worktree is stale only when ALL hold: no file modified in the last 24 h, no process with a
 # file or its cwd under it, no uncommitted changes. The main checkout and the current worktree
 # are never touched. Removal is `git worktree remove` (never --force); branches stay.
+# It also lists dirs under the worktrees root (the main checkout's .claude/worktrees, or
+# SWEEP_WORKTREES_ROOT when the repo's AGENTS.md puts worktrees elsewhere) that git no longer
+# registers, typically a remove that failed on read-only build files, with their size and the
+# command that reclaims them. It never runs that command, even with --apply.
 # Busy check: on Windows, renaming the worktree fails while any process has a file or its cwd
 # in it, so the sweep renames it and back; elsewhere it asks lsof.
 $ErrorActionPreference = 'Continue' # native stderr must not throw (Windows PowerShell 5.1)
@@ -123,4 +127,19 @@ foreach ($wt in $trees) {
     } else { "would remove $wt" }
 }
 if ($apply) { git worktree prune }
+
+$all = @(git worktree list --porcelain | Where-Object { $_ -like 'worktree *' } | ForEach-Object { $_.Substring(9) })
+$root = if ($env:SWEEP_WORKTREES_ROOT) { $env:SWEEP_WORKTREES_ROOT } else { Join-Path $all[0] '.claude/worktrees' }
+if (Test-Path -LiteralPath $root) {
+    $registered = @($all | Where-Object { Test-Path -LiteralPath $_ } | ForEach-Object { Get-FullPath ((Resolve-Path -LiteralPath $_).ProviderPath) })
+    foreach ($d in @(Get-ChildItem -LiteralPath $root -Directory -Force)) {
+        $real = Get-FullPath $d.FullName
+        if ($registered -contains $real) { continue }
+        if (Test-Busy $real) { "keep ${real}: unregistered but in use by a process"; continue }
+        $bytes = (Get-ChildItem -LiteralPath $real -Recurse -Force -File -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum
+        $size = '{0:N1} MB' -f ($bytes / 1MB)
+        $command = if ($onWindows) { "Remove-Item -LiteralPath '$real' -Recurse -Force" } else { "chmod -R u+w '$real' && rm -rf '$real'" }
+        "unregistered $real (${size}): the owner runs $command"
+    }
+}
 exit 0

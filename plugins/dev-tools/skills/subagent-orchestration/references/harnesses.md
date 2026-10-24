@@ -24,7 +24,7 @@ Copilot CLI:
 - A custom agent's `model` is a string and inherits the default if unset; this plugin's agents leave it unset. Agent files have no effort property: set `model` and `effortLevel` per agent in user settings under `subagents.agents.<plugin>:<agent>` (e.g. `dev-tools:worker`), or interactively with `/subagents`. A model the account lacks falls back to an available one.
 
 Codex:
-- Custom agents are TOML in `~/.codex/agents/` (`make install HARNESS=codex` copies this plugin's): `model` and `model_reasoning_effort` per agent, `sandbox_mode` (scout is `read-only`). Unset `model` inherits the session's; `/model` changes it. Use the OpenAI rows of the table.
+- Custom agents are TOML in `~/.codex/agents/` (`make install HARNESS=codex` copies this plugin's): `model` and `model_reasoning_effort` per agent, `sandbox_mode` (scout is `read-only`). Unset `model` inherits the session's; `/model` changes it. Use the OpenAI rows of the table. This plugin's `worker` registers there as `dev-tools-worker`, since a user agent named `worker` would replace Codex's built-in role.
 
 opencode:
 - Subagents are Markdown in `~/.config/opencode/agents/` (`make install HARNESS=opencode`), run through the `task` tool or an `@name` mention. `model` is `provider/id`; unset inherits the session's. `permission` limits a subagent (scout and reviewer deny `edit`).

@@ -128,6 +128,21 @@ try {
     Test-Equal -Name 'sweep never touches the current worktree' -Got @(& $shell -NoProfile -File $sweep | Where-Object { $_ -match 'wt-recent: current' }).Count -Want 1
     Pop-Location
     Stop-Process -Id $busy.Id -ErrorAction SilentlyContinue
+    $live = Join-Path $repo '.claude/worktrees/live'
+    git -C $repo worktree add -q $live -b live 2>$null
+    $orphan = Join-Path $repo '.claude/worktrees/orphan'
+    New-Item -ItemType Directory -Force (Join-Path $orphan 'pkg/mod') | Out-Null
+    Set-Content (Join-Path $orphan 'pkg/mod/f') x
+    (Get-Item (Join-Path $orphan 'pkg/mod/f')).IsReadOnly = $true
+    Push-Location $repo
+    $out = @(& $shell -NoProfile -File $sweep --apply)
+    Pop-Location
+    $orphanReal = [IO.Path]::GetFullPath((Resolve-Path $orphan).ProviderPath)
+    $prefix = 'unregistered ' + $orphanReal + ' ('
+    $listed = @($out | Where-Object { $_.StartsWith($prefix) -and $_.Contains('the owner runs') }).Count
+    $liveListed = @($out | Where-Object { $_ -like 'unregistered *worktrees*live*' }).Count
+    Test-Equal -Name 'sweep lists an unregistered worktree dir with the owner''s command and leaves it' -Got "$listed$liveListed$(Test-Path (Join-Path $orphan 'pkg/mod/f'))" -Want '10True'
+    (Get-Item (Join-Path $orphan 'pkg/mod/f')).IsReadOnly = $false
 
     # sweep-stale.ps1 --branches
     $origin = Join-Path $tmp 'origin.git'

@@ -122,6 +122,13 @@ check "dry run removes nothing" "$(git -C "$repo" worktree list | wc -l | tr -d 
 check "--apply removes it" "$([ -d "$tmp/wt-old" ] && echo kept)$(git -C "$repo" worktree list | wc -l | tr -d ' ')" 4
 check "sweep never touches the current worktree" "$(cd "$tmp/wt-recent" && "$sweep" | grep -c 'wt-recent: current')" 1
 { kill "$busy"; wait "$busy"; } 2>/dev/null
+git -C "$repo" worktree add -q "$repo/.claude/worktrees/live" -b live 2>/dev/null
+mkdir -p "$repo/.claude/worktrees/orphan/pkg/mod" && echo x >"$repo/.claude/worktrees/orphan/pkg/mod/f"
+chmod 0444 "$repo/.claude/worktrees/orphan/pkg/mod/f" && chmod 0555 "$repo/.claude/worktrees/orphan/pkg/mod"
+out=$(cd "$repo" && "$sweep" --apply)
+check "sweep lists an unregistered worktree dir with the owner's command and leaves it" \
+  "$(echo "$out" | grep -c "^unregistered $repo/.claude/worktrees/orphan (.*): the owner runs chmod -R u+w '$repo/.claude/worktrees/orphan' && rm -rf '$repo/.claude/worktrees/orphan'$")$(echo "$out" | grep -c '^unregistered .*worktrees/live')$([ -f "$repo/.claude/worktrees/orphan/pkg/mod/f" ] && echo kept)" 10kept
+chmod -R u+w "$repo/.claude/worktrees/orphan"
 
 # sweep-stale.sh --branches
 git init -q --bare -b main "$tmp/origin.git"

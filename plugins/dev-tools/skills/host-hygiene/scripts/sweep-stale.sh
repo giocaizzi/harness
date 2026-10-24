@@ -18,6 +18,10 @@
 # A worktree is stale only when ALL hold: no file modified in the last 24 h, no process with a
 # file or its cwd under it (lsof), no uncommitted changes. The main checkout and the current
 # worktree are never touched. Removal is `git worktree remove` (never --force); branches stay.
+# It also lists dirs under the worktrees root (the main checkout's .claude/worktrees, or
+# SWEEP_WORKTREES_ROOT when the repo's AGENTS.md puts worktrees elsewhere) that git no longer
+# registers, typically a remove that failed on read-only build files, with their size and the
+# command that reclaims them. It never runs that command, even with --apply.
 set -u
 apply='' branches='' plugins=''
 usage() { echo "usage: sweep-stale.sh [--branches | --plugins] [--apply]" >&2; exit 2; }
@@ -94,4 +98,18 @@ while IFS= read -r wt; do
   fi
 done
 [ -n "$apply" ] && git worktree prune
+
+main=$(git worktree list --porcelain | awk '/^worktree / { sub(/^worktree /, ""); print; exit }')
+root=${SWEEP_WORKTREES_ROOT:-$main/.claude/worktrees}
+if [ -d "$root" ]; then
+  registered=$(git worktree list --porcelain | awk '/^worktree / { sub(/^worktree /, ""); print }' |
+    while IFS= read -r wt; do [ -d "$wt" ] && (cd "$wt" && pwd -P); done)
+  for d in "$root"/*/; do
+    [ -d "$d" ] || continue
+    real=$(cd "$d" && pwd -P) || continue
+    printf '%s\n' "$registered" | grep -q -x -F -- "$real" && continue
+    [ -n "$(lsof +D "$real" 2>/dev/null | tail -n +2)" ] && { echo "keep $real: unregistered but in use by a process"; continue; }
+    echo "unregistered $real ($(du -sh "$real" 2>/dev/null | cut -f1)): the owner runs chmod -R u+w '$real' && rm -rf '$real'"
+  done
+fi
 exit 0
