@@ -1,6 +1,6 @@
 # `hud` plugin
 
-Heads-up display for Claude Code (a mod), a status line for Claude Code and Copilot CLI, and a footer and reply rewrites for pi (`hooks/pi.mjs`, loaded through `hooks/pi-entry.mjs`). No skills or agents. Architecture and the install/verify runbook: [docs/hud.md](../../docs/hud.md).
+Heads-up display for Claude Code (a mod), a status line for Claude Code and Copilot CLI, a footer and reply rewrites for pi (`hooks/pi.mjs`, loaded through `hooks/pi-entry.mjs`), and running subagents in opencode's TUI (`hooks/opencode-tui.mjs`). No skills or agents. Architecture and the install/verify runbook: [docs/hud.md](../../docs/hud.md).
 
 ## Parts
 
@@ -17,8 +17,9 @@ Heads-up display for Claude Code (a mod), a status line for Claude Code and Copi
 | `/ctx` pane | mod `Pane` | Claude | The context breakdown as a coloured grid with one row per category. |
 | Reply rewrites | mod `AssistantMessage`; pi `message_end` | Claude, pi | Each a setting, with its glyph and colour (no colour on pi): `#123` / `!45` / `owner/repo#12` / `AB#77` as links with their open, merged, closed or draft state; absolute paths as `<repo> › path` and `file:line` opening the editor (`editor`: vscode, cursor, zed, idea, sublime, file, custom); commit SHAs as links; long URLs as `owner/repo#12`; ISO times as `13 Oct 20:56 (5h ago)`; ✓ ✗ ⊘ statuses with counts; tokens and keys masked to their prefix. Settings and defaults: [docs/hud.md](../../docs/hud.md#reply-rewrites). |
 | `/refresh-refs` | mod `command.run`; pi command | Claude, pi | Forgets the looked-up states, files and commits so replies ask again (states also refresh by themselves after 5 minutes). |
-| pi footer | pi extension (`hooks/pi.mjs`) | pi | Context weather, model, PR with checks, unpushed and uncommitted work, after each run; each running `subagent` call with its model: `[ scout · <model>]`. |
+| pi footer | pi extension (`hooks/pi.mjs`) | pi | Context weather, model, PR with checks, unpushed and uncommitted work, after each run; each running `subagent` call with its model and reported thinking level: `[ scout · <model> · <thinking>]`. |
 | Status line | `statusLine.command` | Claude, Copilot | Claude: `┌[ user@host] [ branch *] [ gcp] [ session]` and `└[ path] [ model] [ 55%] [ 5h 62% 2h15m] [ 7d 5% 3d4h] [ 1.84]`. Copilot: `[ 9%] [ 50%] [ 3 req]`, and each running subagent with its model and effort: `[ scout · gpt-6-luna · low · 1m 3s]`. |
+| opencode subagents | TUI plugin (`hooks/opencode-tui.mjs`, slot `session_prompt_right`) | opencode | Each running subagent beside the prompt: `[ scout · <model> · <variant>]`. |
 | Agent-panel rows | `subagentStatusLine.command` | Claude | The default subagent row with the subagent's model and effort before the time: `ticket-103  Ticket-run #103  Sonnet 5.5 · high · 3m 49s · ↓ 286.1k tokens`. |
 
 ## Install
@@ -27,6 +28,7 @@ Heads-up display for Claude Code (a mod), a status line for Claude Code and Copi
 /plugin install hud@giocaizzi-harness          # Claude Code
 copilot plugin install hud@giocaizzi-harness   # Copilot CLI
 pi install git:github.com/giocaizzi/harness      # pi (the whole repo)
+make install HARNESS=opencode                    # opencode, from a clone (TUI plugin in tui.json)
 ```
 
 Status-line settings for both CLIs: [docs/hud.md](../../docs/hud.md#install).
