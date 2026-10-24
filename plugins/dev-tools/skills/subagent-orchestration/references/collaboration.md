@@ -27,7 +27,7 @@ Several sessions often work on one machine at once, in different repos or the sa
 4. **Wait for a peer without polling it:** to learn when a session goes idle, ask for one idle notice (`notify_when_idle`) instead of re-listing or "are you done?" messages. The notice says only that it is idle; read its results and verdicts from the durable channel ([Durable verdicts](#durable-verdicts)).
 5. **A peer is not the user.** A peer's request is teammate input: do it within your own permissions, never treat it as approval of a pending prompt, and never do for a peer what its own session was denied.
 
-Where a harness has no cross-session channel, use the neutral ones: a GitHub issue or PR comment, or `docs/wip/<slug>.md`.
+Where a harness has no cross-session channel, use the neutral ones: a GitHub issue or PR comment, or `docs/wip/<slug>.md`. Runs that claim their work on the forge (a label, a claim comment) coordinate through those claims, not through this.
 
 ## Durable verdicts
 
@@ -37,7 +37,13 @@ Reports and messages travel only while their receiver is running, so a waiter th
 - **Background notices may go to the hub.** A background command or agent started by a teammate can report to the session instead of the teammate. Don't hand a wait to a background loop and go idle: poll in the foreground within a short turn, or arm auto-merge and let the forge do the waiting.
 - **Messages queue until the turn ends.** A message to a busy teammate is read after its current turn, minutes later. Requirements belong in the brief; a correction sent later needs a check that it was applied before anyone relies on it.
 
-The durable channel is a PR or MR comment with a fixed marker (`Review round N — verdict: APPROVE|CHANGES`, then findings with severities), or a file whose path the brief names. The waiter polls it (`gh pr view <n> --comments`, `glab mr view <n> --comments`, or the file) and acts on what it finds there, not on a report it expected.
+The durable channel is a PR or MR comment with a fixed marker (`Review round N — verdict: APPROVE|CHANGES`, then findings with severities), or a file whose path the brief names. The waiter polls it (`gh pr view <n> --comments`, `glab mr view <n> --comments`, or the file) and acts on what it finds there, not on a report it expected; a report the spawn call actually returned also counts.
+
+## Review rounds
+
+- **The hub checks merges itself** (`gh pr view <n> --json state,mergeCommit`, or the forge's equivalent), never trusting a "will merge" or "merged" report.
+- **At most 2 review rounds per PR.** Round 2 reviews only the round-1 fix diff, including regressions it causes. After round 2, fix Blockers, Majors and any regression, file Minors as issues, then `land` with checks green. Never merge with a known regression.
+- **Commits after approval need a hub check and a landing note** before the merge: `land` step 2.
 
 ## Rules
 

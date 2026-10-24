@@ -128,6 +128,21 @@ try {
     Test-Equal -Name 'sweep never touches the current worktree' -Got @(& $shell -NoProfile -File $sweep | Where-Object { $_ -match 'wt-recent: current' }).Count -Want 1
     Pop-Location
     Stop-Process -Id $busy.Id -ErrorAction SilentlyContinue
+    $live = Join-Path $repo '.claude/worktrees/live'
+    git -C $repo worktree add -q $live -b live 2>$null
+    $orphan = Join-Path $repo '.claude/worktrees/orphan'
+    New-Item -ItemType Directory -Force (Join-Path $orphan 'pkg/mod') | Out-Null
+    Set-Content (Join-Path $orphan 'pkg/mod/f') x
+    (Get-Item (Join-Path $orphan 'pkg/mod/f')).IsReadOnly = $true
+    Push-Location $repo
+    $out = @(& $shell -NoProfile -File $sweep --apply)
+    Pop-Location
+    $orphanReal = [IO.Path]::GetFullPath((Resolve-Path $orphan).ProviderPath)
+    $prefix = 'unregistered ' + $orphanReal + ' ('
+    $listed = @($out | Where-Object { $_.StartsWith($prefix) -and $_.Contains('the owner runs') }).Count
+    $liveListed = @($out | Where-Object { $_ -like 'unregistered *worktrees*live*' }).Count
+    Test-Equal -Name 'sweep lists an unregistered worktree dir with the owner''s command and leaves it' -Got "$listed$liveListed$(Test-Path (Join-Path $orphan 'pkg/mod/f'))" -Want '10True'
+    (Get-Item (Join-Path $orphan 'pkg/mod/f')).IsReadOnly = $false
 
     # sweep-stale.ps1 --branches
     $origin = Join-Path $tmp 'origin.git'
@@ -148,6 +163,73 @@ try {
     Test-Equal -Name 'branch --apply deletes them, keeps open and default' -Got ((@(git -C $origin branch) + @(git -C $br branch) | ForEach-Object { $_.Trim('* ') } | Sort-Object) -join ' ') -Want 'main main open open'
     Pop-Location
     Remove-Item Env:SWEEP_OPEN_BRANCHES
+
+    # sweep-stale.ps1 --plugins
+    $cfg = Join-Path $tmp 'claude'
+    $c = Join-Path $cfg 'plugins/cache/mkt'
+    foreach ($v in 'p/1.0', 'p/1.1', 'p/0.9', 'p/0.8', 'q/2.0') { New-Item -ItemType Directory -Force (Join-Path $c $v) | Out-Null }
+    $c = (Resolve-Path $c).ProviderPath
+    # p was last updated at 2026-01-01T00:00:00Z = 1767225600; q has no entry left.
+    @{ version = 2; plugins = @{ 'p@mkt' = @(@{ scope = 'user'; installPath = (Join-Path $c 'p/1.1'); version = '1.1'; installedAt = '2025-06-01T00:00:00.000Z'; lastUpdated = '2026-01-01T00:00:00.000Z' }) } } | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $cfg 'plugins/installed_plugins.json')
+    $pbusy = Invoke-Shell 'Start-Sleep 120' (Join-Path $c 'p/0.9')
+    $pargv = Invoke-Shell "Start-Sleep 120 # $(Join-Path $c 'p/0.8/hooks/run.mjs')"
+    Start-Sleep 2
+    $env:CLAUDE_CONFIG_DIR = $cfg
+    function Invoke-PluginSweep([string]$Starts) { $env:SWEEP_SESSION_STARTS = $Starts; @(& $shell -NoProfile -File $sweep --plugins @args) }
+    function Get-Removable($Out) { (@($Out | Where-Object { $_ -like 'would remove*' }) | ForEach-Object { ($_ -replace '\\', '/').Replace(($c -replace '\\', '/') + '/', '') } | Sort-Object) -join ';' }
+    $out = Invoke-PluginSweep ''
+    Test-Equal -Name 'plugin sweep lists only versions neither installed nor in use' -Got (Get-Removable $out) -Want 'would remove p/1.0;would remove q/2.0'
+    Test-Equal -Name 'plugin sweep keeps the installed, busy and running versions' -Got @($out | Where-Object { $_ -match 'p.1\.1: installed|p.0\.9: in use|p.0\.8: named by a running command' }).Count -Want 3
+    $out = Invoke-PluginSweep '1767225500'
+    Test-Equal -Name 'a session started before the update keeps the old versions' -Got "$(Get-Removable $out)$(@($out | Where-Object { $_ -match '(p.1\.0|q.2\.0): 1 sessions started before the update' }).Count)" -Want '2'
+    Test-Equal -Name 'a session started after the update keeps only a plugin with no entry' -Got (Get-Removable (Invoke-PluginSweep '1767225700')) -Want 'would remove p/1.0'
+    Test-Equal -Name '--after-reload drops the session keep' -Got (Get-Removable (Invoke-PluginSweep '1767225500' --after-reload)) -Want 'would remove p/1.0;would remove q/2.0'
+    Invoke-PluginSweep '1767225500' --apply | Out-Null
+    Test-Equal -Name '--apply leaves what a session may still run' -Got @(Get-ChildItem $c -Recurse -Depth 1 -Directory).Count -Want 7
+    Invoke-PluginSweep '' --apply | Out-Null
+    Test-Equal -Name 'plugin --apply removes them and the emptied plugin dir' -Got ((Get-ChildItem $c -Recurse -Depth 1 -Directory | ForEach-Object { $_.Name } | Sort-Object) -join ' ') -Want '0.8 0.9 1.1 p'
+    Set-Content (Join-Path $cfg 'plugins/installed_plugins.json') '{'
+    Invoke-PluginSweep '' --apply 2>$null | Out-Null
+    Test-Equal -Name 'unreadable installed_plugins.json removes nothing' -Got "$LASTEXITCODE $(@(Get-ChildItem (Join-Path $c 'p')).Count)" -Want '1 3'
+    Remove-Item Env:SWEEP_SESSION_STARTS
+    # The real process scan: sessions started by a `claude` binary, a versioned binary and an npm install all count.
+    $cfg2 = Join-Path $tmp 'claude2'
+    $c2 = Join-Path $cfg2 'plugins/cache/mkt'
+    foreach ($v in 'r/1.0', 'r/2.0') { New-Item -ItemType Directory -Force (Join-Path $c2 $v) | Out-Null }
+    $c2 = (Resolve-Path $c2).ProviderPath
+    $precious = Join-Path $tmp 'precious'
+    New-Item -ItemType Directory -Force $precious | Out-Null
+    Set-Content (Join-Path $precious 'file') keep
+    New-Item -ItemType SymbolicLink -Path (Join-Path $c2 'r/0.5') -Target $precious | Out-Null
+    @{ version = 2; plugins = @{ 'r@mkt' = @(@{ scope = 'user'; installPath = (Join-Path $c2 'r/2.0'); version = '2.0'; lastUpdated = '2099-01-01T00:00:00.000Z' }) } } | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $cfg2 'plugins/installed_plugins.json')
+    $env:CLAUDE_CONFIG_DIR = $cfg2
+    function Get-SessionCount {
+        $m = @(& $shell -NoProfile -File $sweep --plugins | Where-Object { $_ -match 'r.1\.0: (\d+) sessions started before the update' } | ForEach-Object { [int]$Matches[1] })
+        if ($m.Count) { $m[0] } else { 0 }
+    }
+    if ($env:OS -ne 'Windows_NT') {
+        $sleep = (Get-Command sleep -CommandType Application | Select-Object -First 1).Source
+        foreach ($d in 'fake/bin', 'fake/claude/versions') { New-Item -ItemType Directory -Force (Join-Path $tmp $d) | Out-Null }
+        New-Item -ItemType SymbolicLink -Path (Join-Path $tmp 'fake/bin/claude') -Target $sleep | Out-Null
+        New-Item -ItemType SymbolicLink -Path (Join-Path $tmp 'fake/claude/versions/9.9.9') -Target $sleep | Out-Null
+        $fakes = @(
+            Start-Process (Join-Path $tmp 'fake/bin/claude') -ArgumentList 60 -PassThru
+            Start-Process (Join-Path $tmp 'fake/claude/versions/9.9.9') -ArgumentList 60 -PassThru
+            Start-Process sh -ArgumentList "-c `"sleep 60; :`" $(Join-Path $tmp 'fake/node_modules/@anthropic-ai/claude-code/cli.js')" -PassThru
+        )
+        Start-Sleep 1
+        $n1 = Get-SessionCount
+        $fakes | Stop-Process -ErrorAction SilentlyContinue
+        Start-Sleep 1
+        $n0 = Get-SessionCount
+        Test-Equal -Name 'the process scan finds sessions by binary, versioned path and npm install' -Got ($n1 - $n0) -Want 3
+    }
+    $env:SWEEP_SESSION_STARTS = ''
+    & $shell -NoProfile -File $sweep --plugins --after-reload --apply | Out-Null
+    Remove-Item Env:SWEEP_SESSION_STARTS
+    Test-Equal -Name 'a symlinked version loses its link, never its target' -Got "$(Test-Path (Join-Path $c2 'r/0.5'))$(Get-Content (Join-Path $precious 'file'))" -Want 'Falsekeep'
+    Remove-Item Env:CLAUDE_CONFIG_DIR
+    Stop-Process -Id $pbusy.Id, $pargv.Id -ErrorAction SilentlyContinue
 } finally {
     Remove-Item -Recurse -Force $tmp
 }

@@ -2,7 +2,7 @@
 
 Runbook for every supported harness. What each one gets: [compatibility.md](compatibility.md). The hooks need `node` 22+ on PATH; everything works on macOS, Linux and Windows.
 
-Plugins: `api`, `python`, `go`, `javascript`, `dev-tools`, `guard`, `hud`, `sounds`, `factory` (`hud` does something in Claude Code and pi, its status line also in Copilot CLI; `sounds` in Claude Code, pi, Codex and opencode).
+Plugins: `api`, `python`, `go`, `javascript`, `dev-tools`, `guard`, `hud`, `sounds`, `factory` (`hud` does something in Claude Code and pi, its status line also in Copilot CLI; `sounds` in Claude Code, pi, Codex and opencode). `factory` needs `dev-tools` and `guard`: Claude Code installs them with it, the other harnesses need them installed too.
 
 ## Claude Code
 
@@ -11,7 +11,7 @@ claude plugin marketplace add giocaizzi/harness
 claude plugin install dev-tools@giocaizzi-harness   # and api, python, go, javascript, guard, hud, sounds, factory
 ```
 
-Update: `claude plugin marketplace update giocaizzi-harness`; an installed plugin updates when its version changes. Check: `/plugin` lists them, `/agents` shows `scout`.
+Update: `claude plugin marketplace update giocaizzi-harness`; an installed plugin updates when its version changes. Check: `/plugin` lists them, `/agents` shows `scout`. Old versions stay in the plugin cache: `sweep-stale.sh --plugins` (dev-tools `host-hygiene`) lists them, and keeps any version a session started before the update may still run. Once every open session ran `/reload-plugins`, `sweep-stale.sh --plugins --after-reload --apply` removes them.
 
 ## GitHub Copilot CLI
 
