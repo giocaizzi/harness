@@ -108,7 +108,7 @@ if ($plugins) {
     # A session is any process whose command line is Claude Code: a `claude` executable, a versioned binary under
     # .../claude/versions/, or an npm install run by node. Doubt keeps the version: an unreadable start time counts
     # as 0 (before every update), and on Windows a node process whose command line cannot be read counts too.
-    function Get-SessionStarts {
+    function Get-SessionStart {
         if ($onWindows) {
             foreach ($p in @(Get-CimInstance Win32_Process)) {
                 $exe = "$($p.ExecutablePath)"; $cmd = "$($p.CommandLine)"
@@ -126,7 +126,7 @@ if ($plugins) {
             $now - ([long]$Matches[1] * 86400 + [long]$Matches[2] * 3600 + [long]$Matches[3] * 60 + [long]$Matches[4])
         }
     }
-    $starts = if ($null -ne $env:SWEEP_SESSION_STARTS) { @($env:SWEEP_SESSION_STARTS -split "`r?`n" | Where-Object { $_ } | ForEach-Object { [long]$_ }) } else { @(Get-SessionStarts) }
+    $starts = if ($null -ne $env:SWEEP_SESSION_STARTS) { @($env:SWEEP_SESSION_STARTS -split "`r?`n" | Where-Object { $_ } | ForEach-Object { [long]$_ }) } else { @(Get-SessionStart) }
     $procs = if ($onWindows) { @(Get-CimInstance Win32_Process | ForEach-Object { $_.CommandLine }) } else { @(ps -axo command= 2>$null) }
     $sep = [IO.Path]::DirectorySeparatorChar
     foreach ($dir in @(Get-ChildItem -LiteralPath $cache -Directory | Get-ChildItem -Directory | Get-ChildItem -Directory)) {
