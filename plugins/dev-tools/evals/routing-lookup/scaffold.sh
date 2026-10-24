@@ -1,86 +1,26 @@
 #!/usr/bin/env bash
-# A web app whose handlers reach the database through several layers of helpers.
+# A web app of 70 modules whose handlers reach the database through chains of helpers; most chains never do.
 set -euo pipefail
 mkdir -p app/web app/domain app/infra
-cat > app/infra/db.py <<'PY'
-def query(sql, *args):
-    raise NotImplementedError
-
-
-def execute(sql, *args):
-    raise NotImplementedError
-PY
-cat > app/infra/cache.py <<'PY'
-_store = {}
-
-
-def cached(key, load):
-    if key not in _store:
-        _store[key] = load()
-    return _store[key]
-PY
-cat > app/domain/users.py <<'PY'
-from app.infra import db
-from app.infra.cache import cached
-
-
-def user(uid):
-    return cached(("user", uid), lambda: db.query("select * from users where id = ?", uid))
-
-
-def rename(uid, name):
-    db.execute("update users set name = ? where id = ?", name, uid)
-PY
-cat > app/domain/orders.py <<'PY'
-from app.domain.users import user
-from app.domain.pricing import total
-
-
-def order_summary(order):
-    return {"buyer": user(order["uid"]), "total": total(order["lines"])}
-PY
-cat > app/domain/pricing.py <<'PY'
-def total(lines):
-    return sum(l["qty"] * l["price"] for l in lines)
-PY
-cat > app/domain/reports.py <<'PY'
-from app.infra import db
-
-
-def daily(day):
-    return db.query("select * from orders where day = ?", day)
-PY
-cat > app/domain/audit.py <<'PY'
-from app.domain import reports
-
-
-def audit(day):
-    return len(reports.daily(day))
-PY
-cat > app/web/handlers.py <<'PY'
-from app.domain.orders import order_summary
-from app.domain.pricing import total
-from app.domain.users import rename
-from app.domain.audit import audit
-
-
-def get_order(req):
-    return order_summary(req["order"])
-
-
-def get_quote(req):
-    return total(req["lines"])
-
-
-def post_rename(req):
-    rename(req["uid"], req["name"])
-
-
-def get_audit(req):
-    return audit(req["day"])
-PY
-cat > app/web/health.py <<'PY'
-def health(req):
-    return {"ok": True}
-PY
+printf 'def query(sql, *args):\n    raise NotImplementedError\n' > app/infra/db.py
+filler() {
+  for f in 1 2 3 4 5 6; do
+    printf '\n\ndef helper_%s_%s(x):\n    """Pure formatting helper."""\n    y = [str(v).strip() for v in x]\n    return ",".join(sorted(y))\n' "$1" "$f"
+  done
+}
+# domain/m1..m60: m(i) calls m(i+7) when i+7 <= 60; every 9th module queries the database
+for i in $(seq 1 60); do
+  {
+    if [ $((i % 9)) -eq 0 ]; then printf 'from app.infra import db\n'; fi
+    if [ $((i + 7)) -le 60 ]; then printf 'from app.domain import m%s\n' $((i + 7)); fi
+    printf '\n\ndef step(x):\n'
+    if [ $((i % 9)) -eq 0 ]; then printf '    db.query("select * from t%s where id = ?", x)\n' "$i"; fi
+    if [ $((i + 7)) -le 60 ]; then printf '    return m%s.step(x)\n' $((i + 7)); else printf '    return x\n'; fi
+    filler "$i"
+  } > app/domain/m$i.py
+done
+# web/h1..h12: handler hN starts the chain at domain mN
+for h in $(seq 1 12); do
+  { printf 'from app.domain import m%s\n\n\ndef handle(req):\n    return m%s.step(req["id"])\n' "$h" "$h"; filler "h$h"; } > app/web/h$h.py
+done
 git init -q && git add -A && git -c user.name=eval -c user.email=eval@example.com commit -qm init
