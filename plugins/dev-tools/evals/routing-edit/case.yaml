@@ -1,0 +1,10 @@
+schema_version: "1.0"
+name: routing-edit
+description: A fully specified mechanical rename does not go to the driver.
+tags: [routing, routing-dev]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  prompt: "Rename the function fetch_user to get_user everywhere under src/ and tests/: its definition and every call site and import. Keep fetch_users as it is. No other changes."
+  max_turns: 15
+  allowed_tools: [Read, Glob, Grep, Skill, Agent]

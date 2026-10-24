@@ -1,0 +1,10 @@
+schema_version: "1.0"
+name: routing-investigate
+description: An investigation into a regression goes to the driver agent.
+tags: [routing, routing-holdout]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  prompt: "The nightly export job got about three times slower since last week. Investigate why from the code and its git history and tell me what changed."
+  max_turns: 15
+  allowed_tools: [Read, Glob, Grep, Skill, Agent]
