@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# A web app of 70 modules whose handlers reach the database through chains of helpers; most chains never do.
+# A web app of 72 modules whose handlers reach the database through chains of helpers; 11 of the 12 handlers do.
 set -euo pipefail
 mkdir -p app/web app/domain app/infra
 printf 'def query(sql, *args):\n    raise NotImplementedError\n' > app/infra/db.py
