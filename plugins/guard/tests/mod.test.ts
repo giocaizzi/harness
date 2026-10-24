@@ -110,6 +110,23 @@ test('dontAsk mode leaves the ask to the engine', async ($, on) => {
   expect((await $.tool.check(call)).decision).toBe('ask')
 })
 
+test("with the mode unknown (a reload, a first call), Claude Code's own ask stays with it, even unattended", async ($, on) => {
+  on('env.get', (_$, e) => ({ value: e.name === 'GUARD_UNATTENDED' ? '1' : undefined }))
+  on('tool.check', () => ({ decision: 'ask' as const, reason: 'core' }))
+  on('tool.call', { tool: 'AskUserQuestion' }, () => {
+    throw new Error('must not ask')
+  })
+  expect((await $.tool.check(call)).decision).toBe('ask')
+})
+
+test("with the mode unknown, the guard's own ask is still parked unattended", async ($, on) => {
+  on('env.get', (_$, e) => ({ value: e.name === 'GUARD_UNATTENDED' ? '1' : undefined }))
+  on('tool.check', { tool: 'Bash' }, ask)
+  const r = await $.tool.check(call)
+  expect(r.decision).toBe('deny')
+  expect(r.reason).toContain('unattended run')
+})
+
 // Records posted to the collector, by event name, with the attributes as a map.
 function collector(on: Parameters<Parameters<typeof test>[1]>[1], env: Record<string, string>) {
   on('env.get', (_$, e) => ({ value: env[e.name] }))

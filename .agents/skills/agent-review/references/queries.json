@@ -1,6 +1,7 @@
 {
   "costByHarness": "sum by (service_name, model) (sum_over_time({service_name=~\"claude-code|codex.*|github-copilot|copilot-chat|opencode|pi\", deployment_environment_name!=\"test\"} | agent_event=\"api_request\" or event_name=\"api_request\" | unwrap cost_usd | __error__=\"\" [$r]))",
   "costBySource": "sum by (model, query_source) (sum_over_time({service_name=\"claude-code\", deployment_environment_name!=\"test\"} | event_name=\"api_request\" | unwrap cost_usd | __error__=\"\" [$r]))",
+  "hookPromptCost": "sum by (plugin_name, model) (sum_over_time({service_name=\"claude-code\", deployment_environment_name!=\"test\"} | event_name=\"api_request\" | query_source=\"hook_prompt\" | unwrap cost_usd | __error__=\"\" [$r]))",
   "subagents": "sum by (agent_type, model) (count_over_time({service_name=\"claude-code\"} | event_name=\"subagent_completed\" [$r]))",
   "subagentCost": "sum by (agent_name, model) (sum_over_time({service_name=\"claude-code\", deployment_environment_name!=\"test\"} | event_name=\"api_request\" | query_source=~\"agent:.*\" | unwrap cost_usd | __error__=\"\" [$r]))",
   "modelSwaps": "sum by (agent_type, model, final_model) (count_over_time({service_name=\"claude-code\"} | event_name=\"subagent_completed\" | model_swapped=\"true\" [$r]))",
