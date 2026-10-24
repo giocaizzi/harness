@@ -159,11 +159,12 @@ host_slot_acquire() {
   rm -f "$HOST_LOCK_DIR/heavy.wait.$$"
 }
 
-# host_ident <pid>: the process's start time, which a later process reusing the pid does not share; empty
-# when neither ps nor /proc can tell.
+# host_ident <pid>: the process's start time, which a later process reusing the pid does not share: /proc's
+# starttime where /proc exists, else ps's lstart; empty when the pid is gone or neither can tell.
+host_proc=/proc
 host_ident() {
-  if [ -n "$host_ps" ]; then ps -o lstart= -p "$1" 2>/dev/null
-  elif [ -r "/proc/$1/stat" ]; then sed 's/.*) //' "/proc/$1/stat" 2>/dev/null | cut -d' ' -f20
+  if [ -r "$host_proc/self/stat" ]; then sed 's/.*) //' "$host_proc/$1/stat" 2>/dev/null | cut -d' ' -f20
+  elif [ -n "$host_ps" ]; then ps -o lstart= -p "$1" 2>/dev/null
   fi
 }
 
@@ -173,15 +174,16 @@ host_ident() {
 # outlives <pid> by that second, so it stops <child> only while the pid still names the process it started
 # with, never one that reused it. It closes every inherited fd, so it holds no caller's pipe or jobserver.
 host_watchdog() {
-  local fd id
+  local fd id now
   for fd in /dev/fd/*; do
     fd=${fd##*/}
     if [ "$fd" -gt 2 ] 2>/dev/null; then eval "exec $fd>&-"; fi
   done
   exec </dev/null >/dev/null 2>&1
-  id=$(host_ident "$2")
-  [ -n "$id" ] || return 0 # cannot tell the command from a later process with its pid
-  while [ "$(host_ident "$2")" = "$id" ]; do
+  [ -r "$host_proc/self/stat" ] || [ -n "$host_ps" ] || return 0 # cannot tell the command from a later process
+  # A ps that fails once (fork EAGAIN under load) reads as empty: that is "gone" only if kill -0 agrees.
+  until id=$(host_ident "$2"); [ -n "$id" ]; do kill -0 "$2" 2>/dev/null || return 0; sleep 1; done
+  while now=$(host_ident "$2"); [ "$now" = "$id" ] || { [ -z "$now" ] && kill -0 "$2" 2>/dev/null; }; do
     # shellcheck disable=SC2046 # one pid per word
     if ! host_alive "$1"; then kill -TERM $(host_tree "$2") 2>/dev/null; return; fi
     sleep 1

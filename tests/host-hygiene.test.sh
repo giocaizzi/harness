@@ -12,6 +12,9 @@ fails=0
 count() { local n=0 f; for f in "$@"; do [ -e "$f" ] && n=$((n + 1)); done; echo "$n"; }
 check() { if [ "$2" = "$3" ]; then echo "ok - $1"; else echo "not ok - $1: got '$2', want '$3'"; fails=$((fails + 1)); fi; }
 dead_pid() { sh -c 'exit 0' & local p=$!; wait "$p"; echo "$p"; }
+# kill_tree <pid>...: TERM each pid and its children, so no orphan keeps the suite's stdout open after it ends.
+# shellcheck disable=SC2046 # one pid per word
+kill_tree() { local p; for p in "$@"; do kill $(ps -A -o pid=,ppid= | awk -v p="$p" '$2 == p { print $1 }') "$p" 2>/dev/null; done; }
 
 # heavy.sh
 "$heavy" sh -c "echo start >>'$tmp/log'; sleep 1; echo end >>'$tmp/log'" 2>/dev/null &
@@ -226,13 +229,54 @@ check "the watchdog leaves a reused pid alone" "$(kill -0 "$other" 2>/dev/null &
 { kill "$other"; wait "$other"; } 2>/dev/null
 
 # A KILL to heavy.sh's group cannot be forwarded: the watchdog stops the command once heavy.sh is gone.
-rm -f "$tmp/cmd"
-set -m; "$heavy" sh -c "echo \$\$ >'$tmp/cmd'; exec sleep 30" 2>/dev/null & w=$!; set +m
-for _ in $(seq 50); do [ -s "$tmp/cmd" ] && break; sleep 0.1; done
-kill -KILL -- "-$w"; wait "$w" 2>/dev/null
-for _ in $(seq 50); do ps -o stat= -p "$(cat "$tmp/cmd")" | grep -qv Z || break; sleep 0.1; done
-check "KILL to heavy.sh's group: the watchdog stops the command" "$(ps -o stat= -p "$(cat "$tmp/cmd")" | grep -v Z | sed 's/.*/running/')" ""
-kill "$(cat "$tmp/cmd")" 2>/dev/null; rm -rf "$L"/heavy.lock.*
+killed_group() { # killed_group [<wrapper>...]: "running" if the command outlives a KILL to heavy.sh's group
+  rm -f "$tmp/cmd"
+  set -m; "$@" "$heavy" sh -c "echo \$\$ >'$tmp/cmd'; exec sleep 30" 2>/dev/null & w=$!; set +m
+  for _ in $(seq 50); do [ -s "$tmp/cmd" ] && break; sleep 0.1; done
+  sleep 1.2 # past the watchdog's first checks
+  kill -KILL -- "-$w"; wait "$w" 2>/dev/null
+  for _ in $(seq 50); do ps -o stat= -p "$(cat "$tmp/cmd")" | grep -qv Z || break; sleep 0.1; done
+  ps -o stat= -p "$(cat "$tmp/cmd")" | grep -v Z | sed 's/.*/running/'
+  kill "$(cat "$tmp/cmd")" 2>/dev/null; rm -rf "$L"/heavy.lock.*
+}
+check "KILL to heavy.sh's group: the watchdog stops the command" "$(killed_group)" ""
+# A ps that fails once mid-run (fork EAGAIN under load) must not end the watchdog: it fails its second lstart.
+# shellcheck disable=SC2317,SC2329 # called by heavy.sh through export -f
+flaky_ps() {
+  ps() {
+    case "$*" in *lstart*) echo x >>"$PS_CALLS"; [ "$(wc -l <"$PS_CALLS")" -eq 2 ] && return 1 ;; esac
+    command ps "$@"
+  }
+  export -f ps; PS_CALLS=$tmp/lstarts "$@"
+}
+rm -f "$tmp/lstarts"
+check "a ps failing once does not end the watchdog" "$(killed_group flaky_ps)" ""
+
+# host_ident through each source: the same process twice gives one answer, a process started later another;
+# with neither source it is empty and the watchdog stops nothing.
+sleep 5 & first=$!
+sleep 1.1
+sleep 5 & second=$!
+before=$fails
+(
+  # shellcheck source=../plugins/dev-tools/skills/host-hygiene/scripts/lib.sh
+  . "$scripts/lib.sh"
+  ps_ok=$host_ps
+  if [ -r /proc/self/stat ]; then
+    a=$(host_ps='' host_ident "$first"); b=$(host_ps='' host_ident "$first"); c=$(host_ps='' host_ident "$second")
+    check "host_ident via /proc: stable for a process, new for a later one" "$([ -n "$a" ] && [ "$a" = "$b" ] && [ "$a" != "$c" ] && echo ok)" ok
+  fi
+  if [ -n "$ps_ok" ]; then
+    a=$(host_proc=/nonexistent host_ident "$first"); b=$(host_proc=/nonexistent host_ident "$first"); c=$(host_proc=/nonexistent host_ident "$second")
+    check "host_ident via ps lstart: stable for a process, new for a later one" "$([ -n "$a" ] && [ "$a" = "$b" ] && [ "$a" != "$c" ] && echo ok)" ok
+  fi
+  host_proc=/nonexistent host_ps=''
+  check "host_ident without ps or /proc: empty" "$(host_ident "$first")" ""
+  host_watchdog "$(dead_pid)" "$first"
+  check "without ps or /proc the watchdog stops nothing" "$(kill -0 "$first" 2>/dev/null && echo alive)" alive
+  exit $((fails - before))
+); fails=$((fails + $?))
+{ kill "$first" "$second"; wait "$first" "$second"; } 2>/dev/null
 
 # Without a ps that takes -p (slim images, BusyBox), liveness falls back to kill -0: a live holder keeps its slot.
 sleep 5 & holder=$!
@@ -289,7 +333,7 @@ git init -q "$repo" && git -C "$repo" -c user.name=t -c user.email=t@t commit -q
 for n in old recent dirty busy; do git -C "$repo" worktree add -q "$tmp/wt-$n" -b "$n" 2>/dev/null; done
 touch "$tmp/wt-dirty/new"
 for n in old dirty busy; do find "$tmp/wt-$n" -exec touch -t 202001010000 {} +; done
-(cd "$tmp/wt-busy" && sleep 10) & busy=$!
+(cd "$tmp/wt-busy" && exec sleep 10) & busy=$!
 out=$(cd "$repo" && "$sweep")
 check "sweep dry run removes only the old, clean, idle worktree" \
   "$(echo "$out" | grep -c '^would remove')$(echo "$out" | grep -c "would remove $tmp/wt-old")" 11
@@ -330,7 +374,7 @@ cfg=$tmp/claude c=$tmp/claude/plugins/cache/mkt
 for v in p/1.0 p/1.1 p/0.9 p/0.8 q/2.0; do mkdir -p "$c/$v"; done
 # p was last updated at 2026-01-01T00:00:00Z = 1767225600; q has no entry left.
 printf '{"version":2,"plugins":{"p@mkt":[{"scope":"user","installPath":"%s","version":"1.1","installedAt":"2025-06-01T00:00:00.000Z","lastUpdated":"2026-01-01T00:00:00.000Z"}]}}' "$c/p/1.1" >"$tmp/claude/plugins/installed_plugins.json"
-(cd "$c/p/0.9" && sleep 60) & pbusy=$!
+(cd "$c/p/0.9" && exec sleep 60) & pbusy=$!
 sh -c 'sleep 60; :' "$c/p/0.8/hooks/run.mjs" & pargv=$!
 sleep 0.3
 psweep() { CLAUDE_CONFIG_DIR=$cfg "$sweep" --plugins "$@"; }
@@ -368,7 +412,7 @@ sh -c 'sleep 60; :' "$tmp/fake/node_modules/@anthropic-ai/claude-code/cli.js" & 
 sleep 0.3
 sessions() { (unset SWEEP_SESSION_STARTS; CLAUDE_CONFIG_DIR=$cfg2 "$sweep" --plugins) | sed -n 's|.*r/1.0: \([0-9]*\) sessions started before the update.*|\1|p'; }
 n1=$(sessions)
-{ kill "$s1" "$s2" "$s3" "$s4"; wait "$s1" "$s2" "$s3" "$s4"; } 2>/dev/null
+{ kill_tree "$s1" "$s2" "$s3" "$s4"; wait "$s1" "$s2" "$s3" "$s4"; } 2>/dev/null
 n0=$(sessions)
 # The host's own sessions count in both runs; the four fakes only in the first.
 check "ps finds sessions by binary, path with a space, versioned path and npm install" "$(( ${n1:-0} - ${n0:-0} ))" 4
@@ -381,6 +425,6 @@ check "a linked marketplace or plugin dir is kept whole" \
   "$(echo "$out" | grep -c -e 'cache/linked: a link' -e 'mkt/linkedp: a link')$([ -d "$tmp/outside/a/b" ] && [ -d "$tmp/outside2/1.0" ] && echo kept)" 2kept
 SWEEP_SESSION_STARTS='' CLAUDE_CONFIG_DIR=$cfg2 "$sweep" --plugins --after-reload --apply >/dev/null
 check "a symlinked version loses its link, never its target" "$([ -L "$c2/r/0.5" ] && echo link)$(cat "$tmp/precious/file")" keep
-{ kill "$pbusy" "$pargv"; wait "$pbusy" "$pargv"; } 2>/dev/null
+{ kill_tree "$pbusy" "$pargv"; wait "$pbusy" "$pargv"; } 2>/dev/null
 
 exit "$fails"
