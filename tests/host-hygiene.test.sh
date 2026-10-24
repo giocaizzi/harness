@@ -175,6 +175,24 @@ echo '{' >"$tmp/claude/plugins/installed_plugins.json"
 check "unreadable installed_plugins.json removes nothing" "$(SWEEP_SESSION_STARTS='' psweep --apply 2>/dev/null; echo "$?"; find "$c/p" -mindepth 1 -maxdepth 1 | wc -l | tr -d ' ')" "$(printf '1\n3')"
 check "--plugins and --branches together is a usage error" "$("$sweep" --plugins --branches 2>/dev/null; echo $?)" 2
 check "--after-reload without --plugins is a usage error" "$("$sweep" --after-reload 2>/dev/null; echo $?)" 2
+# The real ps branch: sessions started by a `claude` binary, a versioned binary and an npm install all count.
+cfg2=$tmp/claude2 c2=$tmp/claude2/plugins/cache/mkt
+mkdir -p "$c2/r/1.0" "$c2/r/2.0" "$tmp/fake/bin" "$tmp/fake/claude/versions" "$tmp/precious"
+echo keep >"$tmp/precious/file" && ln -s "$tmp/precious" "$c2/r/0.5"
+printf '{"version":2,"plugins":{"r@mkt":[{"scope":"user","installPath":"%s","version":"2.0","lastUpdated":"2099-01-01T00:00:00.000Z"}]}}' "$c2/r/2.0" >"$tmp/claude2/plugins/installed_plugins.json"
+ln -s "$(command -v sleep)" "$tmp/fake/bin/claude" && ln -s "$(command -v sleep)" "$tmp/fake/claude/versions/9.9.9"
+"$tmp/fake/bin/claude" 60 & s1=$!
+"$tmp/fake/claude/versions/9.9.9" 60 & s2=$!
+sh -c 'sleep 60; :' "$tmp/fake/node_modules/@anthropic-ai/claude-code/cli.js" & s3=$!
+sleep 0.3
+sessions() { (unset SWEEP_SESSION_STARTS; CLAUDE_CONFIG_DIR=$cfg2 "$sweep" --plugins) | sed -n 's|.*r/1.0: \([0-9]*\) sessions started before the update.*|\1|p'; }
+n1=$(sessions)
+{ kill "$s1" "$s2" "$s3"; wait "$s1" "$s2" "$s3"; } 2>/dev/null
+n0=$(sessions)
+# The host's own sessions count in both runs; the three fakes only in the first.
+check "ps finds sessions by binary, versioned path and npm install" "$(( ${n1:-0} - ${n0:-0} ))" 3
+SWEEP_SESSION_STARTS='' CLAUDE_CONFIG_DIR=$cfg2 "$sweep" --plugins --after-reload --apply >/dev/null
+check "a symlinked version loses its link, never its target" "$([ -L "$c2/r/0.5" ] && echo link)$(cat "$tmp/precious/file")" keep
 { kill "$pbusy" "$pargv"; wait "$pbusy" "$pargv"; } 2>/dev/null
 
 exit "$fails"

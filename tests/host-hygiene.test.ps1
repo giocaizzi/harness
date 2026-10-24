@@ -192,6 +192,42 @@ try {
     Invoke-PluginSweep '' --apply 2>$null | Out-Null
     Test-Equal -Name 'unreadable installed_plugins.json removes nothing' -Got "$LASTEXITCODE $(@(Get-ChildItem (Join-Path $c 'p')).Count)" -Want '1 3'
     Remove-Item Env:SWEEP_SESSION_STARTS
+    # The real process scan: sessions started by a `claude` binary, a versioned binary and an npm install all count.
+    $cfg2 = Join-Path $tmp 'claude2'
+    $c2 = Join-Path $cfg2 'plugins/cache/mkt'
+    foreach ($v in 'r/1.0', 'r/2.0') { New-Item -ItemType Directory -Force (Join-Path $c2 $v) | Out-Null }
+    $c2 = (Resolve-Path $c2).ProviderPath
+    $precious = Join-Path $tmp 'precious'
+    New-Item -ItemType Directory -Force $precious | Out-Null
+    Set-Content (Join-Path $precious 'file') keep
+    New-Item -ItemType SymbolicLink -Path (Join-Path $c2 'r/0.5') -Target $precious | Out-Null
+    @{ version = 2; plugins = @{ 'r@mkt' = @(@{ scope = 'user'; installPath = (Join-Path $c2 'r/2.0'); version = '2.0'; lastUpdated = '2099-01-01T00:00:00.000Z' }) } } | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $cfg2 'plugins/installed_plugins.json')
+    $env:CLAUDE_CONFIG_DIR = $cfg2
+    function Get-SessionCount {
+        $m = @(& $shell -NoProfile -File $sweep --plugins | Where-Object { $_ -match 'r.1\.0: (\d+) sessions started before the update' } | ForEach-Object { [int]$Matches[1] })
+        if ($m.Count) { $m[0] } else { 0 }
+    }
+    if ($env:OS -ne 'Windows_NT') {
+        $sleep = (Get-Command sleep -CommandType Application | Select-Object -First 1).Source
+        foreach ($d in 'fake/bin', 'fake/claude/versions') { New-Item -ItemType Directory -Force (Join-Path $tmp $d) | Out-Null }
+        New-Item -ItemType SymbolicLink -Path (Join-Path $tmp 'fake/bin/claude') -Target $sleep | Out-Null
+        New-Item -ItemType SymbolicLink -Path (Join-Path $tmp 'fake/claude/versions/9.9.9') -Target $sleep | Out-Null
+        $fakes = @(
+            Start-Process (Join-Path $tmp 'fake/bin/claude') -ArgumentList 60 -PassThru
+            Start-Process (Join-Path $tmp 'fake/claude/versions/9.9.9') -ArgumentList 60 -PassThru
+            Start-Process sh -ArgumentList "-c `"sleep 60; :`" $(Join-Path $tmp 'fake/node_modules/@anthropic-ai/claude-code/cli.js')" -PassThru
+        )
+        Start-Sleep 1
+        $n1 = Get-SessionCount
+        $fakes | Stop-Process -ErrorAction SilentlyContinue
+        Start-Sleep 1
+        $n0 = Get-SessionCount
+        Test-Equal -Name 'the process scan finds sessions by binary, versioned path and npm install' -Got ($n1 - $n0) -Want 3
+    }
+    $env:SWEEP_SESSION_STARTS = ''
+    & $shell -NoProfile -File $sweep --plugins --after-reload --apply | Out-Null
+    Remove-Item Env:SWEEP_SESSION_STARTS
+    Test-Equal -Name 'a symlinked version loses its link, never its target' -Got "$(Test-Path (Join-Path $c2 'r/0.5'))$(Get-Content (Join-Path $precious 'file'))" -Want 'Falsekeep'
     Remove-Item Env:CLAUDE_CONFIG_DIR
     Stop-Process -Id $pbusy.Id, $pargv.Id -ErrorAction SilentlyContinue
 } finally {

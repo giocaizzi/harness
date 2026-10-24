@@ -4,11 +4,11 @@
 # $env:CLAUDE_CONFIG_DIR (default ~/.claude)/plugins/cache/<marketplace>/<plugin>/<version> that are
 # not the installPath of any entry in plugins/installed_plugins.json (any scope) and that nothing may
 # still run. A running session loaded its plugins at start and spawns hooks from that path later
-# without holding it open, so a version is kept while any `claude` process started before the
+# without holding it open, so a version is kept while any Claude Code process (found by its command line) started before the
 # plugin's newest lastUpdated (or while any runs, for a plugin with no entry left), besides the busy
 # check below and a process command line naming it. /reload-plugins does not restart the process,
 # so only the user can tell the sweep that every session reloaded: --after-reload drops that keep.
-# Session start times come from Get-Process, or SWEEP_SESSION_STARTS (epoch seconds, one per line)
+# Session start times come from ps (Win32_Process on Windows), or SWEEP_SESSION_STARTS (epoch seconds, one per line)
 # when set. An unreadable installed_plugins.json removes nothing. --apply removes them.
 #
 # --branches sweeps branches instead: remote branches with no open PR (branches of closed or
@@ -74,7 +74,8 @@ function Test-Busy([string]$Path) {
     if ($onWindows) {
         $probe = "$Path.sweep-probe"
         try { Rename-Item -LiteralPath $Path -NewName (Split-Path -Leaf $probe) -ErrorAction Stop } catch { return $true }
-        Rename-Item -LiteralPath $probe -NewName (Split-Path -Leaf $Path)
+        try { Rename-Item -LiteralPath $probe -NewName (Split-Path -Leaf $Path) -ErrorAction Stop }
+        catch { [Console]::Error.WriteLine("sweep: could not rename $probe back to $Path; rename it by hand"); return $true }
         return $false
     }
     # lsof exits 1 for "nothing found" and also on harmless warnings: judge by output past the header.
@@ -104,27 +105,51 @@ if ($plugins) {
         $times = @(foreach ($e in @($p.Value)) { $t = if ($e.lastUpdated) { $e.lastUpdated } else { $e.installedAt }; if ($t) { ConvertTo-Epoch $t } })
         if ($times.Count) { $updated[$p.Name] = ($times | Measure-Object -Maximum).Maximum }
     }
-    $starts = if ($null -ne $env:SWEEP_SESSION_STARTS) { @($env:SWEEP_SESSION_STARTS -split "`r?`n" | Where-Object { $_ } | ForEach-Object { [long]$_ }) }
-        else { @(Get-Process -Name claude -ErrorAction SilentlyContinue | ForEach-Object { ([DateTimeOffset]$_.StartTime).ToUnixTimeSeconds() }) }
+    # A session is any process whose command line is Claude Code: a `claude` executable, a versioned binary under
+    # .../claude/versions/, or an npm install run by node. Doubt keeps the version: an unreadable start time counts
+    # as 0 (before every update), and on Windows a node process whose command line cannot be read counts too.
+    function Get-SessionStarts {
+        if ($onWindows) {
+            foreach ($p in @(Get-CimInstance Win32_Process)) {
+                $exe = "$($p.ExecutablePath)"; $cmd = "$($p.CommandLine)"
+                $hit = $p.Name -eq 'claude.exe' -or $exe -match '[\\/]claude[\\/]versions[\\/]' -or $cmd -match '@anthropic-ai[\\/]claude-code' -or ($p.Name -eq 'node.exe' -and -not $cmd)
+                if ($hit) { if ($p.CreationDate) { ([DateTimeOffset]$p.CreationDate).ToUnixTimeSeconds() } else { 0 } }
+            }
+            return
+        }
+        $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+        foreach ($line in @(ps -axo etime=,command= 2>$null)) {
+            $f = -split $line
+            if ($f.Count -lt 2) { continue }
+            if (-not ($f[1] -match '(^|/)claude$' -or $f[1] -match '/claude/versions/' -or $line -match '@anthropic-ai/claude-code')) { continue }
+            if ($f[0] -notmatch '^(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+)$') { 0; continue }
+            $now - ([long]$Matches[1] * 86400 + [long]$Matches[2] * 3600 + [long]$Matches[3] * 60 + [long]$Matches[4])
+        }
+    }
+    $starts = if ($null -ne $env:SWEEP_SESSION_STARTS) { @($env:SWEEP_SESSION_STARTS -split "`r?`n" | Where-Object { $_ } | ForEach-Object { [long]$_ }) } else { @(Get-SessionStarts) }
     $procs = if ($onWindows) { @(Get-CimInstance Win32_Process | ForEach-Object { $_.CommandLine }) } else { @(ps -axo command= 2>$null) }
     $sep = [IO.Path]::DirectorySeparatorChar
     foreach ($dir in @(Get-ChildItem -LiteralPath $cache -Directory | Get-ChildItem -Directory | Get-ChildItem -Directory)) {
-        $real = Resolve-Real $dir.FullName
+        # $entry is the cache path, which is what gets removed: a symlinked version dir loses its link, never its
+        # target. $real is only for comparing and probing.
+        $entry = Get-FullPath $dir.FullName
+        $real = if ($dir.LinkType) { Get-FullPath ([IO.Path]::Combine((Split-Path -Parent $entry), [string]@($dir.Target)[0])) } else { $entry }
         # -contains ignores case, as Windows paths do; elsewhere that only errs toward keeping.
-        if ($installed -contains $real) { "keep ${real}: installed"; continue }
-        if (Test-Busy $real) { "keep ${real}: in use by a process"; continue }
-        if (@($procs | Where-Object { $_ -and $_.Contains("$real$sep") }).Count) { "keep ${real}: named by a running command"; continue }
+        if ($installed -contains (Resolve-Real $entry) -or $installed -contains $real) { "keep ${entry}: installed"; continue }
         if (-not $afterReload) {
             $key = "$($dir.Parent.Name)@$($dir.Parent.Parent.Name)"
             $n = @($starts | Where-Object { -not $updated.ContainsKey($key) -or $_ -lt $updated[$key] }).Count
-            if ($n) { "keep ${real}: $n sessions started before the update; reload them first, then --after-reload"; continue }
+            if ($n) { "keep ${entry}: $n sessions started before the update; reload them first, then --after-reload"; continue }
         }
+        if (@($procs | Where-Object { $_ -and ($_.Contains("$entry$sep") -or $_.Contains("$real$sep")) }).Count) { "keep ${entry}: named by a running command"; continue }
+        if ($dir.LinkType -and $onWindows) { "keep ${entry}: a link, so the rename probe cannot tell whether it is in use"; continue }
+        if (Test-Busy $real) { "keep ${entry}: in use by a process"; continue }
         if ($apply) {
-            Remove-Item -LiteralPath $real -Recurse -Force
-            if ($?) { "removed $real" }
-            $parent = Split-Path -Parent $real
+            if ($dir.LinkType) { [IO.Directory]::Delete($entry) } else { Remove-Item -LiteralPath $entry -Recurse -Force }
+            if ($?) { "removed $entry" }
+            $parent = Split-Path -Parent $entry
             if (-not @(Get-ChildItem -LiteralPath $parent -Force).Count) { Remove-Item -LiteralPath $parent }
-        } else { "would remove $real" }
+        } else { "would remove $entry" }
     }
     exit 0
 }
