@@ -285,5 +285,8 @@
   ["gh issue edit 7 --body=$F", "deny:factory-config", "G25", "review #247 round 2: an unquoted value after =", {"factory": "unsure"}],
   ["X=l; gh issue create -t x -b y -\"$X\" ship-it", "deny:factory-config", "G25", "review #247 round 2: a quoted expansion as the short flag letter", {"factory": "unsure"}],
   ["hub issue update 7 -l ship-it", "deny:factory-config", "G25", "review #247 round 2: -l on hub", {"factory": "unsure"}],
-  ["glab issue update 7 -l ship-it", "deny:factory-config", "G25", "review #247 round 2: -l on glab", {"factory": "unsure"}]
+  ["glab issue update 7 -l ship-it", "deny:factory-config", "G25", "review #247 round 2: -l on glab", {"factory": "unsure"}],
+
+  ["files=(a b); printf '%s\\n' \"${files[@]}\"", "allow", "G27", "fuzz: a bash array hung the shell reader"],
+  ["cat =(rm -rf src)", "ask:rm", "G27", "fuzz: zsh =(cmd) runs its body"]
 ]

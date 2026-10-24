@@ -113,7 +113,22 @@ export function scan(src) {
       continue
     }
     const op = !src.startsWith('&>', i) && OPS.find((o) => src.startsWith(o, i))
-    if (op && !(op === '(' && cur && /[=@?*+!]$/.test(cur.code))) {
+    // A `(` right after `=`, `@`, `?`, `*`, `+` or `!` belongs to the word before it: a bash array (`x=(a b)`), an
+    // extglob (`@(a|b)`) or zsh's `=(cmd)`, whose body is a command. Read past the group: stopping at it looped forever.
+    if (op === '(' && cur && /[=@?*+!]$/.test(cur.code)) {
+      const end = closeParen(src, i + 1)
+      const text = src.slice(i, end)
+      const w = cur.words.at(-1)
+      if (w) {
+        if (w.val === '=') w.substs.push({ text: src.slice(i + 1, end - (src[end - 1] === ')' ? 1 : 0)), quoted: false })
+        w.val += text
+        w.raw += text
+      }
+      cur.code += text
+      i = end
+      continue
+    }
+    if (op) {
       if (cur) cur.end = i
       // A newline right after `&&`, `||`, a pipe or `&` continues the line: the operator stays the separator.
       const continued = op === '\n' && !cur && ['&&', '||', '|', '|&', '&'].includes(sep)
