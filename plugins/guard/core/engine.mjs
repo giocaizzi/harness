@@ -820,12 +820,15 @@ const GH_SUBCOMMANDS = new Set(['issue', 'pr', 'repo', 'run', 'workflow', 'searc
 function opaqueGhCount(flat) {
   let count = 0;
   for (const m of flat.matchAll(/(?:^|[\s;&|(){}`!=])(?:[^\s;&|(){}`!=]*\/)?gh(?:\.exe)?(?=[\s;&|(){}`<>]|$)/g)) {
-    const words = flat.slice(m.index + m[0].length).split(/[\s;&|()<>`]+/).filter(Boolean);
+    // A bounded window after each match keeps a line of many `gh`s linear; a word cut off there reads as opaque.
+    const start = m.index + m[0].length;
+    const words = flat.slice(start, start + 512).split(/[\s;&|()<>`]+/).filter(Boolean);
+    if (start + 512 < flat.length) words.pop();
     let i = 0;
     while (words[i] === '-R' || words[i] === '--repo' || /^--repo=/.test(words[i] ?? '')) i += words[i].includes('=') ? 1 : 2;
     if (!GH_SUBCOMMANDS.has(words[i])) count++;
   }
-  return count + (flat.match(/\$\{[^}]*(?<![\w.])gh(?:\.exe)?\}/gi)?.length ?? 0);
+  return count + (flat.match(/\$\{[^{}]*(?<![\w.])gh(?:\.exe)?\}/gi)?.length ?? 0);
 }
 const opaqueGh = (flat) => opaqueGhCount(flat) > 0;
 
@@ -842,7 +845,9 @@ function plainGhCalls(command) {
   for (const { cmd, depth } of units(a)) {
     const n = opaqueGhCount(cmd.raw.replace(/['"\\]/g, ''));
     if (!n) continue;
-    if (n !== 1 || depth !== 0 || cmd.payloads.length || plainGh(cmd.raw) === null) return false;
+    // A read only: a plain `gh <word>` may be an alias or extension that writes.
+    const args = plainGh(cmd.raw);
+    if (n !== 1 || depth !== 0 || cmd.payloads.length || args === null || ghAction(args) !== 'read') return false;
     found++;
   }
   return found === opaqueGhCount(flat);

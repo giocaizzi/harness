@@ -1309,7 +1309,7 @@ test('factory run: the label check never throws and fails fast on a hang', () =>
     }
     if (lengths.size !== 40) throw new Error('the generator skipped lengths: ' + lengths.size);
     if (seen.size !== parts.length) throw new Error('the generator skipped parts: ' + parts.filter((p) => !seen.has(p)).join(' '));
-    for (const odd of ['gh "x', "gh 'x", 'gh issue view "agent-ok', "gh api '", 'gh \\\\', '"'.repeat(100000) + 'agent-ok', "'".repeat(100001) + 'agent-ok', '$(gh '.repeat(20000) + 'agent-ok']) touchesApprovalLabel(odd, 'agent-ok');
+    for (const odd of ['gh "x', "gh 'x", 'gh issue view "agent-ok', "gh api '", 'gh \\\\', '"'.repeat(100000) + 'agent-ok', "'".repeat(100001) + 'agent-ok', '$(gh '.repeat(20000) + 'agent-ok', 'echo; ' + 'gh x '.repeat(20000), 'echo; gh ' + '-R x '.repeat(20000), '$\\{'.repeat(20000) + 'gh', 'echo hi; ' + 'gh api user; '.repeat(5000)]) touchesApprovalLabel(odd, 'agent-ok');
   `;
   const r = spawnSync(process.execPath, ['--input-type=module', '-e', script], { timeout: 10000, encoding: 'utf8' });
   assert.equal(r.signal, null, 'timed out');
