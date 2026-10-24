@@ -19,7 +19,7 @@ One ticket, one session, one worktree.
 2. **Resume** a parked ticket only on an approver's answer ([comments.md](references/comments.md#answers)), or, for a merge gate, an approver's merge ([done.md](references/done.md#ship-and-land)).
 3. **Plan comment** first. XS and S start right after it; M and larger wait for the owner's OK.
 4. **Work** in a worktree (`wt`), committing as you go and keeping the run's checklist current ([done.md](references/done.md#checklist)). Decide what belongs to the ticket with the [fold-in test](references/fold-in-test.md), and log the calls the plan does not cover. When the plan splits into clear, testable units, hand each to a fresh Sonnet worker with that unit's plan as the brief; you integrate and run the checks, and a unit that fails twice comes back to you.
-5. **Questions** go on the ticket and park it ([comments.md](references/comments.md#questions-and-parking)).
+5. **Questions**, yours or a spawned driver's open questions (one comment, recommendation included), go on the ticket and park it ([comments.md](references/comments.md#questions-and-parking)).
 6. **Finish:** verifier (on the pushed branch, before the PR opens), ship, land, deploy, record ([done.md](references/done.md)).
 
 Models, effort, escalation and cost for anything you spawn follow the policy table in [routing.md](references/routing.md); waits on CI or a merge use a background poll, never driver turns.

@@ -100,7 +100,7 @@ For a repo adopted per [adopt-factory.md](adopt-factory.md): you approve a ticke
 | `api-reviewer` | `api` | you want an API security review: vulnerabilities, RBAC leaks, compliance | driver (Claude: Opus, `medium`) |
 | `verifier` | `factory` | a ticket's change is ready to ship and needs a gate that did not write it ([factory.md](factory.md#verification)) | driver (Claude: Opus, `medium`; Sonnet `medium` for trivial changes, `high` for security or safety paths, set on the spawn in Claude Code) |
 
-How to call one: say it ("use scout to list every place we read `GUARD_` env vars"). Per harness: Claude Code `/agents` lists them; Copilot CLI `/agent` picks one; opencode `@scout`; Codex and pi by asking (pi runs them through its `subagent` tool). Models per harness: [compatibility.md](compatibility.md). In Claude Code with `CLAUDE_CODE_SUBAGENT_MODEL=sonnet` set, any subagent that names no model (a plain or general-purpose one) runs on Sonnet; ask for another model by name ("use an opus subagent to …") when the task needs judgement.
+How to call one: say it ("use scout to list every place we read `GUARD_` env vars"). Per harness: Claude Code `/agents` lists them; Copilot CLI `/agent` picks one; opencode `@scout`; Codex and pi by asking (pi runs them through its `subagent` tool). Models per harness: [compatibility.md](compatibility.md). In Claude Code with `CLAUDE_CODE_SUBAGENT_MODEL=sonnet` set, any subagent that names no model (a plain or general-purpose one) runs on Sonnet; for work that needs judgement (planning, design, debugging, a feature) ask for `driver` ("use driver to plan …"), which runs at the driver tier whatever the session's model.
 
 ## guard: what it does to the agent
 

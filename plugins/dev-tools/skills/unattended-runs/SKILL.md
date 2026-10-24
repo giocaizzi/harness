@@ -27,12 +27,21 @@ Dev mode (`--dev`, `<APP>_DEV=1`) is refused when `GUARD_UNATTENDED=1`: a relaxe
 
 Leave anything that needs them in the final report for the human, with the exact command. Do not rewrite the command to dodge the pattern (`find -delete`, `git checkout -f`, a script that wraps it): the rule marks work that needs a person.
 
+## Decisions nobody can answer
+
+A spoke's open question (a `driver` reports the user's decisions instead of guessing them) has no one to answer it. Say in each brief that the run is unattended, then per question:
+
+- **Cheap to undo** (code on a branch, a doc, a default): take the recommended option and write it in the PR body as "assumed X because Y", so review can overrule it.
+- **Hard to undo** (data, a public interface or contract, a deploy or release, anything outward-facing): park that unit. Put the question in its PR or an issue and keep the other units going.
+
+A factory ticket parks on the ticket instead (`ticket-run`).
+
 ## Auto-approve modes do not disable guard
 
 Denies (pip/poetry in a uv repo, non-Conventional-Commit titles, skill reminders, host guard) hold in every mode and harness. Hooks run before the mode applies. Auto modes change only what the harness prompts for on its own, so do not pass an approve-everything flag to get past a guard deny; fix the command.
 
 ## Finish
 
-End with a report that separates done, blocked-by-guard (command and reason) and left running. A run that stopped on a deny is a result, not a failure.
+End with a report that separates done, blocked-by-guard (command and reason), parked on a question, assumed (with where it is recorded) and left running. A run that stopped on a deny is a result, not a failure.
 
 Mechanism, per-harness behaviour and limits: `docs/guard.md` in the harness repo (section Unattended and auto-approve runs).
