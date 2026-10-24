@@ -148,6 +148,27 @@ try {
     Test-Equal -Name 'branch --apply deletes them, keeps open and default' -Got ((@(git -C $origin branch) + @(git -C $br branch) | ForEach-Object { $_.Trim('* ') } | Sort-Object) -join ' ') -Want 'main main open open'
     Pop-Location
     Remove-Item Env:SWEEP_OPEN_BRANCHES
+
+    # sweep-stale.ps1 --plugins
+    $cfg = Join-Path $tmp 'claude'
+    $c = Join-Path $cfg 'plugins/cache/mkt'
+    foreach ($v in 'p/1.0', 'p/1.1', 'p/0.9', 'p/0.8', 'q/2.0') { New-Item -ItemType Directory -Force (Join-Path $c $v) | Out-Null }
+    $c = (Resolve-Path $c).ProviderPath
+    @{ version = 2; plugins = @{ 'p@mkt' = @(@{ scope = 'user'; installPath = (Join-Path $c 'p/1.1'); version = '1.1' }) } } | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $cfg 'plugins/installed_plugins.json')
+    $pbusy = Invoke-Shell 'Start-Sleep 20' (Join-Path $c 'p/0.9')
+    $pargv = Invoke-Shell "Start-Sleep 20 # $(Join-Path $c 'p/0.8/hooks/run.mjs')"
+    Start-Sleep 2
+    $env:CLAUDE_CONFIG_DIR = $cfg
+    $out = @(& $shell -NoProfile -File $sweep --plugins)
+    Test-Equal -Name 'plugin sweep lists only versions neither installed nor in use' -Got ((@($out | Where-Object { $_ -like 'would remove*' }) | ForEach-Object { ($_ -replace '\\', '/').Replace(($c -replace '\\', '/') + '/', '') } | Sort-Object) -join ';') -Want 'would remove p/1.0;would remove q/2.0'
+    Test-Equal -Name 'plugin sweep keeps the installed, busy and running versions' -Got @($out | Where-Object { $_ -match 'p.1\.1: installed|p.0\.9: in use|p.0\.8: named by a running command' }).Count -Want 3
+    & $shell -NoProfile -File $sweep --plugins --apply | Out-Null
+    Test-Equal -Name 'plugin --apply removes them and the emptied plugin dir' -Got ((Get-ChildItem $c -Recurse -Depth 1 -Directory | ForEach-Object { $_.Name } | Sort-Object) -join ' ') -Want '0.8 0.9 1.1 p'
+    Set-Content (Join-Path $cfg 'plugins/installed_plugins.json') '{'
+    & $shell -NoProfile -File $sweep --plugins --apply 2>$null | Out-Null
+    Test-Equal -Name 'unreadable installed_plugins.json removes nothing' -Got "$LASTEXITCODE $(@(Get-ChildItem (Join-Path $c 'p')).Count)" -Want '1 3'
+    Remove-Item Env:CLAUDE_CONFIG_DIR
+    Stop-Process -Id $pbusy.Id, $pargv.Id -ErrorAction SilentlyContinue
 } finally {
     Remove-Item -Recurse -Force $tmp
 }

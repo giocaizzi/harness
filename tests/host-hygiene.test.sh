@@ -140,4 +140,23 @@ check "branch --apply deletes them, keeps open and default" \
   "$(git -C "$tmp/origin.git" branch | tr -d ' *' | sort | tr '\n' ' ')$(git -C "$br" branch | tr -d ' *' | sort | tr '\n' ' ')" "main open main open "
 unset SWEEP_OPEN_BRANCHES
 
+# sweep-stale.sh --plugins
+cfg=$tmp/claude c=$tmp/claude/plugins/cache/mkt
+for v in p/1.0 p/1.1 p/0.9 p/0.8 q/2.0; do mkdir -p "$c/$v"; done
+printf '{"version":2,"plugins":{"p@mkt":[{"scope":"user","installPath":"%s","version":"1.1"}]}}' "$c/p/1.1" >"$tmp/claude/plugins/installed_plugins.json"
+(cd "$c/p/0.9" && sleep 10) & pbusy=$!
+sh -c 'sleep 10; :' "$c/p/0.8/hooks/run.mjs" & pargv=$!
+sleep 0.3
+out=$(CLAUDE_CONFIG_DIR=$cfg "$sweep" --plugins)
+check "plugin sweep lists only versions neither installed nor in use" \
+  "$(echo "$out" | grep '^would remove' | sed "s|$c/||" | sort | tr '\n' ' ')" "would remove p/1.0 would remove q/2.0 "
+check "plugin sweep keeps the installed, busy and running versions" \
+  "$(echo "$out" | grep -c -e 'p/1.1: installed' -e 'p/0.9: in use' -e 'p/0.8: named by a running command')" 3
+CLAUDE_CONFIG_DIR=$cfg "$sweep" --plugins --apply >/dev/null
+check "plugin --apply removes them and the emptied plugin dir" "$(cd "$c" && find . -mindepth 1 -maxdepth 2 | sort | tr '\n' ' ')" "./p ./p/0.8 ./p/0.9 ./p/1.1 "
+echo '{' >"$tmp/claude/plugins/installed_plugins.json"
+check "unreadable installed_plugins.json removes nothing" "$(CLAUDE_CONFIG_DIR=$cfg "$sweep" --plugins --apply 2>/dev/null; echo "$?"; find "$c/p" -mindepth 1 -maxdepth 1 | wc -l | tr -d ' ')" "$(printf '1\n3')"
+check "--plugins and --branches together is a usage error" "$("$sweep" --plugins --branches 2>/dev/null; echo $?)" 2
+{ kill "$pbusy" "$pargv"; wait "$pbusy" "$pargv"; } 2>/dev/null
+
 exit "$fails"

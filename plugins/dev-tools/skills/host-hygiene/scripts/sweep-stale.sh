@@ -1,5 +1,12 @@
 #!/usr/bin/env bash
-# sweep-stale.sh [--branches] [--apply]   list (default) or remove stale git worktrees of the current repo
+# sweep-stale.sh [--branches | --plugins] [--apply]   list (default) or remove stale git worktrees of the current repo
+#
+# --plugins sweeps the Claude Code plugin cache instead: version dirs under
+# ${CLAUDE_CONFIG_DIR:-~/.claude}/plugins/cache/<marketplace>/<plugin>/<version> that are not the
+# installPath of any entry in plugins/installed_plugins.json (any scope) and that no process uses
+# (lsof: an open file or cwd under it; ps: a command line naming it). An unreadable
+# installed_plugins.json, or no jq or lsof, removes nothing. --apply removes them (`rm -rf`).
+# A running session keeps the version it loaded until /reload-plugins, which the sweep cannot see.
 #
 # --branches sweeps branches instead: remote branches with no open PR (branches of closed or
 # never-opened PRs; GitHub only deletes on merge) and local branches whose upstream is gone.
@@ -12,10 +19,12 @@
 # file or its cwd under it (lsof), no uncommitted changes. The main checkout and the current
 # worktree are never touched. Removal is `git worktree remove` (never --force); branches stay.
 set -u
-apply='' branches=''
+apply='' branches='' plugins=''
+usage() { echo "usage: sweep-stale.sh [--branches | --plugins] [--apply]" >&2; exit 2; }
 for a in "$@"; do
-  case $a in --apply) apply=1 ;; --branches) branches=1 ;; *) echo "usage: sweep-stale.sh [--branches] [--apply]" >&2; exit 2 ;; esac
+  case $a in --apply) apply=1 ;; --branches) branches=1 ;; --plugins) plugins=1 ;; *) usage ;; esac
 done
+[ -n "$branches" ] && [ -n "$plugins" ] && usage
 
 sweep_branches() {
   git fetch -q --prune origin || { echo "sweep: fetch failed; nothing changed" >&2; return 1; }
@@ -37,7 +46,34 @@ sweep_branches() {
     if [ -n "$apply" ]; then git branch -q -D "$b" && echo "deleted $b"; else echo "would delete $b: upstream gone"; fi
   done
 }
+sweep_plugins() {
+  local root=${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins
+  command -v jq >/dev/null || { echo "sweep: jq not found; nothing removed" >&2; return 1; }
+  command -v lsof >/dev/null || { echo "sweep: lsof not found; cannot tell busy versions, nothing removed" >&2; return 1; }
+  [ -d "$root/cache" ] || { echo "sweep: no plugin cache at $root/cache"; return 0; }
+  local installed procs real
+  installed=$(jq -r '.plugins[][] | .installPath // empty' "$root/installed_plugins.json") ||
+    { echo "sweep: cannot read $root/installed_plugins.json; nothing removed" >&2; return 1; }
+  # Compare resolved paths: the recorded installPath may go through a symlink (/tmp, a moved home).
+  installed=$(printf '%s\n' "$installed" | while IFS= read -r p; do [ -d "$p" ] && (cd "$p" && pwd -P); done)
+  procs=$(ps -axo command= 2>/dev/null)
+  for dir in "$root"/cache/*/*/*/; do
+    [ -d "$dir" ] || continue
+    real=$(cd "$dir" && pwd -P) || continue
+    printf '%s\n' "$installed" | grep -q -x -F -- "$real" && { echo "keep $real: installed"; continue; }
+    # lsof exits 1 for "nothing found" and also on harmless warnings: judge by output past the header.
+    [ -n "$(lsof +D "$real" 2>/dev/null | tail -n +2)" ] && { echo "keep $real: in use by a process"; continue; }
+    printf '%s\n' "$procs" | grep -q -F -- "$real/" && { echo "keep $real: named by a running command"; continue; }
+    if [ -n "$apply" ]; then
+      rm -rf -- "$real" && echo "removed $real"
+      rmdir -- "$(dirname "$real")" 2>/dev/null
+    else
+      echo "would remove $real"
+    fi
+  done
+}
 if [ -n "$branches" ]; then sweep_branches; exit $?; fi
+if [ -n "$plugins" ]; then sweep_plugins; exit $?; fi
 command -v lsof >/dev/null || { echo "sweep: lsof not found; cannot tell busy worktrees, nothing removed" >&2; exit 1; }
 here=$(cd "$(git rev-parse --show-toplevel)" && pwd -P) || exit 1
 

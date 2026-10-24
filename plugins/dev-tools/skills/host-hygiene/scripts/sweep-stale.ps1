@@ -1,4 +1,11 @@
-# sweep-stale.ps1 [--branches] [--apply]   list (default) or remove stale git worktrees of the current repo
+# sweep-stale.ps1 [--branches | --plugins] [--apply]   list (default) or remove stale git worktrees of the current repo
+#
+# --plugins sweeps the Claude Code plugin cache instead: version dirs under
+# $env:CLAUDE_CONFIG_DIR (default ~/.claude)/plugins/cache/<marketplace>/<plugin>/<version> that are
+# not the installPath of any entry in plugins/installed_plugins.json (any scope) and that no process
+# uses (busy check below; also a process command line naming it). An unreadable
+# installed_plugins.json removes nothing. --apply removes them. A running session keeps the version
+# it loaded until /reload-plugins, which the sweep cannot see.
 #
 # --branches sweeps branches instead: remote branches with no open PR (branches of closed or
 # never-opened PRs; GitHub only deletes on merge) and local branches whose upstream is gone.
@@ -15,8 +22,9 @@
 $ErrorActionPreference = 'Continue' # native stderr must not throw (Windows PowerShell 5.1)
 $apply = $args -contains '--apply'
 $branches = $args -contains '--branches'
-$unknown = @($args | Where-Object { $_ -notin '--apply', '--branches' })
-if ($unknown.Count) { [Console]::Error.WriteLine('usage: sweep-stale.ps1 [--branches] [--apply]'); exit 2 }
+$plugins = $args -contains '--plugins'
+$unknown = @($args | Where-Object { $_ -notin '--apply', '--branches', '--plugins' })
+if ($unknown.Count -or ($branches -and $plugins)) { [Console]::Error.WriteLine('usage: sweep-stale.ps1 [--branches | --plugins] [--apply]'); exit 2 }
 if ($branches) {
     git fetch -q --prune origin
     if ($LASTEXITCODE) { [Console]::Error.WriteLine('sweep: fetch failed; nothing changed'); exit 1 }
@@ -52,8 +60,6 @@ if (-not $onWindows -and -not (Get-Command lsof -ErrorAction SilentlyContinue)) 
     [Console]::Error.WriteLine('sweep: lsof not found; cannot tell busy worktrees, nothing removed'); exit 1
 }
 function Get-FullPath([string]$Path) { [IO.Path]::GetFullPath($Path).TrimEnd('\', '/') }
-$here = Get-FullPath (git rev-parse --show-toplevel)
-if ($LASTEXITCODE) { exit 1 }
 
 function Test-Busy([string]$Path) {
     if ($onWindows) {
@@ -66,6 +72,39 @@ function Test-Busy([string]$Path) {
     @(lsof +D $Path 2>$null | Select-Object -Skip 1).Count -gt 0
 }
 
+if ($plugins) {
+    $base = if ($env:CLAUDE_CONFIG_DIR) { $env:CLAUDE_CONFIG_DIR } else { Join-Path $HOME '.claude' }
+    $root = Join-Path $base 'plugins'
+    $cache = Join-Path $root 'cache'
+    if (-not (Test-Path -LiteralPath $cache)) { "sweep: no plugin cache at $cache"; exit 0 }
+    try { $doc = Get-Content -Raw -LiteralPath (Join-Path $root 'installed_plugins.json') -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop }
+    catch { $doc = $null }
+    if ($null -eq $doc -or $null -eq $doc.plugins) { [Console]::Error.WriteLine("sweep: cannot read $root/installed_plugins.json; nothing removed"); exit 1 }
+    # Resolve both sides: the recorded installPath may go through a symlink (/tmp, a moved home).
+    function Resolve-Real([string]$Path) { Get-FullPath ((Resolve-Path -LiteralPath $Path).ProviderPath) }
+    $installed = @(foreach ($p in $doc.plugins.PSObject.Properties) {
+        foreach ($e in @($p.Value)) { if ($e.installPath -and (Test-Path -LiteralPath $e.installPath)) { Resolve-Real $e.installPath } }
+    })
+    $procs = if ($onWindows) { @(Get-CimInstance Win32_Process | ForEach-Object { $_.CommandLine }) } else { @(ps -axo command= 2>$null) }
+    $sep = [IO.Path]::DirectorySeparatorChar
+    foreach ($dir in @(Get-ChildItem -LiteralPath $cache -Directory | Get-ChildItem -Directory | Get-ChildItem -Directory)) {
+        $real = Resolve-Real $dir.FullName
+        # -contains ignores case, as Windows paths do; elsewhere that only errs toward keeping.
+        if ($installed -contains $real) { "keep ${real}: installed"; continue }
+        if (Test-Busy $real) { "keep ${real}: in use by a process"; continue }
+        if (@($procs | Where-Object { $_ -and $_.Contains("$real$sep") }).Count) { "keep ${real}: named by a running command"; continue }
+        if ($apply) {
+            Remove-Item -LiteralPath $real -Recurse -Force
+            if ($?) { "removed $real" }
+            $parent = Split-Path -Parent $real
+            if (-not @(Get-ChildItem -LiteralPath $parent -Force).Count) { Remove-Item -LiteralPath $parent }
+        } else { "would remove $real" }
+    }
+    exit 0
+}
+
+$here = Get-FullPath (git rev-parse --show-toplevel)
+if ($LASTEXITCODE) { exit 1 }
 $since = (Get-Date).AddHours(-24)
 $trees = @(git worktree list --porcelain | Where-Object { $_ -like 'worktree *' } | ForEach-Object { $_.Substring(9) } | Select-Object -Skip 1)
 foreach ($wt in $trees) {

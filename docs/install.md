@@ -11,7 +11,7 @@ claude plugin marketplace add giocaizzi/harness
 claude plugin install dev-tools@giocaizzi-harness   # and api, python, go, javascript, guard, hud, sounds, factory
 ```
 
-Update: `claude plugin marketplace update giocaizzi-harness`; an installed plugin updates when its version changes. Check: `/plugin` lists them, `/agents` shows `scout`.
+Update: `claude plugin marketplace update giocaizzi-harness`; an installed plugin updates when its version changes. Check: `/plugin` lists them, `/agents` shows `scout`. Old versions stay in the plugin cache: once every open session ran `/reload-plugins`, `sweep-stale.sh --plugins` (dev-tools `host-hygiene`) lists them and `--apply` removes them.
 
 ## GitHub Copilot CLI
 
