@@ -4,6 +4,7 @@
 |---|---|
 | Cost by harness and model | A harness or model grows without a reason; compare with the budget. |
 | Claude Code cost by source | `hook_prompt`, `away_summary` or `prompt_suggestion` are a large share: background spend no task asked for. |
+| hook_prompt by plugin | A plugin's row is a large share: its mod forks the session (`$.model.fork`) or runs a prompt hook, each a full-context request on the session's model. Disable the plugin or ask its author to pin a cheaper model. An empty plugin is a session on Claude Code before 2.1.310, which did not label these requests: match the sessions' dates against when a mod was enabled. |
 | Subagent routing | Subagent spend on Opus or Fable is high: lookups belong on Haiku, routine edits on Sonnet (`subagent-orchestration`). |
 | Subagent cost by agent | The unattributed (named spawn) share is large: spawns get a `name` they did not need, and their cost cannot be traced. |
 | Spawns with no model pinned | Any row: the spawn ran on the session's model. Fix the skill or brief that spawned it. |
