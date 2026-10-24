@@ -11,13 +11,13 @@ Assume the App Router and Next.js 16. The APIs move fast: check the current Next
 
 - `app/` holds routing only: layouts, pages, route handlers. Shared code goes in `lib/`, `components/`, `hooks/`, `contexts/`, `types/`; static files in `public/`.
 - Colocate route-specific components and tests in the route folder, with shallow nesting. Route groups `(admin)` group without changing the URL; `_private` folders opt out of routing.
-- Folders `kebab-case`; component files and their default export `PascalCase`, matching; hooks and utilities `camelCase`; providers `XyzProvider`; constants `UPPER_SNAKE_CASE`; static assets `kebab-case`. Related components share an `index.ts` barrel. Props typed with an interface. Tests beside the file (`UserCard.test.tsx`).
+- Folders `kebab-case`; component files and their default export `PascalCase`, matching; hooks and utilities `camelCase`; providers `XyzProvider`; constants `UPPER_SNAKE_CASE`; static assets `snake_case` or `kebab-case`. Related components share an `index.ts` barrel. Props typed with an interface. Tests beside the file (`UserCard.test.tsx`).
 - No example or demo files (`ModalExample.tsx`) unless asked for a live example, story or docs component.
 
 ## Server and client
 
 - Server Components by default; `'use client'` only for interactivity, state or browser APIs, on the smallest component that needs it.
-- Route handlers live in `app/api/**/route.ts`, export verb-named functions and use Web `Request`/`Response`. Validate every input with `zod`, return the right status, and authorize on the server in every route handler and Server Action.
+- Route handlers live in `app/api/**/route.ts`, export verb-named functions and use Web `Request`/`Response`. Validate every input (for example with `zod`), return the right status, and authorize on the server in every route handler and Server Action.
 - Secrets in `.env.local`, never committed.
 
 ## Gotchas

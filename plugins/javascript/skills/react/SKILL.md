@@ -20,7 +20,12 @@ Target React 19+ with function components, hooks and TypeScript.
 
 - Every request handles loading, error and success, and cancels or ignores stale responses.
 - Error Boundaries with a fallback UI around each independently failing area.
-- React Hook Form for validated forms; every input labelled.
+- React Hook Form (or Formik) for validated forms; every input labelled.
+
+## Security and accessibility
+
+- Sanitize and escape user-provided content (XSS); keep sensitive data out of `localStorage`/`sessionStorage`; enforce auth server-side; use CSP headers.
+- Semantic HTML first, ARIA when needed, keyboard operability, alt text, contrast. Verify with screen readers/tools.
 
 ## Styling, testing, docs
 
@@ -35,4 +40,4 @@ Target React 19+ with function components, hooks and TypeScript.
 - `StrictMode` mounts, unmounts and remounts every component in development, so effects run twice. A missing cleanup shows up there first; don't remove `StrictMode` to hide it.
 - React 19 passes `ref` as a normal prop to function components: no `forwardRef` in new code. `<Context value={...}>` replaces `<Context.Provider>`.
 - With the React Compiler enabled, don't add `useMemo`/`useCallback` by hand; it memoizes for you.
-- Never render user HTML through `dangerouslySetInnerHTML` without sanitizing it (DOMPurify), and keep tokens out of `localStorage`.
+- Never render user HTML through `dangerouslySetInnerHTML` without sanitizing it first (DOMPurify).
