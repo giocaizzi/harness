@@ -49,10 +49,10 @@ endif
 e2e: ## Drive each installed harness CLI (Copilot CLI, Codex, opencode, pi) against a scripted model in a throwaway home.
 	@node tests/e2e/run.mjs
 
-eval: ## Run the plugins' skill evals (calls a model, costs money, not part of check or CI).  Usage: make eval [PLUGIN=<plugin>] [TAG=trigger|routing] [MODEL=<model>] [MAX_COST=<usd>]
+eval: ## Run the plugins' skill evals (calls a model, costs money, not part of check or CI).  Usage: make eval [PLUGIN=<plugin>] [TAG=trigger|routing] [MODEL=<model>] [RUNS=<n>] [ALLOW=<tools>] [MAX_COST=<usd>]
 	@for d in $(if $(PLUGIN),plugins/$(PLUGIN),$(patsubst %/evals/,%,$(sort $(dir $(wildcard plugins/*/evals/))))); do \
 		test -d $$d/evals || { echo "$$d has no evals/"; exit 1; }; \
-		echo "== $$d"; claude plugin eval $$d --tag $(or $(TAG),trigger) --ablation none --scaffold --trust-plugin --no-publish $(if $(MODEL),--model $(MODEL)) $(if $(MAX_COST),--max-cost-usd $(MAX_COST)) || exit 1; \
+		echo "== $$d"; claude plugin eval $$d --tag $(or $(TAG),trigger) --ablation none --scaffold --trust-plugin --no-publish $(if $(MODEL),--model $(MODEL)) $(if $(RUNS),--runs $(RUNS)) $(if $(ALLOW),--allow-tools $(ALLOW)) $(if $(MAX_COST),--max-cost-usd $(MAX_COST)) || exit 1; \
 	done
 
 agent-review: ## Weekly agent telemetry review from Loki (docs/agent-review.md).  Usage: make agent-review [RANGE=7d] [EVALS=<dir>]

@@ -1,7 +1,7 @@
 schema_version: "1.0"
 name: driver-open-question
 description: A design that hinges on the user's decision comes back as an open question with a recommendation, not a guess.
-tags: [routing]
+tags: [behavior]
 context:
   scaffold_script: scaffold.sh
 execution:
