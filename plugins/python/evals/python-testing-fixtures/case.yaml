@@ -1,0 +1,10 @@
+schema_version: "1.0"
+name: python-testing-fixtures
+description: The model loads python-testing when asked to clean up a tangled pytest fixture chain.
+tags: [trigger]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  prompt: "tests/test_orders.py is hard to follow: every test depends on a chain of fixtures. Clean it up."
+  max_turns: 15
+  allowed_tools: [Read, Glob, Grep, Edit, Write, Skill]

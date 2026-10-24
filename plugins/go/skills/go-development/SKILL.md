@@ -1,6 +1,6 @@
 ---
 name: go-development
-description: Go 1.26+ conventions for modules and toolchain, go tool dependencies, golangci-lint v2 with every linter on, errors, context, slog, concurrency, process supervision, cross-builds and goreleaser releases, with make targets. Use when writing, reviewing or scaffolding Go code, a go.mod, a .golangci.yml or a .goreleaser.yaml.
+description: "House rules for Go 1.26+ code: errors, context, slog, goroutines and worker pools, os/exec process supervision, go tool dependencies, golangci-lint v2, cross-builds and goreleaser. Use whenever you write or change Go (.go) code, a go.mod, a .golangci.yml or a .goreleaser.yaml, whether adding a feature, fixing a bug, refactoring, reviewing or scaffolding, even when the user does not mention conventions."
 ---
 
 # Go Development (1.26+)
@@ -59,3 +59,4 @@ Read [references/PATTERNS.md](./references/PATTERNS.md) for the `main`/`run` ske
 - `go mod tidy -diff` (in `lint`) fails on an untidy module without touching files; `make fmt` tidies.
 - Since 1.27, `go vet` flags `fmt.Errorf("%w", p)` when `p` is `*E` and `E` (not `*E`) implements `error`: give the `Error` method one receiver kind and use it everywhere.
 - `encoding/json` in 1.27 is backed by v2 even in v1 code; error texts changed. Never match on JSON error strings.
+- Keep `GOMODCACHE` and envtest assets (`setup-envtest --bin-dir`) outside the git worktree: they are written read-only, so `git worktree remove` fails partway and leaves gigabytes of unregistered directories behind.

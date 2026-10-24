@@ -1,6 +1,6 @@
 ---
 name: python-development
-description: Python 3.12+ conventions for typing, project layout, error handling, uv/ruff/mypy tooling and make targets. Use when writing, reviewing or scaffolding Python code.
+description: "House rules for Python 3.12+ code: typing, errors, data classes, project layout, uv/ruff/mypy and make targets. Use whenever you write or change Python (.py) code, whether adding a function or feature, fixing a bug, refactoring, reviewing, or setting up a new Python project, even when the user does not mention conventions."
 ---
 
 # Python Development (3.12+)
@@ -54,3 +54,9 @@ Read [references/TYPING.md](./references/TYPING.md) for the version-feature tabl
 Read [references/PATTERNS.md](./references/PATTERNS.md) for dataclass vs Pydantic vs TypedDict guidance, DI, Result pattern, exception hierarchy, async and module-organization examples.
 
 Read [references/PROJECT_STRUCTURE.md](./references/PROJECT_STRUCTURE.md) when scaffolding a project: directory layout, `pyproject.toml` template, uv workflows, Makefile, py.typed, workspaces.
+
+## Gotchas
+
+- `uv pip install` is still pip: it changes the environment without touching `pyproject.toml` or `uv.lock`, so the next `uv sync` undoes it. Use `uv add`.
+- A Pydantic model resolves its annotations at runtime, so a type imported only under `TYPE_CHECKING` leaves it "not fully defined". Import model field types for real.
+- In an existing repo, its own ruff and mypy settings win: don't switch on `select = ["ALL"]` or `--strict` in a change that is about something else.

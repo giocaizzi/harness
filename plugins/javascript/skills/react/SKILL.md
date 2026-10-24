@@ -1,50 +1,43 @@
 ---
 name: react
-description: React 19+ conventions - component design, state, effects, data fetching, styling (Tailwind v4), testing, Storybook. Use when writing or reviewing React code.
+description: "React 19+ rules: components, state, effects, data fetching, forms, Tailwind v4, testing, Storybook. Use whenever you write, change, debug or review a React component or hook (.tsx or .jsx), such as adding UI behaviour, fixing an effect that loops or refetches, or handling loading and error states."
 ---
 
 # React
 
-Target React 19+ with function components and hooks, TypeScript, per https://react.dev.
+Target React 19+ with function components, hooks and TypeScript.
 
-## Architecture and components
+## Components and state
 
-- Organize by feature/domain. Prefer composition over inheritance; extract reusable stateful logic into custom hooks.
-- Keep components small, single-purpose, testable. Separate presentational from container components so UI stays reusable.
-- Atomic design for the UI kit and its lint rules: the `atomic-design` skill. Design tokens centralized in the Tailwind config.
-- Type props with interfaces; use React's built-in types (`React.ComponentProps`, etc.) and union types for variants.
-
-## State, effects, performance
-
+- Organize by feature. Extract reusable stateful logic into custom hooks; separate presentational components from the ones that fetch or hold state, so the UI stays reusable.
+- Atomic design for the UI kit and its lint rules: the `atomic-design` skill.
+- Type props with an interface; reuse React's types (`React.ComponentProps<'button'>`) and a union for variants.
 - State ladder: `useState` locally, `useReducer` for complex transitions, context for tree-wide sharing, Redux Toolkit or Zustand only when an app truly needs it. Server state goes in React Query or SWR, not hand-rolled effects.
-- Effects: correct dependency arrays and cleanup (otherwise loops and leaks). Do not reach for effects when derivation or event handlers suffice.
-- Memoization (`useMemo`, `useCallback`, `React.memo`) only where profiling shows a need; code-split routes with `React.lazy` + `Suspense`; virtualize large lists.
+- No effect when derivation or an event handler does the job. An effect that stays has a complete dependency array and a cleanup.
+- Memoize (`useMemo`, `useCallback`, `React.memo`) only where profiling shows a need.
 
 ## Data, errors, forms
 
-- Handle loading, error and success states, request cancellation/races, and offline/network failures. Optimistic updates where UX benefits.
-- Error Boundaries with fallback UI; surface meaningful messages to users.
-- Controlled inputs; React Hook Form (or Formik) for validation; labelled, ARIA-correct forms.
-
-## Styling
-
-- Tailwind v4 with config in `globals.css` via `@theme` / `@utility`; mobile-first responsive; consistent spacing/type/color scale.
+- Every request handles loading, error and success, and cancels or ignores stale responses.
+- Error Boundaries with a fallback UI around each independently failing area.
+- React Hook Form (or Formik) for validated forms; every input labelled.
 
 ## Security and accessibility
 
 - Sanitize and escape user-provided content (XSS); keep sensitive data out of `localStorage`/`sessionStorage`; enforce auth server-side; use CSP headers.
 - Semantic HTML first, ARIA when needed, keyboard operability, alt text, contrast. Verify with screen readers/tools.
 
-## Testing and docs
+## Styling, testing, docs
 
-- React Testing Library + Jest; test behavior, not implementation; mock external APIs; cover keyboard/a11y.
-- Storybook: `*.stories.tsx` beside components, using `@storybook/react`.
-- JSDoc for complex components and custom hooks; ESLint + Prettier.
+- Tailwind v4, configured in CSS: tokens in `globals.css` under `@theme` and custom utilities under `@utility`. There is no `tailwind.config.js` unless the project already has one. Mobile-first responsive; a consistent spacing, type and color scale.
+- React Testing Library + Jest: test what the user sees and does, including keyboard use; mock the network, not components.
+- Storybook: `*.stories.tsx` beside the component, using `@storybook/react`.
+- React Router for client-side routing in apps without a framework.
 
-## Routing
+## Gotchas
 
-- React Router for client-side apps: nested routes, route protection, lazy-loaded route chunks.
-
-## References
-
-- Implementation process, common patterns, build tooling, and extra form/routing/security notes: read `references/PATTERNS_AND_PROCESS.md` when planning a feature or choosing a pattern.
+- An object, array or function literal in a dependency array is new on every render, so the effect runs every render: an effect that sets state from a fetch then refetches forever. Move the value inside the effect, depend on its primitive fields, or memoize it.
+- `StrictMode` mounts, unmounts and remounts every component in development, so effects run twice. A missing cleanup shows up there first; don't remove `StrictMode` to hide it.
+- React 19 passes `ref` as a normal prop to function components: no `forwardRef` in new code. `<Context value={...}>` replaces `<Context.Provider>`.
+- With the React Compiler enabled, don't add `useMemo`/`useCallback` by hand; it memoizes for you.
+- Never render user HTML through `dangerouslySetInnerHTML` without sanitizing it first (DOMPurify).
