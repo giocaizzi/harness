@@ -551,6 +551,12 @@ test('a malformed spawn (non-string type or model) never throws and gets no deci
   }
 });
 
+test('a malformed spawn (non-string type or model) never throws and gets no decision', () => {
+  for (const [type, model] of [[null, null], [42, {}], [{}, 7], [[], ['opus']], [true, false]]) {
+    assert.equal(evaluateRouting({ type, model, state: fresh(), rules }).action, 'allow', JSON.stringify([type, model]));
+  }
+});
+
 const outcome = (command, facts = {}) => {
   const d = evaluateCommand({ command, state: fresh(), host: calm, readTool: true, rules, ...facts });
   return d.remind ? `remind:${d.rule}` : d.rule ? `${d.action}:${d.rule}` : d.action;
