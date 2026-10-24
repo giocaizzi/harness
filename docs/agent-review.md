@@ -14,3 +14,11 @@ Telemetry in Loki: Claude Code OTel logs (`service_name="claude-code"`) and the 
 ## Queries and how to read them
 
 One source for both paths: [queries.json](../.agents/skills/agent-review/references/queries.json). What each section means, when to act, and how to write a trigger eval: [reading.md](../.agents/skills/agent-review/references/reading.md).
+
+## Tracing hook_prompt spend
+
+`query_source="hook_prompt"` is a request a plugin makes on its own: a mod forking the session (`$.model.fork`) or a `type: prompt`/`agent` hook. It reads the whole conversation, so each one costs about a main turn on the session's model. The review's `hookPromptCost` query splits it by `plugin_name`. When the plugin is empty (Claude Code before 2.1.310):
+
+1. Break it down by `session_id` and by day (`count_over_time(... [1d])`) and look for the day it started or stopped.
+2. Group by `input_tokens`: one mod sends the same question every time, so its requests share an input size.
+3. Match those dates against the plugins enabled in your settings (`enabledPlugins`, and the history of the file that sets it). Sessions started before a plugin was disabled keep it until they restart.
