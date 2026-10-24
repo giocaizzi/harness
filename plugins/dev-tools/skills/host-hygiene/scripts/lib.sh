@@ -26,6 +26,7 @@ mkdir -p "$HOST_LOCK_DIR"
 host_slot=''
 host_sleeper=''
 host_child=''
+host_dog=''
 host_load=''
 host_deadline=$(($(date +%s) + HOST_LOCK_TIMEOUT_SECONDS))
 
@@ -159,21 +160,37 @@ host_slot_acquire() {
   rm -f "$HOST_LOCK_DIR/heavy.wait.$$"
 }
 
-# host_run <cmd...>: run the command and return its exit code. It runs in the background, so a TERM or INT is
-# forwarded at once to its whole process tree (a trap waits for a foreground command, and the KILL that follows
-# an unanswered TERM would leak the slot and orphan it). set -m around the start keeps INT and QUIT at their
-# defaults and stdin as is: without job control, bash starts a background command with both ignored and
-# stdin from /dev/null. The command gets its own process group, so a terminal's Ctrl+C reaches it through
-# the forward.
+# host_watchdog <pid> <child>: once <pid> is gone while <child> runs, send TERM to <child>'s process tree.
+host_watchdog() {
+  while kill -0 "$2" 2>/dev/null; do
+    # shellcheck disable=SC2046 # one pid per word
+    if ! host_alive "$1"; then kill -TERM $(host_tree "$2") 2>/dev/null; return; fi
+    sleep 1
+  done
+}
+
+# host_run <cmd...>: run the command and return its exit code. It runs in the background, so HUP, INT, QUIT
+# and TERM are forwarded at once to its whole process tree (a trap waits for a foreground command, and the
+# KILL that follows an unanswered TERM would leak the slot and orphan it). set -m around the start keeps INT
+# and QUIT at their defaults and stdin as is: without job control, bash starts a background command with both
+# ignored and stdin from /dev/null. The command gets its own process group, so a terminal's Ctrl+C reaches it
+# through the forward; in a terminal, a command that reads it stops (SIGTTIN) and heavy.sh waits silently
+# until ^C. A KILL to heavy.sh's group cannot be forwarded: a watchdog in a group of its own stops the
+# command within a few seconds of heavy.sh going away.
 host_run() {
-  local code
+  local code sig
   set -m
   "$@" &
   host_child=$!
+  host_watchdog $$ "$host_child" &
+  host_dog=$!
   set +m
-  trap 'kill -INT $(host_tree "$host_child") 2>/dev/null' INT
-  trap 'kill -TERM $(host_tree "$host_child") 2>/dev/null' TERM
+  for sig in HUP INT QUIT TERM; do
+    # shellcheck disable=SC2064 # $sig expands now, the tree at signal time
+    trap "kill -$sig \$(host_tree \"\$host_child\") 2>/dev/null" "$sig"
+  done
   while wait "$host_child"; code=$?; kill -0 "$host_child" 2>/dev/null; do :; done
+  kill "$host_dog" 2>/dev/null
   return "$code"
 }
 

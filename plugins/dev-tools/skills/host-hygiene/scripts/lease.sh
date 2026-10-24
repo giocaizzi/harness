@@ -36,7 +36,9 @@ release() {
 
 host_disk_check
 trap release EXIT
+trap 'exit 129' HUP
 trap 'exit 130' INT
+trap 'exit 131' QUIT
 trap 'exit 143' TERM
 host_slot_acquire "$@"
 

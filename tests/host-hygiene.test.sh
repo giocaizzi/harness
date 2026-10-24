@@ -60,6 +60,7 @@ check "timed-out waiter exits 124" "$?" 124
 check "timed-out waiter keeps the holder's slot" "$(cat "$L/heavy.lock.1/pid")" "$holder"
 
 # Atomic reclaim: a lock that changed hands between the read and the mv is put back, never nested.
+before=$fails
 (
   # shellcheck source=../plugins/dev-tools/skills/host-hygiene/scripts/lib.sh
   . "$scripts/lib.sh"
@@ -70,7 +71,7 @@ check "timed-out waiter keeps the holder's slot" "$(cat "$L/heavy.lock.1/pid")" 
   racy() { mkdir -p "$d"; echo new >"$d/pid"; host_slot_pid "$1"; }
   host_reclaim "$d" "$(dead_pid)" racy 2>/dev/null
   check "reclaim never nests into a re-created lock" "$(cat "$d/pid"):$([ -e "$d/heavy.lock.1.stale.$$" ] && echo nested)" "new:"
-  exit "$fails"
+  exit $((fails - before)) # only this subshell's failures: the parent adds them
 ); fails=$((fails + $?))
 rm -rf "$L"/heavy.lock.*; { kill "$holder"; wait "$holder"; } 2>/dev/null
 
@@ -121,7 +122,7 @@ check "--status shows waiters and their cap" "$("$heavy" --status | grep -c -e "
 HOST_LOCK_TIMEOUT_SECONDS=3 "$heavy" true 2>/dev/null
 check "a dead or lower-cap waiter's entry does not block the queue" "$?" 0
 # The stopped waiter is xargs's child: a bash parent without job control resumes a child that stops.
-echo 5 | xargs sleep & parent=$!
+echo 5 | xargs sleep 2>/dev/null & parent=$!
 for _ in $(seq 20); do stopped=$(ps -A -o pid=,ppid= | awk -v p="$parent" '$2 == p { print $1 }'); [ -n "$stopped" ] && break; sleep 0.1; done
 kill -STOP "$stopped"; echo "100000 stopped" >"$L/heavy.wait.$stopped"
 sleep 1.1
@@ -182,35 +183,44 @@ check "lease.sh: TERM then KILL stops the command, releases lease and slot" \
   "$(ps -o stat= -p "$(cat "$tmp/grandchild")" | grep -v Z | sed 's/.*/orphan/')$(count "$L"/heavy.lock.* "$L"/*.lease)" 0
 kill "$(cat "$tmp/grandchild")" 2>/dev/null; rm -rf "$L"/heavy.lock.* "$L"/*.lease
 
-# Ctrl+C: INT to the process group stops the command and exits 130, slot (and lease) released. Started with
-# set -m so the script under test gets INT at its default, as from a terminal.
-interrupt() { # interrupt <script> <args...>: rc of the script after an INT to its group; the command's state
+# Ctrl+C, a closed terminal, QUIT: the signal to the process group stops the command and the script exits
+# 128+n, slot (and lease) released. Started with set -m so the script under test gets them at their defaults,
+# as from a terminal.
+signal_group() { # signal_group <sig> <script> <args...>: rc of the script after <sig> to its group; the command's state
+  local sig=$1; shift
   rm -f "$tmp/cmd"
   set -m; "$@" sh -c "echo \$\$ >'$tmp/cmd'; exec sleep 30" 2>/dev/null & w=$!; set +m
   for _ in $(seq 50); do [ -s "$tmp/cmd" ] && break; sleep 0.1; done
-  kill -INT -- "-$w"
+  kill -"$sig" -- "-$w"
   for _ in $(seq 30); do kill -0 "$w" 2>/dev/null || break; sleep 0.1; done
-  kill -KILL "$w" 2>/dev/null; wait "$w"; echo "$?$(ps -o stat= -p "$(cat "$tmp/cmd")" | grep -v Z | sed 's/.*/ running/')"
+  kill -KILL "$w" 2>/dev/null; wait "$w" 2>/dev/null; echo "$?$(ps -o stat= -p "$(cat "$tmp/cmd")" | grep -v Z | sed 's/.*/ running/')"
   kill "$(cat "$tmp/cmd")" 2>/dev/null
 }
-check "heavy.sh: INT stops the command, exits 130, frees the slot" "$(interrupt "$heavy"):$(count "$L"/heavy.lock.*)" 130:0
-check "lease.sh: INT stops the command, exits 130, frees lease and slot" "$(interrupt "$lease" sim --):$(count "$L"/heavy.lock.* "$L"/*.lease)" 130:0
-rm -rf "$L"/heavy.lock.* "$L"/*.lease
+for s in HUP:129 INT:130 QUIT:131; do
+  check "heavy.sh: ${s%:*} stops the command, exits ${s#*:}, frees the slot" "$(signal_group "${s%:*}" "$heavy"):$(count "$L"/heavy.lock.*)" "${s#*:}:0"
+  check "lease.sh: ${s%:*} stops the command, exits ${s#*:}, frees lease and slot" "$(signal_group "${s%:*}" "$lease" sim --):$(count "$L"/heavy.lock.* "$L"/*.lease)" "${s#*:}:0"
+  rm -rf "$L"/heavy.lock.* "$L"/*.lease
+done
+
+# A KILL to heavy.sh's group cannot be forwarded: the watchdog stops the command once heavy.sh is gone.
+rm -f "$tmp/cmd"
+set -m; "$heavy" sh -c "echo \$\$ >'$tmp/cmd'; exec sleep 30" 2>/dev/null & w=$!; set +m
+for _ in $(seq 50); do [ -s "$tmp/cmd" ] && break; sleep 0.1; done
+kill -KILL -- "-$w"; wait "$w" 2>/dev/null
+for _ in $(seq 50); do ps -o stat= -p "$(cat "$tmp/cmd")" | grep -qv Z || break; sleep 0.1; done
+check "KILL to heavy.sh's group: the watchdog stops the command" "$(ps -o stat= -p "$(cat "$tmp/cmd")" | grep -v Z | sed 's/.*/running/')" ""
+kill "$(cat "$tmp/cmd")" 2>/dev/null; rm -rf "$L"/heavy.lock.*
 
 # Without a ps that takes -p (slim images, BusyBox), liveness falls back to kill -0: a live holder keeps its slot.
 sleep 5 & holder=$!
 mkdir -p "$L/heavy.lock.1"; echo "$holder" >"$L/heavy.lock.1/pid"
-(
-  # shellcheck disable=SC2317,SC2329 # called by heavy.sh through export -f
-  ps() { return 127; }
-  export -f ps
-  HOST_LOCK_TIMEOUT_SECONDS=1 "$heavy" true 2>/dev/null
-  check "no usable ps: a live holder keeps its slot" "$?:$(cat "$L/heavy.lock.1/pid")" "124:$holder"
-  { kill "$holder"; wait "$holder"; } 2>/dev/null
-  HOST_LOCK_TIMEOUT_SECONDS=3 "$heavy" true 2>/dev/null
-  check "no usable ps: a dead holder's slot is reclaimed" "$?" 0
-  exit "$fails"
-); fails=$((fails + $?))
+# shellcheck disable=SC2317,SC2329 # called by heavy.sh through export -f
+no_ps() { ps() { return 127; }; export -f ps; "$@"; }
+(no_ps env HOST_LOCK_TIMEOUT_SECONDS=1 "$heavy" true 2>/dev/null)
+check "no usable ps: a live holder keeps its slot" "$?:$(cat "$L/heavy.lock.1/pid")" "124:$holder"
+{ kill "$holder"; wait "$holder"; } 2>/dev/null
+(no_ps env HOST_LOCK_TIMEOUT_SECONDS=3 "$heavy" true 2>/dev/null)
+check "no usable ps: a dead holder's slot is reclaimed" "$?" 0
 rm -rf "$L"/heavy.lock.*
 
 # lease.sh
