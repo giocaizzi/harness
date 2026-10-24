@@ -159,11 +159,29 @@ host_slot_acquire() {
   rm -f "$HOST_LOCK_DIR/heavy.wait.$$"
 }
 
+# host_ident <pid>: the process's start time, which a later process reusing the pid does not share; empty
+# when neither ps nor /proc can tell.
+host_ident() {
+  if [ -n "$host_ps" ]; then ps -o lstart= -p "$1" 2>/dev/null
+  elif [ -r "/proc/$1/stat" ]; then sed 's/.*) //' "/proc/$1/stat" 2>/dev/null | cut -d' ' -f20
+  fi
+}
+
 # host_watchdog <pid> <child>: once <pid> is gone while <child> runs, send TERM to <child>'s process tree.
-# It ends by itself within a second of <child> ending; it is never signalled, since a bash 3.2 subshell that
-# takes a TERM while its inherited TERM trap is half reset warns "run_pending_traps: bad value in trap_list".
+# It ends by itself within a second of <child> ending and is never signalled: a bash 3.2 subshell that takes
+# a TERM while its inherited TERM trap is half reset warns "run_pending_traps: bad value in trap_list". It
+# outlives <pid> by that second, so it stops <child> only while the pid still names the process it started
+# with, never one that reused it. It closes every inherited fd, so it holds no caller's pipe or jobserver.
 host_watchdog() {
-  while kill -0 "$2" 2>/dev/null; do
+  local fd id
+  for fd in /dev/fd/*; do
+    fd=${fd##*/}
+    if [ "$fd" -gt 2 ] 2>/dev/null; then eval "exec $fd>&-"; fi
+  done
+  exec </dev/null >/dev/null 2>&1
+  id=$(host_ident "$2")
+  [ -n "$id" ] || return 0 # cannot tell the command from a later process with its pid
+  while [ "$(host_ident "$2")" = "$id" ]; do
     # shellcheck disable=SC2046 # one pid per word
     if ! host_alive "$1"; then kill -TERM $(host_tree "$2") 2>/dev/null; return; fi
     sleep 1
@@ -183,7 +201,7 @@ host_run() {
   set -m
   "$@" &
   host_child=$!
-  host_watchdog $$ "$host_child" </dev/null >/dev/null 2>&1 & # no stdio: it must not hold a caller's $(...) open
+  host_watchdog $$ "$host_child" &
   set +m
   for sig in HUP INT QUIT TERM; do
     # shellcheck disable=SC2064 # $sig expands now, the tree at signal time

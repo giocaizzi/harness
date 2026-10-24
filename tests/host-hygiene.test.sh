@@ -33,9 +33,10 @@ check "exit code propagates" "$?" 7
 # watchdog subshell was stopped with TERM while its inherited trap was half reset.
 for _ in $(seq 20); do "$heavy" true; done 2>"$tmp/err"
 check "a clean run leaves stderr empty" "$(cat "$tmp/err")" ""
-# Command substitution returns with the command: the watchdog's sleep must not hold the caller's pipe.
+# Command substitution returns with the command: the watchdog must not hold the caller's pipe on stdout or
+# on another inherited fd (a make jobserver, `3>&1`).
 start=$(date +%s)
-for _ in 1 2 3; do out=$("$heavy" sleep 0.3); done
+for _ in 1 2 3; do out=$("$heavy" sleep 0.3 3>&1); done
 check "\$(heavy.sh ...) returns when the command ends" "$(($(date +%s) - start <= 2))$out" 1
 check "stdin reaches the command" "$(echo hi | "$heavy" cat)" hi
 "$heavy" sh -c 'echo fd3 >&3' 3>"$tmp/fd3"
@@ -209,6 +210,20 @@ for s in HUP:129 INT:130 QUIT:131; do
   check "lease.sh: ${s%:*} stops the command, exits ${s#*:}, frees lease and slot" "$(signal_group "${s%:*}" "$lease" sim --):$(count "$L"/heavy.lock.* "$L"/*.lease)" "${s#*:}:0"
   rm -rf "$L"/heavy.lock.* "$L"/*.lease
 done
+
+# The watchdog stops only the command it started: once the pid names another process (reused after the
+# command ended), it leaves that process alone. host_ident is faked: the start time it recorded, then another.
+sleep 5 & other=$!
+printf 'started-1\nstarted-2\n' >"$tmp/ident"
+(
+  # shellcheck source=../plugins/dev-tools/skills/host-hygiene/scripts/lib.sh
+  . "$scripts/lib.sh"
+  # shellcheck disable=SC2317,SC2329 # called by host_watchdog
+  host_ident() { head -n 1 "$tmp/ident"; tail -n +2 "$tmp/ident" >"$tmp/ident.n"; mv "$tmp/ident.n" "$tmp/ident"; }
+  host_watchdog "$(dead_pid)" "$other"
+)
+check "the watchdog leaves a reused pid alone" "$(kill -0 "$other" 2>/dev/null && echo alive)" alive
+{ kill "$other"; wait "$other"; } 2>/dev/null
 
 # A KILL to heavy.sh's group cannot be forwarded: the watchdog stops the command once heavy.sh is gone.
 rm -f "$tmp/cmd"
