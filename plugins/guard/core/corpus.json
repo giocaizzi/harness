@@ -288,5 +288,14 @@
   ["glab issue update 7 -l ship-it", "deny:factory-config", "G25", "review #247 round 2: -l on glab", {"factory": "unsure"}],
 
   ["files=(a b); printf '%s\\n' \"${files[@]}\"", "allow", "G27", "fuzz: a bash array hung the shell reader"],
-  ["cat =(rm -rf src)", "ask:rm", "G27", "fuzz: zsh =(cmd) runs its body"]
+  ["cat =(rm -rf src)", "ask:rm", "G27", "fuzz: zsh =(cmd) runs its body"],
+
+  ["echo \"RUN_ID=${FACTORY_RUN_ID:-unset} ...\"; gh api user --jq .login; git remote -v | head -2", "allow", "G26", "factory run: a gh api read in a chain was denied", {"factory": "readable"}],
+  ["echo hi; gh api repos/o/r/pulls --jq '.[].number'", "allow", "G26", "factory run: a gh api read in a chain", {"factory": "readable"}],
+  ["echo hi; gh api -X POST repos/o/r/issues/1/labels -f 'labels[]=agent-ok'", "deny:factory-approval", "G26", "control: a chained gh api write naming the label", {"factory": "readable"}],
+  ["echo hi; gh api repos/o/r/issues/1/labels --input body.json", "deny:factory-approval", "G26", "control: a chained gh api body the guard cannot read", {"factory": "readable"}],
+  ["echo hi; gh issue edit 1 --add-label agent-ok", "deny:factory-approval", "G26", "control: a chained label add", {"factory": "readable"}],
+  ["echo hi; gh $(echo api) repos/o/r/issues/1/labels", "deny:factory-approval", "G26", "control: a chained gh whose subcommand is built", {"factory": "readable"}],
+  ["echo hi; gh \"$CMD\" repos/o/r/issues/1/labels", "deny:factory-approval", "G26", "control: a chained gh whose subcommand is a variable", {"factory": "readable"}],
+  ["echo $(gh api -X POST repos/o/r/issues/1/labels --input b.json)", "deny:factory-approval", "G26", "control: a gh api body inside a substitution", {"factory": "readable"}]
 ]
