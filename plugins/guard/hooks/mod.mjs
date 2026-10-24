@@ -69,8 +69,9 @@ const askClass = (e) => (typeof e.input?.command === 'string' ? cmdClass(null, e
 export const ASK_TIMEOUT_MS = 60_000
 // Tools whose own dialog is the question (askUserQuestionTimeout covers AskUserQuestion); left to the engine.
 const PERSON_TOOLS = new Set(['AskUserQuestion', 'ExitPlanMode'])
-// The session's permission mode, as the last classic hook input carried it. ponytail: a mode switched with
-// shift+tab is seen at the next prompt or tool result, so one ask in between can go the old way.
+// The session's permission mode, as the last classic hook input carried it (SessionStart sets it before the first
+// call). ponytail: a mode switched with shift+tab is seen at the next prompt or tool result, so one ask in between can
+// go the old way.
 let mode
 
 function trackMode($, e, next) {
@@ -78,7 +79,7 @@ function trackMode($, e, next) {
   return next(e)
 }
 
-const summary =(input) => String(input?.command ?? input?.file_path ?? input?.url ?? input?.pattern ?? '').slice(0, 500)
+const summary = (input) => String(input?.command ?? input?.file_path ?? input?.url ?? input?.pattern ?? '').slice(0, 500)
 
 // GUARD_ASK_TIMEOUT_MS when it is a whole number of ms >= 0, else the default; unreadable env: the default.
 async function askTimeoutMs($) {
@@ -101,8 +102,11 @@ async function unattendedEnv($) {
 }
 
 // What the agent is told when nobody answered: the user may be busy elsewhere, so the call is parked, not refused.
-const noAnswer = (tool, why) =>
-  `No answer: ${why}, so ${tool} was not run. This is not a refusal. Carry on with the rest of the task without it, or park it: say in your report that it is waiting for the user's approval.`
+// It names the call, not the tool: "Bash was not run" read as "Bash is unavailable", and an agent gave up the task.
+const noAnswer = (input, why) => {
+  const call = summary(input).slice(0, 120)
+  return `No answer: ${why}, so this call${call ? ` (${call})` : ''} was not run; other calls still run. This is not a refusal. Carry on with the rest of the task without it, or park it: say in your report that it is waiting for the user's approval.`
+}
 
 // Puts the ask in the plugin's own dialog and denies when nobody answers within `ms`. Every outcome is reported as
 // guard.ask_result (allow, deny, timeout, unavailable) with how long it waited.
@@ -120,12 +124,13 @@ async function askWithTimeout($, e, reason, ms) {
   // Not awaited: a slow collector never delays the decision.
   void emitRecord($, 'guard.ask_result', { result, wait_ms: Number.isFinite(waited) ? waited : undefined, tool: e.tool, cmd_class: askClass(e), tool_use_id: e.tool_use_id })
   if (result === 'allow') return { decision: 'allow', reason: 'allowed in the guard dialog' }
-  if (result === 'timeout') return { decision: 'deny', reason: noAnswer(e.tool, `nobody answered the permission prompt within ${ms / 1000} seconds`) }
-  if (result === 'unavailable') return { decision: 'deny', reason: noAnswer(e.tool, 'the permission prompt could not be shown or was dismissed') }
+  if (result === 'timeout') return { decision: 'deny', reason: noAnswer(e.input, `nobody answered the permission prompt within ${ms / 1000} seconds`) }
+  if (result === 'unavailable') return { decision: 'deny', reason: noAnswer(e.input, 'the permission prompt could not be shown or was dismissed') }
   return { decision: 'deny', reason: `The user denied this ${e.tool} call. Do not retry it or a respelling of it; ask the user what they want instead.` }
 }
 
 export function register(on) {
+  on('classic.SessionStart', trackMode)
   on('classic.UserPromptSubmit', trackMode)
   on('classic.PostToolUse', trackMode)
 
@@ -139,7 +144,7 @@ export function register(on) {
     if (mode === 'dontAsk') return r
     if (await unattendedEnv($)) {
       void emitRecord($, 'guard.ask_result', { result: 'unavailable', via: 'unattended', wait_ms: 0, tool: e.tool, cmd_class: askClass(e), tool_use_id: e.tool_use_id })
-      return { decision: 'deny', reason: noAnswer(e.tool, 'this is an unattended run (GUARD_UNATTENDED), so nobody can answer the permission prompt') }
+      return { decision: 'deny', reason: noAnswer(e.input, 'this is an unattended run (GUARD_UNATTENDED), so nobody can answer the permission prompt') }
     }
     const ms = await askTimeoutMs($)
     return ms ? askWithTimeout($, e, r.reason, ms) : r

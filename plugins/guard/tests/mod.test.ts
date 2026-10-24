@@ -84,6 +84,9 @@ test('an ask nobody answers is parked after the timeout, never called a user den
   expect(r.reason).toContain('No answer')
   expect(r.reason).toContain('not a refusal')
   expect(r.reason).not.toContain('denied')
+  // The call, not the tool: "Bash was not run" read as "Bash is unavailable".
+  expect(r.reason).toContain('this call (rm -r build) was not run; other calls still run')
+  expect(r.reason).not.toContain('Bash')
 })
 
 test('an ask whose dialog cannot show (headless, dismissed) is parked, not called a user deny', async ($, on) => {
@@ -104,6 +107,14 @@ test('dontAsk mode leaves the ask to the engine', async ($, on) => {
   })
   on('classic.UserPromptSubmit', () => ({}))
   await $.classic.UserPromptSubmit({ prompt: 'x', permission_mode: 'dontAsk' } as never)
+  expect((await $.tool.check(call)).decision).toBe('ask')
+})
+
+test("dontAsk from SessionStart holds on the session's first call, before any prompt", async ($, on) => {
+  on('env.get', (_$, e) => ({ value: e.name === 'GUARD_UNATTENDED' ? '1' : undefined }))
+  on('tool.check', { tool: 'Bash' }, ask)
+  on('classic.SessionStart', () => ({}))
+  await $.classic.SessionStart({ source: 'startup', permission_mode: 'dontAsk' } as never)
   expect((await $.tool.check(call)).decision).toBe('ask')
 })
 
