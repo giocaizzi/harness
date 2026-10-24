@@ -510,32 +510,44 @@ test('an edit under docs/ or to README/AGENTS hints at docs-sync once', () => {
 });
 
 test('a spawn that bypasses the typed agents gets one routing hint per case and session', () => {
-  const rule = (type, model, state = fresh()) => evaluateRouting({ type, model, state, rules }).rule;
+  const rule = (type, model, state = fresh(), effort) => evaluateRouting({ type, model, effort, state, rules }).rule;
   assert.equal(rule('Plan'), 'routing-plan');
   assert.equal(rule('general-purpose', 'opus'), 'routing-model');
   assert.equal(rule(undefined, 'claude-opus-5-5'), 'routing-model');
   assert.equal(rule('claude', 'fable'), 'routing-model');
   assert.equal(rule('general-purpose', 'gpt-6.1-sol'), 'routing-model');
+  assert.equal(rule('default', 'gpt-6-astra'), 'routing-model'); // Codex
+  // An untyped spawn without a model inherits the session's: use a typed agent.
+  assert.equal(rule('general-purpose'), 'routing-untyped');
+  assert.equal(rule('default'), 'routing-untyped');
+  assert.match(evaluateRouting({ type: 'general-purpose', state: fresh(), rules }).context, /scout` for lookups, `dev-tools:worker` for edits, `dev-tools:driver` for judgement/);
+  // A typed agent's model or effort override, in any plugin, bare names included.
   assert.equal(rule('dev-tools:driver', 'opus'), 'routing-override');
   assert.equal(rule('scout', 'haiku'), 'routing-override');
-  // Routed as the skill says: a typed agent without a model, a routine unit on Sonnet, the verifier's per-change model.
+  assert.equal(rule('api:api-reviewer', 'opus'), 'routing-override');
+  assert.equal(rule('factory:verifier', 'haiku'), 'routing-override');
+  assert.equal(rule('dev-tools:driver', undefined, fresh(), 'high'), 'routing-override');
+  assert.equal(rule('dev-tools:reviewer', undefined, fresh(), 'max'), 'routing-override');
+  assert.match(evaluateRouting({ type: 'scout', model: 'opus', effort: 'high', state: fresh(), rules }).context, /`model: opus` and `effort: high` overrides it/);
+  // Routed as the skill says: a typed agent without overrides, the two allowed ones, an untyped unit on Sonnet.
   assert.equal(rule('dev-tools:driver'), undefined);
   assert.equal(rule('general-purpose', 'sonnet'), undefined);
-  assert.equal(rule('general-purpose'), undefined);
   assert.equal(rule('factory:verifier', 'sonnet'), undefined);
-  assert.equal(rule('api:api-reviewer', 'opus'), undefined);
+  assert.equal(rule('factory:verifier', undefined, fresh(), 'high'), undefined);
+  assert.equal(rule('dev-tools:reviewer', undefined, fresh(), 'high'), undefined);
   assert.equal(rule('Explore', 'opus'), undefined);
+  assert.equal(rule('other:scout', 'opus'), undefined); // another plugin's agent
+  assert.equal(rule(undefined), undefined); // a Codex fork
   const state = fresh();
   assert.equal(rule('Plan', undefined, state), 'routing-plan');
   assert.equal(rule('Plan', undefined, state), undefined); // once
   assert.equal(rule('general-purpose', 'opus', state), 'routing-model'); // another case still hints
-  assert.match(evaluateRouting({ type: 'Plan', state: fresh(), rules }).context, /dev-tools:driver.*plan-only brief/);
-  assert.match(evaluateRouting({ type: 'dev-tools:driver', model: 'opus', state: fresh(), rules }).context, /without a `model`/);
+  assert.match(evaluateRouting({ type: 'Plan', state: fresh(), rules }).context, /^Routing hint: .*dev-tools:driver.*plan-only brief.*\(`subagent-orchestration`\)\.$/);
 });
 
 test('a malformed spawn (non-string type or model) never throws and gets no decision', () => {
   for (const [type, model] of [[null, null], [42, {}], [{}, 7], [[], ['opus']], [true, false]]) {
-    assert.equal(evaluateRouting({ type, model, state: fresh(), rules }).action, 'allow', JSON.stringify([type, model]));
+    assert.equal(evaluateRouting({ type, model, effort: model, state: fresh(), rules }).action, 'allow', JSON.stringify([type, model]));
   }
 });
 

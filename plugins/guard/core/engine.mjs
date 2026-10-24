@@ -968,25 +968,35 @@ export function evaluateEdit({ path, loadedSkills = new Set(), state, rules }) {
 
 // A subagent spawn that bypasses the typed agents: the built-in Plan agent, an untyped spawn on a judgement-tier model,
 // or a typed agent whose model the spawn overrides. A once-per-session hint per case, never a deny.
-export function evaluateRouting({ type, model, state, rules }) {
+export function evaluateRouting({ type, model, effort, state, rules }) {
   const r = rules.routing;
   const t = String(type ?? '').trim().toLowerCase();
   const m = String(model ?? '').trim();
-  const [plugin, name] = t.includes(':') ? [t.slice(0, t.indexOf(':')), t.slice(t.indexOf(':') + 1)] : [null, t];
+  const e = String(effort ?? '').trim().toLowerCase();
+  const typed = r.typed.find((q) => q === t || (!t.includes(':') && q.endsWith(`:${t}`)));
   let rule, say;
   if (r.plan.includes(t)) {
     rule = 'routing-plan';
-    say = `the built-in ${type} agent runs on the session's model. Planning, design and investigation go to a \`${r.plugin}:driver\` spawn with a plan-only brief`;
-  } else if (m && (!t || r.untyped.includes(t)) && new RegExp(r.judgementModel, 'i').test(m)) {
-    rule = 'routing-model';
-    say = `an untyped spawn on ${m} does judgement work outside the typed agents. Give it to \`${r.plugin}:driver\` (\`${r.plugin}:escalate\` after two failures) without a \`model\`; a routine, well-specified unit goes to a general-purpose spawn on Sonnet`;
-  } else if (m && r.typed.includes(name) && (!plugin || plugin === r.plugin)) {
-    rule = 'routing-override';
-    say = `\`${type}\` carries its model and effort in its definition, and this spawn's \`model: ${m}\` overrides it. Spawn it without a \`model\``;
+    say = `the built-in ${type} agent runs on the session's model. Planning, design and investigation go to a \`dev-tools:driver\` spawn with a plan-only brief`;
+  } else if (r.untyped.includes(t) || (!t && m)) {
+    if (m && new RegExp(r.judgementModel, 'i').test(m)) {
+      rule = 'routing-model';
+      say = `an untyped spawn on ${m} does judgement work outside the typed agents. Give it to \`dev-tools:driver\` (\`dev-tools:escalate\` after two failures) without a \`model\``;
+    } else if (!m && t) {
+      rule = 'routing-untyped';
+      say = `an untyped \`${type}\` spawn without a model inherits the session's. Use a typed agent: \`dev-tools:scout\` for lookups, \`dev-tools:worker\` for edits, \`dev-tools:driver\` for judgement`;
+    }
+  } else if (typed) {
+    const allowed = r.overrides[typed] ?? {};
+    const over = [m && !(allowed.model && new RegExp(allowed.model, 'i').test(m)) && `\`model: ${m}\``, e && e !== allowed.effort && `\`effort: ${e}\``].filter(Boolean);
+    if (over.length) {
+      rule = 'routing-override';
+      say = `\`${type}\` carries its model and effort in its definition, and this spawn's ${over.join(' and ')} overrides it. Spawn it without`;
+    }
   }
   if (!rule || state.reminded.has(rule)) return { action: 'allow' };
   state.reminded.add(rule);
-  return { action: 'allow', rule, remind: true, context: `Routing hint (${r.why}): ${say}.` };
+  return { action: 'allow', rule, remind: true, context: `Routing hint: ${say} (\`${r.skill}\`).` };
 }
 
 export function usageLevel(percent, rules) {

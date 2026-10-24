@@ -128,11 +128,11 @@ const ARG = 'e2e-arg-4242'
 const WT_BODY = 'There is no fixed cap on worktrees or agents'
 
 // Codex hook outputs only a live run can confirm: a failing stop check's block reaches the model (Codex rejects a
-// Stop output with keys it does not know), and a PreToolUse hint reaches it as context.
+// Stop output with keys it does not know), and a PreToolUse hint reaches it as context, on a shell call and a spawn.
 async function codexOnly(h, env, root) {
   const failures = []
-  const seen = async (command, cwd, runEnv, text) => {
-    const m = await mock(command, root)
+  const seen = async (command, cwd, runEnv, text, mockEnv) => {
+    const m = await mock(command, root, mockEnv)
     const out = h.run(runEnv, cwd, m.port)
     m.stop()
     const ok = m.entries().some((e) => e.prompt.includes(text))
@@ -149,6 +149,9 @@ async function codexOnly(h, env, root) {
   // block the bare `pytest` before the hint is sent.
   const hint = await seen('scripts/heavy.sh pytest -q', project(root), env, 'Skill hint (')
   if (hint) failures.push(`hint: the pytest skill hint did not reach the model\n${hint}`)
+  // Codex runs PreToolUse on spawn_agent too, so the routing hint reaches the model there.
+  const routing = await seen('echo hi', project(root), env, 'Routing hint: an untyped `default` spawn', { MOCK_SPAWN: JSON.stringify({ agent_type: 'default', message: 'look around' }) })
+  if (routing) failures.push(`routing: the spawn_agent routing hint did not reach the model\n${routing}`)
   return failures
 }
 
