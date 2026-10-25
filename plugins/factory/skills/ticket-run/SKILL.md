@@ -7,7 +7,7 @@ description: Work one owner-approved GitHub issue end to end, attended - check t
 
 One ticket, from approval to merged, deployed and verified work. The owner chose *which* ticket; you own *everything it needs to be done*, and nothing else. The argument is the issue number or URL; it is the text after the skill name, repeated here when the harness fills it in: $ARGUMENTS
 
-The repo's `.factory/config.yaml` holds what is particular to it: forge, approvers, writers, labels, the marker, components with their checks and deploys, risk tiers. If it is missing or unreadable, stop and point to `docs/adopt-factory.md` in giocaizzi/harness; never fall back to defaults for a config you could not read. `docs/factory.md` there explains the protocol.
+The repo's `.factory/config.yaml` holds what is particular to it: forge, approvers, writers, labels, the marker, components with their checks and deploys, risk tiers. If it is missing or unreadable, stop and point to [adopt-factory.md](https://github.com/giocaizzi/harness/blob/main/docs/adopt-factory.md); never fall back to defaults for a config you could not read. [factory.md](https://github.com/giocaizzi/harness/blob/main/docs/factory.md) explains the protocol.
 
 The run needs the `dev-tools` plugin: its agents and its `wt`, `ship` and `land` skills. If the dev-tools `driver` agent is not available (`dev-tools:driver` in Claude Code, `driver` where agents go by bare name), stop and say so; never substitute another agent for it. Agent names below are Claude Code's; [routing.md](references/routing.md) maps them per harness.
 

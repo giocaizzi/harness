@@ -1,4 +1,4 @@
-// The factory contract is prose plus two templates; these keep them in step with docs/factory.md.
+// The factory contract is prose plus two templates; these keep them in step with docs/factory.md and ticket-run's result.md.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
@@ -12,16 +12,17 @@ import { rules } from '../plugins/guard/core/rules.mjs'
 const repo = join(dirname(fileURLToPath(import.meta.url)), '..')
 const read = (rel) => readFileSync(join(repo, rel), 'utf8')
 const doc = read('docs/factory.md')
-// Rows of the docs table under a heading, keyed by the first cell's backticked name.
-const tableKeys = (heading) => {
-  const section = doc.split(`## ${heading}`)[1].split('\n## ')[0]
-  return section.split('\n').filter((l) => l.startsWith('| `')).map((l) => l.match(/^\| `([^`]+)`/)[1])
-}
+// The result keys live in the skill, which needs them to write a result; docs/factory.md links there.
+const contract = read('plugins/factory/skills/ticket-run/references/result.md')
+// Rows of a table (under a heading, or the whole text), keyed by the first cell's backticked name.
+const rowKeys = (section) => section.split('\n').filter((l) => l.startsWith('| `')).map((l) => l.match(/^\| `([^`]+)`/)[1])
+const tableKeys = (heading) => rowKeys(doc.split(`## ${heading}`)[1].split('\n## ')[0])
+const resultKeys = () => rowKeys(contract)
 
 test('result.json template: valid JSON whose keys are exactly the documented contract', () => {
   const result = JSON.parse(read('plugins/factory/template/result.json'))
   // `mode` is set only by a dev run, so the prod template omits it.
-  assert.deepEqual(Object.keys(result).sort(), tableKeys('Result contract').filter((k) => k !== 'mode').sort())
+  assert.deepEqual(Object.keys(result).sort(), resultKeys().filter((k) => k !== 'mode').sort())
   assert.ok(['done', 'parked', 'failed'].includes(result.end_state))
   assert.equal(result.schema, 2)
 })
@@ -29,7 +30,14 @@ test('result.json template: valid JSON whose keys are exactly the documented con
 test('ticket-run names exactly the documented result keys', () => {
   const line = read('plugins/factory/skills/ticket-run/references/done.md').split('\n').find((l) => l.includes('Keys: `schema`'))
   const named = [...line.split('; their meaning')[0].replace(/\([^)]*\)/g, '').matchAll(/`([a-z_]+)`/g)].map((m) => m[1])
-  assert.deepEqual(named.sort(), tableKeys('Result contract').sort())
+  assert.deepEqual(named.sort(), resultKeys().sort())
+})
+
+test('result keys: one table, in the skill; docs/factory.md links to it', () => {
+  const section = doc.split('## Result contract')[1].split('\n## ')[0]
+  assert.ok(section.includes('](../plugins/factory/skills/ticket-run/references/result.md)'), 'docs/factory.md links the result keys')
+  assert.deepEqual(rowKeys(section), [], 'docs/factory.md repeats result keys')
+  assert.ok(resultKeys().length > 20)
 })
 
 test('config.yaml template: top-level keys are exactly the documented ones', () => {
@@ -73,7 +81,7 @@ test('notify: a repo names a topic or a command, a notify.url is flagged, remind
 })
 
 test('reason_code: ticket-run maps every documented code, and only those', () => {
-  const row = doc.split('\n').find((l) => l.startsWith('| `reason_code`'))
+  const row = contract.split('\n').find((l) => l.startsWith('| `reason_code`'))
   const documented = [...row.split('asks one):')[1].split(';')[0].matchAll(/`([a-z_]+)`/g)].map((m) => m[1])
   const line = read('plugins/factory/skills/ticket-run/references/done.md').split('\n').find((l) => l.startsWith('- **`reason_code`:**'))
   const mapped = [...new Set([...line.split('asks one:')[1].matchAll(/`([a-z_]+)`/g)].map((m) => m[1]))]
@@ -339,7 +347,7 @@ test('attended telemetry: the contract, ticket-run and the parity matrix agree o
   const section = doc.split('\n### Attended telemetry\n')[1].split('\n## ')[0]
   for (const s of ['attended.sh', 'attended.ps1', '`FACTORY_ATTENDED_RUN_ID`', '`factory.mode=attended`', '`factory.phase` is absent', '`factory.role` is `main` for the whole session']) assert.ok(section.includes(s), s)
   for (const h of ['Claude Code', 'Copilot CLI', 'VS Code', 'Codex', 'opencode', 'pi']) assert.match(section, new RegExp(`^\\| ${h} \\|`, 'm'), `no row for ${h}`)
-  assert.match(doc.split('\n').find((l) => l.startsWith('| `run_id`')), /else `FACTORY_ATTENDED_RUN_ID` when an attended session was started through the launcher for this ticket/)
+  assert.match(contract.split('\n').find((l) => l.startsWith('| `run_id`')), /else `FACTORY_ATTENDED_RUN_ID` when an attended session was started through the launcher for this ticket/)
   const done = read('plugins/factory/skills/ticket-run/references/done.md').split('\n').find((l) => l.startsWith('- **`run_id`:**'))
   assert.match(done, /Else `FACTORY_ATTENDED_RUN_ID` when it is set and `FACTORY_ATTENDED_TICKET` is this ticket/)
   assert.match(done, /When `FACTORY_ATTENDED_TICKET` names another ticket, ignore both/)
@@ -556,7 +564,7 @@ const exists = (main, n = 12) => existsSync(join(main, '.factory', 'runs', Strin
 
 test('check-result: core fields, from the contract\'s lists, and one entry point for every check', async () => {
   const { coreErrors, resultErrors, END_STATES, REASON_CODES } = await checker()
-  const row = (key) => doc.split('\n').find((l) => l.startsWith(`| \`${key}\``))
+  const row = (key) => contract.split('\n').find((l) => l.startsWith(`| \`${key}\``))
   assert.deepEqual([...END_STATES].sort(), [...row('end_state').split(' | ')[1].matchAll(/`([a-z_]+)`/g)].map((m) => m[1]).sort())
   assert.deepEqual([...REASON_CODES].sort(), [...row('reason_code').split('asks one):')[1].split(';')[0].matchAll(/`([a-z_]+)`/g)].map((m) => m[1]).sort())
   assert.deepEqual(resultErrors(valid, {}), [])
@@ -731,9 +739,9 @@ test('write-result: done.md, SKILL.md and the contract describe the writer', () 
   assert.match(record, /- \*\*`mode`:\*\* the script fills it/)
   assert.match(record, /it rejects any of those, and any other key, in the input/)
   assert.match(read('plugins/factory/skills/ticket-run/SKILL.md'), /- Never hand-write `result\.json`/)
-  const contract = doc.split('## Result contract')[1].split('\n## ')[0]
-  assert.match(contract, /\*\*Writer and check\.\*\*/)
-  assert.ok(contract.includes('must allow `node */skills/ticket-run/scripts/write-result.mjs *`'), 'the runtime allowlist line')
+  const section = doc.split('## Result contract')[1].split('\n## ')[0]
+  assert.match(section, /\*\*Writer and check\.\*\*/)
+  assert.ok(section.includes('must allow `node */skills/ticket-run/scripts/write-result.mjs *`'), 'the runtime allowlist line')
   for (const f of ['plugins/factory/skills/ticket-run/SKILL.md', 'plugins/factory/skills/ticket-run/references/done.md']) assert.doesNotMatch(read(f), /write-result[^\n]*docs\//, `${f}: the writer's steps need no repo doc`)
 })
 
