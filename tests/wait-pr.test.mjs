@@ -69,7 +69,7 @@ function run(kind, steps, args = ['--interval', '0']) {
   const r = spawnSync(exe, argv, { env, encoding: 'utf8', timeout: 30000 })
   let calls = []
   try { calls = readFileSync(file + '.log', 'utf8').trim().split('\n') } catch {}
-  return { code: r.status, out: r.stdout, err: r.stderr, calls }
+  return { code: r.status, out: r.stdout.replace(/\r\n/g, '\n'), err: r.stderr, calls }
 }
 
 for (const [kind] of runners) {
