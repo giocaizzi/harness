@@ -38,7 +38,7 @@ A workflow skill that defines its own gate, question channel, round cap or model
 A wait ends on every terminal outcome, never on success alone: a loop until a PR merges never returns once a required check fails. Wait on a PR with `land`'s `wait-pr` script. Inside a teammate, wait in the foreground ([collaboration.md](references/collaboration.md#durable-verdicts)).
 
 - **The deadline lives inside the command** (`wait-pr --timeout`, or a loop that counts its polls): the command exiting is what wakes the session. In an interactive Claude Code session the Bash tool's timeout is ignored for a background command; a Monitor wakes the session when its `timeout_ms` expires (at most 30 min).
-- Where a background exit is not known to wake the session, also set that harness's own timer (Claude Code: `CronCreate`).
+- Where a background exit is not known to wake the session (not checked in Copilot CLI, Codex, opencode or pi), also set that harness's own timer when it has one.
 
 ## Gotchas
 
