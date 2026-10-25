@@ -18,7 +18,13 @@
     { "kind": "result", "url": "<comment URL>", "state": "posted" }
   ],
   "phases": [
-    { "name": "plan", "started_at": "<ISO 8601 timestamp>", "ended_at": "<ISO 8601 timestamp>" }
+    { "name": "gate", "started_at": "<ISO 8601 timestamp>", "ended_at": "<ISO 8601 timestamp>" },
+    { "name": "plan", "started_at": "<ISO 8601 timestamp>", "ended_at": "<ISO 8601 timestamp>" },
+    { "name": "work", "started_at": "<ISO 8601 timestamp>", "ended_at": "<ISO 8601 timestamp>" },
+    { "name": "verify", "started_at": "<ISO 8601 timestamp>", "ended_at": "<ISO 8601 timestamp>" },
+    { "name": "ship", "started_at": "<ISO 8601 timestamp>", "ended_at": "<ISO 8601 timestamp>" },
+    { "name": "deploy", "started_at": "<ISO 8601 timestamp>", "ended_at": "<ISO 8601 timestamp>" },
+    { "name": "record", "started_at": "<ISO 8601 timestamp>", "ended_at": "<ISO 8601 timestamp>" }
   ],
   "verifier": { "verdict": "pass", "rounds": 1 },
   "routing": [
