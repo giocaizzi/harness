@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import { spawnSync } from 'node:child_process';
 import assert from 'node:assert/strict';
-import { touchesApprovalLabel, badTitle, branchFacts, cmdClass, branchTargets, codexRules, evaluateCommand, evaluateEdit, evaluateRouting, evaluateSpawn, nativeAsk, opencodeAsks, pureRead, refFacts, regenerableName, regenFacts, removalTargets, shellEdit, tagFacts, unattendedSet, usageLevel, worktreeFacts } from './engine.mjs';
+import { touchesApprovalLabel, ghHidden, badTitle, branchFacts, cmdClass, branchTargets, codexRules, evaluateCommand, evaluateEdit, evaluateRouting, evaluateSpawn, nativeAsk, opencodeAsks, pureRead, refFacts, regenerableName, regenFacts, removalTargets, shellEdit, tagFacts, unattendedSet, usageLevel, worktreeFacts } from './engine.mjs';
 import { rules } from './rules.mjs';
 
 const fresh = () => ({ reminded: new Set() });
@@ -1183,6 +1183,16 @@ test('factory run: a command naming the approval label is denied unless it only 
   }
   assert.equal(run('gh issue edit 7 --add-label ready', { approval: 'ready' }).action, 'deny', 'a configured label');
   assert.equal(run('gh issue edit 7 --add-label agent-ok', null).action, 'allow', 'no factory run: allowed');
+});
+
+test('factory run: a command that resolves to gh without spelling it is denied (#274)', () => {
+  const run = (command, factory = { approval: 'agent-ok' }) => evaluateCommand({ command, state: fresh(), host: calm, factory, rules });
+  for (const c of ['GH api user', "$'g\\x68' api user", 'g? api user', 'g* api user', '*', '[a-z]h api user', '{g,x}h api user', '{a..z}h api user', 'sudo GH api user', 'echo $(Gh api user)', '/usr/bin/GH api user']) {
+    assert.equal(ghHidden(c), true, c);
+    assert.equal(run(c).rule, 'factory-approval', c);
+  }
+  for (const c of ['gh api user', '"gh" issue view 1', 'g\\h issue view 1', 'ls *.md', './scripts/*.sh', 'gx', 'h?', '{a,b}', 'echo GH', 'GH=1 make', 'x=GH; $x api']) assert.equal(ghHidden(c), false, c);
+  assert.equal(run('GH api user', null).action, 'allow', 'no factory run');
 });
 
 test('factory run: the takeover label is denied like the approval label, reads pass', () => {

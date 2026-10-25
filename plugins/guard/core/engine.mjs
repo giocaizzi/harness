@@ -861,6 +861,53 @@ function unreadableBody(args) {
   return !(/\/comments(?:\/\d+)?$/.test(path) || (path && !/(?:^|\/)(?:labels|issues)(?:\/|$)/.test(path)));
 }
 
+// Whether a glob or brace word (basename) could name `gh` or `gh.exe`, ignoring case as macOS and Windows do. One level of
+// `{a,b}` is expanded, at most 64 alternatives; `{a..b}` and anything deeper count as a match.
+function globMatchesGh(word) {
+  const name = word.split('/').pop();
+  const brace = /\{([^{}]*)\}/.exec(name);
+  let alts = [name];
+  if (brace) {
+    const parts = brace[1].split(',');
+    if (brace[1].includes('..') || /[{}]/.test(name.slice(brace.index + brace[0].length)) || parts.length > 64) return true;
+    alts = parts.map((p) => name.slice(0, brace.index) + p + name.slice(brace.index + brace[0].length));
+  }
+  return alts.some((alt) => {
+    let re = '';
+    for (let i = 0; i < alt.length; i++) {
+      const c = alt[i];
+      if (c === '*') re += '.*';
+      else if (c === '?') re += '.';
+      else if (c === '[') {
+        const end = alt.indexOf(']', i + 2);
+        if (end < 0) { re += '\\['; continue; }
+        re += `[${alt.slice(i + 1, end).replace(/^!/, '^').replace(/\\/g, '\\\\')}]`;
+        i = end;
+      } else re += c.replace(/[.+^${}()|\\]/g, '\\$&');
+    }
+    try {
+      return new RegExp(`^(?:${re})$`, 'i').test('gh') || new RegExp(`^(?:${re})$`, 'i').test('gh.exe');
+    } catch {
+      return true;
+    }
+  });
+}
+
+// A command, at any depth, that the shell may resolve to `gh` though its text does not spell `gh`: a name that decodes to
+// `gh` only with case folded or an ANSI-C string read (`GH`, `$'g\x68'`), or a glob or brace list that could match it.
+// The text checks above never see such a call. A name the shell builds from a variable (`$GH`) stays out of sight.
+export function ghHidden(command) {
+  const a = analyze(command);
+  for (const { cmd } of units(a)) {
+    const w = commandWords(cmd.words)[0];
+    if (!w) continue;
+    const spelled = w.raw.replace(/['"\\]/g, '');
+    if (/^gh(?:\.exe)?$/i.test(w.val.split('/').pop()) && !/(?:^|\/)gh(?:\.exe)?$/.test(spelled)) return true;
+    if (!/[$`]/.test(w.raw) && dynamicText(w.raw) && globMatchesGh(w.val)) return true;
+  }
+  return false;
+}
+
 // Fail closed while a factory run is active. A command that names the label, approval or takeover (in any quoting or case, as
 // GitHub compares), is denied unless it is one plain `gh` read; adding and removing alike are the owner's. A `gh` command with a
 // body the guard cannot read (`--input`, a `key=@file` field) is denied unless it is one plain `gh api` call writing to
@@ -983,6 +1030,7 @@ function changesLabels(command) {
 export function evaluateCommand({ command, loadedSkills = new Set(), state, host = {}, env = {}, worktrees = {}, branches = {}, regenerable = {}, refs = {}, tags = {}, python = null, readTool = false, factory = null, rules }) {
   // While a factory run is active the agent never touches the approval label: with an owner token it would count as the owner's.
   if (factory && touchesApprovalLabel(command, factory.approval)) return { action: 'deny', rule: 'factory-approval', reason: `${rules.factory.why} The \`${factory.approval}\` label is the owner's to apply or remove; ask on the ticket instead.` }
+  if (factory && ghHidden(command)) return { action: 'deny', rule: 'factory-approval', reason: `${rules.factory.why} This command may run \`gh\` under a spelling the guard cannot read (another letter case, an escape, a glob or brace list); spell \`gh\` literally.` }
   // Nor the takeover label: an approver sets it to hand the ticket to an attended run, which removes it once it claimed.
   if (factory?.takeover && touchesApprovalLabel(command, factory.takeover)) return { action: 'deny', rule: 'factory-takeover', reason: `${rules.factory.takeoverWhy} The \`${factory.takeover}\` label is the owner's to apply; ask on the ticket instead.` }
   // A config the guard could not read fails closed: every label change is denied, and so is any name it could still find.
