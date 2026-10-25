@@ -15,9 +15,11 @@ const POWERSHELLS = new Set(['pwsh', 'powershell', 'pwsh.exe', 'powershell.exe']
 // util-linux, BSD and macOS ones merged): `value` short options take a value (glued or the next word), `flag` ones take
 // none, `optional` ones take a value only glued (`-dpermanent`); `long` maps each long option to whether it needs a
 // value (`--user root`; `--name=value` is always one word, and a unique prefix counts, as getopt_long allows). `pos`
-// words follow the options before the command (timeout's duration, chrt's priority, taskset's mask). `assign`: name=value
+// words follow the options before the command and the tool always takes them (timeout's duration, taskset's mask);
+// `priority`: chrt takes the next word as a priority only when it is all digits, else it is the command. `assign`: name=value
 // words may sit among the options. `split`: env -S, whose value is itself a command line. `shell`: watch, which runs its
-// words joined through `sh -c` unless `-x`. `numeric`: nice's `-5`. An option not listed here makes the reading unsure.
+// words joined through `sh -c` unless `-x`. `numeric`: nice's `-5`. `keyword`: time, which a
+// group or `!` may follow. An option not listed here makes the reading unsure.
 const W = (value, flag, long = {}, extra = {}) => ({ value, flag, optional: '', long, pos: 0, ...extra })
 const flags = (names) => Object.fromEntries(names.split(' ').filter(Boolean).map((n) => [n, false]))
 const values = (names) => Object.fromEntries(names.split(' ').filter(Boolean).map((n) => [n, true]))
@@ -29,20 +31,21 @@ export const WRAPPER_OPTIONS = {
   command: W('', 'pVv'),
   exec: W('a', 'cl'),
   nohup: W('', '', COMMON),
-  time: W('fo', 'ahlpqVv', { ...COMMON, ...values('format output'), ...flags('append portability verbose quiet') }),
+  time: W('fo', 'ahlpqVv', { ...COMMON, ...values('format output'), ...flags('append portability verbose quiet') }, { keyword: true }),
   nice: W('n', '', { ...COMMON, ...values('adjustment') }, { numeric: true }),
   timeout: W('ks', 'fpv', { ...COMMON, ...values('kill-after signal'), ...flags('foreground preserve-status verbose') }, { pos: 1 }),
   xargs: W('adEIJLnPRSs', '0oprtx', { ...COMMON, ...values('arg-file delimiter max-args max-chars max-procs process-slot-var'), ...flags('null eof replace max-lines open-tty interactive no-run-if-empty verbose show-limits exit') }, { optional: 'eil' }),
   caffeinate: W('tw', 'dhimsu'),
   stdbuf: W('eio', '', { ...COMMON, ...values('input output error') }),
   ionice: W('cnpPu', 'htV', { ...COMMON, ...values('class classdata pid pgid uid'), ...flags('ignore') }),
-  chrt: W('DPTUX', 'abdefGhimOopRrVv', { ...COMMON, ...values('sched-runtime sched-period sched-deadline clamp-min clamp-max'), ...flags('all-tasks batch deadline deadline-overrun ext fifo idle pid max other rr reset-on-fork reclaim-grub verbose') }, { pos: 1 }),
+  chrt: W('DPTUX', 'abdefGhimOopRrVv', { ...COMMON, ...values('sched-runtime sched-period sched-deadline clamp-min clamp-max'), ...flags('all-tasks batch deadline deadline-overrun ext fifo idle pid max other rr reset-on-fork reclaim-grub verbose') }, { priority: true }),
   taskset: W('', 'achpV', { ...COMMON, ...flags('all-tasks pid cpu-list') }, { pos: 1 }),
   setsid: W('', 'cfhVw', { ...COMMON, ...flags('ctty fork wait') }),
   unbuffer: W('', 'p'),
   watch: W('nqs', 'bCcefghprtvwx', { ...COMMON, ...values('interval equexit shotsdir'), ...flags('color no-color differences beep errexit follow chgexit exec precise no-rerun no-title no-wrap') }, { optional: 'd', shell: true }),
 }
 export const WRAPPERS = new Set(Object.keys(WRAPPER_OPTIONS))
+const KEYWORD_NEXT = new Set(['{', '!', 'if', 'while', 'until'])
 // ssh options that take a value (OpenSSH): everything else is a flag.
 const SSH_VALUE = new Set(['-b', '-c', '-D', '-E', '-e', '-F', '-I', '-i', '-J', '-L', '-l', '-m', '-O', '-o', '-p', '-Q', '-R', '-S', '-W', '-w', '-B'])
 const EXEC_VALUE = new Set(['-e', '--env', '-u', '--user', '-w', '--workdir', '--env-file', '-c', '--container', '-n', '--namespace', '--detach-keys'])
@@ -403,6 +406,9 @@ export function wrapped(words) {
       }
     }
     for (let p = 0; p < spec.pos && k < words.length; p++) k++
+    if (spec.priority && /^\d+$/.test(words[k]?.val ?? '')) k++
+    // `time` is a shell keyword: a group or a negation may follow it (`time -p { …; }`, `time ! …`), and the command is in it.
+    if (spec.keyword) while (k < words.length && KEYWORD_NEXT.has(words[k].val) && !words[k].quoted) k++
     if (spec.shell && !exec) {
       // watch runs its words joined with spaces through `sh -c`.
       const rest = words.slice(k)

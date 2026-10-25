@@ -103,8 +103,8 @@ test('wrapped: each wrapper reads its own options: no-value flags, clusters, glu
     ['caffeinate -dims -t 5 ls', 'ls'], ['time -p ls', 'ls'], ['time -f %e -o out ls', 'ls'], ['command -p ls', 'ls'], ['exec -c -a name ls', 'ls'], ['nohup -- ls', 'ls'],
     ['nice -n 5 ls', 'ls'], ['nice -n5 ls', 'ls'], ['nice -10 ls', 'ls'], ['nice --adjustment=3 ls', 'ls'], ['timeout 5 ls', 'ls'], ['timeout -s KILL -k 2 5 ls', 'ls'], ['timeout -- 5 ls', 'ls'], ['timeout --foreground 5s ls', 'ls'],
     ['xargs -0 -r -I{} -n 1 -P 4 ls', 'ls'], ['xargs -i ls', 'ls'], ['xargs -eEOF ls', 'ls'], ['doas -n -u root ls', 'ls'], ['env -i -u X -C /tmp A=1 ls', 'ls'], ['env - ls', 'ls'],
-    ['stdbuf -oL -e 0 ls', 'ls'], ['stdbuf --output=L ls', 'ls'], ['ionice -c3 -n 7 ls', 'ls'], ['chrt -f 10 ls', 'ls'], ['chrt -T 5 -D 9 -d 0 ls', 'ls'], ['taskset 0x3 ls', 'ls'], ['taskset -c 0,1 ls', 'ls'],
-    ['setsid -fw ls', 'ls'], ['unbuffer -p ls', 'ls'], ['watch -x -n 1 ls', 'ls'], ['sudo -E timeout -s KILL 5 nice -n 5 ls', 'ls'],
+    ['stdbuf -oL -e 0 ls', 'ls'], ['stdbuf --output=L ls', 'ls'], ['ionice -c3 -n 7 ls', 'ls'], ['chrt -f 10 ls', 'ls'], ['chrt -i ls', 'ls'], ['chrt --other ls', 'ls'], ['chrt 10 ls', 'ls'], ['chrt -T 5 -D 9 -d 0 ls', 'ls'], ['taskset 0x3 ls', 'ls'], ['taskset -c 0,1 ls', 'ls'],
+    ['setsid -fw ls', 'ls'], ['unbuffer -p ls', 'ls'], ['watch -x -n 1 ls', 'ls'], ['sudo -E timeout -s KILL 5 nice -n 5 ls', 'ls'], ['time { ls', 'ls'], ['time -p ! ls', 'ls'],
   ]) assert.deepEqual(read(c), [want, null, false], c)
   // A string a wrapper runs as a command line: env -S (with env in front, since its words may be env's options) and watch.
   assert.deepEqual(read("env -S 'rm -rf /x' y"), ['', 'env rm -rf /x y', false])

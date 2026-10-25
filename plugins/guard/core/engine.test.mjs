@@ -1207,6 +1207,8 @@ test('factory run: the command behind a known wrapper is read with that wrapper\
   // An option the wrapper's table does not know: the whole unit is read.
   for (const c of ['sudo --frobnicate GH api user', 'env -X GH api user']) assert.equal(ghHidden(c), true, c);
   // An option value is not the command, so a value that looks like gh no longer over-denies.
+  // time before a reserved word is a reserved word itself: the command in the group or after `!` is read (#282 review).
+  for (const c of ['time { GH api user; }', 'time ! GH api user', 'time -p { GH api user; }', 'time { sudo -E GH api user; }', 'chrt --idle GH api user']) assert.equal(ghHidden(c), true, c);
   for (const c of ['env -u GH ls', 'sudo -g GH ls', 'env -C G* ls', 'timeout 5 ls *', 'sudo -u root ls', 'timeout -s KILL 5 make', 'coproc NAME { make; }', 'stdbuf -o GH ls']) assert.equal(ghHidden(c), false, c);
 });
 
@@ -1225,6 +1227,10 @@ test('wrappers: each one\'s options are read with its own table, so the command 
     ['sudo --frobnicate ls', 'opaque'], ['stdbuf -X ls', 'opaque'],
   ];
   for (const [c, rule] of asks) assert.deepEqual([run(c).action, run(c).rule], ['ask', rule], c);
+  // time is a keyword: the command in a group or after `!` that follows it is read.
+  for (const c of ["time { bash -c 'rm -rf /x'; }", "time ! bash -c 'rm -rf /x'", "time -p { bash -c 'rm -rf /x'; }"]) assert.deepEqual([run(c).action, run(c).rule], ['ask', 'rm'], c);
+  // chrt takes a priority only when the word is all digits (its policy flags make the priority optional); taskset's mask is required.
+  for (const c of ["chrt -i bash -c 'rm -rf /x'", "chrt --other bash -c 'rm -rf /x'", "chrt -o 0 bash -c 'rm -rf /x'", "chrt 10 bash -c 'rm -rf /x'", "taskset -c 0 bash -c 'rm -rf /x'"]) assert.deepEqual([run(c).action, run(c).rule], ['ask', 'rm'], c);
   for (const c of ['sudo -E make test', 'timeout 30 make test', 'watch -n 2 git status', "env -S 'echo hi'", 'stdbuf -oL tail -f log', 'xargs -0 grep foo', 'nice -n 10 make', 'caffeinate -i make', 'time -p make', 'env -i PATH=/bin ls', 'sudo -u root ls', 'ionice -c 3 make', 'taskset -c 0,1 make']) assert.equal(run(c).action, 'allow', c);
 });
 

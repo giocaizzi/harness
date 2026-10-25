@@ -1244,14 +1244,21 @@ function unquotedExpansion(raw) {
   return false;
 }
 // Words that open a compound command or negate one: the reader keeps them in front of the command they hold
-// (`{ gh …`, `then gh …`, `! gh …`, `coproc gh …`, `function f { gh …`). `time` is left to the wrapper table, which
-// reads its `-p`.
+// (`{ gh …`, `then gh …`, `! gh …`, `coproc gh …`, `function f { gh …`). `time` (with its `-p` and `--`) is one of
+// them only before another reserved word (`time { gh …; }`, `time ! gh …`); before a command it is a wrapper, which
+// the wrapper table reads (`time -p gh …`).
 const RESERVED = new Set(['{', '(', '!', 'do', 'then', 'else', 'elif', 'if', 'while', 'until', 'coproc']);
 function dropReserved(words) {
   let i = 0;
   while (i < words.length) {
+    if (words[i].val === 'time' && !dynamicText(words[i].raw)) {
+      let t = i + 1;
+      while (t < words.length && (words[t].val === '-p' || words[t].val === '--')) t++;
+      if (!words[t] || dynamicText(words[t].raw) || !(RESERVED.has(words[t].val) || words[t].val === 'function')) break;
+      i = t;
+    }
     // A named coprocess (`coproc NAME { … }`): the name is not the command.
-    if (words[i].val === 'coproc' && /^[{(]$/.test(words[i + 2]?.val ?? '')) i += 2;
+    else if (words[i].val === 'coproc' && /^[{(]$/.test(words[i + 2]?.val ?? '')) i += 2;
     else if (RESERVED.has(words[i].val) && !dynamicText(words[i].raw)) i++;
     else if (words[i].val === 'function') i += 2;
     else break;

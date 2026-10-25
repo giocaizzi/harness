@@ -668,7 +668,25 @@ test('through the real hook, a risky command behind a wrapper option asks; the s
     return r.stdout ? JSON.parse(r.stdout).hookSpecificOutput.permissionDecision : 'allow'
   }
   for (const c of ["sudo -E bash -c 'rm -rf /x'", "caffeinate -i bash -c 'rm -rf /x'", "time -p bash -c 'git reset --hard'", "timeout -s KILL 5 bash -c 'rm -rf /x'", "env -S 'rm -rf /x'", "watch 'rm -rf /x'", "stdbuf -oL bash -c 'rm -rf /x'", "taskset 1 bash -c 'rm -rf /x'", 'sudo --frobnicate ls']) assert.equal(run(c), 'ask', c)
-  for (const c of ['sudo -E make test', 'watch -n 2 git status']) assert.equal(run(c), 'allow', c)
+  for (const c of ['sudo -E make test', 'watch -n 2 git status', 'time make']) assert.equal(run(c), 'allow', c)
+})
+
+test('through the real hook, time before a reserved word and chrt without a priority hide no command (#282 review)', () => {
+  const script = fileURLToPath(new URL('./guard.mjs', import.meta.url))
+  const repo = mkdtempSync(join(tmpdir(), 'guard-time-'))
+  mkdirSync(join(repo, '.git'))
+  const run = (command, factory) => {
+    const r = spawnSync(process.execPath, [script, 'PreToolUse'], { input: JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command }, cwd: repo, session_id: 's' }), encoding: 'utf8', timeout: 20000, env: { ...process.env, GUARD_OTEL: 'off', GUARD_UNATTENDED: '', FACTORY_RUN_ID: factory ? 'r1' : '', FACTORY_PROTECTED_PATHS: '', FACTORY_EVENTS_FILE: '', CLAUDE_PLUGIN_DATA: mkdtempSync(join(tmpdir(), 'guard-test-')) } })
+    assert.equal(r.status, 0, r.stderr)
+    return r.stdout ? JSON.parse(r.stdout).hookSpecificOutput.permissionDecision : 'allow'
+  }
+  const label = 'GH api repos/o/r/issues/1/labels --input b.json'
+  // In a factory run: the protected-path check and the label check see the command inside the group or after `!`.
+  for (const c of ['time { tee .github/workflows/ci.yml < b; }', 'time ! tee .github/workflows/ci.yml < b', 'time { rm -rf .factory/runs/12; }', `time { ${label}; }`, `time { sudo -E ${label}; }`, `time ! ${label}`, `time -p { ${label}; }`, `time -p ${label}`, `chrt --idle ${label}`]) assert.equal(run(c, true), 'deny', c)
+  assert.equal(run('time make', true), 'allow')
+  // Out of a run: a recursive delete still asks, a write to .github is not protected.
+  for (const c of ['time { rm -rf .factory/runs/12; }', 'time ! rm -rf src', "time -p bash -c 'rm -rf x'", "chrt -i bash -c 'rm -rf x'", "chrt --other bash -c 'rm -rf x'", "chrt -f 10 bash -c 'rm -rf x'"]) assert.equal(run(c, false), 'ask', c)
+  for (const c of ['time { tee .github/workflows/ci.yml < b; }', 'time make', 'chrt -b make']) assert.equal(run(c, false), 'allow', c)
 })
 
 test('a long chain of commands is judged in linear time, and the decision is the same as for a short one', () => {
