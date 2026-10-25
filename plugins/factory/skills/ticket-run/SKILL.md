@@ -42,7 +42,7 @@ One line per real failure; prune a line once a model change makes it obsolete.
 
 ## Output
 
-Every run ends with the result comment and `result.json` ([done.md](references/done.md#record)), then this report:
+Every run that passed the gate ends with the result comment and `result.json`; a stop at the gate writes what [done.md](references/done.md#record) says under Gate stops. Then this report:
 
 - **End state:** `done`, `parked`, `failed` or `budget_reached`, with the ticket and PR links.
 - **Blocked on me:** the open question or owner action, or "nothing".

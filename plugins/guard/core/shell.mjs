@@ -108,7 +108,7 @@ export function scan(src) {
       i += 2
       continue
     }
-    if (c === '#' && (i === 0 || /[\s;&|()]/.test(src[i - 1]))) {
+    if (c === '#' && (i === 0 || /[ \t\r\n;&|()]/.test(src[i - 1]))) {
       while (i < n && src[i] !== '\n') i++
       continue
     }
@@ -187,7 +187,9 @@ function readWord(src, i) {
   const begin = i
   while (i < src.length) {
     const c = src[i]
-    if (/[\s;&|()<>]/.test(c)) {
+    // Only a blank (space, tab; CR for CRLF lines), a newline or an operator ends a word, as in the shell: a vertical
+    // tab, form feed or Unicode space is part of the word. Ending a word on one the scan loop does not skip looped forever.
+    if (/[ \t\r\n;&|()<>]/.test(c)) {
       // `<(…)`/`>(…)` process substitution and `=(` (zsh) are part of the word.
       if ((c === '<' || c === '>') && src[i + 1] === '(') {
         const end = closeParen(src, i + 2)

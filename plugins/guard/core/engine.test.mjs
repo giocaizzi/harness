@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import { spawnSync } from 'node:child_process';
 import assert from 'node:assert/strict';
-import { touchesApprovalLabel, ghHidden, badTitle, branchFacts, cmdClass, branchTargets, codexRules, evaluateCommand, evaluateEdit, evaluateRouting, evaluateSpawn, nativeAsk, opencodeAsks, pureRead, refFacts, regenerableName, regenFacts, removalTargets, shellEdit, tagFacts, unattendedSet, usageLevel, worktreeFacts } from './engine.mjs';
+import { touchesApprovalLabel, ghHidden, ghUnseen, badTitle, branchFacts, cmdClass, branchTargets, codexRules, evaluateCommand, evaluateEdit, evaluateRouting, evaluateSpawn, nativeAsk, opencodeAsks, pureRead, refFacts, regenerableName, regenFacts, removalTargets, shellEdit, tagFacts, unattendedSet, usageLevel, worktreeFacts } from './engine.mjs';
 import { rules } from './rules.mjs';
 
 const fresh = () => ({ reminded: new Set() });
@@ -1222,6 +1222,17 @@ test('factory run: the hidden-gh check stays fast on stars and brace lists (#274
   assert.equal(r.status, 0, r.stderr);
 });
 
+test('factory run: a gh alias or extension is denied, gh\'s own commands pass (#273)', () => {
+  const run = (command, factory = { approval: 'agent-ok' }) => evaluateCommand({ command, state: fresh(), host: calm, factory, rules });
+  for (const c of ['gh tag 1', 'gh alias set t "issue list"', 'gh alias import a.yml', 'gh extension exec t', 'gh ext exec t', 'gh -R o/r tag', 'gh my-ext --flag', 'gh extension install o/gh-x', 'gh ext upgrade x', 'gh extensions remove x', 'gh stack', 'gh co 1', 'gh copilot']) {
+    assert.equal(ghUnseen(c, rules), true, c);
+    assert.equal(run(c).rule, 'factory-approval', c);
+    assert.match(run(c).reason, /alias or extension/, c);
+  }
+  for (const c of ['gh alias list', 'gh alias delete t', 'gh extension list', 'gh pr view 1', 'gh -R o/r issue list', 'gh api user', 'gh', 'gh --version', 'gh help', 'echo gh tag', 'gh cs list', 'gh at verify x', 'gh rs list', 'gh agent list', 'gh skills list', 'gh a11y', 'gh help environment', 'gh extension list']) assert.equal(ghUnseen(c, rules), false, c);
+  assert.equal(run('gh tag 1', null).action, 'allow', 'no factory run');
+});
+
 test('factory run: the takeover label is denied like the approval label, reads pass', () => {
   const run = (command, factory = { approval: 'agent-ok', takeover: 'factory-takeover' }) => evaluateCommand({ command, state: fresh(), host: calm, factory, rules });
   for (const c of [
@@ -1334,7 +1345,7 @@ test('factory run: the label check never throws and fails fast on a hang', () =>
   // In a child with a timeout, so a check that loops forever fails here in seconds instead of hanging the suite.
   const script = `
     import { touchesApprovalLabel } from ${JSON.stringify(new URL('./engine.mjs', import.meta.url).href)};
-    const parts = ['gh', 'api', 'issue', 'edit', 'view', '-f', '-F=', '-fx=@', '-XPOST', '--input', '--jq', 'labels', 'agent-ok', '$(', '$\\'', '\`', '(', ')', '"', "'", '\\\\', '\\\\"', ';', '&&', '|', '#', '\\n', '\\0', '*', '=', 'X=', 'bash', '-c', ' ', 'jq'];
+    const parts = ['gh', 'api', 'issue', 'edit', 'view', '-f', '-F=', '-fx=@', '-XPOST', '--input', '--jq', 'labels', 'agent-ok', '$(', '$\\'', '\`', '(', ')', '"', "'", '\\\\', '\\\\"', ';', '&&', '|', '#', '\\n', '\\0', '*', '=', 'X=', 'bash', '-c', ' ', 'jq', '\\v', '\\f', '\\u00a0', '\\u2028', '\\u3000', '\\ufeff'];
     let seed = 7;
     const next = () => (seed = (seed * 48271) % 2147483647);
     const seen = new Set(), lengths = new Set();
