@@ -442,6 +442,12 @@ mkdir -p "$c3/mine/a/1.0"
 check "a marketplace named in another case removes nothing" \
   "$(msweep --marketplace MINE --after-reload --apply; echo "$?"; cd "$c3" && find . -mindepth 3 -maxdepth 3 | sort | tr '\n' ' ')" \
   "$(printf 'sweep: no marketplace MINE in %s\n0\n./mine/a/1.0 ./mine/a/2.0 ./other/b/1.0 ' "$c3")"
+# $(basename) would drop the newline and take cache/solo<LF> for solo.
+mkdir -p "$c3/solo
+/a/1.0"
+check "a marketplace dir whose name only ends in a newline is not that marketplace" \
+  "$(msweep --marketplace solo --after-reload --apply; echo "$?"; [ -d "$c3/solo
+/a/1.0" ] && echo kept)" "$(printf 'sweep: no marketplace solo in %s\n0\nkept' "$c3")"
 codes=''
 for bad in '' . .. ... ' ' ../other a/b --apply; do codes=$codes$(msweep --marketplace "$bad" 2>/dev/null; echo $?); done
 codes=$codes$(msweep --marketplace 2>/dev/null; echo $?)$("$sweep" --marketplace mine 2>/dev/null; echo $?)

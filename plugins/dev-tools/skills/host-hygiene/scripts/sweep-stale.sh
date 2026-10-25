@@ -79,7 +79,7 @@ sweep_plugins() {
   local m mkts=("$root"/cache/*/)
   if [ -n "$marketplace" ]; then
     mkts=()
-    for m in "$root"/cache/*/; do [ -d "$m" ] && [ "$(basename "$m")" = "$marketplace" ] && mkts=("$m"); done
+    for m in "$root"/cache/*/; do [ -d "$m" ] || continue; m=${m%/}; [ "${m##*/}" = "$marketplace" ] && mkts+=("$m/"); done
     [ ${#mkts[@]} -eq 1 ] || { echo "sweep: no marketplace $marketplace in $root/cache"; return 0; }
   fi
   local installed updated starts procs table entry real key upd n p
