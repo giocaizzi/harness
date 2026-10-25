@@ -54,7 +54,7 @@ function Exit-Timeout([string]$Hung) {
 }
 # gh's stdout in $outFile, stderr in $errFile, its exit code returned.
 $script:proc = $null
-function Stop-Call {
+function Close-Call {
     if ($script:proc -and -not $script:proc.HasExited) { try { $script:proc.Kill($true) } catch { try { $script:proc.Kill() } catch { $null = $_ } } }
 }
 function Invoke-Gh([string]$Label, [string[]]$GhArgs) {
@@ -64,7 +64,7 @@ function Invoke-Gh([string]$Label, [string[]]$GhArgs) {
     $script:proc = $proc = Start-Process -FilePath $gh -ArgumentList $GhArgs -NoNewWindow -PassThru -RedirectStandardOutput $outFile -RedirectStandardError $errFile
     $null = $proc.Handle
     if (-not $proc.WaitForExit($ms)) {
-        Stop-Call
+        Close-Call
         Exit-Timeout $Label
     }
     $proc.WaitForExit()
@@ -105,6 +105,6 @@ try {
         Start-Sleep -Seconds ([Math]::Min($interval, $left))
     }
 } finally {
-    Stop-Call
+    Close-Call
     Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $tmp
 }
