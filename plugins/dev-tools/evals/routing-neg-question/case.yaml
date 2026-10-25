@@ -1,0 +1,10 @@
+schema_version: "1.0"
+name: routing-neg-question
+description: A one-line question about a small file spawns nothing.
+tags: [routing, routing-dev]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  prompt: "What does slugify in text.py return for an empty string? One line is enough."
+  max_turns: 15
+  allowed_tools: [Read, Glob, Grep, Skill, Agent]

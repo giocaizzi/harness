@@ -814,23 +814,58 @@ function ghAction(args) {
 // Subcommands that cannot send a body the guard cannot read to a labels or issues endpoint (`gh api` can).
 const GH_SUBCOMMANDS = new Set(['issue', 'pr', 'repo', 'run', 'workflow', 'search', 'release', 'project', 'auth', 'label', 'browse', 'status']);
 
-// A line that is not one plain `gh` command but runs `gh` with `api` or a subcommand the guard cannot read literally
-// (`gh $'a'pi`, `gh "$X"`, `gh>/dev/null api`, zsh `=gh`). Read with quotes and backslashes removed, as the shell joins
-// them; `-R`/`--repo` may come first.
-function opaqueGh(flat) {
-  for (const m of flat.matchAll(/(?:^|[\s;&|(){}`!=])(?:[^\s;&|(){}`!=]*\/)?gh(?:\.exe)?(?=[\s;&|()`<>]|$)/g)) {
-    const words = flat.slice(m.index + m[0].length).split(/[\s;&|()<>`]+/).filter(Boolean);
+// How many times a line runs `gh` with `api` or a subcommand the guard cannot read literally (`gh $'a'pi`, `gh "$X"`,
+// `gh>/dev/null api`, zsh `=gh`, `gh` as a parameter's value or default: `${X:=gh}`, `${X:-gh}`). Read with quotes and
+// backslashes removed, as the shell joins them; `-R`/`--repo` may come first.
+function opaqueGhCount(flat) {
+  let count = 0;
+  for (const m of flat.matchAll(/(?:^|[\s;&|(){}`!=])(?:[^\s;&|(){}`!=]*\/)?gh(?:\.exe)?(?=[\s;&|(){}`<>]|$)/g)) {
+    // A bounded window after each match keeps a line of many `gh`s linear; a word cut off there reads as opaque.
+    const start = m.index + m[0].length;
+    const words = flat.slice(start, start + 512).split(/[\s;&|()<>`]+/).filter(Boolean);
+    if (start + 512 < flat.length) words.pop();
     let i = 0;
     while (words[i] === '-R' || words[i] === '--repo' || /^--repo=/.test(words[i] ?? '')) i += words[i].includes('=') ? 1 : 2;
-    if (!GH_SUBCOMMANDS.has(words[i])) return true;
+    if (!GH_SUBCOMMANDS.has(words[i])) count++;
   }
-  return false;
+  return count + (flat.match(/\$\{[^{}]*(?<![\w.])gh(?:\.exe)?\}/gi)?.length ?? 0);
+}
+const opaqueGh = (flat) => opaqueGhCount(flat) > 0;
+
+// Whether every `gh` call opaqueGh counts in a line is a plain `gh` command (plainGh) of its own at the top level, in a
+// line the shell reader splits cleanly: `echo …; gh api user; git remote -v` is three commands, not an opaque `gh` (G26).
+// The calls must add up to the line's: one in a heredoc body (which may be run as a script later) or in a substitution
+// or payload is not a plain command. A line that defines `gh` (a function or an alias) never passes.
+function plainGhCalls(command) {
+  const flat = command.replace(/['"\\]/g, '');
+  if (/(?:^|[\s;&|(){}`])(?:function\s+gh(?:\.exe)?\b|gh(?:\.exe)?\s*\(\s*\)|alias\s+(?:-\S+\s+)*gh=)/.test(flat)) return false;
+  const a = analyze(command);
+  if (a.opaque) return false;
+  let found = 0;
+  for (const { cmd, depth } of units(a)) {
+    const n = opaqueGhCount(cmd.raw.replace(/['"\\]/g, ''));
+    if (!n) continue;
+    // A read only: a plain `gh <word>` may be an alias or extension that writes.
+    const args = plainGh(cmd.raw);
+    if (n !== 1 || depth !== 0 || cmd.payloads.length || args === null || ghAction(args) !== 'read') return false;
+    found++;
+  }
+  return found === opaqueGhCount(flat);
+}
+
+// Whether one plain `gh` command sends a body the guard cannot read to a labels or issues endpoint.
+function unreadableBody(args) {
+  const action = ghAction(args);
+  if (!action || action === 'read') return action !== 'read';
+  const path = action.write.split('?')[0].replace(/\/+$/, '');
+  return !(/\/comments(?:\/\d+)?$/.test(path) || (path && !/(?:^|\/)(?:labels|issues)(?:\/|$)/.test(path)));
 }
 
 // Fail closed while a factory run is active. A command that names the label, approval or takeover (in any quoting or case, as
 // GitHub compares), is denied unless it is one plain `gh` read; adding and removing alike are the owner's. A `gh` command with a
 // body the guard cannot read (`--input`, a `key=@file` field) is denied unless it is one plain `gh api` call writing to
-// a `/comments` endpoint or a path outside `/labels` and `/issues`; so is any other line running `gh api` (opaqueGh). A label the shell builds (`$L`) stays out of sight
+// a `/comments` endpoint or a path outside `/labels` and `/issues`; so is any other line running `gh api` (opaqueGh) unless
+// each such call in it is a plain command (plainGhCalls). A label the shell builds (`$L`) stays out of sight
 // (docs/guard.md).
 export function touchesApprovalLabel(command, label) {
   const want = String(label).trim().toLowerCase();
@@ -844,12 +879,11 @@ export function touchesApprovalLabel(command, label) {
   // A glued short flag is read without its flag (`-lagent-ok`).
   if (named.test(command) || flat.split(/\s+/).some((w) => named.test(w) || named.test(w.replace(/^-[A-Za-z]=?/, '')))) return action !== 'read';
   // A Windows path to gh (`C:\…\gh.exe`) loses its backslashes in `flat`: deny it outright.
-  if (!args && (opaqueGh(flat) || /\\gh(?:\.exe)?(?![\w-])/i.test(command))) return true;
-  if (/\bgh\b/.test(flat) && /--input\b|=@/.test(flat)) {
-    if (!action || action === 'read') return action !== 'read';
-    const path = action.write.split('?')[0].replace(/\/+$/, '');
-    return !(/\/comments(?:\/\d+)?$/.test(path) || (path && !/(?:^|\/)(?:labels|issues)(?:\/|$)/.test(path)));
-  }
+  if (!args && /\\gh(?:\.exe)?(?![\w-])/i.test(command)) return true;
+  // A line of several commands passes when each `gh api` call in it is plain; the label and body checks cover the line.
+  if (!args && opaqueGh(flat) && !plainGhCalls(command)) return true;
+  // A body in a line of several commands is not matched to its call: denied, as before.
+  if (/\bgh\b/.test(flat) && /--input\b|=@/.test(flat)) return args ? unreadableBody(args) : true;
   return false;
 }
 
