@@ -21,7 +21,7 @@ Your brief names the ticket (`<owner>/<repo>#<number>`), the pushed branch (and 
 
 ## Report
 
-Write the whole report to the verdict file the brief names (`.factory/runs/<n>/verdict-<round>.md` in the main checkout), so the run reads it without a hand-back; the caller posts it. Its first line is `Head: <full SHA of the branch tip you reviewed>` (`git rev-parse HEAD` in the worktree), then the three parts below. A verdict covers that head only.
+Write the whole report to the verdict file the brief names (`.factory/runs/<n>/verdict-<round>.md` in the main checkout; in a shell write use a literal absolute path or `$(git rev-parse --path-format=absolute --git-common-dir)/../.factory/runs/<n>/verdict-<round>.md`), so the run reads it without a hand-back; the caller posts it. Its first line is `Head: <full SHA of the branch tip you reviewed>` (`git rev-parse HEAD` in the worktree), then the three parts below. A verdict covers that head only.
 
 1. **Verdict:** `pass` or `fail`.
 2. **Findings,** count first (`2 findings`), then one per line: severity (`Blocker`, `Major`, `Minor`), check (1-5), `path:line` or the missing item, why it is wrong, how to show it fails. Any `Blocker` or `Major` fails the verdict; a `Minor` (a nit, or a pre-existing problem in code the change neither touches nor breaks) never does.

@@ -738,9 +738,9 @@ export function shellEdit(command, env = {}) {
 // glob's literal leading segments only (`**/*.tf` puts no directory above it). Letter case is ignored, as macOS and
 // Windows do. A target the shell globs is matched as a glob (`.g*` may name `.github`; a leading `*` or `?` never names
 // a dot file), a brace list is expanded (one group a level, 64 words at most), and one whose start is a variable or a
-// `cd` not followed is matched by the rest of its path anywhere (`$ROOT/.github/x`). A command that may write fails
-// A default glob is waived for `protect.exempt` (`.factory/runs/**`: the run's own files) when the normalised path is
-// spelled out; a glob in FACTORY_PROTECTED_PATHS (`protect.globs`) is never waived. It fails
+// `cd` not followed is matched by the rest of its path anywhere (`$ROOT/.github/x`). A default glob is waived for
+// `protect.exempt` (`.factory/runs/*/*/**`: files inside a run directory) when the normalised path is spelled out;
+// a glob in FACTORY_PROTECTED_PATHS (`protect.globs`) is never waived. A command that may write fails
 // closed past the limits (`rules.factory.protectedLimits`: targets, characters, milliseconds) or when the check throws,
 // since a hook that times out or emits nothing lets the command through; globs past the limits are ignored. Returns { target } (the first protected target as written), { unsure } (a limit it hit) or null.
 const PROTECT_RM = /^(?:rm|rmdir|unlink|remove-item|ri|del|erase|rd)$/;
