@@ -31,13 +31,13 @@ export const timeErrors = (result) => {
   return errors
 }
 
-const TICKET = /^[\w.-]+\/[\w.-]+#\d+$/
+const TICKET = /^[\w.-]+\/[\w.-]+#[1-9]\d*$/
 
 // `ticket` is the string owner/repo#N; when FACTORY_TICKET is set it must equal it.
 export const ticketErrors = (result, expected = process.env.FACTORY_TICKET) => {
   if (typeof result.ticket !== 'string' || !TICKET.test(result.ticket)) return [`ticket must be a string of the form "<owner>/<repo>#<number>", got ${JSON.stringify(result.ticket)}`]
   const want = (expected ?? '').trim()
-  return want && result.ticket.trim() !== want ? [`ticket "${result.ticket}" differs from FACTORY_TICKET "${want}"`] : []
+  return want && result.ticket !== want ? [`ticket "${result.ticket}" differs from FACTORY_TICKET "${want}"`] : []
 }
 
 export const modeErrors = (result) => (result.mode === undefined || result.mode === 'dev' ? [] : ['mode must be "dev" or absent'])
