@@ -10,6 +10,10 @@ forge: github
 approvers:
   - <github-login>
 
+# Optional: whether an approval label applied by a [bot] login listed in approvers (a GitHub App) counts.
+# Default false: a bot or App token that is an approver cannot approve a ticket.
+approvers_allow_bots: false
+
 # Optional: GitHub logins whose marked comments (claims, plans, questions, results, notices) are trusted;
 # the marker alone proves nothing. Default: approvers. The login a session posts as always counts.
 # Set it to add a runtime's bot or App login, for a GitHub App exactly its slug plus [bot] (example-bot[bot], never the

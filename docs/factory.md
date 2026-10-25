@@ -14,7 +14,7 @@ The `factory` plugin works tickets from a GitHub issue board, one at a time and 
 
 The `ticket-run` skill carries one ticket through these steps; call it with the issue number, and again on a parked ticket once you have answered. `factory-status` lists what needs you, what is in progress and what is done, from the labels and marked comments.
 
-1. **Gate.** The ticket is open and carries the approval label, the issue timeline shows an approver applied it, and nobody, an approver included, edited the title or body since: the approval covers the text as it stood when the label was applied, and only an approver applying the label again restores it. Otherwise the run stops and says why.
+1. **Gate.** The ticket is open and carries the approval label, the issue timeline shows an approver applied it (a `[bot]` login among the approvers counts only when `approvers_allow_bots` is true), and nobody, an approver included, edited the title or body since: the approval covers the text as it stood when the label was applied, and only an approver applying the label again restores it. Otherwise the run stops and says why.
 2. **Plan comment**, drafted by a `dev-tools:driver` spawn. Goal, acceptance checks (each one a command or observation that fails before the change), side effects in scope, planned fold-ins, size and risk tier. XS and S tickets start right after it; M and larger post it as a question and park until the owner's OK.
 3. **Work** in its own worktree and branch, applying the fold-in test to everything found on the way and logging the calls the plan does not already cover in the decision log.
 4. **Questions** go on the ticket, one per comment, and park the ticket (below).
@@ -147,6 +147,7 @@ Template with placeholders: [`plugins/factory/template/config.yaml`](../plugins/
 | `version` | yes | Config format, `1`. |
 | `forge` | yes | `github`, the only forge implemented. The skills express each operation as an intent (read the timeline, label, comment, search issues, open a PR) mapped to the forge's CLI, so GitLab or Azure DevOps can be added the way `repo-standard` maps them. |
 | `approvers` | yes | GitHub logins whose label and comments count as the owner's. |
+| `approvers_allow_bots` | no | `true` lets an approval label applied by a `[bot]` login in `approvers` (a GitHub App, `<slug>[bot]`) count; default `false`, so a bot or App token listed as an approver cannot approve a ticket. Optional, so the config format stays `1`. |
 | `writers` | no | GitHub logins whose marked comments are trusted (see [Comments](#comments)). Default: `approvers`. The login the session itself posts as always counts. Set it to add a runtime's bot or App login, exactly as the REST API reports it (`<slug>[bot]` for an App, never the bare slug, which can be another account); it replaces the default, so list the approvers too. Optional, so the config format stays `1`. |
 | `labels` | no | `approval`, `claimed`, `needs_owner`, `needs_grooming`, `quarantine`, `halt`, `takeover`; defaults as in [Labels](#labels). |
 | `marker` | no | Hidden first line of every agent comment; default `<!-- factory -->`. |
