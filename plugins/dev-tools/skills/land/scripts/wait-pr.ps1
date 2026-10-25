@@ -9,47 +9,73 @@
 #   5    `gh pr view` failed 3 polls in a row (bad PR, auth, network; its error follows)
 #   124  timeout, with the last state and the required checks still pending
 #   2    usage
-# --interval and --timeout default to WAIT_PR_INTERVAL (45) and WAIT_PR_TIMEOUT (5400) seconds.
-# The deadline is the script's own: exiting is what wakes a session that started it in the background.
+# --interval (1-3600) and --timeout (1-86400) default to WAIT_PR_INTERVAL (45) and WAIT_PR_TIMEOUT (5400) seconds.
+# The deadline is the script's own, gh calls included (one that does not return by then is killed):
+# exiting is what wakes a session that started it in the background.
 $ErrorActionPreference = 'Stop'
-function Exit-Usage { [Console]::Error.WriteLine('usage: wait-pr.ps1 <pr> [--interval <s>] [--timeout <s>]'); exit 2 }
+function Exit-Usage { [Console]::Error.WriteLine('usage: wait-pr.ps1 <pr> [--interval <1-3600 s>] [--timeout <1-86400 s>]'); exit 2 }
+# A plain decimal integer from 1 to $Max: no sign, no leading zero, nothing too large for [int].
+function Get-Seconds([string]$Value, [int]$Max) {
+    if ($Value -cnotmatch '^[1-9][0-9]{0,4}$' -or [int]$Value -gt $Max) { Exit-Usage }
+    [int]$Value
+}
 $pr = ''
-$interval = if ($env:WAIT_PR_INTERVAL) { $env:WAIT_PR_INTERVAL } else { '45' }
-$timeout = if ($env:WAIT_PR_TIMEOUT) { $env:WAIT_PR_TIMEOUT } else { '5400' }
+$interval = if ($null -ne $env:WAIT_PR_INTERVAL -and $env:WAIT_PR_INTERVAL -ne '') { $env:WAIT_PR_INTERVAL } else { '45' }
+$timeout = if ($null -ne $env:WAIT_PR_TIMEOUT -and $env:WAIT_PR_TIMEOUT -ne '') { $env:WAIT_PR_TIMEOUT } else { '5400' }
 $argv = @($args)
 for ($i = 0; $i -lt $argv.Count; $i++) {
     $a = "$($argv[$i])"
     if ($a -eq '--interval' -or $a -eq '--timeout') {
         if ($i + 1 -ge $argv.Count) { Exit-Usage }
         $i++
-        if ($a -eq '--interval') { $interval = $argv[$i] } else { $timeout = $argv[$i] }
+        if ($a -eq '--interval') { $interval = "$($argv[$i])" } else { $timeout = "$($argv[$i])" }
     } elseif ($a.StartsWith('-') -or $pr) { Exit-Usage }
     else { $pr = $a }
 }
-if (-not $pr -or "$interval" -notmatch '^\d+$' -or "$timeout" -notmatch '^\d+$') { Exit-Usage }
-$interval = [int]$interval; $timeout = [int]$timeout
+if (-not $pr) { Exit-Usage }
+$interval = Get-Seconds $interval 3600
+$timeout = Get-Seconds $timeout 86400
+$gh = (Get-Command gh -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1).Source
+if (-not $gh) { [Console]::Error.WriteLine('wait-pr: gh not found on PATH'); exit 5 }
 
 $deadline = [DateTime]::UtcNow.AddSeconds($timeout)
 $fails = 0; $state = ''; $merge = ''; $pending = ''
-$err = [IO.Path]::GetTempFileName()
+$tmp = Join-Path ([IO.Path]::GetTempPath()) ([Guid]::NewGuid())
+New-Item -ItemType Directory -Path $tmp | Out-Null
+$outFile = Join-Path $tmp 'out'; $errFile = Join-Path $tmp 'err'
+function Exit-Timeout([string]$Hung) {
+    $s = if ($state) { $state } else { 'unknown' }
+    $m = if ($merge) { $merge } else { 'unknown' }
+    $p = if ($pending) { $pending } else { 'none' }
+    $h = if ($Hung) { " ($Hung did not return)" } else { '' }
+    "PR ${pr}: timed out after ${timeout}s, state $s, mergeStateStatus $m, pending required checks: $p$h"
+    exit 124
+}
+# gh's stdout in $outFile, stderr in $errFile, its exit code returned; killed at the deadline.
+function Invoke-Gh([string]$Label, [string[]]$GhArgs) {
+    $ms = [int][Math]::Max(0, [Math]::Ceiling(($deadline - [DateTime]::UtcNow).TotalMilliseconds))
+    $proc = Start-Process -FilePath $gh -ArgumentList $GhArgs -NoNewWindow -PassThru -RedirectStandardOutput $outFile -RedirectStandardError $errFile
+    $null = $proc.Handle
+    if (-not $proc.WaitForExit($ms)) {
+        try { $proc.Kill($true) } catch { try { $proc.Kill() } catch { $null = $_ } }
+        Exit-Timeout $Label
+    }
+    $proc.WaitForExit()
+    $proc.ExitCode
+}
 try {
     while ($true) {
-        $ErrorActionPreference = 'Continue'
-        $view = gh pr view $pr --json 'state,mergeStateStatus' 2>$err
-        $viewExit = $LASTEXITCODE
-        $ErrorActionPreference = 'Stop'
+        $viewExit = Invoke-Gh 'gh pr view' @('pr', 'view', $pr, '--json', 'state,mergeStateStatus')
         if ($viewExit -eq 0) {
             $fails = 0
-            $v = ConvertFrom-Json -InputObject ($view -join "`n")
+            $v = ConvertFrom-Json -InputObject (Get-Content -Raw $outFile)
             $state = $v.state; $merge = $v.mergeStateStatus
             if ($state -eq 'MERGED') { "PR $pr merged"; exit 0 }
             if ($state -eq 'CLOSED') { "PR $pr closed without merging"; exit 1 }
             # Exits non-zero while checks are pending or failed, and prints nothing when the PR has none: read the output only.
-            $ErrorActionPreference = 'Continue'
-            $out = gh pr checks $pr --required --json 'name,bucket,link' 2>$null
-            $ErrorActionPreference = 'Stop'
+            $null = Invoke-Gh 'gh pr checks' @('pr', 'checks', $pr, '--required', '--json', 'name,bucket,link')
             $checks = @()
-            try { $checks = @(ConvertFrom-Json -InputObject ($out -join "`n")) | Where-Object { $_ } } catch { $checks = @() }
+            try { $checks = @(ConvertFrom-Json -InputObject (Get-Content -Raw $outFile)) | Where-Object { $_ } } catch { $checks = @() }
             $failed = @($checks | Where-Object { $_.bucket -in 'fail', 'cancel' })
             if ($failed.Count -gt 0) {
                 "PR ${pr}: required check failed"
@@ -63,20 +89,14 @@ try {
             $fails++
             if ($fails -ge 3) {
                 [Console]::Error.WriteLine("wait-pr: gh pr view $pr failed $fails times in a row:")
-                [Console]::Error.WriteLine((Get-Content -Raw $err))
+                [Console]::Error.WriteLine((Get-Content -Raw $errFile))
                 exit 5
             }
         }
         $left = [int][Math]::Ceiling(($deadline - [DateTime]::UtcNow).TotalSeconds)
-        if ($left -le 0) {
-            $s = if ($state) { $state } else { 'unknown' }
-            $m = if ($merge) { $merge } else { 'unknown' }
-            $p = if ($pending) { $pending } else { 'none' }
-            "PR ${pr}: timed out after ${timeout}s, state $s, mergeStateStatus $m, pending required checks: $p"
-            exit 124
-        }
+        if ($left -le 0) { Exit-Timeout '' }
         Start-Sleep -Seconds ([Math]::Min($interval, $left))
     }
 } finally {
-    Remove-Item -Force -ErrorAction SilentlyContinue $err
+    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $tmp
 }

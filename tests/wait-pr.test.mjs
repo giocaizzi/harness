@@ -12,7 +12,7 @@ const scripts = fileURLToPath(new URL('../plugins/dev-tools/skills/land/scripts/
 const win = process.platform === 'win32'
 
 // The shim: each `gh pr view` takes the next step (the last one repeats); `gh pr checks` answers from the same step.
-// A step is { view: {state, mergeStateStatus} | 'error', checks?: [{name, bucket, link}] }; no checks means none reported.
+// A step is { view: {state, mergeStateStatus} | 'error' | 'hang', checks?: [{name, bucket, link}] | 'hang' }; no checks means none reported.
 // `--jq` goes through jq, as gh would apply it.
 const shim = `
 import { readFileSync, writeFileSync, appendFileSync } from 'node:fs'
@@ -33,6 +33,8 @@ const out = (data, code) => {
   process.exit(code)
 }
 if (cmd !== 'pr') process.exit(64)
+if (step[sub] === 'hang') setTimeout(() => {}, 60000)
+else {
 if (sub === 'view') {
   if (step.view === 'error') { process.stderr.write('GraphQL: Could not resolve to a PullRequest\\n'); process.exit(1) }
   out(step.view, 0)
@@ -43,6 +45,7 @@ if (sub === 'checks') {
   out(step.checks, b.includes('fail') || b.includes('cancel') ? 1 : b.includes('pending') ? 8 : 0)
 }
 process.exit(64)
+}
 `
 
 const bin = mkdtempSync(join(tmpdir(), 'wait-pr-bin-'))
@@ -60,16 +63,18 @@ const runners = [
 const open = (mergeStateStatus = 'BLOCKED', checks) => ({ view: { state: 'OPEN', mergeStateStatus }, checks })
 const check = (name, bucket) => ({ name, bucket, link: `https://ci.example/${name.replace(/ /g, '-')}` })
 
-function run(kind, steps, args = ['--interval', '0'], extraEnv = {}) {
+function run(kind, steps, args = ['--interval', '1'], extraEnv = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'wait-pr-'))
   const file = join(dir, 'steps.json')
   writeFileSync(file, JSON.stringify(steps))
   const [exe, argv] = runners.find(([k]) => k === kind)[1](['12', ...args])
   const env = { ...process.env, PATH: bin + delimiter + process.env.PATH, SHIM_STEPS: file, WAIT_PR_INTERVAL: '', WAIT_PR_TIMEOUT: '', ...extraEnv }
+  const start = Date.now()
   const r = spawnSync(exe, argv, { env, encoding: 'utf8', timeout: 30000 })
+  const secs = (Date.now() - start) / 1000
   let calls = []
   try { calls = readFileSync(file + '.log', 'utf8').trim().split('\n') } catch {}
-  return { code: r.status, out: r.stdout.replace(/\r\n/g, '\n'), err: r.stderr, calls }
+  return { secs, code: r.status, out: r.stdout.replace(/\r\n/g, '\n'), err: r.stderr, calls }
 }
 
 for (const [kind] of runners) {
@@ -107,13 +112,21 @@ for (const [kind] of runners) {
   })
 
   test(`${kind}: no outcome exits 124 at the timeout with the state, one call pair per poll`, () => {
-    const r = run(kind, [open('BLOCKED', [check('check', 'pending'), check('Validate PR title', 'pending')])], ['--interval', '1', '--timeout', '2'])
+    const r = run(kind, [open('BLOCKED', [check('check', 'pending'), check('Validate PR title', 'pending')])], ['--interval', '1', '--timeout', '3'])
     assert.equal(r.code, 124, r.err)
-    assert.match(r.out, /timed out after 2s, state OPEN, mergeStateStatus BLOCKED, pending required checks: check,Validate PR title/)
-    const views = r.calls.filter((c) => c === 'view').length
-    assert.ok(views >= 2 && views <= 4, `views: ${views}`)
-    assert.deepEqual(r.calls, Array(views).fill(['view', 'checks']).flat())
+    assert.match(r.out, /timed out after 3s, state OPEN, mergeStateStatus BLOCKED, pending required checks: (check,Validate PR title|none)/)
+    // A loaded runner may fit one poll or several, and the deadline may cut the last call short.
+    assert.match(r.calls.join(','), /^(view,checks,)*view(,checks)?$/)
   })
+
+  for (const [what, step] of [['gh pr view', { view: 'hang' }], ['gh pr checks', open('BLOCKED', 'hang')]]) {
+    test(`${kind}: a hung ${what} is killed at the deadline and named`, () => {
+      const r = run(kind, [step], ['--interval', '1', '--timeout', '2'])
+      assert.equal(r.code, 124, r.err)
+      assert.match(r.out, new RegExp(`timed out after 2s, .*\\(${what} did not return\\)`))
+      assert.ok(r.secs < 15, `took ${r.secs}s`)
+    })
+  }
 
   test(`${kind}: without flags the script enforces its own deadline (WAIT_PR_TIMEOUT, default 5400 s)`, () => {
     const r = run(kind, [open()], [], { WAIT_PR_TIMEOUT: '1', WAIT_PR_INTERVAL: '1' })
@@ -138,6 +151,11 @@ for (const [kind] of runners) {
   test(`${kind}: bad arguments exit 2`, () => {
     assert.equal(run(kind, [open()], ['--interval']).code, 2)
     assert.equal(run(kind, [open()], ['--timeout', 'soon']).code, 2)
+    for (const bad of ['09', '08', '', '0', '-5', '1.5', ' 5', '99999999999999999999', '86401']) {
+      assert.equal(run(kind, [open()], ['--timeout', bad]).code, 2, `--timeout '${bad}'`)
+    }
+    for (const bad of ['08', '', '0', '3601']) assert.equal(run(kind, [open()], ['--interval', bad, '--timeout', '5']).code, 2, `--interval '${bad}'`)
+    assert.equal(run(kind, [open()], [], { WAIT_PR_TIMEOUT: '09' }).code, 2, 'WAIT_PR_TIMEOUT=09')
     assert.equal(run(kind, [open()], ['13']).code, 2)
   })
 }
