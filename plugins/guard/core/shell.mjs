@@ -377,12 +377,11 @@ export function wrapped(words) {
     while (k < words.length) {
       const v = words[k].val
       if (spec.assign && ASSIGNMENT.test(v) && !(ended && name === 'sudo')) k++
-      else if (ended || v[0] !== '-') break
-      else if (v === '-') {
-        // env's `-` is -i; anywhere else it is the command.
-        if (name !== 'env') break
+      else if (v === '-' && name === 'env' && (!ended || words[k - 1].val === '--')) {
+        // env's lone `-` is -i, also as the first word after `--` (GNU env); anywhere else it is the command.
         k++
-      } else if (v === '--') {
+      } else if (ended || v[0] !== '-' || v === '-') break
+      else if (v === '--') {
         ended = true
         k++
       } else if (spec.numeric && /^-[-+]?\d/.test(v)) k++

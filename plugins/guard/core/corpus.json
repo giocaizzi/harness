@@ -505,5 +505,10 @@
   ["time { rm -rf .factory/runs/13; }", "ask:rm", "G33", "control (#282 review): a recursive delete inside time { }, no run"],
   ["time make test", "allow", "G33", "control (#282 review): time as a wrapper, no run"],
   ["time -p { bash -c 'rm -rf src'; }", "ask:rm", "G33", "#282 review: time -p before a group holding a shell payload"],
-  ["time ! bash -c 'rm -rf src'", "ask:rm", "G33", "#282 review: time before ! and a shell payload"]
+  ["time ! bash -c 'rm -rf src'", "ask:rm", "G33", "#282 review: time before ! and a shell payload"],
+  ["env -- - GH api repos/o/r/issues/1/labels --input b.json", "deny:factory-approval", "G33", "#282 review: env's lone - after -- is -i", {"factory": "readable"}],
+  ["env -- - tee .github/workflows/ci.yml < b", "deny:protected-path", "G33", "#282 review: a write behind env -- -", {"factory": "readable"}],
+  ["env -i -- - A=1 GH api repos/o/r/issues/1/labels --input b.json", "deny:factory-approval", "G33", "#282 review: env -i -- - and an assignment", {"factory": "readable"}],
+  ["time env -- - GH api repos/o/r/issues/1/labels --input b.json", "deny:factory-approval", "G33", "#282 review: env -- - behind time", {"factory": "readable"}],
+  ["env -- - bash -c 'rm -rf x'", "ask:rm", "G33", "#282 review: a shell payload behind env -- -"]
 ]
