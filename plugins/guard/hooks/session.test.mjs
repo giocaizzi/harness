@@ -180,8 +180,10 @@ test('result gate: a runtime run with no result.json is blocked twice, then may 
     const first = await resultGate({ cwd }, undefined, RUNTIME)
     assert.match(first, /block 1 of 2\): .*result\.json is not a valid result for run run-1:\nno such file\n/)
     assert.match(first, /write-result\.mjs, never by hand/)
-    assert.match(await resultGate({ cwd, stop_hook_active: true }, undefined, RUNTIME), /block 2 of 2/)
-    assert.equal(await resultGate({ cwd }, undefined, RUNTIME), null)
+    const events = []
+    assert.match(await resultGate({ cwd, stop_hook_active: true }, undefined, RUNTIME, (e) => events.push(e)), /block 2 of 2[\s\S]*A subagent \(such as the verifier\) ignores this/)
+    assert.equal(await resultGate({ cwd }, undefined, RUNTIME, (e) => events.push(e)), null)
+    assert.deepEqual(events, [{ result: 'block', target: 'result-gate', runner: 'runtime', blocks: 2 }, { result: 'capped', target: 'result-gate', runner: 'runtime' }])
     // The count is per run id: another run starts over.
     assert.match(await resultGate({ cwd }, undefined, { ...RUNTIME, FACTORY_RUN_ID: 'run-2' }), /block 1 of 2/)
   } finally {
@@ -221,7 +223,9 @@ test('result gate: off, a subagent, no factory run, a bad ticket or no git check
     assert.equal(await resultGate({ cwd }, undefined, {}), null)
     assert.equal(await resultGate({ cwd }, undefined, { ...RUNTIME, FACTORY_TICKET: '12' }), null)
     assert.equal(await resultGate({ cwd }, () => ({ status: 128, stdout: '' }), RUNTIME), null)
-    assert.equal(await resultGate({ cwd }, () => assert.fail('a gate error fails open'), RUNTIME), null)
+    const events = []
+    assert.equal(await resultGate({ cwd }, () => assert.fail('a gate error fails open'), RUNTIME, (e) => events.push(e)), null)
+    assert.deepEqual(events.map((e) => [e.result, e.target]), [['error', 'result-gate']])
   } finally {
     delete process.env.CLAUDE_PLUGIN_DATA
   }
@@ -232,7 +236,9 @@ test('result gate: runs before make check, and both reasons go in one block', as
   Object.assign(process.env, RUNTIME)
   try {
     const run = (cmd, args, opts) => (cmd === 'make' ? stopRun([], { status: 2, stdout: 'FAIL z\n' }, { status: 2 })(cmd, args) : spawnSync(cmd, args, opts))
-    const out = await stopCheck({ cwd }, run, { strain: () => null })
+    const events = []
+    const out = await stopCheck({ cwd }, run, { strain: () => null, report: (e) => events.push(e) })
+    assert.deepEqual(events.map((e) => `${e.target}:${e.result}`), ['result-gate:block', 'check:fail'])
     assert.equal(out.decision, 'block')
     assert.match(out.reason, /^Factory result gate \(block 1 of 2\)[\s\S]*\n\nmake check failed[\s\S]*FAIL z$/)
     assert.deepEqual(out.hookSpecificOutput, { hookEventName: 'Stop', decision: 'block', reason: out.reason })
