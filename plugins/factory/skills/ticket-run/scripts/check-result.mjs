@@ -31,6 +31,15 @@ export const timeErrors = (result) => {
   return errors
 }
 
+const TICKET = /^[\w.-]+\/[\w.-]+#[1-9]\d*$/
+
+// `ticket` is the string owner/repo#N; when FACTORY_TICKET is set it must equal it.
+export const ticketErrors = (result, expected = process.env.FACTORY_TICKET) => {
+  if (typeof result.ticket !== 'string' || !TICKET.test(result.ticket)) return [`ticket must be a string of the form "<owner>/<repo>#<number>", got ${JSON.stringify(result.ticket)}`]
+  const want = (expected ?? '').trim()
+  return want && result.ticket !== want ? [`ticket "${result.ticket}" differs from FACTORY_TICKET "${want}"`] : []
+}
+
 export const modeErrors = (result) => (result.mode === undefined || result.mode === 'dev' ? [] : ['mode must be "dev" or absent'])
 
 export const routingErrors = (result) => {
@@ -50,7 +59,7 @@ export const routingErrors = (result) => {
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const result = JSON.parse(readFileSync(process.argv[2], 'utf8'))
-  const errors = [...timeErrors(result), ...routingErrors(result), ...modeErrors(result)]
+  const errors = [...timeErrors(result), ...routingErrors(result), ...modeErrors(result), ...ticketErrors(result)]
   for (const e of errors) console.error(e)
   process.exit(errors.length ? 1 : 0)
 }

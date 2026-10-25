@@ -58,6 +58,7 @@ function pipelines(command, { injected = true } = {}) {
   const top = count(a);
   const out = [];
   const walk = (level, ctx) => {
+    const siblings = count(level);
     let pipe = [];
     const groups = [];
     for (const c of level.commands) {
@@ -67,7 +68,7 @@ function pipelines(command, { injected = true } = {}) {
     if (pipe.length) groups.push(pipe);
     for (const p of groups) {
       const parts = p.map((c) => ({ code: gitPlain(c.code.trim()), vals: commandWords(c.words).map((w) => w.val) }));
-      out.push({ code: parts.map((x) => x.code).join(' | '), raw: p.map((c) => c.raw).join(' | '), parts, depth: ctx.depth, siblings: count(level), host: ctx.host, top });
+      out.push({ code: parts.map((x) => x.code).join(' | '), raw: p.map((c) => c.raw).join(' | '), parts, depth: ctx.depth, siblings, host: ctx.host, top });
       for (const c of p)
         for (const pl of c.payloads) {
           if (pl.injected && !injected) continue;
