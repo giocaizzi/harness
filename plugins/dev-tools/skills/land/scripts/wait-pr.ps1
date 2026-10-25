@@ -10,6 +10,7 @@
 #   124  timeout, with the last state and the required checks still pending
 #   2    usage
 # --interval and --timeout default to WAIT_PR_INTERVAL (45) and WAIT_PR_TIMEOUT (5400) seconds.
+# The deadline is the script's own: exiting is what wakes a session that started it in the background.
 $ErrorActionPreference = 'Stop'
 function Exit-Usage { [Console]::Error.WriteLine('usage: wait-pr.ps1 <pr> [--interval <s>] [--timeout <s>]'); exit 2 }
 $pr = ''

@@ -11,6 +11,7 @@
 #   124  timeout, with the last state and the required checks still pending
 #   2    usage
 # --interval and --timeout default to WAIT_PR_INTERVAL (45) and WAIT_PR_TIMEOUT (5400) seconds.
+# The deadline is the script's own: exiting is what wakes a session that started it in the background.
 set -u
 usage() { echo "usage: wait-pr.sh <pr> [--interval <s>] [--timeout <s>]" >&2; exit 2; }
 pr='' interval=${WAIT_PR_INTERVAL:-45} timeout=${WAIT_PR_TIMEOUT:-5400}

@@ -60,12 +60,12 @@ const runners = [
 const open = (mergeStateStatus = 'BLOCKED', checks) => ({ view: { state: 'OPEN', mergeStateStatus }, checks })
 const check = (name, bucket) => ({ name, bucket, link: `https://ci.example/${name.replace(/ /g, '-')}` })
 
-function run(kind, steps, args = ['--interval', '0']) {
+function run(kind, steps, args = ['--interval', '0'], extraEnv = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'wait-pr-'))
   const file = join(dir, 'steps.json')
   writeFileSync(file, JSON.stringify(steps))
   const [exe, argv] = runners.find(([k]) => k === kind)[1](['12', ...args])
-  const env = { ...process.env, PATH: bin + delimiter + process.env.PATH, SHIM_STEPS: file, WAIT_PR_INTERVAL: '', WAIT_PR_TIMEOUT: '' }
+  const env = { ...process.env, PATH: bin + delimiter + process.env.PATH, SHIM_STEPS: file, WAIT_PR_INTERVAL: '', WAIT_PR_TIMEOUT: '', ...extraEnv }
   const r = spawnSync(exe, argv, { env, encoding: 'utf8', timeout: 30000 })
   let calls = []
   try { calls = readFileSync(file + '.log', 'utf8').trim().split('\n') } catch {}
@@ -113,6 +113,14 @@ for (const [kind] of runners) {
     const views = r.calls.filter((c) => c === 'view').length
     assert.ok(views >= 2 && views <= 4, `views: ${views}`)
     assert.deepEqual(r.calls, Array(views).fill(['view', 'checks']).flat())
+  })
+
+  test(`${kind}: without flags the script enforces its own deadline (WAIT_PR_TIMEOUT, default 5400 s)`, () => {
+    const r = run(kind, [open()], [], { WAIT_PR_TIMEOUT: '1', WAIT_PR_INTERVAL: '1' })
+    assert.equal(r.code, 124, r.err)
+    assert.match(r.out, /timed out after 1s/)
+    const src = readFileSync(join(scripts, `wait-pr.${kind}`), 'utf8')
+    assert.match(src, kind === 'sh' ? /timeout=\$\{WAIT_PR_TIMEOUT:-5400\}/ : /\$env:WAIT_PR_TIMEOUT \} else \{ '5400' \}/)
   })
 
   test(`${kind}: gh failing 3 polls in a row exits 5 with its error`, () => {
