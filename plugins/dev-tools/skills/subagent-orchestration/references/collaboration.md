@@ -42,7 +42,7 @@ The durable channel is a PR or MR comment with a fixed marker (`Review round N â
 ## Review rounds
 
 - **The hub checks merges itself** (`gh pr view <n> --json state,mergeCommit`, or the forge's equivalent), never trusting a "will merge" or "merged" report.
-- **At most 2 review rounds per PR.** Round 2 reviews only the round-1 fix diff, including regressions it causes. After round 2, fix Blockers, Majors and any regression, file Minors as issues, then `land` with checks green. Never merge with a known regression.
+- **At most 2 review rounds per PR.** Round 2 reviews only the round-1 fix diff, including regressions it causes. A Minor in a file the PR touches, or under about 20 changed lines, is fixed in the PR before the final round. After round 2 there is no round 3: fix Blockers, Majors and any regression, put the remaining Minors in one rolled-up `review follow-ups: <plugin>` issue per plugin (never one issue each), then `land` with checks green. Never merge with a known regression.
 - **Commits after approval need a hub check and a landing note** before the merge: `land` step 2.
 
 ## Rules
