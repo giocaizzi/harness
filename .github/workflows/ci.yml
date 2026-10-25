@@ -38,28 +38,22 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 22
-      # TEMPORARY probe (removed before merge): why the Windows install takes minutes.
-      - name: probe windows npm install
+      # Windows spends minutes writing the CLIs' files (pi's dependency tree most), not downloading them or in
+      # Defender, whose real-time monitoring the runner already has off: restore the installed packages instead.
+      # Each global package nests its own dependencies, and run.mjs starts each from its own entry point.
+      - name: Restore the CLIs (Windows)
+        id: clis
         if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          Get-MpComputerStatus | Select-Object AMServiceEnabled, AntivirusEnabled, RealTimeProtectionEnabled, OnAccessProtectionEnabled, IsTamperProtected | Format-List
-          Get-MpPreference | Select-Object DisableRealtimeMonitoring, ExclusionPath, ExclusionProcess | Format-List
-          "cache: $(npm config get cache)"; "prefix: $(npm prefix -g)"; "root: $(npm root -g)"
-          Get-Volume | Format-Table DriveLetter, FileSystem, Size, SizeRemaining
-          $pkgs = '${{ env.E2E_CLIS }}' -split ' '
-          function Timed($label) { foreach ($p in $pkgs) { $t = Measure-Command { npm install -g $p --no-audit --no-fund | Out-Null }; "{0} {1}: {2:N1}s" -f $label, $p, $t.TotalSeconds } }
-          Timed 'defender-as-is'
-          foreach ($p in $pkgs) { npm uninstall -g ($p -replace '@[^@]+$', '') | Out-Null }
-          npm cache clean --force
-          Set-MpPreference -DisableRealtimeMonitoring $true
-          (Get-MpComputerStatus).RealTimeProtectionEnabled
-          Timed 'realtime-off'
-          foreach ($p in $pkgs) { npm uninstall -g ($p -replace '@[^@]+$', '') | Out-Null }
-          npm cache clean --force
-          Set-MpPreference -DisableRealtimeMonitoring $false
-          $t = Measure-Command { npm install -g @pkgs --no-audit --no-fund | Out-Null }; "defender-as-is all-at-once: {0:N1}s" -f $t.TotalSeconds
-      - run: npm install -g ${{ env.E2E_CLIS }}
+        uses: actions/cache@v6
+        with:
+          path: |
+            C:\npm\prefix\node_modules\@github\copilot
+            C:\npm\prefix\node_modules\@openai\codex
+            C:\npm\prefix\node_modules\opencode-ai
+            C:\npm\prefix\node_modules\@earendil-works\pi-coding-agent
+          key: e2e-clis-${{ runner.os }}-node22-${{ env.E2E_CLIS }}
+      - if: steps.clis.outputs.cache-hit != 'true'
+        run: npm install -g ${{ env.E2E_CLIS }}
       - run: node tests/e2e/run.mjs # `make e2e`; called directly because Windows runners have no make
         env:
           E2E_REQUIRE: 1
