@@ -1,6 +1,8 @@
-// Checks a run's result.json: `finished_at` and `phases` times, the optional `routing` entries and `mode` (only `dev`).
-// Usage `node check-result.mjs <result.json>`. A deviation (model or effort differing from the policy's) needs a non-empty
-// deviation_reason; a time the run could not find is null, never a dropped key.
+// Checks a run's result.json: the core fields (`schema`, `ticket`, `run_id`, `end_state`, `reason`, `reason_code`),
+// `finished_at` and `phases` times, the optional `routing` entries and `mode` (only `dev`).
+// Usage `node check-result.mjs <result.json>`: exit 0 valid, 1 invalid or unreadable (one line per error), 2 usage.
+// A deviation (model or effort differing from the policy's) needs a non-empty deviation_reason; a time the run could not
+// find is null, never a dropped key. Imports Node built-ins only, so a hook can copy it.
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
@@ -31,7 +33,7 @@ export const timeErrors = (result) => {
   return errors
 }
 
-const TICKET = /^[\w.-]+\/[\w.-]+#[1-9]\d*$/
+export const TICKET = /^[\w.-]+\/[\w.-]+#[1-9]\d*$/
 
 // `ticket` is the string owner/repo#N; when FACTORY_TICKET is set it must equal it.
 export const ticketErrors = (result, expected = process.env.FACTORY_TICKET) => {
@@ -57,9 +59,42 @@ export const routingErrors = (result) => {
   })
 }
 
+export const END_STATES = ['done', 'parked', 'failed', 'budget_reached', 'halted']
+export const REASON_CODES = ['question', 'plan_gate', 'merge_gate', 'grooming', 'verify_rounds', 'live_verify_failed', 'env_blocked', 'budget', 'auth', 'takeover']
+
+// `run_id` equals FACTORY_RUN_ID when set, so the result matches the runtime's claim.
+export const coreErrors = (result, env = process.env) => {
+  const errors = []
+  if (result.schema !== 2) errors.push(`schema must be 2, got ${JSON.stringify(result.schema)}`)
+  const want = (env.FACTORY_RUN_ID ?? '').trim()
+  if (typeof result.run_id !== 'string' || result.run_id.trim() === '') errors.push(`run_id must be a non-empty string, got ${JSON.stringify(result.run_id)}`)
+  else if (want && result.run_id !== want) errors.push(`run_id "${result.run_id}" differs from FACTORY_RUN_ID "${want}"`)
+  if (!END_STATES.includes(result.end_state)) errors.push(`end_state must be one of ${END_STATES.join(', ')}, got ${JSON.stringify(result.end_state)}`)
+  if (typeof result.reason !== 'string') errors.push(`reason must be a string (empty when done), got ${JSON.stringify(result.reason)}`)
+  if (result.reason_code !== null && !REASON_CODES.includes(result.reason_code)) errors.push(`reason_code must be null or one of ${REASON_CODES.join(', ')}, got ${JSON.stringify(result.reason_code)}`)
+  return errors
+}
+
+// Every check, in one list; a value that is not a JSON object is one error, never a throw.
+export const resultErrors = (result, env = process.env) => {
+  if (result === null || typeof result !== 'object' || Array.isArray(result)) return [`result.json must hold a JSON object, got ${JSON.stringify(result)}`]
+  return [...coreErrors(result, env), ...ticketErrors(result, env.FACTORY_TICKET ?? ''), ...timeErrors(result), ...routingErrors(result), ...modeErrors(result)]
+}
+
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  const result = JSON.parse(readFileSync(process.argv[2], 'utf8'))
-  const errors = [...timeErrors(result), ...routingErrors(result), ...modeErrors(result), ...ticketErrors(result)]
+  const file = process.argv[2]
+  if (!file || process.argv.length > 3) {
+    console.error('usage: node check-result.mjs <result.json>')
+    process.exit(2)
+  }
+  let result
+  try {
+    result = JSON.parse(readFileSync(file, 'utf8').replace(/^\uFEFF/, ''))
+  } catch (e) {
+    console.error(e.code === 'ENOENT' ? `${file}: no such file` : e instanceof SyntaxError ? `${file}: not valid JSON (${e.message})` : `${file}: cannot read (${e.code ?? e.message})`)
+    process.exit(1)
+  }
+  const errors = resultErrors(result)
   for (const e of errors) console.error(e)
   process.exit(errors.length ? 1 : 0)
 }

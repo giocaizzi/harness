@@ -39,10 +39,11 @@ One ticket, one session, one ticket branch. A session started through this skill
 One line per real failure; prune a line once a model change makes it obsolete.
 
 - A denied call is not `env_blocked`: retry once with a simpler single command inside the checkout, and read this skill's own files (references, scripts) with the harness's file-read tool, never shell `ls` or `cat` on skill paths. Park as `env_blocked` only when a required step has no allowed path ([done.md](references/done.md#record)).
+- Never hand-write `result.json`: a hand-written one had `"ticket"` as a bare number. Write it with `scripts/write-result.mjs` from the judgment fields and fix what it reports ([done.md](references/done.md#record)).
 
 ## Output
 
-Every run that passed the gate ends with the result comment and `result.json`; a stop at the gate writes what [done.md](references/done.md#record) says under Gate stops. Then this report:
+Every run that passed the gate ends with the result comment and `result.json`, written by `scripts/write-result.mjs`; a stop at the gate writes what [done.md](references/done.md#record) says under Gate stops. Then this report:
 
 - **End state:** `done`, `parked`, `failed` or `budget_reached`, with the ticket and PR links.
 - **Blocked on me:** the open question or owner action, or "nothing".
