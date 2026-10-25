@@ -196,6 +196,42 @@ test('result.json routing: a deviation without a reason fails validation, a matc
   assert.match(routingErrors({ routing: [{ phase: 'verify' }] })[0], /missing/)
 })
 
+test('result.json times: a finished run has finished_at and its phases, a missing time is null, never dropped', async () => {
+  const { timeErrors } = await import(pathToFileURL(join(repo, 'plugins/factory/skills/ticket-run/scripts/check-result.mjs')).href)
+  const step = (name, started_at, ended_at) => ({ name, started_at, ended_at })
+  // A done run as the record step writes it.
+  const done = {
+    end_state: 'done',
+    finished_at: '2026-10-25T11:42:00Z',
+    phases: [
+      step('gate', '2026-10-25T09:00:00Z', '2026-10-25T09:02:10Z'),
+      step('plan', '2026-10-25T09:02:10Z', '2026-10-25T09:10:00Z'),
+      step('work', '2026-10-25T09:10:00Z', '2026-10-25T12:20:00+02:00'),
+      step('verify', '2026-10-25T10:20:00Z', '2026-10-25T10:55:00Z'),
+      step('ship', '2026-10-25T10:55:00Z', '2026-10-25T11:40:00Z'),
+      step('record', '2026-10-25T11:40:00Z', '2026-10-25T11:42:00Z'),
+    ],
+  }
+  assert.deepEqual(timeErrors(done), [])
+  // A stop at the gate and an unknown time pass; the run's report names the null.
+  assert.deepEqual(timeErrors({ finished_at: done.finished_at, phases: [step('gate', '2026-10-25T09:00:00Z', null)] }), [])
+  assert.deepEqual(timeErrors({ ...done, phases: [step('gate', null, '2026-10-25T09:02:10Z'), ...done.phases.slice(1)] }), [])
+  // The two failures the issue saw, and the ways a time goes missing silently.
+  assert.match(timeErrors({ ...done, finished_at: null })[0], /finished_at/)
+  assert.match(timeErrors({ ...done, phases: [] })[0], /every step/)
+  assert.match(timeErrors({ ...done, phases: undefined })[0], /every step/)
+  assert.match(timeErrors({ ...done, phases: [{ name: 'gate', started_at: '2026-10-25T09:00:00Z' }] })[0], /ended_at missing/)
+  assert.match(timeErrors({ ...done, phases: [done.phases[1], done.phases[0]] })[0], /in that order/)
+  assert.match(timeErrors({ ...done, phases: [step('implement', '2026-10-25T09:00:00Z', null)] })[0], /name must be one of/)
+  assert.match(timeErrors({ ...done, phases: [step('gate', 'yesterday', null)] })[0], /ISO 8601/)
+  assert.match(timeErrors({ ...done, phases: [step('gate', '2026-10-25T09:00:00Z', '2026-10-25T08:00:00Z')] })[0], /before started_at/)
+  // done.md names every check the script makes, and where each time comes from.
+  const record = read('plugins/factory/skills/ticket-run/references/done.md').split('## Record')[1]
+  for (const s of ['gate', 'plan', 'work', 'verify', 'ship', 'deploy', 'record']) assert.match(record, new RegExp(`- \`${s}\`: `), `done.md gives no source for ${s}`)
+  assert.match(record, /\*\*`finished_at`:\*\* the UTC time you write the file, never `null`/)
+  assert.match(record, /before posting the result comment/)
+})
+
 test('result.json mode: only dev or absent passes validation', async () => {
   const { modeErrors } = await import(pathToFileURL(join(repo, 'plugins/factory/skills/ticket-run/scripts/check-result.mjs')).href)
   assert.deepEqual(modeErrors({}), [])
