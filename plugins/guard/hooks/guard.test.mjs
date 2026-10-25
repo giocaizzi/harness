@@ -627,7 +627,8 @@ test('FACTORY_RUN_ID set: the protected-path check denies within the hook budget
   const script = fileURLToPath(new URL('./guard.mjs', import.meta.url))
   const repo = mkdtempSync(join(tmpdir(), 'guard-protect-'))
   mkdirSync(join(repo, '.git'))
-  const globs = (n) => Array.from({ length: n }, (_, i) => (i % 3 === 0 ? `**/${'d'.repeat(30)}${i}/**/*.yml` : i % 3 === 1 ? `p${i}/**/**/q/**` : `[a-c]*${i}?/x*/**`)).join('\n')
+  // Past the cap the globs are short: Linux caps one environment string at 128 KB, and spawnSync fails past it.
+  const globs = (n) => Array.from({ length: n }, (_, i) => (n > 256 ? `p${i}/**` : i % 3 === 0 ? `**/${'d'.repeat(30)}${i}/**/*.yml` : i % 3 === 1 ? `p${i}/**/**/q/**` : `[a-c]*${i}?/x*/**`)).join('\n')
   const deep = 'a/'.repeat(300) + 'b'
   const cases = [
     [254, 'sed -i s/a/b/ ' + Array(3000).fill(deep).join(' ')],
@@ -645,6 +646,7 @@ test('FACTORY_RUN_ID set: the protected-path check denies within the hook budget
     const command = `${plain}; echo x > .github/workflows/ci.yml`
     const started = Date.now()
     const r = spawnSync(process.execPath, [script, 'PreToolUse'], { input: JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command }, cwd: repo, session_id: 's' }), encoding: 'utf8', timeout: 20000, env: { ...process.env, FACTORY_RUN_ID: 'r1', FACTORY_PROTECTED_PATHS: globs(n), GUARD_OTEL: 'off', FACTORY_EVENTS_FILE: '', CLAUDE_PLUGIN_DATA: mkdtempSync(join(tmpdir(), 'guard-test-')) } })
+    assert.equal(r.error, undefined, `spawn failed: ${r.error?.message}`)
     assert.equal(r.signal, null, `timed out: ${command.slice(0, 40)}`)
     assert.equal(r.status, 0, r.stderr)
     assert.ok(Date.now() - started < 10000, `${Date.now() - started} ms: ${command.slice(0, 40)}`)
