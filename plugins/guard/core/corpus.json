@@ -317,5 +317,8 @@
   ["echo ${HOME}; gh api user --jq .login", "allow", "G28", "control: another expansion next to a plain gh read", {"factory": "readable"}],
   ["gh alias set tag 'api -X POST repos/o/r/issues/1/labels --input b.json'; gh tag", "deny:factory-approval", "G26", "review #271 round 2: an alias set and run in a chain", {"factory": "readable"}],
   ["echo hi; gh tag 1", "deny:factory-approval", "G26", "review #271 round 2: an alias or extension in a chain", {"factory": "readable"}],
-  ["echo hi; gh api -X POST repos/o/r/statuses/abc -f state=success", "deny:factory-approval", "G26", "review #271 round 2: a chained gh api write, even off the labels path", {"factory": "readable"}]
+  ["echo hi; gh api -X POST repos/o/r/statuses/abc -f state=success", "deny:factory-approval", "G26", "review #271 round 2: a chained gh api write, even off the labels path", {"factory": "readable"}],
+
+  ["echo a\u000bb; echo c\fd", "allow", "G29", "#272: a vertical tab and a form feed hung the shell reader"],
+  ["echo a\u00a0b; rm -rf src", "ask:rm", "G29", "#272: a no-break space hung the reader, so the delete after it went unjudged"]
 ]

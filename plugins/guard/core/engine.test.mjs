@@ -1297,7 +1297,7 @@ test('factory run: the label check never throws and fails fast on a hang', () =>
   // In a child with a timeout, so a check that loops forever fails here in seconds instead of hanging the suite.
   const script = `
     import { touchesApprovalLabel } from ${JSON.stringify(new URL('./engine.mjs', import.meta.url).href)};
-    const parts = ['gh', 'api', 'issue', 'edit', 'view', '-f', '-F=', '-fx=@', '-XPOST', '--input', '--jq', 'labels', 'agent-ok', '$(', '$\\'', '\`', '(', ')', '"', "'", '\\\\', '\\\\"', ';', '&&', '|', '#', '\\n', '\\0', '*', '=', 'X=', 'bash', '-c', ' ', 'jq'];
+    const parts = ['gh', 'api', 'issue', 'edit', 'view', '-f', '-F=', '-fx=@', '-XPOST', '--input', '--jq', 'labels', 'agent-ok', '$(', '$\\'', '\`', '(', ')', '"', "'", '\\\\', '\\\\"', ';', '&&', '|', '#', '\\n', '\\0', '*', '=', 'X=', 'bash', '-c', ' ', 'jq', '\\v', '\\f', '\\u00a0', '\\u2028', '\\u3000', '\\ufeff'];
     let seed = 7;
     const next = () => (seed = (seed * 48271) % 2147483647);
     const seen = new Set(), lengths = new Set();
