@@ -46,4 +46,4 @@ End with a report that separates done, blocked-by-guard (command and reason), pa
 
 Mechanism, per-harness behaviour and limits: `docs/guard.md` in the harness repo (section Unattended and auto-approve runs).
 
-Resuming after a network or host drop: `docs/network-drop.md` in the harness repo.
+Resuming after a network or host drop: the `subagent-orchestration` skill's network-drop reference.
