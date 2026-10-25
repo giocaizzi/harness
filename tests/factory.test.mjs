@@ -273,6 +273,51 @@ test('result.json times: a finished run has finished_at and its phases, a missin
   assert.match(record, /\[cultureinfo\]::InvariantCulture/)
 })
 
+// The attended launcher, run with a command that prints its environment.
+const SCRIPTS = join(repo, 'plugins/factory/skills/ticket-run/scripts')
+const hasPwsh = spawnSync('pwsh', ['-NoProfile', '-Command', 'exit 0']).status === 0
+const launch = (shell, args, env = {}) => {
+  const cmd = shell === 'sh' ? ['bash', join(SCRIPTS, 'attended.sh')] : ['pwsh', '-NoProfile', '-File', join(SCRIPTS, 'attended.ps1')]
+  const base = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(FACTORY_|OTEL_RESOURCE_ATTRIBUTES$|GUARD_OTEL_RESOURCE_ATTRIBUTES$)/.test(k)))
+  const run = spawnSync(cmd[0], [...cmd.slice(1), ...args], { env: { ...base, ...env }, encoding: 'utf8' })
+  return { status: run.status, stderr: run.stderr, env: run.status === 0 ? JSON.parse(run.stdout) : null }
+}
+const printEnv = [process.execPath, '-e', 'console.log(JSON.stringify(process.env))']
+
+for (const shell of ['sh', 'ps1']) {
+  test(`attended launcher (${shell}): tags the session with factory.* and the run id ticket-run copies`, { skip: shell === 'ps1' && !hasPwsh && 'pwsh not found' }, () => {
+    const { status, env } = launch(shell, ['acme/app#12', ...printEnv], { OTEL_RESOURCE_ATTRIBUTES: 'service.namespace=dev,factory.phase=stale', GUARD_OTEL_RESOURCE_ATTRIBUTES: 'host.name=h' })
+    assert.equal(status, 0)
+    assert.match(env.FACTORY_ATTENDED_RUN_ID, /^[A-Za-z0-9-]+-12-\d{8}T\d{6}Z$/)
+    assert.equal(env.FACTORY_ATTENDED_TICKET, 'acme/app#12')
+    assert.equal(env.FACTORY_RUN_ID, undefined, 'never the runtime variable')
+    const tags = `factory.run_id=${env.FACTORY_ATTENDED_RUN_ID},factory.ticket=acme/app#12,factory.role=main,factory.mode=attended`
+    assert.equal(env.OTEL_RESOURCE_ATTRIBUTES, `service.namespace=dev,${tags}`, 'other pairs kept, a stale factory.* pair replaced')
+    assert.equal(env.GUARD_OTEL_RESOURCE_ATTRIBUTES, `host.name=h,${tags}`)
+    assert.equal(launch(shell, ['acme/app#3', '--', ...printEnv]).env.OTEL_RESOURCE_ATTRIBUTES.split(',')[0].startsWith('factory.run_id='), true, 'no leading comma when unset')
+    // Refusals: a malformed ticket, a runtime's run, no command.
+    for (const ticket of ['acme/app', 'acme/app#x', 'acme/app#1,factory.role=x', 'a b/c#1']) assert.equal(launch(shell, [ticket, ...printEnv]).status, 2, ticket)
+    const runtime = launch(shell, ['acme/app#12', ...printEnv], { FACTORY_RUN_ID: 'r-1' })
+    assert.equal(runtime.status, 2)
+    assert.match(runtime.stderr, /FACTORY_RUN_ID is set/)
+    assert.equal(launch(shell, ['acme/app#12']).status, 2)
+  })
+}
+
+test('attended telemetry: the contract, ticket-run and the parity matrix agree on the launcher', () => {
+  const section = doc.split('\n### Attended telemetry\n')[1].split('\n## ')[0]
+  for (const s of ['attended.sh', 'attended.ps1', '`FACTORY_ATTENDED_RUN_ID`', '`factory.mode=attended`', '`factory.phase` is absent', '`factory.role` is `main` for the whole session']) assert.ok(section.includes(s), s)
+  for (const h of ['Claude Code', 'Copilot CLI', 'VS Code', 'Codex', 'opencode', 'pi']) assert.match(section, new RegExp(`^\\| ${h} \\|`, 'm'), `no row for ${h}`)
+  assert.match(doc.split('\n').find((l) => l.startsWith('| `run_id`')), /else `FACTORY_ATTENDED_RUN_ID` when an attended session was started through the launcher for this ticket/)
+  const done = read('plugins/factory/skills/ticket-run/references/done.md').split('\n').find((l) => l.startsWith('- **`run_id`:**'))
+  assert.match(done, /Else `FACTORY_ATTENDED_RUN_ID` when it is set and `FACTORY_ATTENDED_TICKET` is this ticket/)
+  assert.match(done, /When `FACTORY_ATTENDED_TICKET` names another ticket, ignore both/)
+  assert.match(read("plugins/factory/skills/ticket-run/references/comments.md"), /Otherwise the run id is the one \[done\.md\]\(done\.md#record\) gives for `run_id`/)
+  const row = read('docs/compatibility.md').split('\n').find((l) => l.startsWith('| `factory` attended telemetry tags'))
+  assert.ok(row, 'docs/compatibility.md has the parity row')
+  assert.equal(row.split(' | ').length, 7, 'one cell per harness')
+})
+
 test('result.json mode: only dev or absent passes validation', async () => {
   const { modeErrors } = await import(pathToFileURL(join(repo, 'plugins/factory/skills/ticket-run/scripts/check-result.mjs')).href)
   assert.deepEqual(modeErrors({}), [])
