@@ -15,6 +15,8 @@ Telemetry in Loki: Claude Code OTel logs (`service_name="claude-code"`) and the 
 
 One source for both paths: [queries.json](../.agents/skills/agent-review/references/queries.json). What each section means, when to act, and how to write a trigger eval: [reading.md](../.agents/skills/agent-review/references/reading.md).
 
+A telemetry finding becomes an issue only with a reproduction (command text or a corpus row) and the guard version it was seen on.
+
 ## Tracing hook_prompt spend
 
 `query_source="hook_prompt"` is a request a plugin makes on its own: a mod forking the session (`$.model.fork`) or a `type: prompt`/`agent` hook. It reads the whole conversation, so each one costs about a main turn on the session's model. The review's `hookPromptCost` query splits it by `plugin_name`. When the plugin is empty (Claude Code before 2.1.310):
