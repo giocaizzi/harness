@@ -39,6 +39,7 @@ A wait ends on every terminal outcome, never on success alone: a loop until a PR
 
 - **The deadline lives inside the command** (`wait-pr --timeout`, or a loop that counts its polls): the command exiting is what wakes the session. In an interactive Claude Code session the Bash tool's timeout is ignored for a background command; a Monitor wakes the session when its `timeout_ms` expires (at most 30 min).
 - Where a background exit is not known to wake the session (not checked in Copilot CLI, Codex, opencode or pi), also set that harness's own timer when it has one.
+- After a network or host drop, check each PR and session before resuming: [references/network-drop.md](references/network-drop.md).
 
 ## Gotchas
 
