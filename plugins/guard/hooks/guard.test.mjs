@@ -654,6 +654,25 @@ test('FACTORY_RUN_ID set: the protected-path check denies within the hook budget
   }
 })
 
+test('a long chain of commands is judged in linear time, and the decision is the same as for a short one', () => {
+  const script = fileURLToPath(new URL('./guard.mjs', import.meta.url))
+  const run = (command) => {
+    const started = Date.now()
+    const r = spawnSync(process.execPath, [script, 'PreToolUse'], { input: JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command }, cwd: '/', session_id: 's' }), encoding: 'utf8', timeout: 20000, env: { ...process.env, GUARD_OTEL: 'off', FACTORY_EVENTS_FILE: '', CLAUDE_PLUGIN_DATA: mkdtempSync(join(tmpdir(), 'guard-test-')) } })
+    assert.equal(r.error, undefined, `spawn failed: ${r.error?.message}`)
+    assert.equal(r.status, 0, r.stderr)
+    return { out: r.stdout, ms: Date.now() - started }
+  }
+  const chain = (n) => 'echo x;'.repeat(n)
+  assert.equal(run(chain(50)).out, '')
+  assert.match(run(`${chain(50)} rm -rf /`).out, /"permissionDecision":"deny"/)
+  // Quadratic, 20,000 segments took ~49 s; linear takes ~0.8 s locally. 8 s leaves ~10x for a slow CI runner.
+  const big = run(chain(20000))
+  assert.equal(big.out, '')
+  assert.ok(big.ms < 8000, `${big.ms} ms for 20,000 segments`)
+  assert.match(run(`${chain(20000)} rm -rf /`).out, /"permissionDecision":"deny"/)
+})
+
 test('FACTORY_RUN_ID set: the approval and takeover labels (default or the repo\'s configured ones) cannot be added; unset, they can', async () => {
   const cwd = mkdtempSync(join(tmpdir(), 'guard-factory-'))
   const configured = mkdtempSync(join(tmpdir(), 'guard-factory-'))
