@@ -15,6 +15,7 @@ concurrency:
 jobs:
   secrets:
     runs-on: ubuntu-latest
+    timeout-minutes: 10 # every job is capped: a hung step would otherwise hold the run for 6 h
     steps:
       - uses: actions/checkout@v7
         with:
@@ -30,6 +31,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 25 # 1-6 min measured (Windows: about 4, 6 on a cache miss)
     env:
       # Exact versions: an unpinned upstream release must not break CI overnight. Bump them in a PR of their own.
       E2E_CLIS: '@github/copilot@1.0.103 @openai/codex@0.163.0 opencode-ai@1.19.3 @earendil-works/pi-coding-agent@1.3.0'
@@ -40,20 +42,44 @@ jobs:
           node-version: 22
       # Windows spends minutes writing the CLIs' files (pi's dependency tree most), not downloading them or in
       # Defender, whose real-time monitoring the runner already has off: restore the installed packages instead.
-      # Each global package nests its own dependencies, and run.mjs starts each from its own entry point.
-      - name: Restore the CLIs (Windows)
+      # Each global package nests its own dependencies, and run.mjs starts each from its own entry point. The cache
+      # paths come from E2E_CLIS, and the cache is saved right after a fresh install, before any CLI runs.
+      - name: CLI paths (Windows)
         id: clis
         if: runner.os == 'Windows'
-        uses: actions/cache@v6
+        shell: bash
+        run: |
+          prefix=$(npm prefix -g)
+          prefix=${prefix//\\//} # C:/npm/prefix
+          echo "prefix=$prefix" >> "$GITHUB_OUTPUT"
+          { echo 'paths<<EOF'; for spec in $E2E_CLIS; do echo "$prefix/node_modules/${spec%@*}"; done; echo EOF; } >> "$GITHUB_OUTPUT"
+      - name: Restore the CLIs (Windows)
+        id: restore
+        if: runner.os == 'Windows'
+        uses: actions/cache/restore@v6
         with:
-          path: |
-            C:\npm\prefix\node_modules\@github\copilot
-            C:\npm\prefix\node_modules\@openai\codex
-            C:\npm\prefix\node_modules\opencode-ai
-            C:\npm\prefix\node_modules\@earendil-works\pi-coding-agent
+          path: ${{ steps.clis.outputs.paths }}
           key: e2e-clis-${{ runner.os }}-node22-${{ env.E2E_CLIS }}
-      - if: steps.clis.outputs.cache-hit != 'true'
+      - if: steps.restore.outputs.cache-hit != 'true'
         run: npm install -g ${{ env.E2E_CLIS }}
+      - name: Save the CLIs (Windows)
+        if: runner.os == 'Windows' && steps.restore.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ steps.clis.outputs.paths }}
+          key: ${{ steps.restore.outputs.cache-primary-key }}
+      - name: Check the restored CLIs' versions (Windows)
+        if: steps.restore.outputs.cache-hit == 'true'
+        shell: bash
+        env:
+          PREFIX: ${{ steps.clis.outputs.prefix }}
+        run: |
+          for spec in $E2E_CLIS; do
+            name=${spec%@*} want=${spec##*@}
+            got=$(node -p 'require(process.argv[1]).version' "$PREFIX/node_modules/$name/package.json")
+            if [ "$got" != "$want" ]; then echo "::error::the cache restored $name $got, E2E_CLIS pins $want"; exit 1; fi
+            echo "$name $got"
+          done
       - run: node tests/e2e/run.mjs # `make e2e`; called directly because Windows runners have no make
         env:
           E2E_REQUIRE: 1
@@ -62,6 +88,7 @@ jobs:
   # and their tests skip elsewhere, so they run here.
   windows-scripts:
     runs-on: windows-latest
+    timeout-minutes: 15 # about 2.5 min measured
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -74,13 +101,15 @@ jobs:
         run: |
           node --test --test-reporter=tap tests/wait-pr-ps1.test.mjs | tee tap.txt
           if ! grep -qx '# tests 14' tap.txt || ! grep -qx '# pass 14' tap.txt; then echo "::error::expected 14 wait-pr.ps1 tests to pass"; exit 1; fi
+      # The factory's ps1 launcher, and its result writer and checker (Node scripts that handle Windows paths and CRLF).
       - shell: bash
         run: |
-          node --test --test-reporter=tap --test-name-pattern='attended launcher \(ps1\)' tests/factory.test.mjs | tee tap.txt
-          if ! grep -qx '# tests 2' tap.txt || ! grep -qx '# pass 2' tap.txt; then echo "::error::expected 2 attended launcher (ps1) tests to pass"; exit 1; fi
+          node --test --test-reporter=tap --test-name-pattern='^(attended launcher \(ps1\)|write-result|check-result|result scripts)' tests/factory.test.mjs | tee tap.txt
+          if ! grep -qx '# tests 16' tap.txt || ! grep -qx '# pass 16' tap.txt; then echo "::error::expected 16 factory launcher (ps1), result writer and checker tests to pass"; exit 1; fi
 
   make-check:
     runs-on: ubuntu-latest
+    timeout-minutes: 15 # about 1.5 min measured
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
@@ -99,6 +128,7 @@ jobs:
     needs: [secrets, make-check, e2e, windows-scripts]
     if: always()
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - env:
           NEEDS: ${{ toJSON(needs) }}
