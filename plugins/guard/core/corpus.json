@@ -317,5 +317,15 @@
   ["echo ${HOME}; gh api user --jq .login", "allow", "G28", "control: another expansion next to a plain gh read", {"factory": "readable"}],
   ["gh alias set tag 'api -X POST repos/o/r/issues/1/labels --input b.json'; gh tag", "deny:factory-approval", "G26", "review #271 round 2: an alias set and run in a chain", {"factory": "readable"}],
   ["echo hi; gh tag 1", "deny:factory-approval", "G26", "review #271 round 2: an alias or extension in a chain", {"factory": "readable"}],
-  ["echo hi; gh api -X POST repos/o/r/statuses/abc -f state=success", "deny:factory-approval", "G26", "review #271 round 2: a chained gh api write, even off the labels path", {"factory": "readable"}]
+  ["echo hi; gh api -X POST repos/o/r/statuses/abc -f state=success", "deny:factory-approval", "G26", "review #271 round 2: a chained gh api write, even off the labels path", {"factory": "readable"}],
+
+  ["GH api repos/o/r/issues/1/labels --input b.json", "deny:factory-approval", "G31", "#274: gh in another letter case", {"factory": "readable"}],
+  ["$'g\\x68' api repos/o/r/issues/1/labels --input b.json", "deny:factory-approval", "G31", "#274: gh decoded from an ANSI-C string", {"factory": "readable"}],
+  ["g? api repos/o/r/issues/1/labels --input b.json", "deny:factory-approval", "G31", "#274: a glob that matches gh", {"factory": "readable"}],
+  ["[g]h api repos/o/r/issues/1/labels --input b.json", "deny:factory-approval", "G31", "#274: a bracket glob that matches gh", {"factory": "readable"}],
+  ["{g,x}h api repos/o/r/issues/1/labels --input b.json", "deny:factory-approval", "G31", "#274: a brace list that makes gh", {"factory": "readable"}],
+  ["echo hi; env G'H' api repos/o/r/issues/1/labels --input b.json", "deny:factory-approval", "G31", "#274: a wrapped gh in another case", {"factory": "readable"}],
+  ["\"gh\" issue view 1", "allow", "G31", "control: a quoted gh the text check reads", {"factory": "readable"}],
+  ["ls *.md && wc -l [a-c]*.txt", "allow", "G31", "control: globs and commands that are not gh", {"factory": "readable"}],
+  ["GH api user", "allow", "G31", "control: no factory run"]
 ]
