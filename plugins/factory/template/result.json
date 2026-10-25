@@ -1,7 +1,7 @@
 {
   "schema": 2,
   "ticket": "<owner>/<repo>#<number>",
-  "run_id": "<FACTORY_RUN_ID, else main session id, else <host>-<number>-<UTC timestamp>>",
+  "run_id": "<FACTORY_RUN_ID, else FACTORY_ATTENDED_RUN_ID for this ticket, else main session id, else <host>-<number>-<UTC timestamp>>",
   "end_state": "done",
   "reason": "",
   "reason_code": null,
