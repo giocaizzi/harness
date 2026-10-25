@@ -1195,12 +1195,26 @@ test('factory run: a command that resolves to gh without spelling it is denied (
   assert.equal(run('GH api user', null).action, 'allow', 'no factory run');
 });
 
+test('factory run: bracket classes fold case, negated ones included (#274 review)', () => {
+  // A class may match when it takes either case of the letter; a negated one when it lacks either.
+  for (const [c, want] of [['[!G]h', true], ['[^g]H', true], ['[!gG]h', false], ['[G]h', true], ['[gG]h', true], ['[!A-Z]h', true], ['g[!H]', true], ['[!a-zA-Z]h', false]]) {
+    assert.equal(ghHidden(`${c} api user`), want, c);
+  }
+});
+
+test('factory run: a unit behind a known wrapper is read whole (#274 review)', () => {
+  for (const c of ['sudo -E -u root GH api user', 'sudo -i -g staff GH api user', 'timeout -s KILL 5 nice -n 5 GH api user', 'time -p sudo -u x GH api user', 'coproc NAME { GH api user; }']) assert.equal(ghHidden(c), true, c);
+  // Known over-denies (docs/guard.md): an option value that may name gh.
+  for (const c of ['env -u GH ls', 'sudo -g GH ls', 'env -C G* ls', 'timeout 5 ls *']) assert.equal(ghHidden(c), true, c);
+  for (const c of ['sudo -u root ls', 'timeout -s KILL 5 make', 'coproc NAME { make; }']) assert.equal(ghHidden(c), false, c);
+});
+
 test('factory run: the hidden-gh check stays fast on stars and brace lists (#274 review)', () => {
   // In a child with a timeout: a regex per glob backtracked on a word of a hundred stars and hung the hook.
   const script = `
     import { evaluateCommand } from ${JSON.stringify(new URL('./engine.mjs', import.meta.url).href)};
     import { rules } from ${JSON.stringify(new URL('./rules.mjs', import.meta.url).href)};
-    const lines = ['*'.repeat(150) + 'x api', '{' + Array(64).fill('*'.repeat(30) + 'x').join(',') + '} api', ('*'.repeat(100) + 'x; ').repeat(200), 'g' + '*'.repeat(10000) + 'q api', '[' + 'a'.repeat(5000) + ']h api'];
+    const lines = ['*'.repeat(150) + 'x api', '{' + Array(64).fill('*'.repeat(30) + 'x').join(',') + '} api', ('*'.repeat(100) + 'x; ').repeat(200), 'g' + '*'.repeat(10000) + 'q api', '[' + 'a'.repeat(5000) + ']h api', 'sudo -E '.repeat(2000) + 'x', 'timeout -s KILL 5 ' + 'g? '.repeat(5000), 'coproc '.repeat(3000) + 'x { make; }'];
     for (const command of lines) evaluateCommand({ command, state: { reminded: new Set() }, host: {}, factory: { approval: 'agent-ok' }, rules });
   `;
   const r = spawnSync(process.execPath, ['--input-type=module', '-e', script], { timeout: 10000, encoding: 'utf8' });

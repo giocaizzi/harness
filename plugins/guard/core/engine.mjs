@@ -3,7 +3,7 @@
 // apply the decision. `state.reminded` (a Set) is mutated: each rule fires once
 // per session ("remind once, then let it through").
 
-import { analyze, commandWords, scan, units } from './shell.mjs';
+import { analyze, commandWords, scan, units, WRAPPERS } from './shell.mjs';
 
 const bare = (skill) => skill.split(':').pop();
 
@@ -886,7 +886,8 @@ function globMatches(pattern, target) {
         }
         return false;
       };
-      tokens.push((ch) => (has(ch) || has(ch.toUpperCase())) !== negate);
+      // Either case may name the file: a class matches when it takes either one, a negated class when it lacks either.
+      tokens.push((ch) => (negate ? !(has(ch) && has(ch.toUpperCase())) : has(ch) || has(ch.toUpperCase())));
       i = end;
     } else {
       const lower = c.toLowerCase();
@@ -931,15 +932,19 @@ function hidesGh(w) {
 
 // A command, at any depth, that the shell may resolve to `gh` though its text does not spell `gh` (hidesGh). The text
 // checks above never see such a call. Every word up to the command is read, past reserved words (`then`, `{`, `!`,
-// `coproc`) and wrappers, so a wrapper option the reader takes for one with a value (`time -p`, `sudo -E`) cannot hide
-// the real command. A name the shell builds from a variable (`$GH`) stays out of sight.
+// `coproc`), and a unit that starts with a known wrapper is read whole, since the reader cannot tell a wrapper's option
+// values from the command (`sudo -E -u x …`, `timeout -s KILL 5 nice …`). A name the shell builds from a variable
+// (`$GH`) stays out of sight, and so does a command behind a wrapper the reader does not know (`stdbuf`, `watch`).
 export function ghHidden(command) {
+  const plain = (w) => !w.val.startsWith('-') && !/^[A-Za-z_]\w*=/.test(w.val);
   for (const { cmd } of units(analyze(command))) {
     const words = dropReserved(cmd.words);
+    const head = words.find(plain);
     let at = words.length - commandWords(words).length;
     // A word the reader took for the command that is an option or a duration (`time -p X`, `timeout -s KILL 5 X`): read on.
     while (at < words.length - 1 && (words[at].val.startsWith('-') || /^\d+(?:\.\d+)?[smhd]?$/.test(words[at].val))) at++;
-    if (words.slice(0, at + 1).some((w) => !w.val.startsWith('-') && !/^[A-Za-z_]\w*=/.test(w.val) && hidesGh(w))) return true;
+    const read = head && WRAPPERS.has(head.val.replace(/^.*[\\/]/, '').toLowerCase()) ? words : words.slice(0, at + 1);
+    if (read.some((w) => plain(w) && hidesGh(w))) return true;
   }
   return false;
 }
@@ -1005,7 +1010,9 @@ const RESERVED = new Set(['{', '(', '!', 'do', 'then', 'else', 'elif', 'if', 'wh
 function dropReserved(words) {
   let i = 0;
   while (i < words.length) {
-    if (RESERVED.has(words[i].val) && !dynamicText(words[i].raw)) i++;
+    // A named coprocess (`coproc NAME { … }`): the name is not the command.
+    if (words[i].val === 'coproc' && /^[{(]$/.test(words[i + 2]?.val ?? '')) i += 2;
+    else if (RESERVED.has(words[i].val) && !dynamicText(words[i].raw)) i++;
     else if (words[i].val === 'function') i += 2;
     else break;
   }

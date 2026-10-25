@@ -344,5 +344,11 @@
   ["[[:alpha:]]h api repos/o/r/issues/1/labels --input b.json", "deny:factory-approval", "G31", "review #277: a POSIX bracket class", {"factory": "readable"}],
   ["GH. api repos/o/r/issues/1/labels --input b.json", "deny:factory-approval", "G31", "review #277: gh in another case a trailing dot", {"factory": "readable"}],
   ["if make; then echo ok; fi", "allow", "G31", "control: reserved words around commands that are not gh", {"factory": "readable"}],
-  ["timeout 5 ls *; cp x{,.bak}", "allow", "G31", "control: a duration, a glob argument and a brace list", {"factory": "readable"}]
+  ["timeout 5 make; ls *; cp x{,.bak}", "allow", "G31", "control: a duration, a glob argument and a brace list (a glob argument behind a wrapper is a known over-deny)", {"factory": "readable"}],
+  ["[!G]h api repos/o/r/issues/1/labels --input b.json", "deny:factory-approval", "G31", "review #277 round 2: a negated bracket class listing the other case", {"factory": "readable"}],
+  ["sudo -E -u root GH api repos/o/r/issues/1/labels --input b.json", "deny:factory-approval", "G31", "review #277 round 2: a value-taking option after a no-value one", {"factory": "readable"}],
+  ["timeout -s KILL 5 nice -n 5 GH api repos/o/r/issues/1/labels --input b.json", "deny:factory-approval", "G31", "review #277 round 2: a second wrapper after timeout's options", {"factory": "readable"}],
+  ["time -p sudo -u x GH api repos/o/r/issues/1/labels --input b.json", "deny:factory-approval", "G31", "review #277 round 2: a second wrapper after time -p", {"factory": "readable"}],
+  ["coproc NAME { GH api repos/o/r/issues/1/labels --input b.json; }", "deny:factory-approval", "G31", "review #277 round 2: a named coprocess", {"factory": "readable"}],
+  ["sudo -u root make; coproc NAME { make; }", "allow", "G31", "control: a wrapper and a named coprocess around commands that are not gh", {"factory": "readable"}]
 ]
