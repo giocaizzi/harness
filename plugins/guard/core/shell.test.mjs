@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { analyze, codeOf, commandWords, scan, units } from './shell.mjs'
+import { analyze, codeOf, commandWords, scan, units, wrapped } from './shell.mjs'
 
 // Each unit as [depth, remote, injected, code].
 const flat = (command) => units(analyze(command)).map((u) => [u.depth, u.remote, u.injected, u.cmd.code.trim()])
@@ -90,6 +90,36 @@ test('commandWords skips assignments and wrappers', () => {
   const words = (c) => commandWords(scan(c)[0].words).map((w) => w.val)
   assert.deepEqual(words('A=1 sudo -u root env -i B=2 nice -n 5 rm -rf x'), ['rm', '-rf', 'x'])
   assert.deepEqual(words('timeout 30 bash -c x'), ['bash', '-c', 'x'])
+})
+
+test('wrapped: each wrapper reads its own options: no-value flags, clusters, glued values, --, long options (#282)', () => {
+  const read = (c) => {
+    const r = wrapped(scan(c)[0].words)
+    return [r.words.map((w) => w.val).join(' '), r.payload?.text ?? null, r.unsure]
+  }
+  for (const [c, want] of [
+    ['sudo -E bash -c x', 'bash -c x'], ['sudo -n -k -S -b -H ls', 'ls'], ['sudo -nE ls', 'ls'], ['sudo -Eu root ls', 'ls'], ['sudo -uroot ls', 'ls'],
+    ['sudo --user=root ls', 'ls'], ['sudo --user root ls', 'ls'], ['sudo --us root ls', 'ls'], ['sudo -u root -- ls', 'ls'], ['sudo A=1 -u x B=2 ls', 'ls'], ['sudo -h host ls', 'ls'], ['sudo -h -u x ls', 'ls'],
+    ['caffeinate -dims -t 5 ls', 'ls'], ['time -p ls', 'ls'], ['time -f %e -o out ls', 'ls'], ['command -p ls', 'ls'], ['exec -c -a name ls', 'ls'], ['nohup -- ls', 'ls'],
+    ['nice -n 5 ls', 'ls'], ['nice -n5 ls', 'ls'], ['nice -10 ls', 'ls'], ['nice --adjustment=3 ls', 'ls'], ['timeout 5 ls', 'ls'], ['timeout -s KILL -k 2 5 ls', 'ls'], ['timeout -- 5 ls', 'ls'], ['timeout --foreground 5s ls', 'ls'],
+    ['xargs -0 -r -I{} -n 1 -P 4 ls', 'ls'], ['xargs -i ls', 'ls'], ['xargs -eEOF ls', 'ls'], ['doas -n -u root ls', 'ls'], ['env -i -u X -C /tmp A=1 ls', 'ls'], ['env - ls', 'ls'], ['env -- - ls', 'ls'], ['env -i -- - A=1 ls', 'ls'],
+    ['stdbuf -oL -e 0 ls', 'ls'], ['stdbuf --output=L ls', 'ls'], ['ionice -c3 -n 7 ls', 'ls'], ['chrt -f 10 ls', 'ls'], ['chrt -i ls', 'ls'], ['chrt --other ls', 'ls'], ['chrt 10 ls', 'ls'], ['chrt -T 5 -D 9 -d 0 ls', 'ls'], ['taskset 0x3 ls', 'ls'], ['taskset -c 0,1 ls', 'ls'],
+    ['setsid -fw ls', 'ls'], ['unbuffer -p ls', 'ls'], ['watch -x -n 1 ls', 'ls'], ['sudo -E timeout -s KILL 5 nice -n 5 ls', 'ls'], ['time { ls', 'ls'], ['time -p ! ls', 'ls'],
+  ]) assert.deepEqual(read(c), [want, null, false], c)
+  // A string a wrapper runs as a command line: env -S (with env in front, since its words may be env's options) and watch.
+  assert.deepEqual(read("env -S 'rm -rf /x' y"), ['', 'env rm -rf /x y', false])
+  assert.deepEqual(read("env -vS'rm x'"), ['', 'env rm x', false])
+  assert.deepEqual(read('env --split-string="rm x"'), ['', 'env rm x', false])
+  assert.deepEqual(read("watch -n 2 -d 'rm -rf /x'"), ['', 'rm -rf /x', false])
+  assert.deepEqual(read('watch git status'), ['', 'git status', false])
+  // A lone `-` is the command anywhere but in env (and env reads only one, as the first word after `--`).
+  assert.deepEqual(read('nohup - ls'), ['- ls', null, false])
+  assert.deepEqual(read('env -- - - ls'), ['- ls', null, false])
+  // An option the table does not know, or an ambiguous long prefix: unsure.
+  for (const c of ['sudo -X ls', 'sudo --frob ls', 'watch --e 1 ls', 'stdbuf -X ls', 'caffeinate -nE ls']) assert.equal(read(c)[2], true, c)
+  // An unsure reading marks the analysis opaque.
+  assert.equal(analyze('sudo -X ls').opaque, true)
+  assert.equal(analyze('sudo -E ls').opaque, false)
 })
 
 test('scan: output redirection targets are kept, descriptor duplicates and inputs are not', () => {

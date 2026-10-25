@@ -1202,11 +1202,36 @@ test('factory run: bracket classes fold case, negated ones included (#274 review
   }
 });
 
-test('factory run: a unit behind a known wrapper is read whole (#274 review)', () => {
-  for (const c of ['sudo -E -u root GH api user', 'sudo -i -g staff GH api user', 'timeout -s KILL 5 nice -n 5 GH api user', 'time -p sudo -u x GH api user', 'coproc NAME { GH api user; }']) assert.equal(ghHidden(c), true, c);
-  // Known over-denies (docs/guard.md): an option value that may name gh.
-  for (const c of ['env -u GH ls', 'sudo -g GH ls', 'env -C G* ls', 'timeout 5 ls *']) assert.equal(ghHidden(c), true, c);
-  for (const c of ['sudo -u root ls', 'timeout -s KILL 5 make', 'coproc NAME { make; }']) assert.equal(ghHidden(c), false, c);
+test('factory run: the command behind a known wrapper is read with that wrapper\'s options (#274 review, #282)', () => {
+  for (const c of ['sudo -E -u root GH api user', 'sudo -i -g staff GH api user', 'timeout -s KILL 5 nice -n 5 GH api user', 'time -p sudo -u x GH api user', 'coproc NAME { GH api user; }', 'sudo -nE GH api user', 'sudo -Eu root GH api user', 'stdbuf -oL GH api user', 'ionice -c 3 GH api user', 'chrt -f 10 GH api user', 'taskset -c 0 GH api user', 'setsid -f GH api user', 'unbuffer -p GH api user', "watch -n 5 'GH api user'", 'watch -x GH api user', "env -S 'GH api user'"]) assert.equal(ghHidden(c), true, c);
+  // An option the wrapper's table does not know: the whole unit is read.
+  for (const c of ['sudo --frobnicate GH api user', 'env -X GH api user']) assert.equal(ghHidden(c), true, c);
+  // An option value is not the command, so a value that looks like gh no longer over-denies.
+  // time before a reserved word is a reserved word itself: the command in the group or after `!` is read (#282 review).
+  for (const c of ['time { GH api user; }', 'time ! GH api user', 'time -p { GH api user; }', 'time { sudo -E GH api user; }', 'chrt --idle GH api user']) assert.equal(ghHidden(c), true, c);
+  for (const c of ['env -u GH ls', 'sudo -g GH ls', 'env -C G* ls', 'timeout 5 ls *', 'sudo -u root ls', 'timeout -s KILL 5 make', 'coproc NAME { make; }', 'stdbuf -o GH ls']) assert.equal(ghHidden(c), false, c);
+});
+
+test('wrappers: each one\'s options are read with its own table, so the command behind it is judged (#282)', () => {
+  const run = (command) => evaluateCommand({ command, state: fresh(), host: calm, rules });
+  const asks = [
+    ["sudo -E bash -c 'rm -rf /x'", 'rm'], ["sudo -n bash -c 'rm -rf /x'", 'rm'], ["sudo -nE bash -c 'rm -rf /x'", 'rm'], ["sudo -Eu root bash -c 'rm -rf /x'", 'rm'],
+    ["sudo FOO=1 bash -c 'rm -rf /x'", 'rm'], ["sudo -h host bash -c 'rm -rf /x'", 'rm'], ["sudo --preserve-env=PATH bash -c 'rm -rf /x'", 'rm'], ["sudo --user root -- bash -c 'rm -rf /x'", 'rm'],
+    ["caffeinate -i bash -c 'rm -rf /x'", 'rm'], ["time -p bash -c 'git reset --hard'", 'reset'], ["time -o out bash -c 'rm -rf /x'", 'rm'], ["command -p bash -c 'rm -rf /x'", 'rm'],
+    ["timeout -s KILL 5 bash -c 'rm -rf /x'", 'rm'], ["timeout --kill-after=5 10 bash -c 'rm -rf /x'", 'rm'], ["env -S 'rm -rf /x'", 'rm'], ["env -i -S'rm -rf /x'", 'rm'],
+    ["env --split-string='rm -rf /x'", 'rm'], ["watch 'rm -rf /x'", 'rm'], ["watch -n 5 -d 'git reset --hard'", 'reset'], ["watch -x bash -c 'rm -rf /x'", 'rm'],
+    ["stdbuf -oL bash -c 'rm -rf /x'", 'rm'], ["stdbuf --output=L bash -c 'rm -rf /x'", 'rm'], ["taskset 1 bash -c 'rm -rf /x'", 'rm'], ["ionice -c 3 bash -c 'rm -rf /x'", 'rm'],
+    ["chrt -f 10 bash -c 'rm -rf /x'", 'rm'], ["setsid -f bash -c 'rm -rf /x'", 'rm'], ["unbuffer -p bash -c 'rm -rf /x'", 'rm'], ["nice -10 bash -c 'rm -rf /x'", 'rm'],
+    ["xargs -0 -I{} bash -c 'rm -rf /x'", 'rm'], ["doas -u root bash -c 'rm -rf /x'", 'rm'], ["exec -a x bash -c 'rm -rf /x'", 'rm'],
+    // An option the wrapper does not know: the command word is unsure, so it asks.
+    ['sudo --frobnicate ls', 'opaque'], ['stdbuf -X ls', 'opaque'],
+  ];
+  for (const [c, rule] of asks) assert.deepEqual([run(c).action, run(c).rule], ['ask', rule], c);
+  // time is a keyword: the command in a group or after `!` that follows it is read.
+  for (const c of ["time { bash -c 'rm -rf /x'; }", "time ! bash -c 'rm -rf /x'", "time -p { bash -c 'rm -rf /x'; }"]) assert.deepEqual([run(c).action, run(c).rule], ['ask', 'rm'], c);
+  // chrt takes a priority only when the word is all digits (its policy flags make the priority optional); taskset's mask is required.
+  for (const c of ["chrt -i bash -c 'rm -rf /x'", "chrt --other bash -c 'rm -rf /x'", "chrt -o 0 bash -c 'rm -rf /x'", "chrt 10 bash -c 'rm -rf /x'", "taskset -c 0 bash -c 'rm -rf /x'"]) assert.deepEqual([run(c).action, run(c).rule], ['ask', 'rm'], c);
+  for (const c of ['sudo -E make test', 'timeout 30 make test', 'watch -n 2 git status', "env -S 'echo hi'", 'stdbuf -oL tail -f log', 'xargs -0 grep foo', 'nice -n 10 make', 'caffeinate -i make', 'time -p make', 'env -i PATH=/bin ls', 'sudo -u root ls', 'ionice -c 3 make', 'taskset -c 0,1 make']) assert.equal(run(c).action, 'allow', c);
 });
 
 test('factory run: the hidden-gh check stays fast on stars and brace lists (#274 review)', () => {
