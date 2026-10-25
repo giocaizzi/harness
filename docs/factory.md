@@ -110,7 +110,7 @@ Each run writes `.factory/runs/<number>/result.json` in the repo's main checkout
 | Key | Type | Meaning |
 |---|---|---|
 | `schema` | integer | Contract version, `2` (`1` in older results). |
-| `ticket` | string | `<owner>/<repo>#<number>`. |
+| `ticket` | string | `<owner>/<repo>#<number>`. A runtime sets `FACTORY_TICKET` to the ticket in this form, and `check-result.mjs` checks `ticket` against it exactly. |
 | `run_id` | string | `FACTORY_RUN_ID` when a runtime started the run (it sets that variable, plus `FACTORY_DEV=1` in dev mode, and claims under it); else `FACTORY_ATTENDED_RUN_ID` when an attended session was started through the launcher for this ticket ([Attended telemetry](#attended-telemetry)); else the main session's id where the harness exposes one, else `<host>-<number>-<UTC timestamp>`. Also in the claim comment. |
 | `end_state` | `done` \| `parked` \| `failed` \| `budget_reached` \| `halted` | `done`: merged, deployed and verified per the definition of done. `parked`: waiting on the owner (a question, the M+ plan, a merge, or three parks). `failed`: could not be finished for a reason the owner must look at. `budget_reached`: a budget cap stopped the run; a pause, not a failure. `halted`: a runtime stopped the run on a halt (kill switch or circuit breaker) or for a [takeover](#takeover) (`reason_code: takeover`); written only by the runtime, never by the skills. |
 | `reason` | string | Why the run parked or failed; empty when done. |
