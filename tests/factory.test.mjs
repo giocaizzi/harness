@@ -42,6 +42,35 @@ test('config.yaml template: placeholders only, no real logins, projects or hosts
   assert.doesNotMatch(text, /https?:\/\//)
 })
 
+test('notify: a repo names a topic or a command, a notify.url is flagged, reminders are host keys', () => {
+  const row = doc.split('\n').find((l) => l.startsWith('| `notify` |'))
+  // The keys a repo's notify block may hold, as the contract row names them before "is flagged".
+  const allowed = [...row.split('is flagged')[0].matchAll(/`([a-z_]+)` \(/g)].map((m) => m[1])
+  assert.deepEqual(allowed.sort(), ['command', 'topic'])
+  // A block is flagged for any key outside the allowed ones, or for setting more than one of them.
+  const flagged = (keys) => [...keys.filter((k) => !allowed.includes(k)), ...(keys.filter((k) => allowed.includes(k)).length > 1 ? ['topic and command both set'] : [])]
+  assert.deepEqual(flagged(['url']), ['url'])
+  assert.deepEqual(flagged(['topic', 'url']), ['url'])
+  assert.deepEqual(flagged(['remind_after', 'remind_max']), ['remind_after', 'remind_max'], 'reminders are never repo keys')
+  assert.deepEqual(flagged(['topic', 'command']), ['topic and command both set'])
+  assert.deepEqual(flagged(['topic']), [])
+  assert.deepEqual(flagged(['command']), [])
+  assert.match(row, /exactly one of `topic`/)
+  assert.match(row, /A `url`, or any other key, is flagged, and so is a block with both `topic` and `command`/)
+  assert.match(row, /under the same trust as the `checks` and `deploy` commands \(whether it should stay a repo key: #288\)/)
+  assert.doesNotMatch(row, /sends nothing to an address the repo supplies/)
+  const block = read('plugins/factory/template/config.yaml').split('\nnotify:\n')[1].split(/\n(?! )/)[0]
+  const keys = block.split('\n').map((l) => l.match(/^ {2}([a-z_]+):/)?.[1]).filter(Boolean)
+  assert.deepEqual(flagged(keys), [], 'the template is a valid notify block: one allowed key')
+  assert.deepEqual(keys, ['topic'])
+  const section = doc.split('\n## Notifications\n')[1].split('\n## ')[0]
+  assert.match(section, /A repo sets one of `topic` or `command`, never both/)
+  assert.match(section, /\*\*Flagged\*\* means the `notify` block breaks the contract, so a runtime must treat the repo's `notify` config as invalid and send no notice through it/)
+  for (const item of ['A `notify.url` in repo config: it gets no message.', 'Any key other than `topic` and `command`, the reminder keys included.', 'A block that sets both `topic` and `command`.']) assert.ok(section.includes(`- ${item}`), item)
+  for (const key of ['notify.remind_after', 'notify.remind_max']) assert.match(section, new RegExp(`^\\| \`${key.replace('.', '\\.')}\` \\|`, 'm'))
+  assert.match(section, /In the runtime's host config, not in `\.factory\/config\.yaml`/)
+})
+
 test('reason_code: ticket-run maps every documented code, and only those', () => {
   const row = doc.split('\n').find((l) => l.startsWith('| `reason_code`'))
   const documented = [...row.split('asks one):')[1].split(';')[0].matchAll(/`([a-z_]+)`/g)].map((m) => m[1])
@@ -279,7 +308,7 @@ test('verifier: the definition grants exactly one write, its verdict file, as th
 
 // Input trust: only approvers and writers instruct a run.
 const COMMENTS = 'plugins/factory/skills/ticket-run/references/comments.md'
-const editCheck = (timeline, edit, approvers = ['owner'], label = 'agent-ok') => {
+const editCheck = (timeline, edit, approvers = ['owner'], label = 'agent-ok', allowBots = false) => {
   const block = read(COMMENTS).split('## Edited after approval')[1].split('```')[1]
   assert.equal(spawnSync('bash', ['-n'], { input: block }).status, 0, 'the documented snippet must parse in bash')
   assert.match(block, /gh api graphql/)
@@ -287,7 +316,7 @@ const editCheck = (timeline, edit, approvers = ['owner'], label = 'agent-ok') =>
   assert.match(block, /event == "renamed"/)
   const command = block.split('\n').find((l) => l.includes('/timeline?per_page=100'))
   assert.equal(touchesApprovalLabel(command.replace('<L>', label), label), false, 'the filled-in check is one plain gh read')
-  const program = command.match(/--jq '([^']+)'$/)[1].replace('<A>', JSON.stringify(approvers)).replace('<EDIT>', JSON.stringify(edit)).replace('<L>', label)
+  const program = command.match(/--jq '([^']+)'$/)[1].replace('<A>', JSON.stringify(approvers)).replace('<B>', JSON.stringify(allowBots)).replace('<EDIT>', JSON.stringify(edit)).replace('<L>', label)
   const run = spawnSync('jq', ['-r', program], { input: JSON.stringify(timeline) })
   assert.equal(run.error, undefined, 'jq must be installed')
   assert.equal(run.status, 0, run.stderr.toString())
@@ -321,6 +350,21 @@ test('Gate edit check: a body or title anyone edited after the approval is refus
   const long = [...approved, ...Array.from({ length: 99 }, (_, i) => ({ event: 'commented', actor: { login: 'owner' }, created_at: `2026-01-03T00:00:${String(i % 60).padStart(2, '0')}Z` }))]
   assert.match(editCheck(long, { lastEditedAt: null, editor: null }), /^refuse: the timeline has 100 or more events/, 'a partial history is refused')
   assert.equal(editCheck(long.slice(0, 99), { lastEditedAt: null, editor: null }), 'ok', '99 events fit one page')
+})
+
+test('Gate approval: a [bot] approver counts only with approvers_allow_bots, documented in the contract and the template', () => {
+  const never = { lastEditedAt: null, editor: null }
+  const approvers = ['owner', 'factory-bot[bot]']
+  assert.match(editCheck([labeled('factory-bot[bot]', '2026-01-02T00:00:00Z')], never, approvers), /^refuse: not approved/, 'a bot approver, key unset')
+  assert.match(editCheck([labeled('Factory-Bot[BOT]', '2026-01-02T00:00:00Z')], never, approvers), /^refuse: not approved/, 'case does not hide the bot')
+  assert.equal(editCheck([labeled('factory-bot[bot]', '2026-01-02T00:00:00Z')], never, approvers, 'agent-ok', true), 'ok', 'a bot approver, key true')
+  assert.match(editCheck([labeled('other-bot[bot]', '2026-01-02T00:00:00Z')], never, approvers, 'agent-ok', true), /^refuse: not approved/, 'the key admits no bot outside approvers')
+  assert.equal(editCheck([labeled('owner', '2026-01-02T00:00:00Z')], never, approvers), 'ok', 'a person approver is unaffected')
+  const gate = read(COMMENTS).split('\n').find((l) => l.startsWith('- **Approved:**'))
+  assert.match(gate, /A login ending in `\[bot\]` \(a GitHub App\) counts as that approver only when the config's `approvers_allow_bots` is `true`; unset, it is `false`/)
+  assert.ok(tableKeys('Config: `.factory/config.yaml`').includes('approvers_allow_bots'))
+  assert.match(doc, /\| `approvers_allow_bots` \| no \| .*default `false`/)
+  assert.match(read('plugins/factory/template/config.yaml'), /\napprovers_allow_bots: false\n/)
 })
 
 test('merge gate: done.md resumes a parked ticket only when an approver merged the PR', () => {

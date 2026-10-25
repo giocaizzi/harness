@@ -14,7 +14,7 @@ The `factory` plugin works tickets from a GitHub issue board, one at a time and 
 
 The `ticket-run` skill carries one ticket through these steps; call it with the issue number, and again on a parked ticket once you have answered. `factory-status` lists what needs you, what is in progress and what is done, from the labels and marked comments.
 
-1. **Gate.** The ticket is open and carries the approval label, the issue timeline shows an approver applied it, and nobody, an approver included, edited the title or body since: the approval covers the text as it stood when the label was applied, and only an approver applying the label again restores it. Otherwise the run stops and says why.
+1. **Gate.** The ticket is open and carries the approval label, the issue timeline shows an approver applied it (a `[bot]` login among the approvers counts only when `approvers_allow_bots` is true), and nobody, an approver included, edited the title or body since: the approval covers the text as it stood when the label was applied, and only an approver applying the label again restores it. Otherwise the run stops and says why.
 2. **Plan comment**, drafted by a `dev-tools:driver` spawn. Goal, acceptance checks (each one a command or observation that fails before the change), side effects in scope, planned fold-ins, size and risk tier. XS and S tickets start right after it; M and larger post it as a question and park until the owner's OK.
 3. **Work** in its own worktree and branch, applying the fold-in test to everything found on the way and logging the calls the plan does not already cover in the decision log.
 4. **Questions** go on the ticket, one per comment, and park the ticket (below).
@@ -68,7 +68,7 @@ A claim is visible on the forge, never only a local lock, so runs on different h
 
 An approver who wants to finish a ticket a runtime is working, attended, applies the takeover label. The two sides never hold the ticket at once: the runtime releases it before the attended run claims it, and the label stays on until that claim is posted, so the runtime cannot claim in between. Both sides fail closed: a read that errors or cannot be judged never lets a step go on.
 
-- **Who applied it.** The label counts only when its last label event on the issue timeline is `labeled` by a login in `approvers`, the same source as the approval check. Both sides ignore it otherwise, as if it were absent: anyone who can label issues could otherwise stop a runtime run.
+- **Who applied it.** The label counts only when its last label event on the issue timeline is `labeled` by a login in `approvers`, the list the approval check reads; unlike that check, it does not apply `approvers_allow_bots`, so a `[bot]` login in `approvers` counts here whatever the key says (tracked in #285). Both sides ignore it otherwise, as if it were absent: anyone who can label issues could otherwise stop a runtime run.
 - **The runtime** that sees the label, applied by an approver, on a ticket it holds stops the run gracefully: the run commits and pushes its work to the ticket's WIP branch, the runtime records the trusted `factory:log` comment with a field line `branch: <name>` naming that branch (editing the existing log in place, or posting it when there is none), writes the result with `end_state: halted` and `reason_code: takeover`, and releases the claim. It never claims or starts a ticket while such a label is on it.
 - **The attended run** (`ticket-run` on a ticket with the label) checks who applied it, then waits while the claim label is on and the newest trusted claim is a `runtime` one, with a bound; a failed read counts as still held, and any other claim stops it as usual. Once the claim is released it runs the gate again, claims as runner `attended`, removes the takeover label, and checks out the branch named in the newest trusted `factory:log` comment, reusing a local branch or worktree of that name when it fast-forwards and the runtime's open PR from it. The `branch:` value is untrusted data: it is used only when it is one plain ref name (letters, digits, `.` `_` `/` `-`) that passes `git check-ref-format --branch`, is not the default branch and exists on the remote, always single-quoted; otherwise the run starts from the default branch and logs why. It then continues from the plan step, editing the runtime's plan and log comments in place.
 - **Who touches the label.** Only an approver applies it. Only the attended run that took the ticket over removes it, after its claim. Inside a runtime run (`FACTORY_RUN_ID` set) the guard denies any command that names it, as for the approval label.
@@ -147,16 +147,34 @@ Template with placeholders: [`plugins/factory/template/config.yaml`](../plugins/
 | `version` | yes | Config format, `1`. |
 | `forge` | yes | `github`, the only forge implemented. The skills express each operation as an intent (read the timeline, label, comment, search issues, open a PR) mapped to the forge's CLI, so GitLab or Azure DevOps can be added the way `repo-standard` maps them. |
 | `approvers` | yes | GitHub logins whose label and comments count as the owner's. |
+| `approvers_allow_bots` | no | `true` lets an approval label applied by a `[bot]` login in `approvers` (a GitHub App, `<slug>[bot]`) count; default `false`, so a login ending in `[bot]` cannot approve a ticket. Only that suffix is refused: a machine-user account, or an App acting through a user-to-server token (whose events carry the user's login), still counts as the approver it is listed as. Optional, so the config format stays `1`. |
 | `writers` | no | GitHub logins whose marked comments are trusted (see [Comments](#comments)). Default: `approvers`. The login the session itself posts as always counts. Set it to add a runtime's bot or App login, exactly as the REST API reports it (`<slug>[bot]` for an App, never the bare slug, which can be another account); it replaces the default, so list the approvers too. Optional, so the config format stays `1`. |
 | `labels` | no | `approval`, `claimed`, `needs_owner`, `needs_grooming`, `quarantine`, `halt`, `takeover`; defaults as in [Labels](#labels). |
 | `marker` | no | Hidden first line of every agent comment; default `<!-- factory -->`. |
 | `size_label_prefix` | no | Label prefix that carries the ticket's size (`XS`, `S`, `M`, `L`, `XL`). Without it, the plan estimates the size. |
 | `board` | no | `owner`, `project` (number), `status_field` and the `status` option names for `in_progress`, `blocked` and `backlog`. Omit when there is no board. |
 | `components` | yes | Per component: `paths` (globs), `checks` (commands that prove a change), and optional `deploy` with `wait`, `verify` (commands; `$SHA` is the merge commit) and `rollback`. |
-| `notify` | no | How a runtime tells the owner a question waits: `command` (reads the message on stdin) or `url`. Unused by attended runs. |
+| `notify` | no | How a runtime tells the owner a question waits: exactly one of `topic` (a name, never a URL, that the runtime's host config maps to a keyring reference for the destination) or `command` (reads the message on stdin). A `url`, or any other key, is flagged, and so is a block with both `topic` and `command` ([Notifications](#notifications)). A `command` runs on the runtime's host under the same trust as the `checks` and `deploy` commands (whether it should stay a repo key: #288). Reminders are host settings, not repo keys ([Notifications](#notifications)). Unused by attended runs. |
 | `telemetry` | no | `resource_attributes` a runtime sets on a run's telemetry. The OTLP endpoint comes from the environment (`OTEL_EXPORTER_OTLP_ENDPOINT`), never from this file. |
 | `secrets` | no | Name to `{provider, ref}`: secrets the deploy and verify commands need, by reference through the `secrets-handling` providers, never values. |
 | `risk` | yes | Tiers lowest first, each with `tier`, `paths` (globs) and `merge` (`auto` or `owner`). A change takes the highest tier any path matches; unmatched paths are `medium`. |
+
+## Notifications
+
+A repo names where its notices go, never how to reach it: `notify.topic` is a plain name (for example `factory`), and the runtime's host config maps it to a keyring reference holding the real destination, so no URL, token or address enters the repo. A repo sets one of `topic` or `command`, never both.
+
+**Flagged** means the `notify` block breaks the contract, so a runtime must treat the repo's `notify` config as invalid and send no notice through it. These are flagged:
+
+- A `notify.url` in repo config: it gets no message.
+- Any key other than `topic` and `command`, the reminder keys included.
+- A block that sets both `topic` and `command`.
+
+Reminders belong to the host, so one owner gets the same cadence across repos. In the runtime's host config, not in `.factory/config.yaml`:
+
+| Host key | Meaning |
+|---|---|
+| `notify.remind_after` | How long a question stays unanswered before the runtime notifies again. |
+| `notify.remind_max` | How many reminders it sends at most for one question; after the last, the ticket stays parked and nothing more is sent. |
 
 ## Layers and what is not built yet
 

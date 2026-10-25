@@ -10,6 +10,11 @@ forge: github
 approvers:
   - <github-login>
 
+# Optional: whether an approval label applied by a [bot] login listed in approvers (a GitHub App) counts.
+# Default false: a login ending in [bot] cannot approve a ticket. Only that suffix is refused: a machine-user
+# account, or an App acting through a user-to-server token (events carry the user's login), still counts.
+approvers_allow_bots: false
+
 # Optional: GitHub logins whose marked comments (claims, plans, questions, results, notices) are trusted;
 # the marker alone proves nothing. Default: approvers. The login a session posts as always counts.
 # Set it to add a runtime's bot or App login, for a GitHub App exactly its slug plus [bot] (example-bot[bot], never the
@@ -78,9 +83,13 @@ risk:
     merge: owner
 
 # Optional backends a runtime would use; the attended skills ignore them. Delete what you do not use.
-# How to tell the owner a question is waiting: a command that reads the message on stdin, or a URL to POST it to.
+# How to tell the owner a question is waiting: exactly one of a topic name the runtime's host config maps to a
+# keyring reference, or a command that reads the message on stdin (it runs on the runtime's host). A notify.url,
+# any other key, or both topic and command make the block invalid: the runtime sends nothing through it.
+# Reminders (notify.remind_after, notify.remind_max) are host settings, never set here.
 notify:
-  command: "<command reading the message on stdin>"
+  topic: <topic-name>
+  # command: "<command reading the message on stdin>"   (instead of topic)
 # Resource attributes to tag a run's telemetry with. The OTLP endpoint comes from the environment
 # (OTEL_EXPORTER_OTLP_ENDPOINT), never from this file.
 telemetry:
