@@ -11,7 +11,8 @@ approvers:
   - <github-login>
 
 # Optional: whether an approval label applied by a [bot] login listed in approvers (a GitHub App) counts.
-# Default false: a bot or App token that is an approver cannot approve a ticket.
+# Default false: a login ending in [bot] cannot approve a ticket. Only that suffix is refused: a machine-user
+# account, or an App acting through a user-to-server token (events carry the user's login), still counts.
 approvers_allow_bots: false
 
 # Optional: GitHub logins whose marked comments (claims, plans, questions, results, notices) are trusted;
