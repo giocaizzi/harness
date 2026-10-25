@@ -42,6 +42,35 @@ test('config.yaml template: placeholders only, no real logins, projects or hosts
   assert.doesNotMatch(text, /https?:\/\//)
 })
 
+test('notify: a repo names a topic or a command, a notify.url is flagged, reminders are host keys', () => {
+  const row = doc.split('\n').find((l) => l.startsWith('| `notify` |'))
+  // The keys a repo's notify block may hold, as the contract row names them before "is flagged".
+  const allowed = [...row.split('is flagged')[0].matchAll(/`([a-z_]+)` \(/g)].map((m) => m[1])
+  assert.deepEqual(allowed.sort(), ['command', 'topic'])
+  // A block is flagged for any key outside the allowed ones, or for setting more than one of them.
+  const flagged = (keys) => [...keys.filter((k) => !allowed.includes(k)), ...(keys.filter((k) => allowed.includes(k)).length > 1 ? ['topic and command both set'] : [])]
+  assert.deepEqual(flagged(['url']), ['url'])
+  assert.deepEqual(flagged(['topic', 'url']), ['url'])
+  assert.deepEqual(flagged(['remind_after', 'remind_max']), ['remind_after', 'remind_max'], 'reminders are never repo keys')
+  assert.deepEqual(flagged(['topic', 'command']), ['topic and command both set'])
+  assert.deepEqual(flagged(['topic']), [])
+  assert.deepEqual(flagged(['command']), [])
+  assert.match(row, /exactly one of `topic`/)
+  assert.match(row, /A `url`, or any other key, is flagged, and so is a block with both `topic` and `command`/)
+  assert.match(row, /under the same trust as the `checks` and `deploy` commands \(whether it should stay a repo key: #288\)/)
+  assert.doesNotMatch(row, /sends nothing to an address the repo supplies/)
+  const block = read('plugins/factory/template/config.yaml').split('\nnotify:\n')[1].split(/\n(?! )/)[0]
+  const keys = block.split('\n').map((l) => l.match(/^ {2}([a-z_]+):/)?.[1]).filter(Boolean)
+  assert.deepEqual(flagged(keys), [], 'the template is a valid notify block: one allowed key')
+  assert.deepEqual(keys, ['topic'])
+  const section = doc.split('\n## Notifications\n')[1].split('\n## ')[0]
+  assert.match(section, /A repo sets one of `topic` or `command`, never both/)
+  assert.match(section, /\*\*Flagged\*\* means the `notify` block breaks the contract, so a runtime must treat the repo's `notify` config as invalid and send no notice through it/)
+  for (const item of ['A `notify.url` in repo config: it gets no message.', 'Any key other than `topic` and `command`, the reminder keys included.', 'A block that sets both `topic` and `command`.']) assert.ok(section.includes(`- ${item}`), item)
+  for (const key of ['notify.remind_after', 'notify.remind_max']) assert.match(section, new RegExp(`^\\| \`${key.replace('.', '\\.')}\` \\|`, 'm'))
+  assert.match(section, /In the runtime's host config, not in `\.factory\/config\.yaml`/)
+})
+
 test('reason_code: ticket-run maps every documented code, and only those', () => {
   const row = doc.split('\n').find((l) => l.startsWith('| `reason_code`'))
   const documented = [...row.split('asks one):')[1].split(';')[0].matchAll(/`([a-z_]+)`/g)].map((m) => m[1])
