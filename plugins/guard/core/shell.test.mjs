@@ -14,6 +14,15 @@ test('scan: quoted text is blanked, heredoc bodies and comments dropped, operato
   assert.equal(codeOf('a && b | c'), 'a && b | c')
 })
 
+test('scan: a vertical tab, form feed or Unicode space is part of the word, as in the shell (G29)', () => {
+  // In a child with a timeout: the reader ended a word on these without moving past them and filled memory.
+  const script = `import { scan } from ${JSON.stringify(new URL('./shell.mjs', import.meta.url).href)};
+    console.log(JSON.stringify(['\\v', '\\f', '\\u00a0', '\\u2028', '\\u3000', '\\ufeff'].map((c) => scan('echo a' + c + 'b # x' + c + '#y; ls').map((x) => x.words.map((w) => w.val)))))`
+  const r = spawnSync(process.execPath, ['--max-old-space-size=200', '--input-type=module', '-e', script], { timeout: 10000, encoding: 'utf8' })
+  assert.equal(r.status, 0, r.stderr.slice(0, 300))
+  assert.deepEqual(JSON.parse(r.stdout), ['\v', '\f', '\u00a0', '\u2028', '\u3000', '\ufeff'].map((c) => [['echo', `a${c}b`]]))
+})
+
 test('scan: a ( after =, @, ?, *, + or ! joins the word, closed or not; zsh =(cmd) is a substitution (G27)', () => {
   // In a child with a timeout: the reader used to stop at the ( without moving on and fill memory.
   const script = `import { scan } from ${JSON.stringify(new URL('./shell.mjs', import.meta.url).href)};
