@@ -40,6 +40,8 @@ jobs:
       # `make check` runs on Linux only: the host-hygiene .ps1 suite (named mutexes, CPU sampling) needs Windows.
       - if: runner.os == 'Windows'
         run: pwsh -NoProfile -File tests/host-hygiene.test.ps1
+      - if: runner.os == 'Windows'
+        run: node --test tests/wait-pr.test.mjs # wait-pr.ps1 on Windows; `make check` covers Linux
 
   # Required status check. `if: always()` so a failed `secrets` or `e2e` job fails
   # `check` instead of skipping it (a skipped required check counts as passing).
