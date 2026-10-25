@@ -1,15 +1,16 @@
-// Tests for plugins/dev-tools/skills/land/scripts/wait-pr.{sh,ps1} against a scripted `gh` on PATH.
-// The .sh runs on macOS/Linux, the .ps1 on Windows (CI's windows-scripts job), like the scripts themselves.
+// Shared by tests/wait-pr-sh.test.mjs and tests/wait-pr-ps1.test.mjs: the tests of
+// plugins/dev-tools/skills/land/scripts/wait-pr.{sh,ps1} against a scripted `gh` on PATH. The .sh runs on
+// macOS/Linux, the .ps1 on Windows (CI's windows-scripts job), like the scripts themselves. Each test spawns
+// its own script, gh shim and temp dir, so a file runs them concurrently (`CONCURRENCY`).
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { spawn, spawnSync } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const scripts = fileURLToPath(new URL('../plugins/dev-tools/skills/land/scripts/', import.meta.url))
-const win = process.platform === 'win32'
 
 // The shim: each `gh pr view` takes the next step (the last one repeats); `gh pr checks` answers from the same step.
 // A step is { view: {state, mergeStateStatus} | 'error' | 'hang' | 'stubborn', checks?: [{name, bucket, link}] | 'hang' | 'stubborn',
@@ -58,82 +59,95 @@ writeFileSync(join(bin, 'gh'), `#!/bin/sh\nif [ -n "$SHIM_NOEXEC" ]; then node "
 chmodSync(join(bin, 'gh'), 0o755)
 writeFileSync(join(bin, 'gh.cmd'), '@node "%~dp0shim.mjs" %*\r\n')
 
-const pwsh = win && spawnSync('pwsh', ['-NoProfile', '-Command', 'exit 0']).status === 0
-const runners = [
-  ...(win ? [] : [['sh', (args) => ['bash', [join(scripts, 'wait-pr.sh'), ...args]]]]),
-  ...(pwsh ? [['ps1', (args) => ['pwsh', ['-NoProfile', '-File', join(scripts, 'wait-pr.ps1'), ...args]]]] : []),
-]
+export const win = process.platform === 'win32'
+// Tests at once per file: most of each one is waiting on a 1-3 s deadline and its 5 s grace, not CPU.
+export const CONCURRENCY = 4
+const runners = {
+  sh: (args) => ['bash', [join(scripts, 'wait-pr.sh'), ...args]],
+  ps1: (args) => ['pwsh', ['-NoProfile', '-File', join(scripts, 'wait-pr.ps1'), ...args]],
+}
 
 const open = (mergeStateStatus = 'BLOCKED', checks) => ({ view: { state: 'OPEN', mergeStateStatus }, checks })
 const check = (name, bucket) => ({ name, bucket, link: `https://ci.example/${name.replace(/ /g, '-')}` })
 
-function setup(kind, steps, args, extraEnv) {
+export function setup(kind, steps, args, extraEnv) {
   const dir = mkdtempSync(join(tmpdir(), 'wait-pr-'))
   const file = join(dir, 'steps.json')
   writeFileSync(file, JSON.stringify(steps))
-  const [exe, argv] = runners.find(([k]) => k === kind)[1](['12', ...args])
+  const [exe, argv] = runners[kind](['12', ...args])
   const env = { ...process.env, PATH: bin + delimiter + process.env.PATH, SHIM_STEPS: file, SHIM_NOEXEC: '', WAIT_PR_INTERVAL: '', WAIT_PR_TIMEOUT: '', ...extraEnv }
   return { file, exe, argv, env }
 }
-const pids = (file) => (existsSync(file + '.pids') ? readFileSync(file + '.pids', 'utf8').trim().split(/\s+/).map(Number) : [])
+export const pids = (file) => (existsSync(file + '.pids') ? readFileSync(file + '.pids', 'utf8').trim().split(/\s+/).map(Number) : [])
 const alive = (pid) => { try { process.kill(pid, 0); return true } catch (e) { return e.code === 'EPERM' } }
-// The gh calls' pids still running a moment after the script ended (a killed orphan needs time to be reaped).
-async function survivors(file) {
-  for (let i = 0; i < 20; i++) {
+// The gh calls' pids still running a moment after the script ended (a killed orphan needs time to be reaped,
+// longer on a loaded runner).
+export async function survivors(file) {
+  for (let i = 0; i < 50; i++) {
     if (pids(file).filter(alive).length === 0) return []
     await new Promise((r) => setTimeout(r, 100))
   }
   return pids(file).filter(alive)
 }
 
-function run(kind, steps, args = ['--interval', '1'], extraEnv = {}) {
+// Async, so the tests of a file can run at once.
+async function run(kind, steps, args = ['--interval', '1'], extraEnv = {}) {
   const { file, exe, argv, env } = setup(kind, steps, args, extraEnv)
   const start = Date.now()
-  const r = spawnSync(exe, argv, { env, encoding: 'utf8', timeout: 30000 })
+  const r = await new Promise((resolve) => {
+    const child = spawn(exe, argv, { env, timeout: 30000 })
+    let stdout = ''
+    let stderr = ''
+    child.stdout.on('data', (d) => (stdout += d))
+    child.stderr.on('data', (d) => (stderr += d))
+    child.on('error', (e) => resolve({ status: null, stdout, stderr: stderr + e.message }))
+    child.on('close', (status) => resolve({ status, stdout, stderr }))
+  })
   const secs = (Date.now() - start) / 1000
   let calls = []
   try { calls = readFileSync(file + '.log', 'utf8').trim().split('\n') } catch {}
   return { file, secs, code: r.status, out: r.stdout.replace(/\r\n/g, '\n'), err: r.stderr, calls }
 }
 
-for (const [kind] of runners) {
-  test(`${kind}: merged exits 0 after the open polls`, () => {
-    const r = run(kind, [open('BLOCKED', [check('check', 'pending')]), { view: { state: 'MERGED', mergeStateStatus: 'UNKNOWN' } }])
+// The tests both scripts must pass; call it inside a suite with `{ concurrency: CONCURRENCY }`.
+export function commonTests(kind) {
+  test(`${kind}: merged exits 0 after the open polls`, async () => {
+    const r = await run(kind, [open('BLOCKED', [check('check', 'pending')]), { view: { state: 'MERGED', mergeStateStatus: 'UNKNOWN' } }])
     assert.equal(r.code, 0, r.err)
     assert.match(r.out, /PR 12 merged/)
   })
 
-  test(`${kind}: closed without merging exits 1`, () => {
-    const r = run(kind, [open(), { view: { state: 'CLOSED', mergeStateStatus: 'UNKNOWN' } }])
+  test(`${kind}: closed without merging exits 1`, async () => {
+    const r = await run(kind, [open(), { view: { state: 'CLOSED', mergeStateStatus: 'UNKNOWN' } }])
     assert.equal(r.code, 1, r.err)
     assert.match(r.out, /closed without merging/)
   })
 
-  test(`${kind}: a failed required check exits 3 with its name and link`, () => {
-    const r = run(kind, [open('BLOCKED', [check('lint', 'pass'), check('e2e tests', 'fail'), check('build', 'pending')])])
+  test(`${kind}: a failed required check exits 3 with its name and link`, async () => {
+    const r = await run(kind, [open('BLOCKED', [check('lint', 'pass'), check('e2e tests', 'fail'), check('build', 'pending')])])
     assert.equal(r.code, 3, r.err)
     assert.match(r.out, /required check failed\n {2}e2e tests https:\/\/ci\.example\/e2e-tests\n$/)
   })
 
-  test(`${kind}: a cancelled required check exits 3`, () => {
-    const r = run(kind, [open('BLOCKED', [check('check', 'cancel')])])
+  test(`${kind}: a cancelled required check exits 3`, async () => {
+    const r = await run(kind, [open('BLOCKED', [check('check', 'cancel')])])
     assert.equal(r.code, 3, r.err)
     assert.match(r.out, /check https:\/\/ci\.example\/check/)
   })
 
-  test(`${kind}: BEHIND and DIRTY exit 4`, () => {
-    const behind = run(kind, [open('BEHIND', [check('check', 'pass')])])
+  test(`${kind}: BEHIND and DIRTY exit 4`, async () => {
+    const behind = await run(kind, [open('BEHIND', [check('check', 'pass')])])
     assert.equal(behind.code, 4, behind.err)
     assert.match(behind.out, /behind its base/)
-    const dirty = run(kind, [open('DIRTY')])
+    const dirty = await run(kind, [open('DIRTY')])
     assert.equal(dirty.code, 4, dirty.err)
     assert.match(dirty.out, /merge conflict/)
   })
 
   const blocked = open('BLOCKED', [check('check', 'pending'), check('Validate PR title', 'pending')])
   for (const [name, step] of [['', blocked], [' and a gh that takes 0.3 s', { ...blocked, delay: 300 }]]) {
-    test(`${kind}: no outcome${name} exits 124 at the timeout, naming no call, one call pair per poll`, () => {
-      const r = run(kind, [step], ['--interval', '1', '--timeout', '3'])
+    test(`${kind}: no outcome${name} exits 124 at the timeout, naming no call, one call pair per poll`, async () => {
+      const r = await run(kind, [step], ['--interval', '1', '--timeout', '3'])
       assert.equal(r.code, 124, r.err)
       assert.match(r.out, /^PR 12: timed out after 3s, state OPEN, mergeStateStatus BLOCKED, pending required checks: check,Validate PR title\n$/)
       assert.match(r.calls.join(','), /^view,checks(,view,checks)*$/)
@@ -141,8 +155,8 @@ for (const [kind] of runners) {
   }
 
   for (const [what, step] of [['gh pr view', { view: 'hang' }], ['gh pr checks', open('BLOCKED', 'hang')]]) {
-    test(`${kind}: a hung ${what} is killed after the deadline and named`, () => {
-      const r = run(kind, [step], ['--interval', '1', '--timeout', '1'])
+    test(`${kind}: a hung ${what} is killed after the deadline and named`, async () => {
+      const r = await run(kind, [step], ['--interval', '1', '--timeout', '1'])
       assert.equal(r.code, 124, r.err)
       assert.match(r.out, new RegExp(`timed out after 1s, .*\\(${what} did not return\\)\n$`))
       assert.ok(r.secs < 15, `took ${r.secs}s`)
@@ -150,55 +164,41 @@ for (const [kind] of runners) {
   }
 
   test(`${kind}: a hung gh that forks and ignores SIGTERM is killed with its children`, async () => {
-    const r = run(kind, [{ view: 'stubborn' }], ['--interval', '1', '--timeout', '1'], { SHIM_NOEXEC: '1' })
+    const r = await run(kind, [{ view: 'stubborn' }], ['--interval', '1', '--timeout', '1'], { SHIM_NOEXEC: '1' })
     assert.equal(r.code, 124, r.err)
     assert.match(r.out, /\(gh pr view did not return\)/)
     assert.ok(r.secs < 15, `took ${r.secs}s`)
     assert.deepEqual(await survivors(r.file), [])
   })
 
-  test(`${kind}: without flags the script enforces its own deadline (WAIT_PR_TIMEOUT, default 5400 s)`, () => {
-    const r = run(kind, [open()], [], { WAIT_PR_TIMEOUT: '1', WAIT_PR_INTERVAL: '1' })
+  test(`${kind}: without flags the script enforces its own deadline (WAIT_PR_TIMEOUT, default 5400 s)`, async () => {
+    const r = await run(kind, [open()], [], { WAIT_PR_TIMEOUT: '1', WAIT_PR_INTERVAL: '1' })
     assert.equal(r.code, 124, r.err)
     assert.match(r.out, /timed out after 1s/)
     const src = readFileSync(join(scripts, `wait-pr.${kind}`), 'utf8')
     assert.match(src, kind === 'sh' ? /timeout=\$\{WAIT_PR_TIMEOUT:-5400\}/ : /\$env:WAIT_PR_TIMEOUT \} else \{ '5400' \}/)
   })
 
-  test(`${kind}: gh failing 3 polls in a row exits 5 with its error`, () => {
-    const r = run(kind, [{ view: 'error' }])
+  test(`${kind}: gh failing 3 polls in a row exits 5 with its error`, async () => {
+    const r = await run(kind, [{ view: 'error' }])
     assert.equal(r.code, 5)
     assert.match(r.err, /failed 3 times in a row/)
     assert.match(r.err, /Could not resolve/)
   })
 
-  test(`${kind}: a transient gh error and a PR without checks keep waiting`, () => {
-    const r = run(kind, [{ view: 'error' }, open('BLOCKED'), { view: 'error' }, { view: { state: 'MERGED', mergeStateStatus: 'UNKNOWN' } }])
+  test(`${kind}: a transient gh error and a PR without checks keep waiting`, async () => {
+    const r = await run(kind, [{ view: 'error' }, open('BLOCKED'), { view: 'error' }, { view: { state: 'MERGED', mergeStateStatus: 'UNKNOWN' } }])
     assert.equal(r.code, 0, r.err)
   })
 
-  test(`${kind}: bad arguments exit 2`, () => {
-    assert.equal(run(kind, [open()], ['--interval']).code, 2)
-    assert.equal(run(kind, [open()], ['--timeout', 'soon']).code, 2)
+  test(`${kind}: bad arguments exit 2`, async () => {
+    assert.equal((await run(kind, [open()], ['--interval'])).code, 2)
+    assert.equal((await run(kind, [open()], ['--timeout', 'soon'])).code, 2)
     for (const bad of ['09', '08', '', '0', '-5', '1.5', ' 5', '99999999999999999999', '86401']) {
-      assert.equal(run(kind, [open()], ['--timeout', bad]).code, 2, `--timeout '${bad}'`)
+      assert.equal((await run(kind, [open()], ['--timeout', bad])).code, 2, `--timeout '${bad}'`)
     }
-    for (const bad of ['08', '', '0', '3601']) assert.equal(run(kind, [open()], ['--interval', bad, '--timeout', '5']).code, 2, `--interval '${bad}'`)
-    for (const bad of ['09', '5\n', '5\n6']) assert.equal(run(kind, [open()], [], { WAIT_PR_TIMEOUT: bad }).code, 2, `WAIT_PR_TIMEOUT=${JSON.stringify(bad)}`)
-    assert.equal(run(kind, [open()], ['13']).code, 2)
-  })
-}
-
-// A signal reaches the .sh between polls or while it waits on gh; Windows has no SIGTERM.
-if (!win) {
-  test('sh: SIGTERM ends the wait and the running gh call with it', async () => {
-    const { file, exe, argv, env } = setup('sh', [{ view: 'stubborn' }], ['--interval', '1', '--timeout', '60'], { SHIM_NOEXEC: '1' })
-    const child = spawn(exe, argv, { env, stdio: 'ignore' })
-    const exited = new Promise((resolve) => child.on('exit', (code, signal) => resolve(code ?? signal)))
-    for (let i = 0; i < 100 && pids(file).length < 1; i++) await new Promise((r) => setTimeout(r, 100))
-    assert.ok(pids(file).length > 0, 'gh never started')
-    child.kill('SIGTERM')
-    assert.equal(await exited, 143)
-    assert.deepEqual(await survivors(file), [])
+    for (const bad of ['08', '', '0', '3601']) assert.equal((await run(kind, [open()], ['--interval', bad, '--timeout', '5'])).code, 2, `--interval '${bad}'`)
+    for (const bad of ['09', '5\n', '5\n6']) assert.equal((await run(kind, [open()], [], { WAIT_PR_TIMEOUT: bad })).code, 2, `WAIT_PR_TIMEOUT=${JSON.stringify(bad)}`)
+    assert.equal((await run(kind, [open()], ['13'])).code, 2)
   })
 }

@@ -4,7 +4,8 @@
 // checkout the documented way, asks the model to run `pip install requests` in a uv project, and checks
 // that the guard's deny reached the model, that every skill and agent is in its prompt, that a risky
 // command is not run, and that a skill invoked with an argument gets it. A harness whose CLI is missing
-// is skipped (failed with E2E_REQUIRE=1). Usage: node tests/e2e/run.mjs [harness...]
+// is skipped (failed with E2E_REQUIRE=1). Several harnesses run at once, one child `run.mjs <name>` each (own temp
+// home, mock port and log), and print one block each, in order. Usage: node tests/e2e/run.mjs [harness...]
 import { spawn, spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -17,9 +18,12 @@ const MOCK = join(REPO, 'tests', 'e2e', 'mock-llm.mjs')
 // npm installs each CLI as a .cmd shim on Windows, which only runs through cmd.exe and its quoting. Run the
 // package's own entry point instead: a .js bin under node, a native one directly. Elsewhere, the name on PATH.
 const PACKAGES = { copilot: '@github/copilot', codex: '@openai/codex', opencode: 'opencode-ai', pi: '@earendil-works/pi-coding-agent' }
+// `npm root -g` once: it is a shell and an npm start per call, and every harness command resolves through cli().
+let npmRoot
 function cli(name) {
   if (process.platform !== 'win32' || !PACKAGES[name]) return [name]
-  const root = spawnSync('npm', ['root', '-g'], { encoding: 'utf8', shell: true }).stdout.trim()
+  npmRoot ??= spawnSync('npm', ['root', '-g'], { encoding: 'utf8', shell: true }).stdout.trim()
+  const root = npmRoot
   const pkg = join(root, PACKAGES[name])
   if (!existsSync(join(pkg, 'package.json'))) return [name]
   const bin = JSON.parse(readFileSync(join(pkg, 'package.json'), 'utf8')).bin
@@ -37,6 +41,12 @@ function sh(cmd, args, opts = {}) {
 const BASE_ENV = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(GUARD_)?OTEL_/.test(k)))
 const has = (cmd) => sh(cmd, ['--version'], { allowFail: true }).status === 0
 
+// Every running mock, stopped when this process exits however a check ended (a throw between mock() and stop()
+// included). A mock also ends by itself when this process dies: MOCK_STDIN_LIFELINE makes it exit once its stdin
+// (a pipe this process holds) closes, so none outlives a killed run.
+const mocks = new Set()
+process.on('exit', () => mocks.forEach((child) => child.kill()))
+
 // Start the mock on a free port with a scripted command; resolves to { port, log, stop }.
 async function mock(command, root, extraEnv = {}) {
   const log = join(root, 'mock.jsonl')
@@ -45,13 +55,18 @@ async function mock(command, root, extraEnv = {}) {
   // A taken port, or no `ready` within 20 s, retries on another port; a crash prints its error to the CI log.
   for (let attempt = 0; attempt < 5; attempt++) {
     const port = 40_000 + Math.floor(Math.random() * 20_000)
-    const child = spawn(process.execPath, [MOCK, String(port)], { env: { ...BASE_ENV, MOCK_COMMAND: command, MOCK_LOG: log, ...extraEnv }, stdio: ['ignore', 'pipe', 'inherit'] })
+    // stderr piped, not inherited: an inherited one would hold a parallel run's output pipe open after this child ends.
+    const child = spawn(process.execPath, [MOCK, String(port)], { env: { ...BASE_ENV, MOCK_COMMAND: command, MOCK_LOG: log, MOCK_STDIN_LIFELINE: '1', ...extraEnv }, stdio: ['pipe', 'pipe', 'pipe'] })
+    child.stderr.pipe(process.stderr)
     const ready = await new Promise((resolve) => {
       const timer = setTimeout(() => resolve(false), 20_000)
       child.stdout.on('data', (d) => String(d).includes('ready') && (clearTimeout(timer), resolve(true)))
       child.on('exit', () => (clearTimeout(timer), resolve(false)))
     })
-    if (ready) return { port, entries, stop: () => child.kill() }
+    if (ready) {
+      mocks.add(child)
+      return { port, entries, stop: () => (mocks.delete(child), child.kill()) }
+    }
     child.kill()
   }
   throw new Error('mock LLM did not start')
@@ -296,16 +311,51 @@ async function check(name) {
 }
 
 const wanted = process.argv.slice(2).length ? process.argv.slice(2) : Object.keys(HARNESSES)
-let failed = false
-for (const name of wanted) {
+
+// One child per harness, all at once: their output is buffered and printed as one block each, in the order asked,
+// as soon as that harness and the ones before it are done. A child is done when it exits (its pipes get 2 s to drain):
+// waiting for them to close would hang on any process that kept one. A child that ends without a result line, killed
+// or crashed, gets one.
+async function parallel(names) {
+  const runs = names.map(
+    (name) =>
+      new Promise((resolve) => {
+        const child = spawn(process.execPath, [fileURLToPath(import.meta.url), name], { env: process.env, windowsHide: true })
+        let out = ''
+        let ended = null
+        const done = () => {
+          if (!ended) return
+          const result = ended.code === 0 || out.includes(`✗ ${name}`) ? '' : `✗ ${name}: the run ended ${ended.signal ? `on ${ended.signal}` : `with exit code ${ended.code}`} without a result\n`
+          resolve({ code: ended.code, out: out + result })
+        }
+        child.stdout.on('data', (d) => (out += d))
+        child.stderr.on('data', (d) => (out += d))
+        child.on('error', (err) => ((ended = { code: 1, signal: null }), (out += `✗ ${name}: ${err.message}\n`), done()))
+        child.on('exit', (code, signal) => ((ended = { code, signal }), setTimeout(done, 2000)))
+        child.on('close', done)
+      }),
+  )
+  let failed = false
+  for (const run of runs) {
+    const { code, out } = await run
+    process.stdout.write(out)
+    failed ||= code !== 0
+  }
+  return failed
+}
+
+async function single(name) {
   if (!has(name)) {
     // CI sets E2E_REQUIRE=1: there a missing CLI is a failed install, not a skip.
-    failed ||= Boolean(process.env.E2E_REQUIRE)
     console.log(`${process.env.E2E_REQUIRE ? '✗' : '-'} ${name}: CLI not installed`)
-    continue
+    return Boolean(process.env.E2E_REQUIRE)
   }
   const failures = await check(name)
-  failed ||= failures.length > 0
   console.log(failures.length ? `✗ ${name}\n  ${failures.join('\n  ')}` : `✓ ${name}`)
+  return failures.length > 0
 }
-process.exit(failed ? 1 : 0)
+
+// The parent only waits on its children, so it ends by itself once its buffered output is written; a harness run
+// can leave a handle open (a background clone), so a single run exits explicitly.
+if (wanted.length > 1) process.exitCode = (await parallel(wanted)) ? 1 : 0
+else process.exit((await single(wanted[0])) ? 1 : 0)
