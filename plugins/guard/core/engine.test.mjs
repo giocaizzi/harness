@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import { spawnSync } from 'node:child_process';
 import assert from 'node:assert/strict';
-import { touchesApprovalLabel, ghHidden, ghUnseen, badTitle, branchFacts, cmdClass, branchTargets, codexRules, evaluateCommand, evaluateEdit, evaluateRouting, evaluateSpawn, nativeAsk, opencodeAsks, pureRead, refFacts, regenerableName, regenFacts, removalTargets, shellEdit, tagFacts, unattendedSet, usageLevel, worktreeFacts } from './engine.mjs';
+import { touchesApprovalLabel, protectedWrite, ghHidden, ghUnseen, badTitle, branchFacts, cmdClass, branchTargets, codexRules, evaluateCommand, evaluateEdit, evaluateRouting, evaluateSpawn, nativeAsk, opencodeAsks, pureRead, refFacts, regenerableName, regenFacts, removalTargets, shellEdit, tagFacts, unattendedSet, usageLevel, worktreeFacts } from './engine.mjs';
 import { rules } from './rules.mjs';
 
 const fresh = () => ({ reminded: new Set() });
@@ -1231,6 +1231,43 @@ test('factory run: a gh alias or extension is denied, gh\'s own commands pass (#
   }
   for (const c of ['gh alias list', 'gh alias delete t', 'gh extension list', 'gh pr view 1', 'gh -R o/r issue list', 'gh api user', 'gh', 'gh --version', 'gh help', 'echo gh tag', 'gh cs list', 'gh at verify x', 'gh rs list', 'gh agent list', 'gh skills list', 'gh a11y', 'gh help environment', 'gh extension list']) assert.equal(ghUnseen(c, rules), false, c);
   assert.equal(run('gh tag 1', null).action, 'allow', 'no factory run');
+});
+
+test('factory run: shell writes to a protected path are denied (#213)', () => {
+  const g = { globs: ['.github/**', '.factory/**'], root: '/r', cwd: '/r' };
+  const hit = (c, p = g) => protectedWrite(c, p, { HOME: '/Users/me', TMPDIR: '/tmp/' });
+  for (const c of ['echo x > .github/a', 'x &>> .github/a', 'x >| .factory/a', 'tee .github/a < b', 'sed -i.bak s/a/b/ .github/a', 'perl -pi -e s/a/b/ .github/a', 'Add-Content .github/a x', 'Out-File -FilePath .factory/a', 'rm -rf .github', 'rm -rf .', 'rm -rf /r', 'rm -rf /', 'Remove-Item -Recurse .factory', 'mv .github x', 'mv x .github/a', 'mv -t .github x', 'cp x --target-directory=.github', 'cp -r src/.github .', 'Copy-Item x -Destination .github/a', 'cd src && echo x > ../.github/a', 'echo x > $R/.github/a', 'rm -rf .[g]*', 'echo x > .github/$N.yml', 'echo x > /r/.GITHUB/a', 'nohup sh -c "echo x > .github/a"', 'timeout 5 tee .github/a']) assert.notEqual(hit(c), null, c);
+  for (const c of ['echo x >&2', 'echo x > /dev/null', 'echo x > $TMPDIR/a', 'echo x > .githubx', 'cp .github/a /tmp/a', 'cp /tmp/x .', 'mv /tmp/x src/', 'rm -rf *', 'rm -rf ?github', 'rm -rf ../other', 'echo x > /other/.github/a', 'sed -n 1p .github/a', 'tee /tmp/a < .github/a', 'echo .github/a', 'git add .github', 'ssh h "echo x > .github/a"']) assert.equal(hit(c), null, c);
+  // Added globs: a directory glob, a file glob, a trailing slash, a backslash.
+  const more = { ...g, globs: [...g.globs, 'infra/**', 'deploy/*.tf', 'secrets/', 'conf\\prod.yml'] };
+  for (const c of ['echo x > infra/a/b', 'echo x > deploy/main.tf', 'rm -rf secrets', 'echo x > conf/prod.yml']) assert.notEqual(hit(c, more), null, c);
+  for (const c of ['echo x > infra2/a', 'echo x > deploy/a/main.tf', 'echo x > conf/dev.yml']) assert.equal(hit(c, more), null, c);
+  // From a subdirectory; with no known root, an absolute path is matched by its tail.
+  assert.notEqual(hit('echo x > ../.github/a', { ...g, cwd: '/r/src' }), null);
+  assert.equal(hit('echo x > .github/a', { ...g, cwd: '/r/src' }), null, 'src/.github is not the root one');
+  assert.notEqual(hit('echo x > /Users/me/repo/.github/a', { globs: g.globs }), null);
+  // Windows: a drive root, backslashes, case.
+  assert.notEqual(hit('Set-Content -Path C:\\r\\.github\\a -Value x', { globs: g.globs, root: 'C:/r', cwd: 'C:/r' }), null);
+  assert.notEqual(hit('echo x > c:/R/.github/a', { globs: g.globs, root: 'C:/r', cwd: 'C:/r' }), null);
+  const run = (command, factory) => evaluateCommand({ command, state: fresh(), host: calm, factory, rules });
+  assert.equal(run('echo x > .github/a', { approval: 'agent-ok' }).rule, 'protected-path', 'the defaults apply with no protect facts');
+  assert.equal(run('echo x > infra/a', { approval: 'agent-ok', protect: { extra: ['infra/**'] } }).rule, 'protected-path', 'extra globs add');
+  assert.equal(run('echo x > .github/a', { approval: 'agent-ok', protect: { extra: ['infra/**'] } }).rule, 'protected-path', 'extra globs never replace the defaults');
+  assert.equal(run('echo x > .github/a', null).action, 'allow', 'no factory run');
+});
+
+test('factory run: the protected-path check stays fast on long path lists and globs (#213)', () => {
+  // In a child with a timeout: the hook must answer well within its budget.
+  const script = `
+    import { evaluateCommand } from ${JSON.stringify(new URL('./engine.mjs', import.meta.url).href)};
+    import { rules } from ${JSON.stringify(new URL('./rules.mjs', import.meta.url).href)};
+    const extra = Array.from({ length: 5000 }, (_, i) => i % 2 ? '**/' + 'd'.repeat(20) + i + '/**/*.yml' : 'p' + i + '/**/**/**');
+    const lines = ['echo x > ' + 'a/'.repeat(2000) + 'b', 'rm -rf ' + '*/'.repeat(500) + '*', 'echo x > ' + '*'.repeat(5000), 'rm -rf ' + Array.from({ length: 2000 }, (_, i) => 'f' + i).join(' '), 'cp ' + 'x '.repeat(3000) + '.github/', ('echo x > $V/' + '**/'.repeat(50) + 'y; ').repeat(100)];
+    for (const command of lines) evaluateCommand({ command, state: { reminded: new Set() }, host: {}, factory: { approval: 'agent-ok', protect: { extra, root: '/r', cwd: '/r' } }, rules });
+  `;
+  const r = spawnSync(process.execPath, ['--input-type=module', '-e', script], { timeout: 20000, encoding: 'utf8' });
+  assert.equal(r.signal, null, 'timed out');
+  assert.equal(r.status, 0, r.stderr);
 });
 
 test('factory run: the takeover label is denied like the approval label, reads pass', () => {
