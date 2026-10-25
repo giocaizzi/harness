@@ -14,6 +14,8 @@ release-please parses Conventional Commits on the default branch and maintains o
 
 To bump a version, land the right Conventional Commit and let the Release PR appear; do not edit versions by hand in a normal PR.
 
+To force a specific version (a prerelease such as `1.0.0-rc.1`, or skipping ahead), set `"release-as": "<version>"` on the package in `release-please-config.json` in a PR, then remove it in a PR right after the release is tagged, or every later Release PR proposes that version again. The schema marks the key deprecated, but release-please reads it before any commit, so it is deterministic. A `Release-As: <version>` footer works only when it is the last trailer block of the commit on the default branch: in a squash merge GitHub appends `---------` and `Co-authored-by:` trailers after the PR body, and the parser then drops the footer and the Release PR falls back to the version from commit types. Use the footer only in a commit message you control end to end (a direct or empty commit), and check `git log -1 --format=%B origin/<default>` before trusting the Release PR.
+
 ## Gotchas
 
 - Pushing to the Release PR branch is overwritten. Fix the source commits on `main` and let it re-render.
