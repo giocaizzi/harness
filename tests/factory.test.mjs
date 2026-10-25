@@ -274,9 +274,10 @@ test('result.json times: a finished run has finished_at and its phases, a missin
   assert.match(record, /\[cultureinfo\]::InvariantCulture/)
 })
 
-// The attended launcher, run with a command that prints its environment.
+// The attended launcher, run with a command that prints its environment. The .ps1 is for Windows: it runs
+// there only (CI's windows-scripts job), the .sh everywhere else.
 const SCRIPTS = join(repo, 'plugins/factory/skills/ticket-run/scripts')
-const hasPwsh = spawnSync('pwsh', ['-NoProfile', '-Command', 'exit 0']).status === 0
+const hasPwsh = process.platform === 'win32' && spawnSync('pwsh', ['-NoProfile', '-Command', 'exit 0']).status === 0
 const launch = (shell, args, env = {}, cwd = undefined) => {
   const cmd = shell === 'sh' ? ['bash', join(SCRIPTS, 'attended.sh')] : ['pwsh', '-NoProfile', '-File', join(SCRIPTS, 'attended.ps1')]
   const base = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(FACTORY_|OTEL_RESOURCE_ATTRIBUTES$|GUARD_OTEL_RESOURCE_ATTRIBUTES$)/.test(k)))
@@ -286,7 +287,7 @@ const launch = (shell, args, env = {}, cwd = undefined) => {
 const printEnv = [process.execPath, '-e', 'console.log(JSON.stringify(process.env))']
 
 for (const shell of ['sh', 'ps1']) {
-  test(`attended launcher (${shell}): tags the session with factory.* and the run id ticket-run copies`, { skip: shell === 'ps1' && !hasPwsh && 'pwsh not found' }, () => {
+  test(`attended launcher (${shell}): tags the session with factory.* and the run id ticket-run copies`, { skip: shell === 'ps1' && !hasPwsh && 'Windows with pwsh only' }, () => {
     const { status, env } = launch(shell, ['acme/app#12', ...printEnv], { OTEL_RESOURCE_ATTRIBUTES: 'service.namespace=dev,factory.phase=stale', GUARD_OTEL_RESOURCE_ATTRIBUTES: 'host.name=h' })
     assert.equal(status, 0)
     assert.match(env.FACTORY_ATTENDED_RUN_ID, /^[A-Za-z0-9-]+-12-\d{8}T\d{6}Z$/)
@@ -307,7 +308,7 @@ for (const shell of ['sh', 'ps1']) {
     assert.equal(launch(shell, ['acme/app#12', process.execPath, '-e', 'process.exit(7)']).status, 7)
   })
 
-  test(`attended launcher (${shell}): existing pairs are split on commas only, trimmed, and only case-sensitive factory.* keys replaced`, { skip: shell === 'ps1' && !hasPwsh && 'pwsh not found' }, () => {
+  test(`attended launcher (${shell}): existing pairs are split on commas only, trimmed, and only case-sensitive factory.* keys replaced`, { skip: shell === 'ps1' && !hasPwsh && 'Windows with pwsh only' }, () => {
     const attrs = (value, cwd) => {
       const { env } = launch(shell, ['acme/app#12', ...printEnv], { OTEL_RESOURCE_ATTRIBUTES: value }, cwd)
       return env.OTEL_RESOURCE_ATTRIBUTES.split(',factory.run_id=')[0]
