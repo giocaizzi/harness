@@ -360,6 +360,9 @@ export const rules = {
     "ghUnseenWhy": "In a factory run every gh command must be one the guard can read: a gh alias or extension can run any command, a label change included, out of its sight.",
     // Repo-relative globs a run's shell never writes (rule `protected-path`); FACTORY_PROTECTED_PATHS adds to them.
     "protectedPaths": [".github/**", ".factory/**"],
+    // Past any of these the check denies the command's writes (a hook that times out lets the command through): globs
+    // (defaults included), write targets in one command, characters in a glob or target, milliseconds for the check.
+    "protectedLimits": { "globs": 256, "targets": 512, "chars": 1024, "ms": 2000 },
     "protectedWhy": "A factory run must not change a protected path (CI, the factory config, or one the runtime lists): those changes are the owner's."
   },
   "titles": {

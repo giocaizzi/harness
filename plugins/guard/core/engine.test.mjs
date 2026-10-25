@@ -1256,18 +1256,27 @@ test('factory run: shell writes to a protected path are denied (#213)', () => {
   assert.equal(run('echo x > .github/a', null).action, 'allow', 'no factory run');
 });
 
-test('factory run: the protected-path check stays fast on long path lists and globs (#213)', () => {
-  // In a child with a timeout: the hook must answer well within its budget.
-  const script = `
-    import { evaluateCommand } from ${JSON.stringify(new URL('./engine.mjs', import.meta.url).href)};
-    import { rules } from ${JSON.stringify(new URL('./rules.mjs', import.meta.url).href)};
-    const extra = Array.from({ length: 5000 }, (_, i) => i % 2 ? '**/' + 'd'.repeat(20) + i + '/**/*.yml' : 'p' + i + '/**/**/**');
-    const lines = ['echo x > ' + 'a/'.repeat(2000) + 'b', 'rm -rf ' + '*/'.repeat(500) + '*', 'echo x > ' + '*'.repeat(5000), 'rm -rf ' + Array.from({ length: 2000 }, (_, i) => 'f' + i).join(' '), 'cp ' + 'x '.repeat(3000) + '.github/', ('echo x > $V/' + '**/'.repeat(50) + 'y; ').repeat(100)];
-    for (const command of lines) evaluateCommand({ command, state: { reminded: new Set() }, host: {}, factory: { approval: 'agent-ok', protect: { extra, root: '/r', cwd: '/r' } }, rules });
-  `;
-  const r = spawnSync(process.execPath, ['--input-type=module', '-e', script], { timeout: 20000, encoding: 'utf8' });
-  assert.equal(r.signal, null, 'timed out');
-  assert.equal(r.status, 0, r.stderr);
+test('factory run: protected-path reads past reserved words, keeps above to literal segments, takes absolute targets as written (#213 review)', () => {
+  const g = { globs: ['.github/**', '.factory/**', '**/*.tf', '**/migrations/**'], root: '/r', cwd: '/r' };
+  const hit = (c) => protectedWrite(c, g, { TMPDIR: '/tmp/' });
+  for (const c of ['if true; then rm .github/a; fi', 'if x; then :; else cp y .github/a; fi', 'for f in a; do tee .factory/a; done', 'while x; do mv .github/a b; done', '{ sed -i s/a/b/ .github/a; }', '! rm .github/a', 'coproc cp x .github/a', 'f() { rm .factory/a; }', 'function f { rm .factory/a; }', 'cd src && echo x > /r/.github/a', 'cp -T x .github', 'rm {.github,x}/a', 'rm -rf {a,{b,.factory}}', 'rm a.tf', 'rm -f *.tf', 'rm -rf db/migrations', 'rm -rf .']) assert.notEqual(hit(c), null, c);
+  // A glob that starts with `**` puts no directory above it; two globs meet only when their ends agree.
+  for (const c of ['rm src/a.js', 'mv src/a.js src/b.js', 'rm -f *.log', 'rm -rf dist', 'rm -rf node_modules', 'rm -f $TMPDIR/x', 'cd .github && cp workflows/ci.yml /tmp/ci.yml', 'cd .github && grep -r on: . > /tmp/out', 'rm {a,b}/c']) assert.equal(hit(c), null, c);
+});
+
+test('factory run: protected-path fails closed past its limits (#213 review)', () => {
+  const g = (extra = []) => ({ globs: ['.github/**', ...extra], root: '/r', cwd: '/r' });
+  const limits = { globs: 256, targets: 512, chars: 1024, ms: 2000 };
+  assert.match(protectedWrite('echo x > a', g(Array(256).fill('x/**')), {}, limits).unsure, /globs/, 'too many globs');
+  assert.match(protectedWrite('echo x > a', g(['a'.repeat(1025)]), {}, limits).unsure, /globs/, 'a glob too long');
+  assert.match(protectedWrite('rm ' + Array(513).fill('a').join(' '), g(), {}, limits).unsure, /targets/, 'too many targets');
+  assert.match(protectedWrite('echo x > ' + 'a'.repeat(1025), g(), {}, limits).unsure, /targets/, 'a target too long');
+  assert.match(protectedWrite('rm ' + 'x{' + Array(65).fill('a').join(',') + '}', g(), {}, limits).unsure, /targets/, 'a brace list too long');
+  assert.match(protectedWrite('rm ' + Array(400).fill('a/'.repeat(100) + 'b').join(' '), g(Array(200).fill('**/q*/**/z')), {}, { ...limits, ms: 0 }).unsure, /ms/, 'out of time');
+  assert.equal(protectedWrite('rm ' + Array(512).fill('a').join(' '), g(), {}, limits), null, 'at the limit: checked');
+  const d = evaluateCommand({ command: 'rm ' + Array(600).fill('a').join(' '), state: fresh(), host: calm, factory: { approval: 'agent-ok' }, rules });
+  assert.equal(d.rule, 'protected-path');
+  assert.match(d.reason, /could not check/);
 });
 
 test('factory run: the takeover label is denied like the approval label, reads pass', () => {
