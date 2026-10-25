@@ -111,7 +111,7 @@ Each run writes `.factory/runs/<number>/result.json` in the repo's main checkout
 |---|---|---|
 | `schema` | integer | Contract version, `2` (`1` in older results). |
 | `ticket` | string | `<owner>/<repo>#<number>`. |
-| `run_id` | string | `FACTORY_RUN_ID` when a runtime started the run (it sets that variable, plus `FACTORY_DEV=1` in dev mode, and claims under it); else the main session's id where the harness exposes one, else `<host>-<number>-<UTC timestamp>`. Also in the claim comment. |
+| `run_id` | string | `FACTORY_RUN_ID` when a runtime started the run (it sets that variable, plus `FACTORY_DEV=1` in dev mode, and claims under it); else `FACTORY_ATTENDED_RUN_ID` when an attended session was started through the launcher for this ticket ([Attended telemetry](#attended-telemetry)); else the main session's id where the harness exposes one, else `<host>-<number>-<UTC timestamp>`. Also in the claim comment. |
 | `end_state` | `done` \| `parked` \| `failed` \| `budget_reached` \| `halted` | `done`: merged, deployed and verified per the definition of done. `parked`: waiting on the owner (a question, the M+ plan, a merge, or three parks). `failed`: could not be finished for a reason the owner must look at. `budget_reached`: a budget cap stopped the run; a pause, not a failure. `halted`: a runtime stopped the run on a halt (kill switch or circuit breaker) or for a [takeover](#takeover) (`reason_code: takeover`); written only by the runtime, never by the skills. |
 | `reason` | string | Why the run parked or failed; empty when done. |
 | `reason_code` | string \| null | Nullable machine-readable `reason` (the specific cause wins over `question` when a park also asks one): `question`, `plan_gate`, `merge_gate`, `grooming`, `verify_rounds`, `live_verify_failed`, `env_blocked`, `budget`, `auth` (a credential or token failure, or a runtime-started run with no trusted claim under its run id) or `takeover` (written only by a runtime, for a run it stopped for a [takeover](#takeover), and added without a schema bump, so a consumer reads a code it does not know as none); `null` when done or none fits. |
@@ -136,7 +136,32 @@ Each run writes `.factory/runs/<number>/result.json` in the repo's main checkout
 | `host` | object | `{name, os, runner}`: host name, `darwin`, `linux` or `windows`, and `attended`, `headless` or `runtime`, so runs from several machines can be told apart. |
 | `finished_at` | string | ISO 8601 timestamp of when the run wrote the file; never `null`. |
 
-**Telemetry.** `sessions` and `plugin_versions` let a run be joined to the harness's OpenTelemetry data by `session.id` and compared across plugin versions, and `phases` lets it be sliced by step. A runtime may also tag a run's telemetry through `OTEL_RESOURCE_ATTRIBUTES` (for example `factory.run_id`, `factory.ticket`, `factory.role`, `factory.phase`); the skills emit nothing themselves.
+**Telemetry.** `sessions` and `plugin_versions` let a run be joined to the harness's OpenTelemetry data by `session.id` and compared across plugin versions, and `phases` lets it be sliced by step. A runtime tags each run's telemetry through `OTEL_RESOURCE_ATTRIBUTES` and its `GUARD_OTEL_RESOURCE_ATTRIBUTES` copy: `factory.run_id`, `factory.ticket` (`<owner>/<repo>#<number>`), `factory.role`, `factory.phase` and `factory.mode=unattended`. An attended session carries the same keys when it is started through the launcher ([below](#attended-telemetry)); the skills emit nothing themselves.
+
+### Attended telemetry
+
+Resource attributes are fixed when a harness process starts, and an attended run begins inside a session the person opened, so the session must be started already tagged. `ticket-run`'s launcher does it, one session per ticket:
+
+```bash
+bash plugins/factory/skills/ticket-run/scripts/attended.sh acme/app#12 claude                                       # macOS, Linux
+pwsh -File plugins/factory/skills/ticket-run/scripts/attended.ps1 acme/app#12 copilot                            # PowerShell 7
+powershell -ExecutionPolicy Bypass -File plugins/factory/skills/ticket-run/scripts/attended.ps1 acme/app#12 copilot  # Windows PowerShell 5.1
+```
+
+These paths are relative to a checkout of this repo, the simplest place to run it from. Inside an installed copy of the `factory` plugin the script sits at `skills/ticket-run/scripts/` under the plugin's directory, which each harness keeps in its own plugin cache (Claude Code: `~/.claude/plugins/cache/<marketplace>/factory/<version>/`); opencode's install copies it to `~/.config/opencode/skills/ticket-run/scripts/`, and pi keeps the whole repo, so the checkout path applies under its package directory. Then ask the session to work the ticket. It sets `FACTORY_ATTENDED_RUN_ID` (`<host>-<number>-<UTC timestamp>`) and `FACTORY_ATTENDED_TICKET`, appends `factory.run_id` (that id), `factory.ticket`, `factory.role=main` and `factory.mode=attended` to `OTEL_RESOURCE_ATTRIBUTES` and `GUARD_OTEL_RESOURCE_ATTRIBUTES` (replacing any pair whose key starts with `factory.`, matched case-sensitively as OTel keys are, and keeping the rest, trimmed of surrounding spaces), and runs the harness command, passing its exit code through. `ticket-run` writes that id as `run_id` in `result.json` and its claim, so the run's telemetry and its result join on it. It refuses to start when `FACTORY_RUN_ID` is set, since that marks a runtime's run, and a variable separate from `FACTORY_RUN_ID` keeps the gate from treating the run as one.
+
+Two keys differ from a runtime's: `factory.phase` is absent, since a phase changes while the process's attributes cannot (slice by `phases` in `result.json` instead), and `factory.role` is `main` for the whole session, native subagents such as the verifier included, since they share its environment (`sessions` in `result.json` tells them apart). A session started without the launcher is untagged and its `run_id` is the session id, as before.
+
+Per harness ([compatibility.md](compatibility.md)):
+
+| Harness | Its own telemetry | `guard` records |
+|---|---|---|
+| Claude Code | tagged: it reads `OTEL_RESOURCE_ATTRIBUTES` at start | tagged, from the `GUARD_OTEL_*` copy (hooks get no `OTEL_*`) |
+| Copilot CLI | tagged: it reads `OTEL_RESOURCE_ATTRIBUTES` at start | tagged, from the `GUARD_OTEL_*` copy |
+| VS Code | not confirmed that Copilot Chat's export reads it ([#291](https://github.com/giocaizzi/harness/issues/291)); a VS Code already running ignores a new launch's environment | tagged only when the launcher started VS Code's first window |
+| Codex | tagged: its OTel resource uses the SDK's default detectors, which read `OTEL_RESOURCE_ATTRIBUTES` | tagged |
+| opencode | none of its own; the `guard` plugin's `api_request` is tagged | tagged |
+| pi | none of its own; the `guard` extension's `api_request` is tagged | tagged |
 
 ## Config: `.factory/config.yaml`
 
