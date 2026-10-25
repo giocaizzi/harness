@@ -2,7 +2,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -168,7 +168,7 @@ test('runtime claim not from a writer: the gate names only the claim label\'s ac
   assert.match(stops, /`FACTORY_RUN_ID` set\) that stops at the gate still writes `result\.json`, with `end_state` `failed`/)
   assert.match(stops, /`reason_code` `auth` when no trusted claim carries this run's id/)
   assert.match(stops, /Ready check is no stop: .* parks \(`parked`, `question`\)/)
-  assert.match(read('plugins/factory/skills/ticket-run/SKILL.md'), /Every run that passed the gate ends with the result comment and `result\.json`; a stop at the gate/)
+  assert.match(read('plugins/factory/skills/ticket-run/SKILL.md'), /Every run that passed the gate ends with the result comment and `result\.json`, written by `scripts\/write-result\.mjs`; a stop at the gate/)
   const authors = doc.split('**Authors.**')[1].split('\n\n')[0]
   assert.match(authors, /`reason_code: auth`[^\n]*last `labeled` actor/)
   assert.match(authors, /Anyone who can label can still be named/)
@@ -267,10 +267,10 @@ test('result.json times: a finished run has finished_at and its phases, a missin
   // done.md names every check the script makes, and where each time comes from.
   const record = read('plugins/factory/skills/ticket-run/references/done.md').split('## Record')[1]
   for (const s of ['gate', 'plan', 'work', 'verify', 'ship', 'deploy', 'record']) assert.match(record, new RegExp(`- \`${s}\`: `), `done.md gives no source for ${s}`)
-  assert.match(record, /\*\*`finished_at`:\*\* the UTC time you write the file \(step 1\), never `null`/)
-  // The order: write (finished_at set), check, post, then add the post and re-check; gate stops check but never post.
-  assert.match(record, /1\. Write `\.factory\/runs\/N\/result\.json`.*`finished_at` set to the time of this write[\s\S]*2\. Check it with this skill's `scripts\/check-result\.mjs[\s\S]*3\. Post the result comment[\s\S]*4\. Add the comment to `posts`.*This edit finalizes the file/)
-  assert.match(record, /\*\*Gate stops\.\*\*[^\n]*steps 1 and 2 of the Record order \(write, then `check-result\.mjs`\) but posts no result comment/)
+  assert.match(record, /\*\*`finished_at`:\*\* the script fills it with the UTC time it writes the file \(step 1\), never `null`; `--post` keeps it/)
+  // The order: write through the script (finished_at set, checked), post, then add the post with --post; gate stops write but never post.
+  assert.match(record, /1\. Write `\.factory\/runs\/N\/result\.json` with this skill's `scripts\/write-result\.mjs`, never by hand.*`finished_at` \(the time of this write\).*writes nothing while anything is wrong[\s\S]*2\. Post the result comment[\s\S]*3\. Add the comment with `node <skill dir>\/scripts\/write-result\.mjs \[--ticket <owner>\/<repo>#N\] --post result=<comment URL>`.*This edit finalizes the file/)
+  assert.match(record, /\*\*Gate stops\.\*\*[^\n]*step 1 of the Record order \(write with `write-result\.mjs`\) but posts no result comment/)
   assert.match(record, /\[cultureinfo\]::InvariantCulture/)
 })
 
@@ -344,7 +344,8 @@ test('attended telemetry: the contract, ticket-run and the parity matrix agree o
   assert.match(done, /Else `FACTORY_ATTENDED_RUN_ID` when it is set and `FACTORY_ATTENDED_TICKET` is this ticket/)
   assert.match(done, /When `FACTORY_ATTENDED_TICKET` names another ticket, ignore both/)
   assert.match(done, /compared ignoring case, as GitHub names are/)
-  assert.match(done, /Otherwise \(no launcher, or that mismatch\) the main session's id where the harness exposes one, else `<host>-<number>-<UTC timestamp>`/)
+  assert.match(done, /Otherwise \(no launcher, or that mismatch\) the main session's id where the harness exposes one, else `<host>-<number>-<UTC timestamp>`, chosen at the claim: pass it as `--run-id`/)
+  assert.match(done, /^- \*\*`run_id`:\*\* the script fills it/)
   assert.match(read('plugins/factory/skills/ticket-run/SKILL.md'), /A session started through this skill's `scripts\/attended\.sh` \(or `attended\.ps1`\)/)
   assert.ok(section.includes('powershell -ExecutionPolicy Bypass -File'), 'Windows PowerShell 5.1 needs the bypass')
   assert.ok(section.includes('`skills/ticket-run/scripts/` under the plugin\'s directory'), 'says where the script sits in an installed plugin')
@@ -522,4 +523,297 @@ test('result.json ticket: a string owner/repo#N, equal to FACTORY_TICKET when se
   assert.deepEqual(ticketErrors({ ticket: ok }, undefined), [])
   assert.deepEqual(ticketErrors({ ticket: ok }, ' acme/app#77 '), [])
   assert.match(ticketErrors({ ticket: ok }, 'acme/app#78')[0], /acme\/app#77.*acme\/app#78/)
+})
+
+// The result writer and the core checks (#306).
+const CHECK = join(SCRIPTS, 'check-result.mjs')
+const WRITE = join(SCRIPTS, 'write-result.mjs')
+const checker = () => import(pathToFileURL(CHECK).href)
+const writer = () => import(pathToFileURL(WRITE).href)
+const judgment = () => ({
+  end_state: 'done', reason: '', reason_code: null, pr: 'https://github.com/acme/app/pull/13', decisions: [], evidence: [], checks: [{ command: 'make check', result: 'pass' }], follow_ups: [], posts: [],
+  phases: [{ name: 'gate', started_at: '2026-10-25T09:00:00Z', ended_at: '2026-10-25T09:02:00Z' }, { name: 'record', started_at: '2026-10-25T09:02:00Z', ended_at: null }],
+  verifier: { verdict: 'pass', rounds: 1 }, cost_usd: null, tokens: null, turns: null, harness: 'claude-code', model: 'm', effort: null, sessions: [], plugin_versions: { factory: '0.21.0' },
+})
+const valid = { schema: 2, ticket: 'acme/app#12', run_id: 'r-1', end_state: 'done', reason: '', reason_code: null, finished_at: '2026-10-25T10:00:00Z', phases: [{ name: 'gate', started_at: null, ended_at: null }] }
+const cleanEnv = (env = {}) => ({ ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('FACTORY_'))), ...env })
+// A throwaway repo with one commit; `wt` adds a linked worktree beside it.
+const scratchRepo = (wt = false) => {
+  const dir = mkdtempSync(join(tmpdir(), 'write-result-'))
+  const main = join(dir, 'main')
+  const git = (...a) => assert.equal(spawnSync('git', a, { cwd: main, encoding: 'utf8' }).status, 0, a.join(' '))
+  spawnSync('git', ['init', '-q', main])
+  git('-c', 'user.email=a@example.test', '-c', 'user.name=a', 'commit', '-q', '--allow-empty', '-m', 'init')
+  if (wt) git('worktree', 'add', '-q', join(dir, 'wt'))
+  return { dir, main, cwd: wt ? join(dir, 'wt') : main, done: () => rmSync(dir, { recursive: true, force: true }) }
+}
+const write = (cwd, args, env = {}, input = undefined) => {
+  const run = spawnSync(process.execPath, [WRITE, ...args], { cwd, env: cleanEnv(env), encoding: 'utf8', input })
+  return { status: run.status, stdout: run.stdout, stderr: run.stderr }
+}
+const resultAt = (main, n = 12) => JSON.parse(readFileSync(join(main, '.factory', 'runs', String(n), 'result.json'), 'utf8'))
+const exists = (main, n = 12) => existsSync(join(main, '.factory', 'runs', String(n), 'result.json'))
+
+test('check-result: core fields, from the contract\'s lists, and one entry point for every check', async () => {
+  const { coreErrors, resultErrors, END_STATES, REASON_CODES } = await checker()
+  const row = (key) => doc.split('\n').find((l) => l.startsWith(`| \`${key}\``))
+  assert.deepEqual([...END_STATES].sort(), [...row('end_state').split(' | ')[1].matchAll(/`([a-z_]+)`/g)].map((m) => m[1]).sort())
+  assert.deepEqual([...REASON_CODES].sort(), [...row('reason_code').split('asks one):')[1].split(';')[0].matchAll(/`([a-z_]+)`/g)].map((m) => m[1]).sort())
+  assert.deepEqual(resultErrors(valid, {}), [])
+  assert.deepEqual(resultErrors({ ...valid, end_state: 'halted', reason_code: 'takeover' }, {}), [], 'a runtime may check its own results')
+  assert.deepEqual(resultErrors(valid, { FACTORY_RUN_ID: 'r-1', FACTORY_TICKET: 'acme/app#12' }), [])
+  const one = (patch, env = {}) => coreErrors({ ...valid, ...patch }, env)
+  assert.match(one({ schema: 1 })[0], /schema must be 2/)
+  assert.match(one({ schema: '2' })[0], /schema must be 2/)
+  for (const run_id of ['', '  ', 7, null, undefined]) assert.match(one({ run_id })[0], /run_id must be a non-empty string/)
+  assert.match(one({}, { FACTORY_RUN_ID: 'r-2' })[0], /run_id "r-1" differs from FACTORY_RUN_ID "r-2"/)
+  for (const end_state of ['finished', '', null]) assert.match(one({ end_state })[0], /end_state must be one of/)
+  for (const reason of [null, undefined, 3]) assert.match(one({ reason })[0], /reason must be a string/)
+  for (const reason_code of ['blocked', '', undefined]) assert.match(one({ reason_code })[0], /reason_code must be null or one of/)
+  assert.match(resultErrors({ ...valid, ticket: 12 }, {})[0], /ticket must be a string/)
+  assert.match(resultErrors(valid, { FACTORY_TICKET: 'acme/app#13' })[0], /differs from FACTORY_TICKET/)
+  for (const bad of [null, 5, [], 'x']) assert.match(resultErrors(bad, {})[0], /must hold a JSON object/)
+})
+
+test('check-result: the CLI gives one line for a missing file or broken JSON, and imports Node built-ins only', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'check-result-'))
+  const run = (...a) => spawnSync(process.execPath, [CHECK, ...a], { encoding: 'utf8', env: cleanEnv() })
+  const missing = run(join(dir, 'none.json'))
+  assert.equal(missing.status, 1)
+  assert.match(missing.stderr, /^.*none\.json: no such file\n$/)
+  writeFileSync(join(dir, 'broken.json'), '{"schema": 2,')
+  const broken = run(join(dir, 'broken.json'))
+  assert.equal(broken.status, 1)
+  assert.equal(broken.stderr.trim().split('\n').length, 1, broken.stderr)
+  assert.match(broken.stderr, /not valid JSON/)
+  writeFileSync(join(dir, 'ok.json'), `\uFEFF${JSON.stringify(valid, null, 2).replace(/\n/g, '\r\n')}`)
+  assert.equal(run(join(dir, 'ok.json')).status, 0, 'a BOM and CRLF are fine')
+  assert.equal(run().status, 2)
+  rmSync(dir, { recursive: true })
+  const imports = [...read('plugins/factory/skills/ticket-run/scripts/check-result.mjs').matchAll(/^\s*import\b[^'"]*['"]([^'"]+)['"]/gm)].map((m) => m[1])
+  assert.ok(imports.length > 0)
+  for (const m of imports) assert.match(m, /^node:/, `check-result.mjs imports ${m}: a hook copies it, so Node built-ins only`)
+  assert.doesNotMatch(read('plugins/factory/skills/ticket-run/scripts/check-result.mjs'), /\bimport\(|require\(/)
+})
+
+test('write-result: a runtime run takes ticket and run id from the environment, fills the owned fields and closes record', () => {
+  const r = scratchRepo()
+  writeFileSync(join(r.main, 'judgment.json'), JSON.stringify(judgment()))
+  const out = write(r.cwd, ['judgment.json'], { FACTORY_RUN_ID: 'rt-77', FACTORY_TICKET: 'acme/app#12' })
+  assert.equal(out.status, 0, out.stderr)
+  const result = resultAt(r.main)
+  assert.equal(realpathSync.native(out.stdout.trim()), realpathSync.native(join(r.main, '.factory', 'runs', '12', 'result.json')))
+  assert.deepEqual(Object.keys(result).slice(0, 3), ['schema', 'ticket', 'run_id'])
+  assert.equal(Object.keys(result).at(-1), 'finished_at')
+  assert.deepEqual([result.schema, result.ticket, result.run_id, result.host.runner, result.mode], [2, 'acme/app#12', 'rt-77', 'runtime', undefined])
+  assert.match(result.finished_at, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/)
+  assert.equal(result.phases.at(-1).ended_at, result.finished_at, 'record ends at the write')
+  assert.equal(result.phases[0].ended_at, '2026-10-25T09:02:00Z')
+  assert.equal(result.host.os, process.platform === 'win32' ? 'windows' : process.platform)
+  // A --ticket that contradicts the runtime's is refused; a --run-id is overridden with a warning.
+  assert.equal(write(r.cwd, ['--ticket', 'acme/app#13', 'judgment.json'], { FACTORY_RUN_ID: 'rt-77', FACTORY_TICKET: 'acme/app#12' }).status, 2)
+  const warned = write(r.cwd, ['--run-id', 'sess-1', 'judgment.json'], { FACTORY_RUN_ID: 'rt-77', FACTORY_TICKET: 'acme/app#12' })
+  assert.equal(warned.status, 0)
+  assert.match(warned.stderr, /--run-id sess-1 ignored/)
+  assert.equal(resultAt(r.main).run_id, 'rt-77')
+  r.done()
+})
+
+test('write-result: attended, the launcher\'s run id only for its own ticket, else a warning and the fallback', () => {
+  const r = scratchRepo()
+  const env = { FACTORY_ATTENDED_TICKET: 'Acme/App#12', FACTORY_ATTENDED_RUN_ID: 'host-12-20261025T090000Z' }
+  const match = write(r.cwd, ['-'], env, JSON.stringify(judgment()))
+  assert.equal(match.status, 0, match.stderr)
+  assert.deepEqual([resultAt(r.main).ticket, resultAt(r.main).run_id, resultAt(r.main).host.runner], ['Acme/App#12', 'host-12-20261025T090000Z', 'attended'])
+  assert.equal(write(r.cwd, ['--ticket', 'acme/app#12', '-'], env, JSON.stringify(judgment())).status, 0, 'case ignored')
+  assert.equal(resultAt(r.main).run_id, 'host-12-20261025T090000Z')
+  const other = write(r.cwd, ['--ticket', 'acme/app#14', '--run-id', 'sess-9', '-'], env, JSON.stringify(judgment()))
+  assert.equal(other.status, 0, other.stderr)
+  assert.match(other.stderr, /FACTORY_ATTENDED_TICKET is "Acme\/App#12", not acme\/app#14/)
+  assert.deepEqual([resultAt(r.main, 14).ticket, resultAt(r.main, 14).run_id], ['acme/app#14', 'sess-9'])
+  const fallback = write(r.cwd, ['--ticket', 'acme/app#15', '-'], env, JSON.stringify(judgment()))
+  assert.equal(fallback.status, 0)
+  assert.match(resultAt(r.main, 15).run_id, /^[A-Za-z0-9-]+-15-\d{8}T\d{6}Z$/)
+  r.done()
+})
+
+test('write-result: no environment needs --ticket (else exit 2); FACTORY_DEV=1 adds mode dev; a headless runner is kept', () => {
+  const r = scratchRepo()
+  const none = write(r.cwd, ['-'], {}, JSON.stringify(judgment()))
+  assert.equal(none.status, 2)
+  assert.match(none.stderr, /no ticket/)
+  assert.equal(write(r.cwd, ['--ticket', '12', '-'], {}, JSON.stringify(judgment())).status, 2, 'a bare number is no ticket')
+  const ok = write(r.cwd, ['--ticket', 'acme/app#12', '-'], { FACTORY_DEV: '1' }, JSON.stringify({ ...judgment(), host: { runner: 'headless' } }))
+  assert.equal(ok.status, 0, ok.stderr)
+  assert.deepEqual([resultAt(r.main).mode, resultAt(r.main).host.runner], ['dev', 'headless'])
+  for (const args of [[], ['a.json', 'b.json'], ['--post', 'result=https://x.test/1', 'a.json'], ['--nope', 'a.json'], ['--ticket']]) assert.equal(write(r.cwd, args).status, 2, args.join(' '))
+  assert.equal(write(r.cwd, ['--ticket', 'acme/app#12', 'missing.json']).status, 2)
+  const outside = mkdtempSync(join(tmpdir(), 'no-git-'))
+  assert.equal(write(outside, ['--ticket', 'acme/app#12', '-'], {}, JSON.stringify(judgment())).status, 2, 'not in a git checkout')
+  rmSync(outside, { recursive: true })
+  r.done()
+})
+
+test('write-result: owned or unknown keys, halted and takeover, and an invalid result write nothing', () => {
+  const r = scratchRepo()
+  const env = { FACTORY_TICKET: 'acme/app#12', FACTORY_RUN_ID: 'rt-1' }
+  const bad = [
+    [{ ticket: 12 }, /ticket: filled by this script/],
+    [{ schema: 2 }, /schema: filled by this script/],
+    [{ run_id: 'x' }, /run_id: filled by this script/],
+    [{ finished_at: '2026-10-25T10:00:00Z' }, /finished_at: filled by this script/],
+    [{ mode: 'dev' }, /mode: filled by this script/],
+    [{ host: { name: 'h', runner: 'runtime' } }, /host\.name: filled by this script/],
+    [{ host: { runner: 'cron' } }, /host\.runner must be one of/],
+    [{ reasonCode: null }, /reasonCode: not a result key/],
+    [{ end_state: 'halted' }, /halted is written only by a runtime/],
+    [{ reason_code: 'takeover' }, /takeover is written only by a runtime/],
+    [{ end_state: 'finished' }, /end_state must be one of/],
+    [{ reason: null }, /reason must be a string/],
+    [{ phases: [] }, /every step/],
+  ]
+  for (const [patch, error] of bad) {
+    const out = write(r.cwd, ['-'], env, JSON.stringify({ ...judgment(), ...patch }))
+    assert.equal(out.status, 1, JSON.stringify(patch))
+    assert.match(out.stderr, error)
+    assert.match(out.stderr, /nothing written/)
+    assert.equal(exists(r.main), false, JSON.stringify(patch))
+  }
+  for (const input of ['{"end_state":', '[]', 'null']) assert.equal(write(r.cwd, ['-'], env, input).status, 1, input)
+  // An invalid rewrite leaves the earlier file as it was.
+  assert.equal(write(r.cwd, ['-'], env, JSON.stringify(judgment())).status, 0)
+  const before = readFileSync(join(r.main, '.factory/runs/12/result.json'), 'utf8')
+  assert.equal(write(r.cwd, ['-'], env, JSON.stringify({ ...judgment(), end_state: 'halted' })).status, 1)
+  assert.equal(readFileSync(join(r.main, '.factory/runs/12/result.json'), 'utf8'), before)
+  r.done()
+})
+
+test('write-result: --post appends the comment, keeps finished_at and checks again', () => {
+  const r = scratchRepo()
+  const env = { FACTORY_TICKET: 'acme/app#12', FACTORY_RUN_ID: 'rt-1' }
+  assert.equal(write(r.cwd, ['--post', 'result=https://github.com/acme/app/issues/12#issuecomment-1'], env).status, 2, 'nothing to finalize yet')
+  writeFileSync(join(r.main, 'j.json'), JSON.stringify({ ...judgment(), phases: [{ name: 'gate', started_at: '2026-10-25T09:00:00Z', ended_at: null }] }))
+  assert.equal(write(r.cwd, ['j.json'], env).status, 0)
+  const first = resultAt(r.main)
+  const url = 'https://github.com/acme/app/issues/12#issuecomment-1'
+  const posted = write(r.cwd, ['--post', `result=${url}`], env)
+  assert.equal(posted.status, 0, posted.stderr)
+  const after = resultAt(r.main)
+  assert.equal(after.finished_at, first.finished_at)
+  assert.equal(after.phases[0].ended_at, null, 'only a record phase is closed')
+  assert.deepEqual(after.posts, [{ kind: 'result', url, state: 'posted' }])
+  assert.equal(write(r.cwd, ['--post', `result=${url}`], env).status, 0)
+  assert.equal(resultAt(r.main).posts.length, 1, 'posting the same URL twice adds it once')
+  for (const post of ['result', 'result=', '=https://x.test', 'result=not a url']) assert.equal(write(r.cwd, ['--post', post], env).status, 2, post)
+  assert.equal(write(r.cwd, ['--post', `result=${url}`], { ...env, FACTORY_RUN_ID: 'rt-2' }).status, 1, 'the re-check still holds the run id')
+  r.done()
+})
+
+test('write-result: from a linked worktree the file lands in the main checkout; CRLF input; Windows paths and os', async () => {
+  const r = scratchRepo(true)
+  const input = `\uFEFF${JSON.stringify(judgment(), null, 2).replace(/\n/g, '\r\n')}\r\n`
+  writeFileSync(join(r.cwd, 'judgment.json'), input)
+  const out = write(r.cwd, ['--ticket', 'acme/app#12', 'judgment.json'])
+  assert.equal(out.status, 0, out.stderr)
+  assert.equal(resultAt(r.main).ticket, 'acme/app#12')
+  assert.equal(exists(r.cwd), false, 'never in the worktree')
+  r.done()
+  const { resultPath, hostOs } = await writer()
+  const { win32, posix } = await import('node:path')
+  assert.equal(resultPath('C:/Users/dev/app/.git', 'acme/app#12', win32), 'C:\\Users\\dev\\app\\.factory\\runs\\12\\result.json')
+  assert.equal(resultPath('C:\\Users\\dev\\app\\.git', 'acme/app#12', win32), 'C:\\Users\\dev\\app\\.factory\\runs\\12\\result.json')
+  assert.equal(resultPath('/home/dev/app/.git', 'acme/app#12', posix), '/home/dev/app/.factory/runs/12/result.json')
+  assert.deepEqual(['win32', 'darwin', 'linux'].map(hostOs), ['windows', 'darwin', 'linux'])
+})
+
+test('write-result: done.md, SKILL.md and the contract describe the writer', () => {
+  const record = read('plugins/factory/skills/ticket-run/references/done.md').split('## Record')[1]
+  assert.match(record, /- \*\*`mode`:\*\* the script fills it/)
+  assert.match(record, /it rejects any of those, and any other key, in the input/)
+  assert.match(read('plugins/factory/skills/ticket-run/SKILL.md'), /- Never hand-write `result\.json`/)
+  const contract = doc.split('## Result contract')[1].split('\n## ')[0]
+  assert.match(contract, /\*\*Writer and check\.\*\*/)
+  assert.ok(contract.includes('must allow `node */skills/ticket-run/scripts/write-result.mjs *`'), 'the runtime allowlist line')
+  for (const f of ['plugins/factory/skills/ticket-run/SKILL.md', 'plugins/factory/skills/ticket-run/references/done.md']) assert.doesNotMatch(read(f), /write-result[^\n]*docs\//, `${f}: the writer's steps need no repo doc`)
+})
+
+test('write-result: --run-id must be a printable id of at most 128 characters', () => {
+  const r = scratchRepo()
+  for (const id of ['', ' ', ' sess', 'sess ', 'a\nb', 'a\tb', 'a\u0007b', 'a\u202eb', 'x'.repeat(129)]) {
+    const out = write(r.cwd, ['--ticket', 'acme/app#12', '--run-id', id, '-'], {}, JSON.stringify(judgment()))
+    assert.equal(out.status, 2, JSON.stringify(id))
+    assert.match(out.stderr, /--run-id must be 1 to 128 printable characters/)
+    assert.ok(out.stderr.length < 400, 'the echo is capped')
+  }
+  for (const id of ['sess-1', 'a b', 'x'.repeat(128), 'séance_7']) {
+    assert.equal(write(r.cwd, ['--ticket', 'acme/app#12', '--run-id', id, '-'], {}, JSON.stringify(judgment())).status, 0, id)
+    assert.equal(resultAt(r.main).run_id, id)
+  }
+  r.done()
+})
+
+test('write-result: an input host.runner must agree with FACTORY_RUN_ID', () => {
+  const r = scratchRepo()
+  const runtimeEnv = { FACTORY_TICKET: 'acme/app#12', FACTORY_RUN_ID: 'rt-1' }
+  const run = (runner, env) => write(r.cwd, ['--ticket', 'acme/app#12', '-'], env, JSON.stringify({ ...judgment(), host: { runner } }))
+  assert.match(run('runtime', {}).stderr, /host\.runner runtime needs FACTORY_RUN_ID/)
+  assert.equal(run('runtime', {}).status, 1)
+  for (const runner of ['attended', 'headless']) {
+    const out = run(runner, runtimeEnv)
+    assert.equal(out.status, 1, runner)
+    assert.match(out.stderr, new RegExp(`host\\.runner ${runner} contradicts FACTORY_RUN_ID`))
+  }
+  assert.equal(run('runtime', runtimeEnv).status, 0)
+  for (const runner of ['attended', 'headless']) {
+    assert.equal(run(runner, {}).status, 0, runner)
+    assert.equal(resultAt(r.main).host.runner, runner)
+  }
+  r.done()
+})
+
+test('write-result: --post marks a posting or maybe_posted entry posted, once', () => {
+  const r = scratchRepo()
+  const env = { FACTORY_TICKET: 'acme/app#12', FACTORY_RUN_ID: 'rt-1' }
+  const url = 'https://github.com/acme/app/issues/12#issuecomment-5'
+  const other = { kind: 'question', url: 'https://github.com/acme/app/issues/12#issuecomment-4', state: 'maybe_posted' }
+  for (const state of ['posting', 'maybe_posted']) {
+    assert.equal(write(r.cwd, ['-'], env, JSON.stringify({ ...judgment(), posts: [other, { kind: 'result', url, state }] })).status, 0)
+    assert.equal(write(r.cwd, ['--post', `result=${url}`], env).status, 0)
+    assert.equal(write(r.cwd, ['--post', `result=${url}`], env).status, 0)
+    assert.deepEqual(resultAt(r.main).posts, [other, { kind: 'result', url, state: 'posted' }], state)
+  }
+  r.done()
+})
+
+test('check-result: echoed values and the report are capped, and a long report is not cut short in a pipe', async () => {
+  const { show, report, resultErrors } = await checker()
+  assert.equal(show('x'.repeat(500)).length, 201)
+  assert.ok(show('x'.repeat(500)).endsWith('…'))
+  assert.equal(show(undefined), 'undefined')
+  const huge = 'y'.repeat(100000)
+  for (const e of resultErrors({ ...valid, ticket: huge, run_id: huge, end_state: huge, reason: [huge], reason_code: huge, schema: huge }, { FACTORY_TICKET: huge })) assert.ok(e.length < 400, e.slice(0, 80))
+  const many = Array.from({ length: 120 }, (_, i) => `e${i} ${'z'.repeat(1000)}`)
+  const lines = report(many)
+  assert.equal(lines.length, 51)
+  assert.equal(lines.at(-1), '… and 70 more')
+  assert.ok(lines.every((l) => l.length <= 301))
+  // Through a pipe: every capped line arrives, the last one included.
+  const dir = mkdtempSync(join(tmpdir(), 'check-result-'))
+  const phases = Array.from({ length: 2000 }, (_, i) => ({ name: `step-${i}-${'p'.repeat(300)}`, started_at: null, ended_at: null }))
+  writeFileSync(join(dir, 'r.json'), JSON.stringify({ ...valid, phases, routing: phases.map(() => ({ phase: 'verify' })) }))
+  const run = spawnSync(process.execPath, [CHECK, join(dir, 'r.json')], { encoding: 'utf8', env: cleanEnv() })
+  rmSync(dir, { recursive: true })
+  assert.equal(run.status, 1)
+  const out = run.stderr.trim().split('\n')
+  assert.equal(out.length, 51)
+  assert.match(out.at(-1), /^… and \d+ more$/)
+  assert.doesNotMatch(read('plugins/factory/skills/ticket-run/scripts/check-result.mjs'), /process\.exit\(/)
+})
+
+test('result scripts: a BOM is stripped by an escape sequence, never a literal U+FEFF', () => {
+  for (const f of ['check-result.mjs', 'write-result.mjs']) {
+    const text = readFileSync(join(SCRIPTS, f), 'utf8')
+    assert.ok(!text.includes('\uFEFF'), `${f} holds a literal U+FEFF`)
+    assert.ok(text.includes('.replace(/^\\uFEFF/, \'\')'), `${f} strips the BOM by its escape`)
+  }
 })
