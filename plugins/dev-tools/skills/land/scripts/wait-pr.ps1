@@ -15,7 +15,7 @@
 $ErrorActionPreference = 'Stop'
 function Exit-Usage { [Console]::Error.WriteLine('usage: wait-pr.ps1 <pr> [--interval <1-3600 s>] [--timeout <1-86400 s>]'); exit 2 }
 # A plain decimal integer from 1 to $Max: no sign, no leading zero, nothing too large for [int].
-function Get-Seconds([string]$Value, [int]$Max) {
+function Get-Duration([string]$Value, [int]$Max) {
     if ($Value -cnotmatch '^[1-9][0-9]{0,4}$' -or [int]$Value -gt $Max) { Exit-Usage }
     [int]$Value
 }
@@ -33,8 +33,8 @@ for ($i = 0; $i -lt $argv.Count; $i++) {
     else { $pr = $a }
 }
 if (-not $pr) { Exit-Usage }
-$interval = Get-Seconds $interval 3600
-$timeout = Get-Seconds $timeout 86400
+$interval = Get-Duration $interval 3600
+$timeout = Get-Duration $timeout 86400
 $gh = (Get-Command gh -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1).Source
 if (-not $gh) { [Console]::Error.WriteLine('wait-pr: gh not found on PATH'); exit 5 }
 
