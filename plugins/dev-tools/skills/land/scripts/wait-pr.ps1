@@ -10,13 +10,14 @@
 #   124  timeout, with the last state and the required checks still pending
 #   2    usage
 # --interval (1-3600) and --timeout (1-86400) default to WAIT_PR_INTERVAL (45) and WAIT_PR_TIMEOUT (5400) seconds.
-# The deadline is the script's own, gh calls included (one that does not return by then is killed):
-# exiting is what wakes a session that started it in the background.
+# The deadline is the script's own: exiting is what wakes a session that started it in the background.
+# The poll that falls on the deadline still runs. A gh call still running 5 s after the deadline, or after its
+# own start when that is later, is killed with its children, and the timeout line names it.
 $ErrorActionPreference = 'Stop'
 function Exit-Usage { [Console]::Error.WriteLine('usage: wait-pr.ps1 <pr> [--interval <1-3600 s>] [--timeout <1-86400 s>]'); exit 2 }
-# A plain decimal integer from 1 to $Max: no sign, no leading zero, nothing too large for [int].
+# A plain decimal integer from 1 to $Max: no sign, no leading zero, no trailing newline, nothing too large for [int].
 function Get-Duration([string]$Value, [int]$Max) {
-    if ($Value -cnotmatch '^[1-9][0-9]{0,4}$' -or [int]$Value -gt $Max) { Exit-Usage }
+    if ($Value -cnotmatch '^[1-9][0-9]{0,4}\z' -or [int]$Value -gt $Max) { Exit-Usage }
     [int]$Value
 }
 $pr = ''
@@ -51,13 +52,19 @@ function Exit-Timeout([string]$Hung) {
     "PR ${pr}: timed out after ${timeout}s, state $s, mergeStateStatus $m, pending required checks: $p$h"
     exit 124
 }
-# gh's stdout in $outFile, stderr in $errFile, its exit code returned; killed at the deadline.
+# gh's stdout in $outFile, stderr in $errFile, its exit code returned.
+$script:proc = $null
+function Stop-Call {
+    if ($script:proc -and -not $script:proc.HasExited) { try { $script:proc.Kill($true) } catch { try { $script:proc.Kill() } catch { $null = $_ } } }
+}
 function Invoke-Gh([string]$Label, [string[]]$GhArgs) {
-    $ms = [int][Math]::Max(0, [Math]::Ceiling(($deadline - [DateTime]::UtcNow).TotalMilliseconds))
-    $proc = Start-Process -FilePath $gh -ArgumentList $GhArgs -NoNewWindow -PassThru -RedirectStandardOutput $outFile -RedirectStandardError $errFile
+    $now = [DateTime]::UtcNow
+    $limit = $(if ($now -gt $deadline) { $now } else { $deadline }).AddSeconds(5)
+    $ms = [int][Math]::Ceiling(($limit - $now).TotalMilliseconds)
+    $script:proc = $proc = Start-Process -FilePath $gh -ArgumentList $GhArgs -NoNewWindow -PassThru -RedirectStandardOutput $outFile -RedirectStandardError $errFile
     $null = $proc.Handle
     if (-not $proc.WaitForExit($ms)) {
-        try { $proc.Kill($true) } catch { try { $proc.Kill() } catch { $null = $_ } }
+        Stop-Call
         Exit-Timeout $Label
     }
     $proc.WaitForExit()
@@ -98,5 +105,6 @@ try {
         Start-Sleep -Seconds ([Math]::Min($interval, $left))
     }
 } finally {
+    Stop-Call
     Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $tmp
 }

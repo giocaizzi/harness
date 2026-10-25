@@ -11,8 +11,9 @@
 #   124  timeout, with the last state and the required checks still pending
 #   2    usage
 # --interval (1-3600) and --timeout (1-86400) default to WAIT_PR_INTERVAL (45) and WAIT_PR_TIMEOUT (5400) seconds.
-# The deadline is the script's own, gh calls included (one that does not return by then is killed):
-# exiting is what wakes a session that started it in the background.
+# The deadline is the script's own: exiting is what wakes a session that started it in the background.
+# The poll that falls on the deadline still runs. A gh call still running 5 s after the deadline, or after its
+# own start when that is later, is killed with its children, and the timeout line names it.
 set -u
 usage() { echo "usage: wait-pr.sh <pr> [--interval <1-3600 s>] [--timeout <1-86400 s>]" >&2; exit 2; }
 # seconds <value> <max>: a plain decimal integer from 1 to max (no sign, no leading zero, which bash reads as octal).
@@ -31,22 +32,42 @@ done
 seconds "$interval" 3600
 seconds "$timeout" 86400
 
-tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
+grace=5 call=''
+tmp=$(mktemp -d)
+# tree <pid>: the pid and its descendants.
+tree() { local c; echo "$1"; for c in $(ps -A -o pid=,ppid= | awk -v p="$1" '$2 == p { print $1 }'); do tree "$c"; done; }
+# stop_call: TERM the running gh call and its children, KILL what is left after 1 s.
+stop_call() {
+  [ -n "$call" ] || return 0
+  local pids n=0; pids=$(tree "$call")
+  # shellcheck disable=SC2086 # one pid per word
+  kill $pids 2>/dev/null
+  while kill -0 "$call" 2>/dev/null && [ "$n" -lt 10 ]; do sleep 0.1; n=$((n + 1)); done
+  # shellcheck disable=SC2086
+  kill -9 $pids 2>/dev/null
+  wait "$call" 2>/dev/null; call=''
+}
+trap 'stop_call; rm -rf "$tmp"' EXIT
+trap 'exit 143' TERM
+trap 'exit 130' INT
 deadline=$(($(date +%s) + timeout)) fails=0 state='' merge='' pending=''
 timed_out() {
   echo "PR $pr: timed out after ${timeout}s, state ${state:-unknown}, mergeStateStatus ${merge:-unknown}, pending required checks: ${pending:-none}${1:+ ($1 did not return)}"
   exit 124
 }
-# gh_call <label> <args...>: gh's stdout in $tmp/out, stderr in $tmp/err, its status returned; killed at the deadline.
+# gh_call <label> <args...>: gh's stdout in $tmp/out, stderr in $tmp/err, its status returned.
 gh_call() {
-  local label=$1; shift
+  local label=$1 limit; shift
+  limit=$(date +%s); limit=$((limit > deadline ? limit : deadline)); limit=$((limit + grace))
   gh "$@" >"$tmp/out" 2>"$tmp/err" &
-  local pid=$!
-  while kill -0 "$pid" 2>/dev/null; do
-    if [ "$(date +%s)" -ge "$deadline" ]; then kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; timed_out "$label"; fi
+  call=$!
+  while kill -0 "$call" 2>/dev/null; do
+    if [ "$(date +%s)" -ge "$limit" ]; then stop_call; timed_out "$label"; fi
     sleep 0.1
   done
-  wait "$pid"
+  local rc=0; wait "$call" || rc=$?
+  call=''
+  return "$rc"
 }
 while :; do
   if gh_call "gh pr view" pr view "$pr" --json state,mergeStateStatus --jq '.state + " " + .mergeStateStatus'; then
@@ -75,5 +96,5 @@ while :; do
   fi
   left=$((deadline - $(date +%s)))
   [ "$left" -gt 0 ] || timed_out
-  sleep $((interval < left ? interval : left))
+  sleep $((interval < left ? interval : left)) & wait $!  # a signal is handled at once, not after the sleep
 done
