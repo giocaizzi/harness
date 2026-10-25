@@ -510,3 +510,15 @@ test('untrusted-data rule: ticket-run, the verifier and every generated verifier
   assert.match(doc, /A ticket whose title or body anyone, an approver included, edited after the approval is not approved/)
   assert.doesNotMatch(doc, /a non-approver edited/)
 })
+
+test('result.json ticket: a string owner/repo#N, equal to FACTORY_TICKET when set', async () => {
+  const { ticketErrors } = await import(pathToFileURL(join(repo, 'plugins/factory/skills/ticket-run/scripts/check-result.mjs')).href)
+  const ok = 'acme/app#77'
+  for (const bad of [77, '', 'acme/app#', 'acme/app/77', 'acme/app#77 extra', undefined]) {
+    assert.match(ticketErrors({ ticket: bad }, '')[0], /ticket must be a string.*<owner>\/<repo>#<number>/)
+  }
+  assert.deepEqual(ticketErrors({ ticket: ok }, ''), [])
+  assert.deepEqual(ticketErrors({ ticket: ok }, undefined), [])
+  assert.deepEqual(ticketErrors({ ticket: ok }, ' acme/app#77 '), [])
+  assert.match(ticketErrors({ ticket: ok }, 'acme/app#78')[0], /acme\/app#77.*acme\/app#78/)
+})
