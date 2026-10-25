@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import { spawnSync } from 'node:child_process';
 import assert from 'node:assert/strict';
-import { touchesApprovalLabel, ghHidden, ghUnseen, badTitle, branchFacts, cmdClass, branchTargets, codexRules, evaluateCommand, evaluateEdit, evaluateRouting, evaluateSpawn, nativeAsk, opencodeAsks, pureRead, refFacts, regenerableName, regenFacts, removalTargets, shellEdit, tagFacts, unattendedSet, usageLevel, worktreeFacts } from './engine.mjs';
+import { touchesApprovalLabel, protectedWrite, ghHidden, ghUnseen, badTitle, branchFacts, cmdClass, branchTargets, codexRules, evaluateCommand, evaluateEdit, evaluateRouting, evaluateSpawn, nativeAsk, opencodeAsks, pureRead, refFacts, regenerableName, regenFacts, removalTargets, shellEdit, tagFacts, unattendedSet, usageLevel, worktreeFacts } from './engine.mjs';
 import { rules } from './rules.mjs';
 
 const fresh = () => ({ reminded: new Set() });
@@ -1231,6 +1231,74 @@ test('factory run: a gh alias or extension is denied, gh\'s own commands pass (#
   }
   for (const c of ['gh alias list', 'gh alias delete t', 'gh extension list', 'gh pr view 1', 'gh -R o/r issue list', 'gh api user', 'gh', 'gh --version', 'gh help', 'echo gh tag', 'gh cs list', 'gh at verify x', 'gh rs list', 'gh agent list', 'gh skills list', 'gh a11y', 'gh help environment', 'gh extension list']) assert.equal(ghUnseen(c, rules), false, c);
   assert.equal(run('gh tag 1', null).action, 'allow', 'no factory run');
+});
+
+test('factory run: shell writes to a protected path are denied (#213)', () => {
+  const g = { globs: ['.github/**', '.factory/**'], root: '/r', cwd: '/r' };
+  const hit = (c, p = g) => protectedWrite(c, p, { HOME: '/Users/me', TMPDIR: '/tmp/' });
+  for (const c of ['echo x > .github/a', 'x &>> .github/a', 'x >| .factory/a', 'tee .github/a < b', 'sed -i.bak s/a/b/ .github/a', 'perl -pi -e s/a/b/ .github/a', 'Add-Content .github/a x', 'Out-File -FilePath .factory/a', 'rm -rf .github', 'rm -rf .', 'rm -rf /r', 'rm -rf /', 'Remove-Item -Recurse .factory', 'mv .github x', 'mv x .github/a', 'mv -t .github x', 'cp x --target-directory=.github', 'cp -r src/.github .', 'Copy-Item x -Destination .github/a', 'cd src && echo x > ../.github/a', 'echo x > $R/.github/a', 'rm -rf .[g]*', 'echo x > .github/$N.yml', 'echo x > /r/.GITHUB/a', 'nohup sh -c "echo x > .github/a"', 'timeout 5 tee .github/a']) assert.notEqual(hit(c), null, c);
+  for (const c of ['echo x >&2', 'echo x > /dev/null', 'echo x > $TMPDIR/a', 'echo x > .githubx', 'cp .github/a /tmp/a', 'cp /tmp/x .', 'mv /tmp/x src/', 'rm -rf *', 'rm -rf ?github', 'rm -rf ../other', 'echo x > /other/.github/a', 'sed -n 1p .github/a', 'tee /tmp/a < .github/a', 'echo .github/a', 'git add .github', 'ssh h "echo x > .github/a"']) assert.equal(hit(c), null, c);
+  // Added globs: a directory glob, a file glob, a trailing slash, a backslash.
+  const more = { ...g, globs: [...g.globs, 'infra/**', 'deploy/*.tf', 'secrets/', 'conf\\prod.yml'] };
+  for (const c of ['echo x > infra/a/b', 'echo x > deploy/main.tf', 'rm -rf secrets', 'echo x > conf/prod.yml']) assert.notEqual(hit(c, more), null, c);
+  for (const c of ['echo x > infra2/a', 'echo x > deploy/a/main.tf', 'echo x > conf/dev.yml']) assert.equal(hit(c, more), null, c);
+  // From a subdirectory; with no known root, an absolute path is matched by its tail.
+  assert.notEqual(hit('echo x > ../.github/a', { ...g, cwd: '/r/src' }), null);
+  assert.equal(hit('echo x > .github/a', { ...g, cwd: '/r/src' }), null, 'src/.github is not the root one');
+  assert.notEqual(hit('echo x > /Users/me/repo/.github/a', { globs: g.globs }), null);
+  // Windows: a drive root, backslashes, case.
+  assert.notEqual(hit('Set-Content -Path C:\\r\\.github\\a -Value x', { globs: g.globs, root: 'C:/r', cwd: 'C:/r' }), null);
+  assert.notEqual(hit('echo x > c:/R/.github/a', { globs: g.globs, root: 'C:/r', cwd: 'C:/r' }), null);
+  const run = (command, factory) => evaluateCommand({ command, state: fresh(), host: calm, factory, rules });
+  assert.equal(run('echo x > .github/a', { approval: 'agent-ok' }).rule, 'protected-path', 'the defaults apply with no protect facts');
+  assert.equal(run('echo x > infra/a', { approval: 'agent-ok', protect: { extra: ['infra/**'] } }).rule, 'protected-path', 'extra globs add');
+  assert.equal(run('echo x > .github/a', { approval: 'agent-ok', protect: { extra: ['infra/**'] } }).rule, 'protected-path', 'extra globs never replace the defaults');
+  assert.equal(run('echo x > .github/a', null).action, 'allow', 'no factory run');
+});
+
+test('factory run: protected-path reads past reserved words, keeps above to literal segments, takes absolute targets as written (#213 review)', () => {
+  const g = { globs: ['.github/**', '.factory/**', '**/*.tf', '**/migrations/**'], root: '/r', cwd: '/r' };
+  const hit = (c) => protectedWrite(c, g, { TMPDIR: '/tmp/' });
+  for (const c of ['if true; then rm .github/a; fi', 'if x; then :; else cp y .github/a; fi', 'for f in a; do tee .factory/a; done', 'while x; do mv .github/a b; done', '{ sed -i s/a/b/ .github/a; }', '! rm .github/a', 'coproc cp x .github/a', 'f() { rm .factory/a; }', 'function f { rm .factory/a; }', 'cd src && echo x > /r/.github/a', 'cp -T x .github', 'rm {.github,x}/a', 'rm -rf {a,{b,.factory}}', 'rm a.tf', 'rm -f *.tf', 'rm -rf db/migrations', 'rm -rf .']) assert.notEqual(hit(c), null, c);
+  // A glob that starts with `**` puts no directory above it; two globs meet only when their ends agree.
+  for (const c of ['rm src/a.js', 'mv src/a.js src/b.js', 'rm -f *.log', 'rm -rf dist', 'rm -rf node_modules', 'rm -f $TMPDIR/x', 'cd .github && cp workflows/ci.yml /tmp/ci.yml', 'cd .github && grep -r on: . > /tmp/out', 'rm {a,b}/c']) assert.equal(hit(c), null, c);
+});
+
+test('factory run: protected-path fails closed past its limits, for a command that may write only (#213 review)', () => {
+  const g = (extra = []) => ({ globs: ['.github/**', ...extra], root: '/r', cwd: '/r' });
+  const limits = { globs: 256, targets: 512, chars: 1024, ms: 2000 };
+  const pw = (c, p = g(), l = limits) => protectedWrite(c, p, {}, l);
+  // A setting past the limits is cut: globs over the length dropped, the rest kept up to the cap, defaults first.
+  const many = g([...Array(255).fill('x/**'), 'late/**']);
+  assert.equal(pw('echo x > late/a', many), null, 'a glob past the cap is ignored');
+  assert.notEqual(pw('echo x > .github/a', many), null, 'the defaults stay');
+  assert.notEqual(pw('echo x > x/a', many), null, 'globs within the cap stay');
+  assert.equal(pw('echo x > ' + 'a'.repeat(1025), g()).unsure !== undefined, true, 'a target too long');
+  assert.equal(pw('echo x > a', g(['a'.repeat(1025)])), null, 'a glob too long is dropped');
+  assert.match(pw('rm ' + Array(513).fill('a').join(' ')).unsure, /targets/, 'too many targets');
+  assert.equal(pw('rm ' + Array(512).fill('a').join(' ')), null, 'at the limit: checked');
+  assert.equal(pw('mv ' + Array(511).fill('a').join(' ') + ' b'), null, 'an mv operand counts once');
+  assert.match(pw('rm x{' + Array(65).fill('a').join(',') + '}').unsure, /brace/, 'a brace list too long');
+  assert.match(pw('rm ' + Array(400).fill('a/'.repeat(100) + 'b').join(' '), g(Array(200).fill('**/q*/**/z')), { ...limits, ms: 0 }).unsure, /ms/, 'out of time');
+  // A command with no write passes whatever its size.
+  for (const c of ['ls ' + Array(600).fill('a').join(' '), 'printf %s x{' + Array(200).fill('a').join(',') + '}', 'echo ' + 'a'.repeat(5000), 'git status']) assert.equal(pw(c), null, c.slice(0, 30));
+  // Thousands of brace groups (once a stack overflow, which emitted no decision): a deny, never a throw.
+  const groups = '{a,b}'.repeat(4000);
+  assert.deepEqual(pw(`echo ${groups}; echo x > .github/a`), { target: '.github/a' });
+  assert.match(pw(`rm ${groups}; echo x > .github/a`).unsure, /brace/);
+  assert.match(pw(`tee ${'{a..b}'.repeat(4000)}`).unsure, /brace/);
+  assert.equal(pw(`echo ${groups}`), null, 'no write: passes');
+  // A list after a group that is no list still expands; a variable glued to a protected name may be empty.
+  assert.notEqual(pw('rm -rf x{y}/../{.github,z}'), null);
+  assert.notEqual(pw('echo x > $P.github/a'), null);
+  assert.equal(pw('echo x > $P/a'), null);
+  // GNU destination spellings.
+  for (const c of ['cp -rt .github x', 'cp -vt .github/ x', 'mv --target=.github x', 'cp --target-dir .github x', 'cp -rt.github x']) assert.notEqual(pw(c), null, c);
+  for (const c of ['cp -T x y', 'Copy-Item -Path .github/a -Destination /tmp/a']) assert.equal(pw(c), null, c);
+  const d = evaluateCommand({ command: 'rm ' + Array(600).fill('a').join(' '), state: fresh(), host: calm, factory: { approval: 'agent-ok' }, rules });
+  assert.equal(d.rule, 'protected-path');
+  assert.match(d.reason, /could not check/);
+  assert.notEqual(evaluateCommand({ command: 'ls ' + Array(600).fill('a').join(' '), state: fresh(), host: calm, factory: { approval: 'agent-ok', protect: { extra: Array(300).fill('x/**') } }, rules }).rule, 'protected-path', 'a read with too many globs passes');
 });
 
 test('factory run: the takeover label is denied like the approval label, reads pass', () => {

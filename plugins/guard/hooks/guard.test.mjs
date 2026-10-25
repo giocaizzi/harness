@@ -5,7 +5,7 @@ import { spawn, spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { tmpdir, userInfo } from 'node:os'
 import { join, resolve } from 'node:path'
-import { CODEX_RULES, codexAsks, codexReviewer, factoryLabels, handle, inWorkTree, pythonManager, sessionStore, tail } from './guard.mjs'
+import { CODEX_RULES, codexAsks, codexReviewer, factoryLabels, handle, protectFacts, inWorkTree, pythonManager, sessionStore, tail } from './guard.mjs'
 import { fallbackDataDir } from './data.mjs'
 import { codexRules } from '../core/engine.mjs'
 import { rules } from '../core/rules.mjs'
@@ -595,6 +595,63 @@ test('VS Code task tools are judged by the command they run', async () => {
   assert.equal(decision(await task('run_task', { id: 'wipe', workspaceFolder: ws })).permissionDecision, 'ask')
   assert.equal(decision(await task('create_and_run_task', { workspaceFolder: ws, task: { label: 'b', type: 'shell', command: 'npm', args: ['run', 'build'] } })), undefined)
   assert.match(decision(await task('run_task', { id: 'shell: missing', workspaceFolder: ws })).additionalContext, /could not read the command/)
+})
+
+test('FACTORY_RUN_ID set: a shell write to a protected path is denied; FACTORY_PROTECTED_PATHS adds globs (#213)', async () => {
+  const repo = mkdtempSync(join(tmpdir(), 'guard-protect-'))
+  mkdirSync(join(repo, '.git'))
+  mkdirSync(join(repo, 'src'))
+  const sub = join(repo, 'src')
+  const slash = (p) => p.replace(/\\/g, '/')
+  assert.deepEqual(protectFacts({}, sub), { extra: [], root: slash(repo), cwd: slash(sub) }, 'unset: no extra globs, root found above cwd')
+  assert.deepEqual(protectFacts({ FACTORY_PROTECTED_PATHS: '' }, repo).extra, [], 'set but empty: no extra globs (the defaults stay)')
+  assert.deepEqual(protectFacts({ FACTORY_PROTECTED_PATHS: ' infra/** \r\n\n deploy/*.tf\n' }, repo).extra, ['infra/**', 'deploy/*.tf'], 'one glob per line, blanks dropped')
+  const write = (command, cwd = repo) => ({ ...pre('Bash', command), cwd })
+  const inRun = (paths) => setup({ env: { FACTORY_RUN_ID: 'r1', ...(paths === undefined ? {} : { FACTORY_PROTECTED_PATHS: paths }) } })
+  for (const paths of [undefined, '', 'infra/**']) {
+    const d = decision(await inRun(paths)(write('echo x > .github/workflows/ci.yml')))
+    assert.equal(d.permissionDecision, 'deny', `defaults always on (${JSON.stringify(paths)})`)
+    assert.match(d.permissionDecisionReason, /protected path/)
+    assert.equal(decision(await inRun(paths)(write('echo x > ../.factory/config.yaml', sub))).permissionDecision, 'deny', 'relative to the repo root, from a subdirectory')
+  }
+  assert.equal(decision(await inRun('infra/**')(write('echo x > infra/main.tf'))).permissionDecision, 'deny', 'an added glob')
+  assert.notEqual(decision(await inRun('')(write('echo x > infra/main.tf')))?.permissionDecision, 'deny', 'not added: allowed')
+  assert.equal(decision(await inRun('infra/**')(write('echo x > ../infra/main.tf', sub))).permissionDecision, 'deny', 'an added glob from a subdirectory')
+  assert.equal(decision(await inRun(undefined)(write(`echo x > ${slash(repo)}/.github/x`, sub))).permissionDecision, 'deny', 'an absolute path inside the repo')
+  assert.notEqual(decision(await inRun(undefined)(write('cat .github/workflows/ci.yml')))?.permissionDecision, 'deny', 'reads pass')
+  assert.notEqual(decision(await setup({ env: {} })(write('echo x > .github/workflows/ci.yml')))?.permissionDecision, 'deny', 'no factory run: allowed')
+})
+
+test('FACTORY_RUN_ID set: the protected-path check denies within the hook budget on worst cases (#213 review)', () => {
+  // Through the real entry point, in a child with a timeout: a hook that times out lets the command through.
+  const script = fileURLToPath(new URL('./guard.mjs', import.meta.url))
+  const repo = mkdtempSync(join(tmpdir(), 'guard-protect-'))
+  mkdirSync(join(repo, '.git'))
+  // Past the cap the globs are short: Linux caps one environment string at 128 KB, and spawnSync fails past it.
+  const globs = (n) => Array.from({ length: n }, (_, i) => (n > 256 ? `p${i}/**` : i % 3 === 0 ? `**/${'d'.repeat(30)}${i}/**/*.yml` : i % 3 === 1 ? `p${i}/**/**/q/**` : `[a-c]*${i}?/x*/**`)).join('\n')
+  const deep = 'a/'.repeat(300) + 'b'
+  const cases = [
+    [254, 'sed -i s/a/b/ ' + Array(3000).fill(deep).join(' ')],
+    [254, 'mv ' + Array.from({ length: 3000 }, (_, i) => `$V${i}/${deep}`).join(' ') + ' dist/'],
+    [254, 'cp ' + Array.from({ length: 3000 }, (_, i) => `s${i}/${deep}`).join(' ') + ' dist/'],
+    [254, 'rm ' + Array.from({ length: 500 }, (_, i) => `x${i}/${'*/'.repeat(40)}y`).join(' ')],
+    [254, 'echo x > ' + '*a'.repeat(50000)],
+    [254, Array(500).fill('cd src && echo x > a/b/c').join('; ')],
+    [254, 'echo ' + '{a,b}'.repeat(4000)],
+    [254, 'rm ' + '{a,b}'.repeat(4000)],
+    [5000, 'echo x > a'],
+  ]
+  for (const [n, plain] of cases) {
+    // Each case ends in a protected write, so the only right answer is a deny, whatever limit it hits first.
+    const command = `${plain}; echo x > .github/workflows/ci.yml`
+    const started = Date.now()
+    const r = spawnSync(process.execPath, [script, 'PreToolUse'], { input: JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command }, cwd: repo, session_id: 's' }), encoding: 'utf8', timeout: 20000, env: { ...process.env, FACTORY_RUN_ID: 'r1', FACTORY_PROTECTED_PATHS: globs(n), GUARD_OTEL: 'off', FACTORY_EVENTS_FILE: '', CLAUDE_PLUGIN_DATA: mkdtempSync(join(tmpdir(), 'guard-test-')) } })
+    assert.equal(r.error, undefined, `spawn failed: ${r.error?.message}`)
+    assert.equal(r.signal, null, `timed out: ${command.slice(0, 40)}`)
+    assert.equal(r.status, 0, r.stderr)
+    assert.ok(Date.now() - started < 10000, `${Date.now() - started} ms: ${command.slice(0, 40)}`)
+    assert.match(r.stdout, /"permissionDecision":"deny"/, `no deny: ${command.slice(0, 40)}`)
+  }
 })
 
 test('FACTORY_RUN_ID set: the approval and takeover labels (default or the repo\'s configured ones) cannot be added; unset, they can', async () => {

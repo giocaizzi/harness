@@ -257,7 +257,7 @@ function assign(cmd, vars, env, pwd) {
 // One level of commands (the top level, or a payload), each with its directory; payloads follow their command, in
 // the directory it runs in (a remote payload starts in no known directory, without this machine's HOME). A command
 // that hands its words to another host or a container (`ssh host rm -rf x`) is judged only through its payload.
-// Each entry: { seg (redirections dropped), code, words, dir, remote, resolve(path) }.
+// Each entry: { seg (redirections dropped), code, words, redirs (output redirection targets), dir, remote, resolve(path) }.
 // A `cd` holds past the end of its chain (`;`, a newline, `&`) only when it surely ran: nothing but assignments and
 // other sure `cd`s ran before it in the whole command (`ran`, inherited by payloads), so nothing could have removed or
 // moved its directory first, and that directory exists (`env.dirs`, which the adapter gathers through `cdDirs`). Else
@@ -307,7 +307,7 @@ function levelSegments(a, baseDir, remote, env, outer = {}, frozen = null, cds =
     } else {
       chainSure = false;
       ran = true;
-      if (!cmd.payloads.some((p) => p.remote && p.kind !== 'subst')) out.push({ seg: gitPlain(seg), code: cmd.code, words: cmd.words, dir: gitDirs(seg).map(resolve).reduce(inDir, dir), remote, resolve });
+      if (!cmd.payloads.some((p) => p.remote && p.kind !== 'subst')) out.push({ seg: gitPlain(seg), code: cmd.code, words: cmd.words, redirs: cmd.redirs, dir: gitDirs(seg).map(resolve).reduce(inDir, dir), remote, resolve });
     }
     for (const p of cmd.payloads) {
       const inner = p.expanded === 'escaped' ? { vars: {}, pwd: undefined } : p.expanded ? { vars: snapshot, pwd } : frozen;
@@ -729,6 +729,217 @@ export function shellEdit(command, env = {}) {
   return false;
 }
 
+// A shell write, in a factory run, to a protected path (#213): `protect.globs` (`rules.factory.protectedPaths`, always,
+// plus FACTORY_PROTECTED_PATHS), each over paths relative to the repo root (`protect.root`; the cwd when unknown). Writes are output redirections of any command, `tee`, `sed -i`/`perl -pi`, Set-Content, Add-Content,
+// Out-File and Tee-Object, the operands of rm, Remove-Item and their aliases, the sources and destination of mv and
+// Move-Item, and the destination of cp and Copy-Item (a destination also as `<dest>/<source name>`, a directory it may
+// be). Removing or moving away a directory above a protected path counts (`rm -rf .github`, `rm -rf .`), along a
+// glob's literal leading segments only (`**/*.tf` puts no directory above it). Letter case is ignored, as macOS and
+// Windows do. A target the shell globs is matched as a glob (`.g*` may name `.github`; a leading `*` or `?` never names
+// a dot file), a brace list is expanded (one group a level, 64 words at most), and one whose start is a variable or a
+// `cd` not followed is matched by the rest of its path anywhere (`$ROOT/.github/x`). A command that may write fails
+// closed past the limits (`rules.factory.protectedLimits`: targets, characters, milliseconds) or when the check throws,
+// since a hook that times out or emits nothing lets the command through; globs past the limits are ignored. Returns { target } (the first protected target as written), { unsure } (a limit it hit) or null.
+const PROTECT_RM = /^(?:rm|rmdir|unlink|remove-item|ri|del|erase|rd)$/;
+const PROTECT_MV = /^(?:mv|move-item|mi|move)$/;
+const PROTECT_CP = /^(?:cp|copy-item|ci|copy|cpi)$/;
+const PROTECT_PS = /^(?:set-content|add-content|out-file|tee-object|sc|ac)$/;
+const SEG_GLOB = /[*?[]/;
+const posixPath = (p) => p.replace(/\\/g, '/');
+function normalizeSegments(path) {
+  const out = [];
+  for (const s of path.split('/')) {
+    if (!s || s === '.') continue;
+    if (s === '..') {
+      if (!out.length || out.at(-1) === '..') out.push('..');
+      else out.pop();
+    } else out.push(s);
+  }
+  return out;
+}
+// The repo-relative segments of a target: { segs } from the root, { segs, suffix: true } when its start is unknown,
+// or null outside the repo.
+function repoSegments(target, dir, protect) {
+  const p = posixPath(target);
+  const cwdRel = protect.root && protect.cwd ? relativeTo(posixPath(protect.root), posixPath(protect.cwd)) : [];
+  // A first segment that is only a variable or `~user` is dropped; one with text after the variable stays (`$P.github`).
+  if (/^[$~%`]/.test(p)) {
+    const segs = normalizeSegments(p);
+    return { segs: /^(?:\$(?:\{[^}]*\}|\w+|\([^)]*\))|%\w+%|~[\w.-]*|`[^`]*`)$/.test(segs[0] ?? '') ? segs.slice(1) : segs, suffix: true };
+  }
+  // An absolute target is where it says, whatever directory a `cd` reached.
+  if (dir === UNKNOWN_DIR && !ABS_DIR.test(p)) return { segs: normalizeSegments(p), suffix: true };
+  const full = dir && !ABS_DIR.test(p) ? `${posixPath(dir).replace(/\/+$/, '')}/${p}` : p;
+  if (ABS_DIR.test(full)) {
+    if (!protect.root) return { segs: normalizeSegments(full), suffix: true };
+    return relativeTo(posixPath(protect.root), full.replace(/^\/(?=[a-z]:)/i, ''), true);
+  }
+  const segs = normalizeSegments([...cwdRel, ...full.split('/')].join('/'));
+  // Above the root (`..`) holds the whole repo; beside it (`../other`) is outside.
+  if (segs[0] === '..') return segs.every((x) => x === '..') ? { segs: [] } : null;
+  return { segs };
+}
+// `path` relative to `root` as segments (case ignored); with `wrap`, { segs }, `{ segs: [] }` for a directory above the
+// root (it holds the whole repo), or null when outside.
+function relativeTo(root, path, wrap = false) {
+  const r = normalizeSegments(root);
+  const s = normalizeSegments(path);
+  const same = (a, b) => a.slice(0, Math.min(a.length, b.length)).every((x, i) => x.toLowerCase() === b[i].toLowerCase());
+  const inside = r.length <= s.length && same(r, s);
+  if (!wrap) return inside ? s.slice(r.length) : [];
+  return inside ? { segs: s.slice(r.length) } : same(s, r) ? { segs: [] } : null;
+}
+// Whether two globs may name one word: the text before the first wildcard of each, and after the last, agree (`*.log`
+// never meets `*.tf`).
+function globsMayMeet(a, b) {
+  const head = (g) => g.slice(0, g.search(/[*?[]/)).toLowerCase();
+  const tail = (g) => g.slice(Math.max(g.lastIndexOf('*'), g.lastIndexOf('?'), g.lastIndexOf(']')) + 1).toLowerCase();
+  const agree = (x, y, end) => (end ? x.endsWith(y) || y.endsWith(x) : x.startsWith(y) || y.startsWith(x));
+  return agree(head(a), head(b), false) && agree(tail(a), tail(b), true);
+}
+// Whether one target segment may be one protected-pattern segment.
+// A variable may hold a leading dot, so only a written `*`, `?` or `[` at the start keeps a dot file out.
+function segMayMatch(pat, seg) {
+  const glob = seg.replace(/\$(?:\{[^}]*\}|\w+|\([^)]*\))|%\w+%|`[^`]*`/g, '*');
+  if (SEG_GLOB.test(glob)) {
+    if (/^[*?[]/.test(seg) && pat.startsWith('.')) return false;
+    return SEG_GLOB.test(pat) ? globsMayMeet(glob, pat) : globMatches(glob, pat.toLowerCase());
+  }
+  return SEG_GLOB.test(pat) ? globMatches(pat, glob.toLowerCase()) : pat.toLowerCase() === glob.toLowerCase();
+}
+// Whether pattern segments `pat` match target segments `segs`; `above` lets the target end above a match, when every
+// segment it has matched one literal leading segment of the pattern (no `**` took any). `tick` counts the work.
+function patternHits(pat, segs, above, suffix, tick) {
+  const memo = new Map();
+  const f = (i, j) => {
+    const key = i * (segs.length + 1) + j;
+    if (memo.has(key)) return memo.get(key);
+    tick();
+    let r;
+    if (j === segs.length) r = (above && i === j && !pat.slice(0, i).includes('**')) || pat.slice(i).every((p) => p === '**');
+    else if (i === pat.length) r = false;
+    else if (pat[i] === '**') r = f(i + 1, j) || f(i, j + 1);
+    else r = segMayMatch(pat[i], segs[j]) && f(i + 1, j + 1);
+    memo.set(key, r);
+    return r;
+  };
+  if (!suffix) return f(0, 0);
+  // An unknown start (a variable, a `cd` not followed, an absolute path with no known root): any tail of the path.
+  return segs.some((_, j) => f(0, j));
+}
+// The words a brace list expands to, innermost list first, a range kept as a glob and a group that is no list left as
+// written; null past `limit` words or with more than `limit` groups. Iterative: a word of thousands of groups must not
+// overflow the stack.
+function expandBraces(text, limit = 64) {
+  if ((text.match(/\{/g) ?? []).length > limit) return null;
+  const done = [];
+  const todo = [text];
+  while (todo.length) {
+    const word = todo.pop();
+    const m = [...word.matchAll(/\{([^{}]*)\}/g)].find((g) => /,|\.\./.test(g[1]));
+    if (!m) {
+      done.push(word);
+      continue;
+    }
+    const head = word.slice(0, m.index);
+    const tail = word.slice(m.index + m[0].length);
+    for (const part of m[1].includes(',') ? m[1].split(',') : ['*']) todo.push(head + part + tail);
+    if (done.length + todo.length > limit) return null;
+  }
+  return done;
+}
+const LIMITED = Symbol('limited');
+// A command that may write at all: an output redirection or a writer's name. Only such a command can fail closed.
+const MAY_WRITE = /[>]|(?:^|[^\w-])(?:tee|sed|perl|rm|rmdir|unlink|mv|cp|move|copy|set-content|add-content|out-file|tee-object|remove-item|move-item|copy-item|ri|mi|ci|cpi|del|erase|rd|sc|ac)(?![\w-])/i;
+export function protectedWrite(command, protect, env = {}, limits = { globs: 256, targets: 512, chars: 1024, ms: 2000 }) {
+  // A setting past the limits is cut, not failed: globs over `chars` are dropped, then all past `globs` (defaults first).
+  const globs = protect.globs.filter((g) => g.length <= limits.chars).slice(0, limits.globs).map((g) => normalizeSegments(posixPath(g).replace(/\/$/, '/**')));
+  const until = Date.now() + limits.ms;
+  let work = 0;
+  let targets = 0;
+  const tick = () => {
+    if ((++work & 255) === 0 && Date.now() > until) throw LIMITED;
+  };
+  // One write target as written: counted, and checked for length, once however many spellings it has.
+  const count = (w) => {
+    if (++targets > limits.targets || w.val.length > limits.chars) throw LIMITED;
+  };
+  const hits = (target, dir, resolve, above) => {
+    const at = repoSegments(resolve(target), dir, protect);
+    return at !== null && globs.some((g) => patternHits(g, at.segs, above, at.suffix, tick));
+  };
+  try {
+    const target = scanWrites(command, env, count, hits);
+    return target === null ? null : { target };
+  } catch (e) {
+    // Any failure (a limit, a stack overflow, a bug) denies a command that may write, and lets the rest through.
+    if (!MAY_WRITE.test(command)) return null;
+    return { unsure: e === LIMITED ? `more than ${limits.targets} write targets, one over ${limits.chars} characters, a brace list of more than 64 words, or over ${limits.ms} ms to check` : 'the check failed' };
+  }
+}
+// PowerShell and cmd keep a backslash (`.github\ci.yml`) that a POSIX shell reads as an escape: both spellings count. A
+// brace list the shell expands counts as each word it yields; past the limit, the command fails closed.
+function spellings(w) {
+  const out = [w.val, ...(w.raw.includes('\\') ? [w.raw.replace(/['"]/g, '')] : [])];
+  if (!/\{/.test(w.val) || !dynamicText(w.raw)) return out;
+  const words = expandBraces(w.val);
+  if (!words) throw LIMITED;
+  return [...out, ...words];
+}
+const POSIX_MOVERS = /^(?:cp|mv)$/;
+function scanWrites(command, env, count, hits) {
+  for (const { words, redirs = [], dir, remote, resolve } of segments(command, env)) {
+    if (remote) continue;
+    for (const w of redirs) {
+      if (NOT_A_FILE.test(w.val)) continue;
+      count(w);
+      for (const t of spellings(w)) if (!NOT_A_FILE.test(t) && hits(t, dir, resolve, false)) return t;
+    }
+    // Past reserved words (`then rm …`, `{ cp …`, `! tee …`), as the hidden-gh check reads them.
+    const cw = commandWords(dropReserved(words));
+    if (!cw.length) continue;
+    const name = cw[0].val.replace(/^.*[\\/]/, '').replace(/\.exe$/i, '').toLowerCase();
+    const inPlace = (name === 'sed' && cw.some((w) => /^(?:-[Enrsuz]*[iI]|--in-place)/.test(w.val))) || (name === 'perl' && cw.some((w) => /^-[0-9aelnpsw]*i/.test(w.val)));
+    if (!(name === 'tee' || inPlace || PROTECT_PS.test(name) || PROTECT_RM.test(name) || PROTECT_MV.test(name) || PROTECT_CP.test(name))) continue;
+    // Only a writer's words are counted and expanded: a read-only command never fails closed.
+    for (const w of cw.slice(1)) if (!w.val.startsWith('-')) count(w);
+    const args = cw.slice(1).flatMap(spellings);
+    const operands = args.filter((a) => !a.startsWith('-'));
+    let writes = [];
+    let removes = [];
+    if (name === 'tee') writes = operands;
+    else if (inPlace) {
+      const files = inPlaceFiles(name, args.join(' '));
+      writes = files.length ? files : operands;
+    } else if (PROTECT_PS.test(name)) {
+      const k = args.findIndex((a) => /^-(?:path|filepath|literalpath)$/i.test(a));
+      const end = args.findIndex((x, i) => i > k && x.startsWith('-'));
+      writes = k >= 0 ? args.slice(k + 1, end < 0 ? undefined : end) : operands.slice(0, 2);
+    } else if (PROTECT_RM.test(name)) removes = operands;
+    else {
+      let dest = null;
+      const sources = [];
+      for (let k = 0; k < args.length; k++) {
+        const a = args[k];
+        // GNU: `--target-directory` or any prefix of it down to `--t`, glued with `=` or not; a short-flag cluster
+        // ending in `t` (`-rt DIR`) or holding it with its value glued (`-tDIR`, `-rtDIR`).
+        const long = /^(--[a-z-]+)(?:=(.*))?$/.exec(a);
+        const short = POSIX_MOVERS.test(name) && /^-([A-Za-z]*?)t(.*)$/.exec(a);
+        if (long && long[1].length >= 3 && '--target-directory'.startsWith(long[1])) dest = long[2] ?? args[++k] ?? null;
+        else if (short && /^[a-su-zA-Z]*$/.test(short[1])) dest = short[2] || (args[++k] ?? null);
+        else if (/^-destination$/i.test(a)) dest = args[++k] ?? null;
+        else if (!a.startsWith('-')) sources.push(a);
+      }
+      if (dest === null) dest = sources.pop() ?? null;
+      if (dest !== null) writes = [dest, ...sources.map((src) => `${dest}/${posixPath(src).replace(/\/+$/, '').split('/').pop()}`)];
+      if (PROTECT_MV.test(name)) removes = sources;
+    }
+    for (const t of writes) if (hits(t, dir, resolve, false)) return t;
+    for (const t of removes) if (hits(t, dir, resolve, true)) return t;
+  }
+  return null;
+}
+
 // `python`: the Python manager of the repo in cwd ('uv', 'poetry', 'pipenv', 'pip'; null for none), for deny rules with `when`.
 // A whole command that only prints files (`cat f`, `head -n 5 f`, `sed -n 1,20p f`): the harness's read tool does it better.
 const SHELL_READ = /^\s*(?:(?:cat|head|tail|less|more)(?:\s+-[\w-]+(?:\s+\d+)?)*|sed\s+-n\s+\S+)(?:\s+[^\s|;&<>()`$]+)+\s*$/;
@@ -1094,6 +1305,10 @@ export function evaluateCommand({ command, loadedSkills = new Set(), state, host
   if (factory && ghUnseen(command, rules)) return { action: 'deny', rule: 'factory-approval', reason: `${rules.factory.ghUnseenWhy} Use gh's own subcommand (\`gh issue|pr|api …\`) instead of an alias or extension.` }
   // Nor the takeover label: an approver sets it to hand the ticket to an attended run, which removes it once it claimed.
   if (factory?.takeover && touchesApprovalLabel(command, factory.takeover)) return { action: 'deny', rule: 'factory-takeover', reason: `${rules.factory.takeoverWhy} The \`${factory.takeover}\` label is the owner's to apply; ask on the ticket instead.` }
+  // Nor a protected path (`.github/**`, `.factory/**`, FACTORY_PROTECTED_PATHS) through a shell write: the runtime counts the deny.
+  const shielded = factory && protectedWrite(command, { ...factory.protect, globs: [...rules.factory.protectedPaths, ...(factory.protect?.extra ?? [])] }, env, rules.factory.protectedLimits)
+  if (shielded?.target) return { action: 'deny', rule: 'protected-path', reason: `${rules.factory.protectedWhy} \`${shielded.target}\` is a protected path in this run; leave it to the owner and say on the ticket what should change.` }
+  if (shielded?.unsure) return { action: 'deny', rule: 'protected-path', reason: `${rules.factory.protectedWhy} The guard could not check this command's writes within its limits (${shielded.unsure}), so it denies them; split the command into smaller ones.` }
   // A config the guard could not read fails closed: every label change is denied, and so is any name it could still find.
   if (factory?.unsure && (changesLabels(command) || (factory.extra ?? []).some((name) => touchesApprovalLabel(command, name)))) return { action: 'deny', rule: 'factory-config', reason: `${rules.factory.unsureWhy} Every label change is denied in this run until the config is fixed; ask on the ticket instead.` }
   if (factory?.unsure && ghBuildsLabelFlag(command)) return { action: 'deny', rule: 'factory-config', reason: `${rules.factory.unsureWhy} This \`gh issue|pr create|edit\` has a subcommand or flag the shell builds at run time, which could add a label. Spell the subcommand and flags literally, quote every value, and pass a body as a value or with a literal \`--body-file\` path.` }

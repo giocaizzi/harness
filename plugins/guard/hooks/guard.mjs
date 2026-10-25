@@ -293,6 +293,24 @@ export function factoryLabels(cwd) {
   }
 }
 
+// What a factory run's shell must not write (rule `protected-path`): the globs of FACTORY_PROTECTED_PATHS (one per line,
+// added to the rules' defaults; unset or empty adds none), the repo root (the nearest directory above `cwd` holding
+// `.git`, else `cwd`) and `cwd`, with forward slashes.
+export function protectFacts(env, cwd) {
+  const extra = String(env?.FACTORY_PROTECTED_PATHS ?? '').split(/\r?\n/).map((g) => g.trim()).filter(Boolean)
+  const at = resolve(cwd || '.')
+  let root = at
+  for (let dir = at; ; dir = dirname(dir)) {
+    if (existsSync(join(dir, '.git'))) {
+      root = dir
+      break
+    }
+    if (dirname(dir) === dir) break
+  }
+  const slash = (p) => p.replace(/\\/g, '/')
+  return { extra, root: slash(root), cwd: slash(at) }
+}
+
 async function onShell(input, state, deps) {
   const command = String(input.tool_input?.command ?? '')
   if (!command) return {}
@@ -330,7 +348,7 @@ async function onShell(input, state, deps) {
     const held = input.permission_mode === 'auto' ? ['read', 'edit'].filter((r) => !state.reminded.includes(r)) : []
     const reminded = new Set([...state.reminded, ...held])
     const judged = hostJudged(command, rules, reminded)
-    const d = evaluateCommand({ command, loadedSkills: new Set(state.loaded), state: { reminded }, host, readTool: deps.readTool ?? true, ...facts, factory: deps.env?.FACTORY_RUN_ID ? factoryLabels(input.cwd) : null, rules })
+    const d = evaluateCommand({ command, loadedSkills: new Set(state.loaded), state: { reminded }, host, readTool: deps.readTool ?? true, ...facts, factory: deps.env?.FACTORY_RUN_ID ? { ...factoryLabels(input.cwd), protect: protectFacts(deps.env, input.cwd) } : null, rules })
     state.reminded = [...reminded].filter((r) => !held.includes(r))
     if (unfinished && d.action !== 'allow') d.reason += '\nChecks unfinished: the worktree, branch and build-output lookups ran out of time, so a safe case could not be shown.'
     // Logged after the harness-specific transforms, so `action` is what happened: an ask that became a deny is a deny,

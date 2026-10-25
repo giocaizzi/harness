@@ -357,7 +357,14 @@ export const rules = {
     // unseen. `copilot` is left out: it starts an agent whose commands the guard never sees. On an older gh, a name that is a
     // built-in only in a later release may be an extension: this list still lets it pass. Newer built-ins deny until listed.
     "ghCommands": ["a11y", "accessibility", "actions", "agent", "agent-task", "agent-tasks", "agents", "alias", "api", "at", "attestation", "auth", "browse", "cache", "codespace", "completion", "config", "cs", "discussion", "environment", "exit-codes", "ext", "extension", "extensions", "formatting", "gist", "gpg-key", "help", "issue", "label", "licenses", "mintty", "org", "pr", "preview", "project", "reference", "release", "repo", "rs", "ruleset", "run", "search", "secret", "skill", "skills", "ssh-key", "status", "telemetry", "variable", "version", "workflow"],
-    "ghUnseenWhy": "In a factory run every gh command must be one the guard can read: a gh alias or extension can run any command, a label change included, out of its sight."
+    "ghUnseenWhy": "In a factory run every gh command must be one the guard can read: a gh alias or extension can run any command, a label change included, out of its sight.",
+    // Repo-relative globs a run's shell never writes (rule `protected-path`); FACTORY_PROTECTED_PATHS adds to them.
+    "protectedPaths": [".github/**", ".factory/**"],
+    // Past any of these a command that may write is denied (a hook that times out lets the command through): write
+    // targets in one command, characters in a target, milliseconds for the check. Globs past `globs` (defaults counted
+    // first) or over `chars` are ignored.
+    "protectedLimits": { "globs": 256, "targets": 512, "chars": 1024, "ms": 2000 },
+    "protectedWhy": "A factory run must not change a protected path (CI, the factory config, or one the runtime lists): those changes are the owner's."
   },
   "titles": {
     "types": ["feat", "fix", "perf", "refactor", "revert", "docs", "style", "test", "build", "ci", "chore"],

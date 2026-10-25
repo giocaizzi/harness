@@ -89,7 +89,7 @@ export function scan(src) {
   let sep = ''
   const pending = [] // heredocs waiting for the end of the line: { delim, strip, cmd }
   const start = (i) => {
-    if (!cur) cur = { start: i, end: i, code: '', words: [], heredocs: [], sep }
+    if (!cur) cur = { start: i, end: i, code: '', words: [], heredocs: [], redirs: [], sep }
   }
   const finish = () => {
     if (cur && (cur.words.length || cur.code.trim())) commands.push(cur)
@@ -149,7 +149,11 @@ export function scan(src) {
       if (redir[2] === '<<' || redir[2] === '<<-') {
         pending.push({ delim: target.word.val, strip: redir[2] === '<<-', cmd: cur })
         cur.code += ` ${redir[0]}${target.word.val} `
-      } else cur.code += ` ${redir[0]}${target.code} `
+      } else {
+        cur.code += ` ${redir[0]}${target.code} `
+        // An output redirection's file (`>&2`, `>&-` duplicate a descriptor): what the command writes besides its arguments.
+        if (/>/.test(redir[2]) && !(redir[2] === '>&' && /^(?:\d+|-)$/.test(target.word.val))) cur.redirs.push(target.word)
+      }
       continue
     }
     const { word, code, end } = readWord(src, i)
@@ -389,7 +393,7 @@ function payloadsOf(cmd, prev) {
   return { payloads: out, opaque }
 }
 
-// The whole analysis of a command: { commands: [{ raw, code, words, heredocs, sep, payloads: [{ kind, text, remote,
+// The whole analysis of a command: { commands: [{ raw, code, words, heredocs, redirs, sep, payloads: [{ kind, text, remote,
 // host, injected, analysis }] }], opaque }. Payloads are analysed again, MAX_DEPTH levels at most.
 export function analyze(src, depth = 0) {
   const commands = scan(src)

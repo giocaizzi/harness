@@ -91,3 +91,9 @@ test('commandWords skips assignments and wrappers', () => {
   assert.deepEqual(words('A=1 sudo -u root env -i B=2 nice -n 5 rm -rf x'), ['rm', '-rf', 'x'])
   assert.deepEqual(words('timeout 30 bash -c x'), ['bash', '-c', 'x'])
 })
+
+test('scan: output redirection targets are kept, descriptor duplicates and inputs are not', () => {
+  const redirs = (src) => scan(src).map((c) => c.redirs.map((w) => w.val))
+  assert.deepEqual(redirs('echo x > a >> "b c" 2>&1 >&2 >&- < in <<< s; cat >| d &> e &>>f 2>g >&h'), [['a', 'b c'], ['d', 'e', 'f', 'g', 'h']])
+  assert.deepEqual(redirs('cat <<EOF > out\nbody\nEOF'), [['out']])
+})
