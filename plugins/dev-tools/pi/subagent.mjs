@@ -40,10 +40,10 @@ export function piArgs(agent, task, promptFile, model) {
 // How to start pi again: the running entry point under the same node, else `pi` on PATH.
 const piCommand = () => (process.argv[1] && existsSync(process.argv[1]) ? [process.execPath, process.argv[1]] : ['pi'])
 
-// The child's environment: the guard's stop check is off there, since the parent's own stop runs it once the
-// subagent's work is part of its turn; and the guard keeps the child's reminders as its own agent's within the
+// The child's environment: the guard's stop check and factory result gate are off there, since the parent's own stop
+// runs them once the subagent's work is part of its turn; and the guard keeps the child's reminders as its own agent's within the
 // parent session, so the skills either loads count for both.
-export const childEnv = (env = process.env, { session, agent } = {}) => ({ ...env, GUARD_STOP_CHECK: 'off', ...(session ? { GUARD_PARENT_SESSION: session, GUARD_AGENT_ID: agent } : {}) })
+export const childEnv = (env = process.env, { session, agent } = {}) => ({ ...env, GUARD_STOP_CHECK: 'off', GUARD_RESULT_GATE: 'off', ...(session ? { GUARD_PARENT_SESSION: session, GUARD_AGENT_ID: agent } : {}) })
 
 function run(argv, cwd, signal, ids) {
   return new Promise((resolve) => {

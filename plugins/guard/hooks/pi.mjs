@@ -58,7 +58,8 @@ export default function guardExtension(pi, deps) {
   pi.on('session_start', () => void guard.awake())
   pi.on('session_shutdown', async (_event, ctx) => void (await guard.sessionEnd({ sessionId: sessionOf(ctx) })))
 
-  // The Stop hook: when make check fails, send the failure back as a follow-up once; the next settle passes.
+  // The Stop hook: when make check fails, send the failure back as a follow-up once; the next settle passes. The factory
+  // result gate is sent back the same way, at most twice per run.
   pi.on('agent_settled', async (event, ctx) => {
     if (event.aborted) return
     const reason = await guard.stop({ cwd: ctx.cwd, active: blocked })
