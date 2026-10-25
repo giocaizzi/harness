@@ -327,5 +327,15 @@
   ["gh alias list", "allow", "G30", "control: listing aliases changes nothing", {"factory": "readable"}],
   ["gh issue view 1 --json labels", "allow", "G30", "control: a known subcommand", {"factory": "readable"}],
   ["gh -R o/r pr list", "allow", "G30", "control: a known subcommand after -R", {"factory": "readable"}],
-  ["gh tag 2", "allow", "G30", "control: no factory run"]
+  ["gh tag 2", "allow", "G30", "control: no factory run"],
+  ["gh extension install o/gh-tag", "deny:factory-approval", "G30", "review #276: installing an extension, whose name a later call runs", {"factory": "readable"}],
+  ["gh ext upgrade tag", "deny:factory-approval", "G30", "review #276: upgrading an extension swaps its code", {"factory": "readable"}],
+  ["gh extension remove tag", "deny:factory-approval", "G30", "review #276: removing an extension frees a name for another", {"factory": "readable"}],
+  ["gh stack push", "deny:factory-approval", "G30", "review #276: stack is an extension, not a gh command", {"factory": "readable"}],
+  ["gh co 1", "deny:factory-approval", "G30", "review #276: co is a default alias a run can replace", {"factory": "readable"}],
+  ["gh copilot -p 'fix it'", "deny:factory-approval", "G30", "review #276: copilot starts an agent the guard never sees", {"factory": "readable"}],
+  ["gh cs list", "allow", "G30", "control: a built-in alias (codespace)", {"factory": "readable"}],
+  ["gh agent-tasks list", "allow", "G30", "control: a built-in alias (agent-task)", {"factory": "readable"}],
+  ["gh environment", "allow", "G30", "control: a help topic", {"factory": "readable"}],
+  ["gh extension list", "allow", "G30", "control: listing extensions changes nothing", {"factory": "readable"}]
 ]

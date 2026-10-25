@@ -1187,12 +1187,12 @@ test('factory run: a command naming the approval label is denied unless it only 
 
 test('factory run: a gh alias or extension is denied, gh\'s own commands pass (#273)', () => {
   const run = (command, factory = { approval: 'agent-ok' }) => evaluateCommand({ command, state: fresh(), host: calm, factory, rules });
-  for (const c of ['gh tag 1', 'gh alias set t "issue list"', 'gh alias import a.yml', 'gh extension exec t', 'gh ext exec t', 'gh -R o/r tag', 'gh my-ext --flag']) {
+  for (const c of ['gh tag 1', 'gh alias set t "issue list"', 'gh alias import a.yml', 'gh extension exec t', 'gh ext exec t', 'gh -R o/r tag', 'gh my-ext --flag', 'gh extension install o/gh-x', 'gh ext upgrade x', 'gh extensions remove x', 'gh stack', 'gh co 1', 'gh copilot']) {
     assert.equal(ghUnseen(c, rules), true, c);
     assert.equal(run(c).rule, 'factory-approval', c);
     assert.match(run(c).reason, /alias or extension/, c);
   }
-  for (const c of ['gh alias list', 'gh alias delete t', 'gh extension list', 'gh pr view 1', 'gh -R o/r issue list', 'gh api user', 'gh', 'gh --version', 'gh help', 'echo gh tag']) assert.equal(ghUnseen(c, rules), false, c);
+  for (const c of ['gh alias list', 'gh alias delete t', 'gh extension list', 'gh pr view 1', 'gh -R o/r issue list', 'gh api user', 'gh', 'gh --version', 'gh help', 'echo gh tag', 'gh cs list', 'gh at verify x', 'gh rs list', 'gh agent list', 'gh skills list', 'gh a11y', 'gh help environment', 'gh extension list']) assert.equal(ghUnseen(c, rules), false, c);
   assert.equal(run('gh tag 1', null).action, 'allow', 'no factory run');
 });
 

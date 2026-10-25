@@ -862,7 +862,7 @@ function unreadableBody(args) {
 }
 
 // A plain `gh` command whose real command the guard cannot see: an alias or extension (`gh <name>` that is not one of gh's
-// own commands), or one that makes or runs one (`gh alias set|import`, `gh extension exec`). Other lines are left to
+// own commands), or one that makes, swaps or runs one (`gh alias set|import`, `gh extension install|upgrade|remove|exec`). Other lines are left to
 // touchesApprovalLabel, which denies a non-plain `gh` with an unknown subcommand already.
 export function ghUnseen(command, rules) {
   const args = plainGh(command.replace(/\\\r?\n/g, ''));
@@ -875,7 +875,7 @@ export function ghUnseen(command, rules) {
   const [cmd, sub] = positional;
   if (cmd === undefined) return false;
   if (!rules.factory.ghCommands.includes(cmd)) return true;
-  return (cmd === 'alias' && ['set', 'import'].includes(sub)) || (['extension', 'extensions', 'ext'].includes(cmd) && sub === 'exec');
+  return (cmd === 'alias' && ['set', 'import'].includes(sub)) || (['extension', 'extensions', 'ext'].includes(cmd) && ['install', 'upgrade', 'remove', 'exec'].includes(sub));
 }
 
 // Fail closed while a factory run is active. A command that names the label, approval or takeover (in any quoting or case, as
