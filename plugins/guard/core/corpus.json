@@ -446,5 +446,9 @@
   ["echo x > .factory/runs/12/", "deny:protected-path", "G32", "#302: a run directory with a trailing slash", {"factory": "readable"}],
   ["echo x > $(git rev-parse --path-format=absolute --git-common-dir)/../.factory/runs/12/result.json", "allow", "G32", "#302: the documented absolute-path spelling", {"factory": "readable"}],
   ["echo x > $(git rev-parse --path-format=absolute --git-common-dir)/../.factory/runs/12", "deny:protected-path", "G32", "#302: the run directory through the substitution", {"factory": "readable"}],
-  ["echo x > $(dirname \"$(git rev-parse --git-common-dir)\")/.factory/runs/12/result.json", "deny:protected-path", "G32", "#302: known limit: a nested substitution is not understood", {"factory": "readable"}]
+  ["echo x > $(dirname \"$(git rev-parse --git-common-dir)\")/.factory/runs/12/result.json", "deny:protected-path", "G32", "#302: known limit: a nested substitution is not understood", {"factory": "readable"}],
+  ["Move-Item \".factory\\runs\\12\\.. \" C:\\tmp\\x", "deny:protected-path", "G32", "#302 review: a trailing space Windows strips", {"factory": "readable"}],
+  ["Move-Item .factory\\runs\\12\\... C:\\tmp\\x", "deny:protected-path", "G32", "#302 review: trailing dots Windows strips", {"factory": "readable"}],
+  ["Remove-Item -Recurse -Force '.factory\\runs\\12\\.. '", "deny:protected-path", "G32", "#302 review: Remove-Item with a stripped segment", {"factory": "readable"}],
+  ["echo x > '.factory/runs/12/result.json '", "deny:protected-path", "G32", "#302 review: a file name ending in a space", {"factory": "readable"}]
 ]

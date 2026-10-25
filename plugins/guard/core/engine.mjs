@@ -878,8 +878,8 @@ export function protectedWrite(command, protect, env = {}, limits = { globs: 256
     const hit = globs.filter((g) => patternHits(g.segs, at.segs, above, at.suffix, tick));
     if (hit.some((g) => !g.base)) return true;
     // A default glob is waived for the run's own files: the whole normalised path is spelled out (no wildcard, variable
-    // or brace, which could stand for `..`) and starts at the root, so `.factory/runs/../config.yaml` is no exemption.
-    return hit.length > 0 && !(at.segs.every((x) => !/[*?[\]{}$`%~]/.test(x)) && exempt.some((g) => patternHits(g, at.segs, false, false, tick)));
+    // or brace, which could stand for `..`, nor a segment ending in a dot or space, which Windows strips: `12\.. ` is `12\..`) and starts at the root, so `.factory/runs/../config.yaml` is no exemption.
+    return hit.length > 0 && !(at.segs.every((x) => !/[*?[\]{}$`%~]|[. ]$/.test(x)) && exempt.some((g) => patternHits(g, at.segs, false, false, tick)));
   };
   try {
     const target = scanWrites(command, env, count, hits);
