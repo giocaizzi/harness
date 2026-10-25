@@ -35,7 +35,7 @@ A workflow skill that defines its own gate, question channel, round cap or model
 
 ## Waiting on other agents
 
-A wait ends on every terminal outcome, never on success alone: a loop until a PR merges never returns once a required check fails. Wait on a PR with `land`'s `wait-pr` script, and start any background wait with a timeout; inside a teammate, wait in the foreground ([collaboration.md](references/collaboration.md#durable-verdicts)).
+A wait ends on every terminal outcome, never on success alone: a loop until a PR merges never returns once a required check fails. Wait on a PR with `land`'s `wait-pr` script, and start any background wait with a timeout plus a fallback wake about 30 min out (Claude Code `ScheduleWakeup` or a cron; elsewhere the harness's own timer): a Bash or Monitor timeout ends the command but is not proven to wake the session. Inside a teammate, wait in the foreground ([collaboration.md](references/collaboration.md#durable-verdicts)).
 
 ## Gotchas
 
