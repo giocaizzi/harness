@@ -629,7 +629,7 @@ test('write-result: attended, the launcher\'s run id only for its own ticket, el
   assert.equal(resultAt(r.main).run_id, 'host-12-20261025T090000Z')
   const other = write(r.cwd, ['--ticket', 'acme/app#14', '--run-id', 'sess-9', '-'], env, JSON.stringify(judgment()))
   assert.equal(other.status, 0, other.stderr)
-  assert.match(other.stderr, /FACTORY_ATTENDED_TICKET is Acme\/App#12, not acme\/app#14/)
+  assert.match(other.stderr, /FACTORY_ATTENDED_TICKET is "Acme\/App#12", not acme\/app#14/)
   assert.deepEqual([resultAt(r.main, 14).ticket, resultAt(r.main, 14).run_id], ['acme/app#14', 'sess-9'])
   const fallback = write(r.cwd, ['--ticket', 'acme/app#15', '-'], env, JSON.stringify(judgment()))
   assert.equal(fallback.status, 0)
@@ -735,4 +735,85 @@ test('write-result: done.md, SKILL.md and the contract describe the writer', () 
   assert.match(contract, /\*\*Writer and check\.\*\*/)
   assert.ok(contract.includes('must allow `node */skills/ticket-run/scripts/write-result.mjs *`'), 'the runtime allowlist line')
   for (const f of ['plugins/factory/skills/ticket-run/SKILL.md', 'plugins/factory/skills/ticket-run/references/done.md']) assert.doesNotMatch(read(f), /write-result[^\n]*docs\//, `${f}: the writer's steps need no repo doc`)
+})
+
+test('write-result: --run-id must be a printable id of at most 128 characters', () => {
+  const r = scratchRepo()
+  for (const id of ['', ' ', ' sess', 'sess ', 'a\nb', 'a\tb', 'a\u0007b', 'a\u202eb', 'x'.repeat(129)]) {
+    const out = write(r.cwd, ['--ticket', 'acme/app#12', '--run-id', id, '-'], {}, JSON.stringify(judgment()))
+    assert.equal(out.status, 2, JSON.stringify(id))
+    assert.match(out.stderr, /--run-id must be 1 to 128 printable characters/)
+    assert.ok(out.stderr.length < 400, 'the echo is capped')
+  }
+  for (const id of ['sess-1', 'a b', 'x'.repeat(128), 'séance_7']) {
+    assert.equal(write(r.cwd, ['--ticket', 'acme/app#12', '--run-id', id, '-'], {}, JSON.stringify(judgment())).status, 0, id)
+    assert.equal(resultAt(r.main).run_id, id)
+  }
+  r.done()
+})
+
+test('write-result: an input host.runner must agree with FACTORY_RUN_ID', () => {
+  const r = scratchRepo()
+  const runtimeEnv = { FACTORY_TICKET: 'acme/app#12', FACTORY_RUN_ID: 'rt-1' }
+  const run = (runner, env) => write(r.cwd, ['--ticket', 'acme/app#12', '-'], env, JSON.stringify({ ...judgment(), host: { runner } }))
+  assert.match(run('runtime', {}).stderr, /host\.runner runtime needs FACTORY_RUN_ID/)
+  assert.equal(run('runtime', {}).status, 1)
+  for (const runner of ['attended', 'headless']) {
+    const out = run(runner, runtimeEnv)
+    assert.equal(out.status, 1, runner)
+    assert.match(out.stderr, new RegExp(`host\\.runner ${runner} contradicts FACTORY_RUN_ID`))
+  }
+  assert.equal(run('runtime', runtimeEnv).status, 0)
+  for (const runner of ['attended', 'headless']) {
+    assert.equal(run(runner, {}).status, 0, runner)
+    assert.equal(resultAt(r.main).host.runner, runner)
+  }
+  r.done()
+})
+
+test('write-result: --post marks a posting or maybe_posted entry posted, once', () => {
+  const r = scratchRepo()
+  const env = { FACTORY_TICKET: 'acme/app#12', FACTORY_RUN_ID: 'rt-1' }
+  const url = 'https://github.com/acme/app/issues/12#issuecomment-5'
+  const other = { kind: 'question', url: 'https://github.com/acme/app/issues/12#issuecomment-4', state: 'maybe_posted' }
+  for (const state of ['posting', 'maybe_posted']) {
+    assert.equal(write(r.cwd, ['-'], env, JSON.stringify({ ...judgment(), posts: [other, { kind: 'result', url, state }] })).status, 0)
+    assert.equal(write(r.cwd, ['--post', `result=${url}`], env).status, 0)
+    assert.equal(write(r.cwd, ['--post', `result=${url}`], env).status, 0)
+    assert.deepEqual(resultAt(r.main).posts, [other, { kind: 'result', url, state: 'posted' }], state)
+  }
+  r.done()
+})
+
+test('check-result: echoed values and the report are capped, and a long report is not cut short in a pipe', async () => {
+  const { show, report, resultErrors } = await checker()
+  assert.equal(show('x'.repeat(500)).length, 201)
+  assert.ok(show('x'.repeat(500)).endsWith('…'))
+  assert.equal(show(undefined), 'undefined')
+  const huge = 'y'.repeat(100000)
+  for (const e of resultErrors({ ...valid, ticket: huge, run_id: huge, end_state: huge, reason: [huge], reason_code: huge, schema: huge }, { FACTORY_TICKET: huge })) assert.ok(e.length < 400, e.slice(0, 80))
+  const many = Array.from({ length: 120 }, (_, i) => `e${i} ${'z'.repeat(1000)}`)
+  const lines = report(many)
+  assert.equal(lines.length, 51)
+  assert.equal(lines.at(-1), '… and 70 more')
+  assert.ok(lines.every((l) => l.length <= 301))
+  // Through a pipe: every capped line arrives, the last one included.
+  const dir = mkdtempSync(join(tmpdir(), 'check-result-'))
+  const phases = Array.from({ length: 2000 }, (_, i) => ({ name: `step-${i}-${'p'.repeat(300)}`, started_at: null, ended_at: null }))
+  writeFileSync(join(dir, 'r.json'), JSON.stringify({ ...valid, phases, routing: phases.map(() => ({ phase: 'verify' })) }))
+  const run = spawnSync(process.execPath, [CHECK, join(dir, 'r.json')], { encoding: 'utf8', env: cleanEnv() })
+  rmSync(dir, { recursive: true })
+  assert.equal(run.status, 1)
+  const out = run.stderr.trim().split('\n')
+  assert.equal(out.length, 51)
+  assert.match(out.at(-1), /^… and \d+ more$/)
+  assert.doesNotMatch(read('plugins/factory/skills/ticket-run/scripts/check-result.mjs'), /process\.exit\(/)
+})
+
+test('result scripts: a BOM is stripped by an escape sequence, never a literal U+FEFF', () => {
+  for (const f of ['check-result.mjs', 'write-result.mjs']) {
+    const text = readFileSync(join(SCRIPTS, f), 'utf8')
+    assert.ok(!text.includes('\uFEFF'), `${f} holds a literal U+FEFF`)
+    assert.ok(text.includes('.replace(/^\\uFEFF/, \'\')'), `${f} strips the BOM by its escape`)
+  }
 })

@@ -9,15 +9,19 @@ import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node
 import { hostname } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { TICKET, resultErrors } from './check-result.mjs'
+import { TICKET, report, resultErrors, show } from './check-result.mjs'
 
 // The keys the run decides, in the contract's order; `host` may carry only `runner`.
 export const JUDGMENT = ['end_state', 'reason', 'reason_code', 'pr', 'decisions', 'evidence', 'checks', 'follow_ups', 'posts', 'phases', 'verifier', 'routing', 'cost_usd', 'tokens', 'turns', 'harness', 'model', 'effort', 'sessions', 'plugin_versions', 'host']
 export const OWNED = ['schema', 'ticket', 'run_id', 'mode', 'finished_at']
 const ORDER = ['schema', 'ticket', 'run_id', ...JUDGMENT.slice(0, 12), 'mode', ...JUDGMENT.slice(12), 'finished_at']
 const RUNNERS = ['attended', 'headless', 'runtime']
+// A session or claim id: no control or format characters (newlines included), no surrounding spaces, at most 128.
+const RUN_ID = /^(?=.{1,128}$)[^\p{C}\s](?:[^\p{C}]*[^\p{C}\s])?$/u
 
 export class UsageError extends Error {}
+
+const cut = (key) => (key.length > 200 ? `${key.slice(0, 200)}…` : key)
 
 const utcNow = (now) => now.toISOString().replace(/\.\d{3}Z$/, 'Z')
 export const hostOs = (platform) => (platform === 'win32' ? 'windows' : platform)
@@ -26,9 +30,9 @@ export const hostOs = (platform) => (platform === 'win32' ? 'windows' : platform
 export const resolveTicket = (env, ticketArg) => {
   const runtime = (env.FACTORY_TICKET ?? '').trim()
   const ticket = runtime || ticketArg || (env.FACTORY_ATTENDED_TICKET ?? '').trim()
-  if (runtime && ticketArg && ticketArg !== runtime) throw new UsageError(`--ticket ${ticketArg} differs from FACTORY_TICKET ${runtime}`)
+  if (runtime && ticketArg && ticketArg !== runtime) throw new UsageError(`--ticket ${show(ticketArg)} differs from FACTORY_TICKET ${show(runtime)}`)
   if (!ticket) throw new UsageError('no ticket: FACTORY_TICKET and FACTORY_ATTENDED_TICKET are unset, so pass --ticket <owner>/<repo>#<n>')
-  if (!TICKET.test(ticket)) throw new UsageError(`ticket must be <owner>/<repo>#<number>, got ${JSON.stringify(ticket)}`)
+  if (!TICKET.test(ticket)) throw new UsageError(`ticket must be <owner>/<repo>#<number>, got ${show(ticket)}`)
   return ticket
 }
 
@@ -41,25 +45,29 @@ export const resolveRunId = ({ env, ticket, runIdArg, host, now, warn }) => {
   let id = runtime
   if (!id && attendedTicket) {
     if (attendedTicket.toLowerCase() === ticket.toLowerCase()) id = attendedId
-    else warn(`FACTORY_ATTENDED_TICKET is ${attendedTicket}, not ${ticket}: this session's telemetry is tagged for that ticket, so its run id is not used; tell the person`)
+    else warn(`FACTORY_ATTENDED_TICKET is ${show(attendedTicket)}, not ${ticket}: this session's telemetry is tagged for that ticket, so its run id is not used; tell the person`)
   }
   if (id && runIdArg && runIdArg !== id) warn(`--run-id ${runIdArg} ignored: ${runtime ? 'FACTORY_RUN_ID' : 'FACTORY_ATTENDED_RUN_ID'} gives ${id}`)
   return id || runIdArg || `${host.split('.')[0]}-${ticket.split('#')[1]}-${utcNow(now).replace(/[-:]/g, '')}`
 }
 
 // The input's own errors: owned or unknown keys, and what only a runtime writes.
-export const inputErrors = (input) => {
+export const inputErrors = (input, env = {}) => {
   if (input === null || typeof input !== 'object' || Array.isArray(input)) return ['the input must be a JSON object of the judgment fields']
   const errors = []
   for (const key of Object.keys(input)) {
     if (OWNED.includes(key)) errors.push(`${key}: filled by this script, remove it from the input`)
-    else if (!JUDGMENT.includes(key)) errors.push(`${key}: not a result key the run writes (allowed: ${JUDGMENT.join(', ')})`)
+    else if (!JUDGMENT.includes(key)) errors.push(`${cut(key)}: not a result key the run writes (allowed: ${JUDGMENT.join(', ')})`)
   }
   if (input.host !== undefined) {
     if (input.host === null || typeof input.host !== 'object' || Array.isArray(input.host)) errors.push('host must be an object holding only runner')
     else {
-      for (const key of Object.keys(input.host)) if (key !== 'runner') errors.push(`host.${key}: filled by this script, remove it from the input`)
-      if ('runner' in input.host && !RUNNERS.includes(input.host.runner)) errors.push(`host.runner must be one of ${RUNNERS.join(', ')}`)
+      for (const key of Object.keys(input.host)) if (key !== 'runner') errors.push(`host.${cut(key)}: filled by this script, remove it from the input`)
+      const runtime = (env.FACTORY_RUN_ID ?? '').trim() !== ''
+      const runner = input.host.runner
+      if ('runner' in input.host && !RUNNERS.includes(runner)) errors.push(`host.runner must be one of ${RUNNERS.join(', ')}`)
+      else if (runner === 'runtime' && !runtime) errors.push('host.runner runtime needs FACTORY_RUN_ID: a run without it is attended or headless')
+      else if (runner !== undefined && runner !== 'runtime' && runtime) errors.push(`host.runner ${runner} contradicts FACTORY_RUN_ID: a runtime's run is runtime`)
     }
   }
   if (input.end_state === 'halted') errors.push('end_state halted is written only by a runtime')
@@ -69,7 +77,7 @@ export const inputErrors = (input) => {
 
 // The full result from the input; `errors` lists everything wrong with it, input and result alike.
 export const buildResult = (input, { env, ticket, runIdArg, now = new Date(), host = hostname(), platform = process.platform, warn = () => {} }) => {
-  const errors = inputErrors(input)
+  const errors = inputErrors(input, env)
   if (errors.length) return { errors }
   const finished_at = utcNow(now)
   const filled = {
@@ -91,11 +99,13 @@ export const buildResult = (input, { env, ticket, runIdArg, now = new Date(), ho
 // The posted comment added to an existing result; finished_at stays as the write set it.
 export const addPost = (result, ticket, post, env) => {
   const m = /^([a-z][a-z_]*)=(https?:\/\/\S+)$/.exec(post)
-  if (!m) throw new UsageError(`--post takes <kind>=<url>, got ${JSON.stringify(post)}`)
+  if (!m) throw new UsageError(`--post takes <kind>=<url>, got ${show(post)}`)
   if (result === null || typeof result !== 'object' || Array.isArray(result)) return { errors: resultErrors(result, env) }
-  if (result.ticket !== ticket) return { errors: [`the result's ticket ${JSON.stringify(result.ticket)} is not ${ticket}`] }
+  if (result.ticket !== ticket) return { errors: [`the result's ticket ${show(result.ticket)} is not ${ticket}`] }
   const posts = Array.isArray(result.posts) ? result.posts : []
-  const next = posts.some((p) => p?.url === m[2]) ? result : { ...result, posts: [...posts, { kind: m[1], url: m[2], state: 'posted' }] }
+  // A URL already listed (as posting or maybe_posted) is now known to be posted; posting it again changes nothing.
+  const listed = posts.some((p) => p?.url === m[2])
+  const next = { ...result, posts: listed ? posts.map((p) => (p?.url === m[2] ? { ...p, state: 'posted' } : p)) : [...posts, { kind: m[1], url: m[2], state: 'posted' }] }
   return { result: next, errors: resultErrors(next, env) }
 }
 
@@ -115,10 +125,11 @@ const parseArgs = (argv) => {
   }
   if ((args.input === undefined) === (args.post === undefined)) throw new UsageError('give an input file (or - for stdin) or --post <kind>=<url>, not both')
   if (args.post !== undefined && args.runId !== undefined) throw new UsageError('--run-id applies to a write, not to --post')
+  if (args.runId !== undefined && !RUN_ID.test(args.runId)) throw new UsageError(`--run-id must be 1 to 128 printable characters without spaces at either end, got ${show(args.runId)}`)
   return args
 }
 
-const readJson = (file) => JSON.parse(readFileSync(file, 'utf8').replace(/^﻿/, ''))
+const readJson = (file) => JSON.parse(readFileSync(file, 'utf8').replace(/^\uFEFF/, ''))
 
 const main = (argv, env) => {
   const args = parseArgs(argv)
@@ -165,7 +176,7 @@ const main = (argv, env) => {
 }
 
 const fail = (errors) => {
-  for (const e of errors) console.error(e)
+  for (const line of report(errors)) console.error(line)
   console.error('nothing written: fix the input and run it again')
   return 1
 }

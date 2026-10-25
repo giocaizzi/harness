@@ -6,6 +6,19 @@
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
+// An offending value is echoed cut to 200 characters, a line to 300, and a report to 50 lines, so a huge or hostile
+// result cannot flood the output.
+export const show = (v) => {
+  const text = JSON.stringify(v) ?? String(v)
+  return text.length > 200 ? `${text.slice(0, 200)}…` : text
+}
+const MAX_LINE = 300
+const MAX_LINES = 50
+export const report = (errors) => {
+  const lines = errors.slice(0, MAX_LINES).map((e) => (e.length > MAX_LINE ? `${e.slice(0, MAX_LINE)}…` : e))
+  return errors.length > MAX_LINES ? [...lines, `… and ${errors.length - MAX_LINES} more`] : lines
+}
+
 const fields = ['phase', 'policy_model', 'policy_effort', 'model', 'effort']
 
 const STEPS = ['gate', 'plan', 'work', 'verify', 'ship', 'deploy', 'record']
@@ -37,9 +50,9 @@ export const TICKET = /^[\w.-]+\/[\w.-]+#[1-9]\d*$/
 
 // `ticket` is the string owner/repo#N; when FACTORY_TICKET is set it must equal it.
 export const ticketErrors = (result, expected = process.env.FACTORY_TICKET) => {
-  if (typeof result.ticket !== 'string' || !TICKET.test(result.ticket)) return [`ticket must be a string of the form "<owner>/<repo>#<number>", got ${JSON.stringify(result.ticket)}`]
+  if (typeof result.ticket !== 'string' || !TICKET.test(result.ticket)) return [`ticket must be a string of the form "<owner>/<repo>#<number>", got ${show(result.ticket)}`]
   const want = (expected ?? '').trim()
-  return want && result.ticket !== want ? [`ticket "${result.ticket}" differs from FACTORY_TICKET "${want}"`] : []
+  return want && result.ticket !== want ? [`ticket ${show(result.ticket)} differs from FACTORY_TICKET ${show(want)}`] : []
 }
 
 export const modeErrors = (result) => (result.mode === undefined || result.mode === 'dev' ? [] : ['mode must be "dev" or absent'])
@@ -53,7 +66,7 @@ export const routingErrors = (result) => {
     if (missing.length) return [`${at}: missing ${missing.join(', ')}`]
     const reason = entry.deviation_reason
     const deviates = entry.model !== entry.policy_model || entry.effort !== entry.policy_effort
-    if (deviates && (typeof reason !== 'string' || reason.trim() === '')) return [`${at} (${entry.phase}): deviates from the policy without a deviation_reason`]
+    if (deviates && (typeof reason !== 'string' || reason.trim() === '')) return [`${at} (${show(entry.phase)}): deviates from the policy without a deviation_reason`]
     if (reason !== null && reason !== undefined && typeof reason !== 'string') return [`${at}: deviation_reason must be a string or null`]
     return []
   })
@@ -65,36 +78,40 @@ export const REASON_CODES = ['question', 'plan_gate', 'merge_gate', 'grooming', 
 // `run_id` equals FACTORY_RUN_ID when set, so the result matches the runtime's claim.
 export const coreErrors = (result, env = process.env) => {
   const errors = []
-  if (result.schema !== 2) errors.push(`schema must be 2, got ${JSON.stringify(result.schema)}`)
+  if (result.schema !== 2) errors.push(`schema must be 2, got ${show(result.schema)}`)
   const want = (env.FACTORY_RUN_ID ?? '').trim()
-  if (typeof result.run_id !== 'string' || result.run_id.trim() === '') errors.push(`run_id must be a non-empty string, got ${JSON.stringify(result.run_id)}`)
-  else if (want && result.run_id !== want) errors.push(`run_id "${result.run_id}" differs from FACTORY_RUN_ID "${want}"`)
-  if (!END_STATES.includes(result.end_state)) errors.push(`end_state must be one of ${END_STATES.join(', ')}, got ${JSON.stringify(result.end_state)}`)
-  if (typeof result.reason !== 'string') errors.push(`reason must be a string (empty when done), got ${JSON.stringify(result.reason)}`)
-  if (result.reason_code !== null && !REASON_CODES.includes(result.reason_code)) errors.push(`reason_code must be null or one of ${REASON_CODES.join(', ')}, got ${JSON.stringify(result.reason_code)}`)
+  if (typeof result.run_id !== 'string' || result.run_id.trim() === '') errors.push(`run_id must be a non-empty string, got ${show(result.run_id)}`)
+  else if (want && result.run_id !== want) errors.push(`run_id ${show(result.run_id)} differs from FACTORY_RUN_ID ${show(want)}`)
+  if (!END_STATES.includes(result.end_state)) errors.push(`end_state must be one of ${END_STATES.join(', ')}, got ${show(result.end_state)}`)
+  if (typeof result.reason !== 'string') errors.push(`reason must be a string (empty when done), got ${show(result.reason)}`)
+  if (result.reason_code !== null && !REASON_CODES.includes(result.reason_code)) errors.push(`reason_code must be null or one of ${REASON_CODES.join(', ')}, got ${show(result.reason_code)}`)
   return errors
 }
 
 // Every check, in one list; a value that is not a JSON object is one error, never a throw.
 export const resultErrors = (result, env = process.env) => {
-  if (result === null || typeof result !== 'object' || Array.isArray(result)) return [`result.json must hold a JSON object, got ${JSON.stringify(result)}`]
+  if (result === null || typeof result !== 'object' || Array.isArray(result)) return [`result.json must hold a JSON object, got ${show(result)}`]
   return [...coreErrors(result, env), ...ticketErrors(result, env.FACTORY_TICKET ?? ''), ...timeErrors(result), ...routingErrors(result), ...modeErrors(result)]
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  const file = process.argv[2]
-  if (!file || process.argv.length > 3) {
+// Exit code, not process.exit: an exit mid-pipe can cut stderr short.
+const main = (args) => {
+  const [file] = args
+  if (!file || args.length > 1) {
     console.error('usage: node check-result.mjs <result.json>')
-    process.exit(2)
+    return 2
   }
   let result
   try {
     result = JSON.parse(readFileSync(file, 'utf8').replace(/^\uFEFF/, ''))
   } catch (e) {
-    console.error(e.code === 'ENOENT' ? `${file}: no such file` : e instanceof SyntaxError ? `${file}: not valid JSON (${e.message})` : `${file}: cannot read (${e.code ?? e.message})`)
-    process.exit(1)
+    const why = e.code === 'ENOENT' ? 'no such file' : e instanceof SyntaxError ? `not valid JSON (${e.message})` : `cannot read (${e.code ?? e.message})`
+    for (const line of report([`${file}: ${why}`])) console.error(line)
+    return 1
   }
   const errors = resultErrors(result)
-  for (const e of errors) console.error(e)
-  process.exit(errors.length ? 1 : 0)
+  for (const line of report(errors)) console.error(line)
+  return errors.length ? 1 : 0
 }
+
+if (process.argv[1] === fileURLToPath(import.meta.url)) process.exitCode = main(process.argv.slice(2))
