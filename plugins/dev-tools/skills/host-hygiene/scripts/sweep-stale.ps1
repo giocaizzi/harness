@@ -11,7 +11,10 @@
 # Session start times come from ps (Win32_Process on Windows), or SWEEP_SESSION_STARTS (epoch seconds, one per line)
 # when set. An unreadable installed_plugins.json or process list removes nothing. A linked marketplace or
 # plugin dir is kept whole; a linked version dir loses only its link. --apply removes them.
-# --marketplace <name> sweeps only cache/<name>, leaving every other marketplace's versions alone.
+# --marketplace <name> sweeps only cache/<name>, leaving every other marketplace's versions alone. The name
+# must equal a cache dir's name exactly (case included): it is matched against the listing, never resolved as a
+# path, so neither a case-insensitive filesystem nor Win32's trailing dot and space trimming can hand back a dir
+# under a spelling the installed check misses (or the cache itself).
 #
 # --branches sweeps branches instead: remote branches with no open PR (branches of closed or
 # never-opened PRs; GitHub only deletes on merge) and local branches whose upstream is gone.
@@ -35,7 +38,7 @@ $flags = @(for ($i = 0; $i -lt $args.Count; $i++) {
     if ($args[$i] -ne '--marketplace') { $args[$i]; continue }
     # One dir name under the cache: an empty, path-like or option-like name is a usage error, never "all of them".
     $marketplace = if ($i + 1 -lt $args.Count) { [string]$args[++$i] } else { '' }
-    if ($marketplace -in '', '.', '..' -or $marketplace -match '^-|[\\/]') { '--bad-marketplace' }
+    if ($marketplace -match '^[. ]*$|^-|[\\/]') { '--bad-marketplace' }
 })
 $apply = $flags -contains '--apply'
 $branches = $flags -contains '--branches'
@@ -97,9 +100,8 @@ if ($plugins) {
     $cache = Join-Path $root 'cache'
     if (-not (Test-Path -LiteralPath $cache)) { "sweep: no plugin cache at $cache"; exit 0 }
     if ($marketplace) {
-        $mdir = Join-Path $cache $marketplace
-        if (-not (Test-Path -LiteralPath $mdir -PathType Container)) { "sweep: no marketplace $marketplace in $cache"; exit 0 }
-        $mkts = @(Get-Item -LiteralPath $mdir)
+        $mkts = @(Get-ChildItem -LiteralPath $cache -Directory | Where-Object { $_.Name -ceq $marketplace })
+        if ($mkts.Count -ne 1) { "sweep: no marketplace $marketplace in $cache"; exit 0 }
     } else { $mkts = @(Get-ChildItem -LiteralPath $cache -Directory) }
     try { $doc = Get-Content -Raw -LiteralPath (Join-Path $root 'installed_plugins.json') -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop }
     catch { $doc = $null }

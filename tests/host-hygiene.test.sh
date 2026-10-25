@@ -436,10 +436,16 @@ check "--marketplace --apply leaves a third-party version untouched" "$(cd "$c3"
 check "without --marketplace every marketplace is swept" "$(msweep | grep -c '/other/b/1.0$')" 1
 check "an unknown marketplace removes nothing" "$(msweep --marketplace none --apply; echo "$?"; find "$c3" -mindepth 3 -maxdepth 3 | wc -l | tr -d ' ')" \
   "$(printf 'sweep: no marketplace none in %s\n0\n2' "$c3")"
+# Matched against the cache listing, never resolved: on a case-insensitive filesystem cache/MINE opens mine, and
+# its versions would then miss the installed check.
+mkdir -p "$c3/mine/a/1.0"
+check "a marketplace named in another case removes nothing" \
+  "$(msweep --marketplace MINE --after-reload --apply; echo "$?"; cd "$c3" && find . -mindepth 3 -maxdepth 3 | sort | tr '\n' ' ')" \
+  "$(printf 'sweep: no marketplace MINE in %s\n0\n./mine/a/1.0 ./mine/a/2.0 ./other/b/1.0 ' "$c3")"
 codes=''
-for bad in '' . .. ../other a/b --apply; do codes=$codes$(msweep --marketplace "$bad" 2>/dev/null; echo $?); done
+for bad in '' . .. ... ' ' ../other a/b --apply; do codes=$codes$(msweep --marketplace "$bad" 2>/dev/null; echo $?); done
 codes=$codes$(msweep --marketplace 2>/dev/null; echo $?)$("$sweep" --marketplace mine 2>/dev/null; echo $?)
-check "an empty, path-like, option-like or missing marketplace, or one without --plugins, is a usage error" "$codes" 22222222
+check "an empty, path-like, option-like or missing marketplace, or one without --plugins, is a usage error" "$codes" 2222222222
 { kill_tree "$pbusy" "$pargv"; wait "$pbusy" "$pargv"; } 2>/dev/null
 
 exit "$fails"

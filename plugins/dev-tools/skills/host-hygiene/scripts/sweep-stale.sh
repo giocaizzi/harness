@@ -12,7 +12,9 @@
 # that keep. Session start times come from ps, or SWEEP_SESSION_STARTS (epoch seconds, one per
 # line) when set. An unreadable installed_plugins.json, no jq, lsof or ps, or a failing ps removes
 # nothing. A linked marketplace or plugin dir is kept whole; a linked version dir loses only its link.
-# --marketplace <name> sweeps only cache/<name>, leaving every other marketplace's versions alone.
+# --marketplace <name> sweeps only cache/<name>, leaving every other marketplace's versions alone. The name
+# must equal a cache dir's name exactly (case included): it is matched against the listing, never resolved as a
+# path, so a case-insensitive filesystem cannot hand back the dir under a spelling the installed check misses.
 # --apply removes them (`rm -rf`).
 #
 # --branches sweeps branches instead: remote branches with no open PR (branches of closed or
@@ -37,7 +39,8 @@ while [ $# -gt 0 ]; do
     --apply) apply=1 ;; --branches) branches=1 ;; --plugins) plugins=1 ;; --after-reload) after_reload=1 ;;
     --marketplace)
       # One dir name under the cache: an empty, path-like or option-like name is a usage error, never "all of them".
-      case ${2-} in '' | -* | . | .. | */* | *\\*) usage ;; esac
+      case ${2-} in *[!.\ ]*) ;; *) usage ;; esac # empty, or only dots and spaces
+      case $2 in -* | */* | *\\*) usage ;; esac
       marketplace=$2; shift ;;
     *) usage ;;
   esac
@@ -73,12 +76,13 @@ sweep_plugins() {
   command -v lsof >/dev/null || { echo "sweep: lsof not found; cannot tell busy versions, nothing removed" >&2; return 1; }
   command -v ps >/dev/null || { echo "sweep: ps not found; cannot tell running sessions, nothing removed" >&2; return 1; }
   [ -d "$root/cache" ] || { echo "sweep: no plugin cache at $root/cache"; return 0; }
-  local mkts=("$root"/cache/*/)
+  local m mkts=("$root"/cache/*/)
   if [ -n "$marketplace" ]; then
-    [ -d "$root/cache/$marketplace" ] || { echo "sweep: no marketplace $marketplace in $root/cache"; return 0; }
-    mkts=("$root/cache/$marketplace/")
+    mkts=()
+    for m in "$root"/cache/*/; do [ -d "$m" ] && [ "$(basename "$m")" = "$marketplace" ] && mkts=("$m"); done
+    [ ${#mkts[@]} -eq 1 ] || { echo "sweep: no marketplace $marketplace in $root/cache"; return 0; }
   fi
-  local installed updated starts procs table entry real key upd n m p
+  local installed updated starts procs table entry real key upd n p
   installed=$(jq -r '.plugins[][] | .installPath // empty' "$root/installed_plugins.json") ||
     { echo "sweep: cannot read $root/installed_plugins.json; nothing removed" >&2; return 1; }
   # <plugin>@<marketplace> TAB the newest lastUpdated (or installedAt) of its entries, as epoch seconds.

@@ -328,10 +328,15 @@ try { Enter-HostSlot job; Set-Content $env:TEST_GOT (Get-Date).ToString('o') } f
     Test-Equal -Name 'without --marketplace every marketplace is swept' -Got (Get-Rel (Invoke-MktSweep)) -Want 'would remove other/b/1.0'
     $out = @(& $shell -NoProfile -File $sweep --plugins --marketplace none --apply)
     Test-Equal -Name 'an unknown marketplace removes nothing' -Got "$LASTEXITCODE $($out -join '') $(Test-Path (Join-Path $c3 'other/b/1.0'))" -Want "0 sweep: no marketplace none in $c3 True"
-    $codes = foreach ($bad in '', '.', '..', '../other', 'a/b', '--apply') { & $shell -NoProfile -File $sweep --plugins --marketplace $bad 2>$null | Out-Null; $LASTEXITCODE }
+    # Matched against the cache listing, never resolved: a case-insensitive filesystem opens cache/MINE as mine, and
+    # Windows trims trailing dots and spaces, so '...' would open the cache itself.
+    New-Item -ItemType Directory -Force (Join-Path $c3 'mine/a/1.0') | Out-Null
+    $out = @(& $shell -NoProfile -File $sweep --plugins --marketplace MINE --after-reload --apply)
+    Test-Equal -Name 'a marketplace named in another case removes nothing' -Got "$LASTEXITCODE $($out -join '') $(Test-Path (Join-Path $c3 'mine/a/1.0')) $(Test-Path (Join-Path $c3 'mine/a/2.0')) $(Test-Path (Join-Path $c3 'other/b/1.0'))" -Want "0 sweep: no marketplace MINE in $c3 True True True"
+    $codes = foreach ($bad in '', '.', '..', '...', ' ', '../other', 'a/b', '--apply') { & $shell -NoProfile -File $sweep --plugins --marketplace $bad 2>$null | Out-Null; $LASTEXITCODE }
     & $shell -NoProfile -File $sweep --plugins --marketplace 2>$null | Out-Null; $codes += $LASTEXITCODE
     & $shell -NoProfile -File $sweep --marketplace mine 2>$null | Out-Null; $codes += $LASTEXITCODE
-    Test-Equal -Name 'an empty, path-like, option-like or missing marketplace, or one without --plugins, is a usage error' -Got ($codes -join '') -Want '22222222'
+    Test-Equal -Name 'an empty, path-like, option-like or missing marketplace, or one without --plugins, is a usage error' -Got ($codes -join '') -Want '2222222222'
     Remove-Item Env:SWEEP_SESSION_STARTS
     Remove-Item Env:CLAUDE_CONFIG_DIR
     Stop-Process -Id $pbusy.Id, $pargv.Id -ErrorAction SilentlyContinue
