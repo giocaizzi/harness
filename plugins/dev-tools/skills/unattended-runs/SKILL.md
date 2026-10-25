@@ -45,3 +45,5 @@ Denies (pip/poetry in a uv repo, non-Conventional-Commit titles, skill reminders
 End with a report that separates done, blocked-by-guard (command and reason), parked on a question, assumed (with where it is recorded) and left running. A run that stopped on a deny is a result, not a failure.
 
 Mechanism, per-harness behaviour and limits: `docs/guard.md` in the harness repo (section Unattended and auto-approve runs).
+
+Resuming after a network or host drop: the `subagent-orchestration` skill's network-drop reference.
