@@ -1,5 +1,7 @@
-# Tests for plugins/dev-tools/skills/host-hygiene/scripts/*.ps1 (run by `make test` when pwsh is on PATH).
+# Tests for plugins/dev-tools/skills/host-hygiene/scripts/*.ps1 (run by `make test` when pwsh is on PATH, and by CI's windows-scripts job).
+# The .ps1 scripts are for Windows (named mutexes, CPU sampling); macOS/Linux run the .sh ones (tests/host-hygiene.test.sh).
 $ErrorActionPreference = 'Stop'
+if ($env:OS -ne 'Windows_NT') { Write-Output 'not Windows: host-hygiene .ps1 tests skipped, tests/host-hygiene.test.sh covers it'; exit 0 }
 $scripts = Join-Path $PSScriptRoot '../plugins/dev-tools/skills/host-hygiene/scripts'
 $heavy = Join-Path $scripts 'heavy.ps1'
 $lease = Join-Path $scripts 'lease.ps1'

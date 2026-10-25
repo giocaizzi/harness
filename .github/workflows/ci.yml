@@ -1,9 +1,12 @@
 name: CI
 
+# Every PR; `main` nightly and by hand (`gh workflow run ci.yml`) instead of on each merge, since a PR
+# merges only up to date with `main` and green.
 on:
   pull_request:
-  push:
-    branches: [main]
+  schedule:
+    - cron: '17 3 * * *' # 03:17 UTC
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -37,23 +40,23 @@ jobs:
       - run: node tests/e2e/run.mjs # `make e2e`; called directly because Windows runners have no make
         env:
           E2E_REQUIRE: 1
-      # `make check` runs on Linux only: the host-hygiene .ps1 suite (named mutexes, CPU sampling) needs Windows.
-      - if: runner.os == 'Windows'
-        run: pwsh -NoProfile -File tests/host-hygiene.test.ps1
-      - if: runner.os == 'Windows'
-        run: node --test tests/wait-pr.test.mjs # wait-pr.ps1 on Windows; `make check` covers Linux
 
-  # Required status check. `if: always()` so a failed `secrets` or `e2e` job fails
-  # `check` instead of skipping it (a skipped required check counts as passing).
-  check:
-    needs: [secrets, e2e]
-    if: always()
+  # `make check` runs on Linux only (Windows runners have no make). The .ps1 scripts are Windows-only
+  # and their tests skip elsewhere, so they run here.
+  windows-scripts:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - run: pwsh -NoProfile -File tests/host-hygiene.test.ps1
+      - run: node --test tests/wait-pr.test.mjs # wait-pr.ps1; the .sh half skips on Windows
+      - run: node --test --test-name-pattern="attended launcher \(ps1\)" tests/factory.test.mjs
+
+  make-check:
     runs-on: ubuntu-latest
     steps:
-      - if: needs.secrets.result != 'success'
-        run: echo "::error::secrets job ${{ needs.secrets.result }}" && exit 1
-      - if: needs.e2e.result != 'success'
-        run: echo "::error::e2e job ${{ needs.e2e.result }}" && exit 1
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
         with:
@@ -63,4 +66,17 @@ jobs:
         with:
           node-version: 22 # guard plugin tests: node --test
       - run: npm install -g @anthropic-ai/claude-code@2.1.309 # validate.py runs `claude plugin validate`; pinned like the e2e CLIs
-      - run: make check
+      - run: make check # PSScriptAnalyzer lints the .ps1 files here: the runner ships pwsh with it
+
+  # Required status check, and only an aggregate: `if: always()` so a failed, cancelled or skipped
+  # needed job fails `check` instead of skipping it (a skipped required check counts as passing).
+  check:
+    needs: [secrets, make-check, e2e, windows-scripts]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          echo "$NEEDS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          echo "$NEEDS" | jq -e 'all(.[]; .result == "success")' >/dev/null || { echo "::error::a needed job did not succeed"; exit 1; }
