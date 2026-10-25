@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import { spawnSync } from 'node:child_process';
 import assert from 'node:assert/strict';
-import { touchesApprovalLabel, ghUnseen, badTitle, branchFacts, cmdClass, branchTargets, codexRules, evaluateCommand, evaluateEdit, evaluateRouting, evaluateSpawn, nativeAsk, opencodeAsks, pureRead, refFacts, regenerableName, regenFacts, removalTargets, shellEdit, tagFacts, unattendedSet, usageLevel, worktreeFacts } from './engine.mjs';
+import { touchesApprovalLabel, ghHidden, ghUnseen, badTitle, branchFacts, cmdClass, branchTargets, codexRules, evaluateCommand, evaluateEdit, evaluateRouting, evaluateSpawn, nativeAsk, opencodeAsks, pureRead, refFacts, regenerableName, regenFacts, removalTargets, shellEdit, tagFacts, unattendedSet, usageLevel, worktreeFacts } from './engine.mjs';
 import { rules } from './rules.mjs';
 
 const fresh = () => ({ reminded: new Set() });
@@ -1183,6 +1183,43 @@ test('factory run: a command naming the approval label is denied unless it only 
   }
   assert.equal(run('gh issue edit 7 --add-label ready', { approval: 'ready' }).action, 'deny', 'a configured label');
   assert.equal(run('gh issue edit 7 --add-label agent-ok', null).action, 'allow', 'no factory run: allowed');
+});
+
+test('factory run: a command that resolves to gh without spelling it is denied (#274)', () => {
+  const run = (command, factory = { approval: 'agent-ok' }) => evaluateCommand({ command, state: fresh(), host: calm, factory, rules });
+  for (const c of ['GH api user', "$'g\\x68' api user", 'g? api user', 'g* api user', '*', '[a-z]h api user', '{g,x}h api user', '{a..z}h api user', 'sudo GH api user', 'echo $(Gh api user)', '/usr/bin/GH api user']) {
+    assert.equal(ghHidden(c), true, c);
+    assert.equal(run(c).rule, 'factory-approval', c);
+  }
+  for (const c of ['gh api user', '"gh" issue view 1', 'g\\h issue view 1', 'ls *.md', './scripts/*.sh', 'gx', 'h?', '{a,b}', 'echo GH', 'GH=1 make', 'x=GH; $x api']) assert.equal(ghHidden(c), false, c);
+  assert.equal(run('GH api user', null).action, 'allow', 'no factory run');
+});
+
+test('factory run: bracket classes fold case, negated ones included (#274 review)', () => {
+  // A class may match when it takes either case of the letter; a negated one when it lacks either.
+  for (const [c, want] of [['[!G]h', true], ['[^g]H', true], ['[!gG]h', false], ['[G]h', true], ['[gG]h', true], ['[!A-Z]h', true], ['g[!H]', true], ['[!a-zA-Z]h', false]]) {
+    assert.equal(ghHidden(`${c} api user`), want, c);
+  }
+});
+
+test('factory run: a unit behind a known wrapper is read whole (#274 review)', () => {
+  for (const c of ['sudo -E -u root GH api user', 'sudo -i -g staff GH api user', 'timeout -s KILL 5 nice -n 5 GH api user', 'time -p sudo -u x GH api user', 'coproc NAME { GH api user; }']) assert.equal(ghHidden(c), true, c);
+  // Known over-denies (docs/guard.md): an option value that may name gh.
+  for (const c of ['env -u GH ls', 'sudo -g GH ls', 'env -C G* ls', 'timeout 5 ls *']) assert.equal(ghHidden(c), true, c);
+  for (const c of ['sudo -u root ls', 'timeout -s KILL 5 make', 'coproc NAME { make; }']) assert.equal(ghHidden(c), false, c);
+});
+
+test('factory run: the hidden-gh check stays fast on stars and brace lists (#274 review)', () => {
+  // In a child with a timeout: a regex per glob backtracked on a word of a hundred stars and hung the hook.
+  const script = `
+    import { evaluateCommand } from ${JSON.stringify(new URL('./engine.mjs', import.meta.url).href)};
+    import { rules } from ${JSON.stringify(new URL('./rules.mjs', import.meta.url).href)};
+    const lines = ['*'.repeat(150) + 'x api', '{' + Array(64).fill('*'.repeat(30) + 'x').join(',') + '} api', ('*'.repeat(100) + 'x; ').repeat(200), 'g' + '*'.repeat(10000) + 'q api', '[' + 'a'.repeat(5000) + ']h api', 'sudo -E '.repeat(2000) + 'x', 'timeout -s KILL 5 ' + 'g? '.repeat(5000), 'coproc '.repeat(3000) + 'x { make; }'];
+    for (const command of lines) evaluateCommand({ command, state: { reminded: new Set() }, host: {}, factory: { approval: 'agent-ok' }, rules });
+  `;
+  const r = spawnSync(process.execPath, ['--input-type=module', '-e', script], { timeout: 10000, encoding: 'utf8' });
+  assert.equal(r.signal, null, 'timed out');
+  assert.equal(r.status, 0, r.stderr);
 });
 
 test('factory run: a gh alias or extension is denied, gh\'s own commands pass (#273)', () => {
