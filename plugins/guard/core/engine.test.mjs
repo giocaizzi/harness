@@ -1229,8 +1229,20 @@ test('factory run: a gh alias or extension is denied, gh\'s own commands pass (#
     assert.equal(run(c).rule, 'factory-approval', c);
     assert.match(run(c).reason, /alias or extension/, c);
   }
-  for (const c of ['gh alias list', 'gh alias delete t', 'gh extension list', 'gh pr view 1', 'gh -R o/r issue list', 'gh api user', 'gh', 'gh --version', 'gh help', 'echo gh tag', 'gh cs list', 'gh at verify x', 'gh rs list', 'gh agent list', 'gh skills list', 'gh a11y', 'gh help environment', 'gh extension list']) assert.equal(ghUnseen(c, rules), false, c);
+  for (const c of ['gh alias list', 'gh alias delete t', 'gh extension list', 'gh pr view 1', 'gh -R o/r issue list', 'gh api user', 'gh', 'gh --version', 'gh help', 'gh pr checkout 12', 'echo gh tag', 'gh cs list', 'gh at verify x', 'gh rs list', 'gh agent list', 'gh skills list', 'gh a11y', 'gh help environment', 'gh extension list']) assert.equal(ghUnseen(c, rules), false, c);
   assert.equal(run('gh tag 1', null).action, 'allow', 'no factory run');
+});
+
+test('factory run: files inside .factory/runs/*/ are waived from the defaults, an explicit glob is not (#302)', () => {
+  const base = { defaults: ['.github/**', '.factory/**'], exempt: ['.factory/runs/*/*/**'], globs: [], root: '/r', cwd: '/r' };
+  const hit = (c, p = base) => protectedWrite(c, p, { HOME: '/Users/me', TMPDIR: '/tmp/' });
+  for (const c of ['echo x > .factory/runs/12/checklist.md', 'echo x > ./.factory/runs/12/result.json', 'echo x > /r/.factory/runs/12/verdict-1.md', 'echo x > /r/src/../.factory/runs/12/a', 'echo x | tee .factory/runs/12/a', 'sed -i s/a/b/ .factory/runs/12/a', 'mv /tmp/a .factory/runs/12/a', 'cp /tmp/a .factory/runs/12/a', 'rm .factory/runs/12/a', 'Set-Content -Path .factory\\runs\\12\\r.json x', 'echo x > .FACTORY/RUNS/12/a', 'echo x > $(git rev-parse --git-common-dir)/../.factory/runs/12/verdict-1.md', 'echo x > $ROOT/.factory/runs/12/a']) assert.equal(hit(c), null, c);
+  for (const c of ['echo x > .factory/config.yaml', 'echo x > .factory/runs.yaml', 'echo x > .github/workflows/ci.yml', 'echo x > .factory/runs/../config.yaml', 'echo x > .factory/runs/x/../../config.yaml', 'echo x > /r/.factory/runs/../config.yaml', 'echo x > $ROOT/.factory/runs/../config.yaml', 'echo x > .factory/runs/$N/a', 'echo x > .factory/runs/{a,..}/config.yaml', "Move-Item '.factory\\runs\\12\\.. ' C:\\tmp\\x", 'Move-Item .factory\\runs\\12\\... C:\\tmp\\x', "Remove-Item -Recurse -Force '.factory\\runs\\12\\.. '", "echo x > '.factory/runs/12/a '", 'cp /tmp/a .factory/runs/12/', 'cp -t .factory/runs/12 /tmp/a', 'echo x > .factory/*', 'echo x > .factory/r*', 'rm -rf .factory/runs', 'rm -r .factory/runs/12', 'mv .factory/runs/12 /tmp/x', 'mv .factory/runs /tmp/x', 'echo x > .factory/runs', 'echo x > .factory/runs/12', 'rm -r .factory', 'rm -r .', 'mv .factory/config.yaml .factory/runs/a', 'Set-Content -Path .factory\\runs\\..\\config.yaml x', 'echo x > .factory/runs/12/a > .factory/config.yaml']) assert.notEqual(hit(c), null, c);
+  // A glob the runtime lists wins over the waiver, however it is spelled.
+  const listed = { ...base, globs: ['.factory/runs/*/secret.json', '.factory/**'] };
+  assert.notEqual(hit('echo x > .factory/runs/12/secret.json', { ...base, globs: ['.factory/runs/*/secret.json'] }), null);
+  assert.equal(hit('echo x > .factory/runs/12/result.json', { ...base, globs: ['.factory/runs/*/secret.json'] }), null);
+  assert.notEqual(hit('echo x > .factory/runs/12/result.json', listed), null);
 });
 
 test('factory run: shell writes to a protected path are denied (#213)', () => {
