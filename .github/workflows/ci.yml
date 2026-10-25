@@ -30,13 +30,36 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    env:
+      # Exact versions: an unpinned upstream release must not break CI overnight. Bump them in a PR of their own.
+      E2E_CLIS: '@github/copilot@1.0.103 @openai/codex@0.163.0 opencode-ai@1.19.3 @earendil-works/pi-coding-agent@1.3.0'
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
           node-version: 22
-      # Exact versions: an unpinned upstream release must not break CI overnight. Bump them in a PR of their own.
-      - run: npm install -g @github/copilot@1.0.103 @openai/codex@0.163.0 opencode-ai@1.19.3 @earendil-works/pi-coding-agent@1.3.0
+      # TEMPORARY probe (removed before merge): why the Windows install takes minutes.
+      - name: probe windows npm install
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Get-MpComputerStatus | Select-Object AMServiceEnabled, AntivirusEnabled, RealTimeProtectionEnabled, OnAccessProtectionEnabled, IsTamperProtected | Format-List
+          Get-MpPreference | Select-Object DisableRealtimeMonitoring, ExclusionPath, ExclusionProcess | Format-List
+          "cache: $(npm config get cache)"; "prefix: $(npm prefix -g)"; "root: $(npm root -g)"
+          Get-Volume | Format-Table DriveLetter, FileSystem, Size, SizeRemaining
+          $pkgs = '${{ env.E2E_CLIS }}' -split ' '
+          function Timed($label) { foreach ($p in $pkgs) { $t = Measure-Command { npm install -g $p --no-audit --no-fund | Out-Null }; "{0} {1}: {2:N1}s" -f $label, $p, $t.TotalSeconds } }
+          Timed 'defender-as-is'
+          foreach ($p in $pkgs) { npm uninstall -g ($p -replace '@[^@]+$', '') | Out-Null }
+          npm cache clean --force
+          Set-MpPreference -DisableRealtimeMonitoring $true
+          (Get-MpComputerStatus).RealTimeProtectionEnabled
+          Timed 'realtime-off'
+          foreach ($p in $pkgs) { npm uninstall -g ($p -replace '@[^@]+$', '') | Out-Null }
+          npm cache clean --force
+          Set-MpPreference -DisableRealtimeMonitoring $false
+          $t = Measure-Command { npm install -g @pkgs --no-audit --no-fund | Out-Null }; "defender-as-is all-at-once: {0:N1}s" -f $t.TotalSeconds
+      - run: npm install -g ${{ env.E2E_CLIS }}
       - run: node tests/e2e/run.mjs # `make e2e`; called directly because Windows runners have no make
         env:
           E2E_REQUIRE: 1
@@ -51,8 +74,15 @@ jobs:
         with:
           node-version: 22
       - run: pwsh -NoProfile -File tests/host-hygiene.test.ps1
-      - run: node --test tests/wait-pr.test.mjs # wait-pr.ps1; the .sh half skips on Windows
-      - run: node --test --test-name-pattern="attended launcher \(ps1\)" tests/factory.test.mjs
+      # node passes a run whose tests all skipped or none matched: each step fails unless some test ran and none skipped.
+      - shell: bash
+        run: |
+          node --test --test-reporter=tap tests/wait-pr-ps1.test.mjs | tee tap.txt
+          if ! grep -q '^# pass [1-9]' tap.txt || ! grep -qx '# skipped 0' tap.txt; then echo "::error::no wait-pr.ps1 test ran, or one skipped"; exit 1; fi
+      - shell: bash
+        run: |
+          node --test --test-reporter=tap --test-name-pattern='attended launcher \(ps1\)' tests/factory.test.mjs | tee tap.txt
+          if ! grep -q '^# pass [1-9]' tap.txt || ! grep -qx '# skipped 0' tap.txt; then echo "::error::no attended launcher (ps1) test ran, or one skipped"; exit 1; fi
 
   make-check:
     runs-on: ubuntu-latest
