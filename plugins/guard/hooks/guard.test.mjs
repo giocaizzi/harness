@@ -660,6 +660,17 @@ test('FACTORY_RUN_ID set: the protected-path check denies within the hook budget
   }
 })
 
+test('through the real hook, a risky command behind a wrapper option asks; the safe one passes (#282)', () => {
+  const script = fileURLToPath(new URL('./guard.mjs', import.meta.url))
+  const run = (command) => {
+    const r = spawnSync(process.execPath, [script, 'PreToolUse'], { input: JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command }, cwd: '/', session_id: 's' }), encoding: 'utf8', timeout: 20000, env: { ...process.env, GUARD_OTEL: 'off', GUARD_UNATTENDED: '', FACTORY_RUN_ID: '', FACTORY_EVENTS_FILE: '', CLAUDE_PLUGIN_DATA: mkdtempSync(join(tmpdir(), 'guard-test-')) } })
+    assert.equal(r.status, 0, r.stderr)
+    return r.stdout ? JSON.parse(r.stdout).hookSpecificOutput.permissionDecision : 'allow'
+  }
+  for (const c of ["sudo -E bash -c 'rm -rf /x'", "caffeinate -i bash -c 'rm -rf /x'", "time -p bash -c 'git reset --hard'", "timeout -s KILL 5 bash -c 'rm -rf /x'", "env -S 'rm -rf /x'", "watch 'rm -rf /x'", "stdbuf -oL bash -c 'rm -rf /x'", "taskset 1 bash -c 'rm -rf /x'", 'sudo --frobnicate ls']) assert.equal(run(c), 'ask', c)
+  for (const c of ['sudo -E make test', 'watch -n 2 git status']) assert.equal(run(c), 'allow', c)
+})
+
 test('a long chain of commands is judged in linear time, and the decision is the same as for a short one', () => {
   const script = fileURLToPath(new URL('./guard.mjs', import.meta.url))
   const run = (command) => {

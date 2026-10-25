@@ -3,7 +3,7 @@
 // apply the decision. `state.reminded` (a Set) is mutated: each rule fires once
 // per session ("remind once, then let it through").
 
-import { analyze, commandWords, scan, units, WRAPPERS } from './shell.mjs';
+import { analyze, commandWords, scan, units, wrapped } from './shell.mjs';
 
 const bare = (skill) => skill.split(':').pop();
 
@@ -1155,19 +1155,17 @@ function hidesGh(w) {
 }
 
 // A command, at any depth, that the shell may resolve to `gh` though its text does not spell `gh` (hidesGh). The text
-// checks above never see such a call. Every word up to the command is read, past reserved words (`then`, `{`, `!`,
-// `coproc`), and a unit that starts with a known wrapper is read whole, since the reader cannot tell a wrapper's option
-// values from the command (`sudo -E -u x …`, `timeout -s KILL 5 nice …`). A name the shell builds from a variable
-// (`$GH`) stays out of sight, and so does a command behind a wrapper the reader does not know (`stdbuf`, `watch`).
+// checks above never see such a call. The words at command position are read, past reserved words (`then`, `{`, `!`,
+// `coproc`): each known wrapper and the command it runs, its options read with that wrapper's own table
+// (`sudo -E -u x …`, `timeout -s KILL 5 nice …`; a string a wrapper runs, env -S or watch, is a unit of its own). A unit
+// with a wrapper option the table does not know is read whole. A name the shell builds from a variable (`$GH`) stays
+// out of sight, and so does a command behind a wrapper the reader does not know (`busybox`, `chronic`).
 export function ghHidden(command) {
   const plain = (w) => !w.val.startsWith('-') && !/^[A-Za-z_]\w*=/.test(w.val);
   for (const { cmd } of units(analyze(command))) {
     const words = dropReserved(cmd.words);
-    const head = words.find(plain);
-    let at = words.length - commandWords(words).length;
-    // A word the reader took for the command that is an option or a duration (`time -p X`, `timeout -s KILL 5 X`): read on.
-    while (at < words.length - 1 && (words[at].val.startsWith('-') || /^\d+(?:\.\d+)?[smhd]?$/.test(words[at].val))) at++;
-    const read = head && WRAPPERS.has(head.val.replace(/^.*[\\/]/, '').toLowerCase()) ? words : words.slice(0, at + 1);
+    const run = wrapped(words);
+    const read = run.unsure ? words : run.heads.map((i) => words[i]);
     if (read.some((w) => plain(w) && hidesGh(w))) return true;
   }
   return false;
@@ -1246,8 +1244,9 @@ function unquotedExpansion(raw) {
   return false;
 }
 // Words that open a compound command or negate one: the reader keeps them in front of the command they hold
-// (`{ gh …`, `then gh …`, `! gh …`, `coproc gh …`, `function f { gh …`).
-const RESERVED = new Set(['{', '(', '!', 'do', 'then', 'else', 'elif', 'if', 'while', 'until', 'time', 'coproc']);
+// (`{ gh …`, `then gh …`, `! gh …`, `coproc gh …`, `function f { gh …`). `time` is left to the wrapper table, which
+// reads its `-p`.
+const RESERVED = new Set(['{', '(', '!', 'do', 'then', 'else', 'elif', 'if', 'while', 'until', 'coproc']);
 function dropReserved(words) {
   let i = 0;
   while (i < words.length) {

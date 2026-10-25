@@ -11,10 +11,38 @@
 const MAX_DEPTH = 3
 const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'mksh', 'ash', 'fish', 'busybox'])
 const POWERSHELLS = new Set(['pwsh', 'powershell', 'pwsh.exe', 'powershell.exe'])
-// Words that run the next word as the command: skipped to find what actually runs.
-export const WRAPPERS = new Set(['sudo', 'env', 'command', 'exec', 'nohup', 'time', 'nice', 'timeout', 'xargs', 'doas', 'caffeinate'])
-// Options of the wrappers above that take a value.
-const WRAPPER_VALUE = new Set(['-u', '-g', '-C', '-h', '-p', '-n', '-I', '-L', '-P', '-d', '-E', '-s', '-a', '-S', '--user', '--group', '-k', '-i', '-w', '-t'])
+// Words that run another word as the command, each with its own options (from each tool's getopt string, the GNU,
+// util-linux, BSD and macOS ones merged): `value` short options take a value (glued or the next word), `flag` ones take
+// none, `optional` ones take a value only glued (`-dpermanent`); `long` maps each long option to whether it needs a
+// value (`--user root`; `--name=value` is always one word, and a unique prefix counts, as getopt_long allows). `pos`
+// words follow the options before the command (timeout's duration, chrt's priority, taskset's mask). `assign`: name=value
+// words may sit among the options. `split`: env -S, whose value is itself a command line. `shell`: watch, which runs its
+// words joined through `sh -c` unless `-x`. `numeric`: nice's `-5`. An option not listed here makes the reading unsure.
+const W = (value, flag, long = {}, extra = {}) => ({ value, flag, optional: '', long, pos: 0, ...extra })
+const flags = (names) => Object.fromEntries(names.split(' ').filter(Boolean).map((n) => [n, false]))
+const values = (names) => Object.fromEntries(names.split(' ').filter(Boolean).map((n) => [n, true]))
+const COMMON = flags('help version')
+export const WRAPPER_OPTIONS = {
+  sudo: W('aCcDgpRrTtUu', 'ABbEeHhiKklNnPSsVv', { ...COMMON, ...values('auth-type close-from login-class chdir group host prompt chroot role command-timeout type user other-user'), ...flags('background preserve-env edit set-home login remove-timestamp list preserve-groups shell validate askpass bell reset-timestamp no-update non-interactive stdin') }, { assign: true }),
+  doas: W('aCu', 'Lns'),
+  env: W('aCLPSUu', '0iv', { ...COMMON, ...values('argv0 env0-from unset chdir quoting-style split-string'), ...flags('ignore-environment null default-signal ignore-signal block-signal list-signal-handling debug') }, { assign: true, split: true }),
+  command: W('', 'pVv'),
+  exec: W('a', 'cl'),
+  nohup: W('', '', COMMON),
+  time: W('fo', 'ahlpqVv', { ...COMMON, ...values('format output'), ...flags('append portability verbose quiet') }),
+  nice: W('n', '', { ...COMMON, ...values('adjustment') }, { numeric: true }),
+  timeout: W('ks', 'fpv', { ...COMMON, ...values('kill-after signal'), ...flags('foreground preserve-status verbose') }, { pos: 1 }),
+  xargs: W('adEIJLnPRSs', '0oprtx', { ...COMMON, ...values('arg-file delimiter max-args max-chars max-procs process-slot-var'), ...flags('null eof replace max-lines open-tty interactive no-run-if-empty verbose show-limits exit') }, { optional: 'eil' }),
+  caffeinate: W('tw', 'dhimsu'),
+  stdbuf: W('eio', '', { ...COMMON, ...values('input output error') }),
+  ionice: W('cnpPu', 'htV', { ...COMMON, ...values('class classdata pid pgid uid'), ...flags('ignore') }),
+  chrt: W('DPTUX', 'abdefGhimOopRrVv', { ...COMMON, ...values('sched-runtime sched-period sched-deadline clamp-min clamp-max'), ...flags('all-tasks batch deadline deadline-overrun ext fifo idle pid max other rr reset-on-fork reclaim-grub verbose') }, { pos: 1 }),
+  taskset: W('', 'achpV', { ...COMMON, ...flags('all-tasks pid cpu-list') }, { pos: 1 }),
+  setsid: W('', 'cfhVw', { ...COMMON, ...flags('ctty fork wait') }),
+  unbuffer: W('', 'p'),
+  watch: W('nqs', 'bCcefghprtvwx', { ...COMMON, ...values('interval equexit shotsdir'), ...flags('color no-color differences beep errexit follow chgexit exec precise no-rerun no-title no-wrap') }, { optional: 'd', shell: true }),
+}
+export const WRAPPERS = new Set(Object.keys(WRAPPER_OPTIONS))
 // ssh options that take a value (OpenSSH): everything else is a flag.
 const SSH_VALUE = new Set(['-b', '-c', '-D', '-E', '-e', '-F', '-I', '-i', '-J', '-L', '-l', '-m', '-O', '-o', '-p', '-Q', '-R', '-S', '-W', '-w', '-B'])
 const EXEC_VALUE = new Set(['-e', '--env', '-u', '--user', '-w', '--workdir', '--env-file', '-c', '--container', '-n', '--namespace', '--detach-keys'])
@@ -293,20 +321,100 @@ function substitutions(inner) {
 // The code of a fragment (quoted text as "", heredoc bodies and comments dropped), operators kept.
 export const codeOf = (src) => scan(src).map((c) => `${c.sep && c.sep !== '\n' ? `${c.sep} ` : ''}${c.code.trim()}`).join(' ').trim()
 
-// The words of a simple command after prefix assignments and wrappers (sudo, env, xargs, …): what it runs.
-export function commandWords(words) {
+// One long option of a wrapper (`--name`, `--name=value`, or a unique prefix of a name): { name, words, value }, or
+// null when the wrapper has no such option.
+function longOption(spec, words, k) {
+  const v = words[k].val
+  const eq = v.indexOf('=')
+  const given = v.slice(2, eq < 0 ? v.length : eq)
+  let name = Object.hasOwn(spec.long, given) ? given : null
+  if (name === null) {
+    const found = Object.keys(spec.long).filter((n) => n.startsWith(given))
+    if (!given || found.length !== 1) return null
+    name = found[0]
+  }
+  if (eq >= 0) return { name, words: 1, value: { ...words[k], val: v.slice(eq + 1), raw: words[k].raw } }
+  return spec.long[name] ? { name, words: 2, value: words[k + 1] } : { name, words: 1 }
+}
+
+// One cluster of short options (`-nE`, `-Eu root`, `-oL`): { words, letters, opt, value } where `opt` is the letter that
+// took a value, glued or the next word; `unsure` when a letter is not one of the wrapper's options.
+function shortOptions(spec, words, k) {
+  const v = words[k].val
+  const letters = []
+  for (let i = 1; i < v.length; i++) {
+    const c = v[i]
+    letters.push(c)
+    if (spec.value.includes(c)) {
+      if (i + 1 < v.length) return { words: 1, letters, opt: c, value: { ...words[k], val: v.slice(i + 1) } }
+      return { words: 2, letters, opt: c, value: words[k + 1] }
+    }
+    if (spec.optional.includes(c)) return { words: 1, letters }
+    if (!spec.flag.includes(c)) return { words: 1, letters, unsure: true }
+  }
+  return { words: 1, letters }
+}
+
+// What a simple command runs past its prefix assignments and wrappers, each wrapper read with its own options
+// (WRAPPER_OPTIONS): { words, heads, payload, unsure }. `words` from the command word on; `heads` the index of each
+// wrapper and of the command word; `payload` { text, words } the command line a wrapper runs from a string (env -S,
+// watch), `words` then empty; `unsure` when a wrapper has an option the table does not know, so the command word may be
+// another one. One pass over the words.
+export function wrapped(words) {
   let k = 0
+  const heads = []
+  let unsure = false
   while (k < words.length && ASSIGNMENT.test(words[k].val)) k++
   while (k < words.length && WRAPPERS.has(basename(words[k].val))) {
-    const wrapper = basename(words[k].val)
-    k++
-    if (wrapper === 'timeout' && words[k] && !words[k].val.startsWith('-')) k++
-    while (k < words.length && (words[k].val.startsWith('-') || (wrapper === 'env' && ASSIGNMENT.test(words[k].val)))) {
-      k += WRAPPER_VALUE.has(words[k].val) ? 2 : 1
+    const name = basename(words[k].val)
+    const spec = WRAPPER_OPTIONS[name]
+    heads.push(k++)
+    let ended = false
+    let exec = false
+    while (k < words.length) {
+      const v = words[k].val
+      if (spec.assign && ASSIGNMENT.test(v) && !(ended && name === 'sudo')) k++
+      else if (ended || v[0] !== '-') break
+      else if (v === '-') {
+        // env's `-` is -i; anywhere else it is the command.
+        if (name !== 'env') break
+        k++
+      } else if (v === '--') {
+        ended = true
+        k++
+      } else if (spec.numeric && /^-[-+]?\d/.test(v)) k++
+      else {
+        const o = v.startsWith('--') ? longOption(spec, words, k) : shortOptions(spec, words, k)
+        if (!o || o.unsure) {
+          unsure = true
+          k++
+          continue
+        }
+        // sudo's `-h` alone is a host when a plain word follows (sudo's own rule), else help.
+        if (name === 'sudo' && v === '-h' && words[k + 1] && !words[k + 1].val.startsWith('-') && !ASSIGNMENT.test(words[k + 1].val)) o.words = 2
+        if (o.name === 'exec' || o.letters?.includes('x')) exec = true
+        if (spec.split && (o.name === 'split-string' || o.opt === 'S')) {
+          // env -S: its value is split into words that run ahead of the rest, options and assignments included.
+          const rest = words.slice(k + o.words)
+          const text = `env ${o.value?.val ?? ''}${rest.length ? ` ${requote(rest.map((w) => w.val))}` : ''}`
+          return { words: [], heads, payload: { text, words: [o.value ?? words[k], ...rest] }, unsure }
+        }
+        k += o.words
+      }
+    }
+    for (let p = 0; p < spec.pos && k < words.length; p++) k++
+    if (spec.shell && !exec) {
+      // watch runs its words joined with spaces through `sh -c`.
+      const rest = words.slice(k)
+      return { words: [], heads, payload: rest.length ? { text: rest.map((w) => w.val).join(' '), words: rest } : null, unsure }
     }
   }
-  return words.slice(k)
+  if (k < words.length) heads.push(k)
+  return { words: words.slice(k), heads, payload: null, unsure }
 }
+
+// The words of a simple command after prefix assignments and wrappers (sudo, env, xargs, …): what it runs.
+export const commandWords = (words) => wrapped(words).words
 
 // Re-quotes argv words as one command line: a word with anything a shell would split or expand is single-quoted.
 const requote = (words) => words.map((w) => (/^[\w./@%+=:,~-]+$/.test(w) ? w : `'${w.replace(/'/g, `'\\''`)}'`)).join(' ')
@@ -331,7 +439,10 @@ function payloadsOf(cmd, prev) {
     const injected = /^[A-Za-z_]\w*="\$\([\s\S]*\)"$/.test(w.raw) && w.substs.length === 1
     for (const s of w.substs) out.push({ kind: 'subst', text: s.text, injected })
   }
-  const words = commandWords(cmd.words)
+  const run = wrapped(cmd.words)
+  if (run.unsure) opaque = true
+  if (run.payload) out.push({ kind: 'shell', text: run.payload.text, expanded: expands(run.payload.words) })
+  const words = run.words
   const name = words[0] ? basename(words[0].val) : ''
   const args = words.slice(1)
   if (SHELLS.has(name)) {
