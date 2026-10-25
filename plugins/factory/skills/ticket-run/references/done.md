@@ -2,7 +2,7 @@
 
 ## Checklist
 
-Keep the run's checklist in `.factory/runs/N/checklist.md` of the main checkout (git-ignored, so it never enters the diff): acceptance checks with their state, open fold-ins, what is pushed, routing deviations with their reasons. Update it as you go; after a compaction or a resume, read it before anything else.
+Keep the run's checklist in `.factory/runs/N/checklist.md` of the main checkout (git-ignored, so it never enters the diff): acceptance checks with their state, open fold-ins, what is pushed, routing deviations with their reasons, and each step's start and end time in UTC as you enter and leave it (the source of `phases`). Update it as you go; after a compaction or a resume, read it before anything else.
 
 ## Verify
 
@@ -31,20 +31,36 @@ A failed live check means the change does not work where it lands: open a revert
 
 ## Record
 
-Every run that passed the gate ends with both, and releases its claim (a stop at the gate: **Gate stops** below):
+Every run that passed the gate ends with a result file and a result comment, in this order, and then releases its claim (a stop at the gate: **Gate stops** below):
 
-1. The result comment (kind `factory:result`, [comments.md](comments.md#comments)).
-2. `.factory/runs/N/result.json` in the main checkout, which outlives the worktree (the parent of `git rev-parse --path-format=absolute --git-common-dir`). Keys: `schema` (2), `ticket`, `run_id`, `end_state`, `reason`, `reason_code`, `pr`, `decisions` (the log rows: `item`, `test`, `decision`, `where`), `evidence`, `checks` (`command`, `result`), `follow_ups`, `posts` (`kind`, `url`, `state`), `phases` (`name`, `started_at`, `ended_at`), `verifier` (`verdict`, `rounds`), `routing` (`phase`, `policy_model`, `policy_effort`, `model`, `effort`, `deviation_reason`), `mode`, `cost_usd`, `tokens`, `turns`, `harness`, `model`, `effort`, `sessions` (`role`, `id`, `model`, `effort`), `plugin_versions`, `host` (`name`, `os`, `runner`), `finished_at`; their meaning is in `docs/factory.md` (Result contract).
+1. Write `.factory/runs/N/result.json` (below), with `finished_at` set to the time of this write and the result comment not yet in `posts`.
+2. Check it with this skill's `scripts/check-result.mjs <result.json>` and fix what it reports.
+3. Post the result comment (kind `factory:result`, [comments.md](comments.md#comments)).
+4. Add the comment to `posts` (`kind` `result`, its URL, `state` `posted`), leaving `finished_at` as step 1 set it, and run the check again. This edit finalizes the file.
+
+`.factory/runs/N/result.json` sits in the main checkout, which outlives the worktree (the parent of `git rev-parse --path-format=absolute --git-common-dir`). Keys: `schema` (2), `ticket`, `run_id`, `end_state`, `reason`, `reason_code`, `pr`, `decisions` (the log rows: `item`, `test`, `decision`, `where`), `evidence`, `checks` (`command`, `result`), `follow_ups`, `posts` (`kind`, `url`, `state`), `phases` (`name`, `started_at`, `ended_at`), `verifier` (`verdict`, `rounds`), `routing` (`phase`, `policy_model`, `policy_effort`, `model`, `effort`, `deviation_reason`), `mode`, `cost_usd`, `tokens`, `turns`, `harness`, `model`, `effort`, `sessions` (`role`, `id`, `model`, `effort`), `plugin_versions`, `host` (`name`, `os`, `runner`), `finished_at`; their meaning is in `docs/factory.md` (Result contract).
 
 Record what the harness reports, not what you asked for: a model or effort that differs from the requested one is how a silent downgrade shows. Fields the harness does not expose are `null`. `end_state` is `budget_reached` when a budget cap stopped the run, which is not a failure; never write `halted`, which only a runtime writes.
 
 - **`run_id`:** `FACTORY_RUN_ID` when it is set, so the result matches the runtime's claim.
 - **`reason_code`:** the park or failure as one code, `null` when done or none fits; the specific cause wins over `question` when a park also asks one: a question `question`, the M+ plan waiting for the OK `plan_gate`, an owner merge `merge_gate`, the third park `grooming`, the verifier still failing after three rounds `verify_rounds`, a failed live check `live_verify_failed`, missing access or a broken environment `env_blocked` (one denied call is not enough: retry it as a simpler single command inside the checkout first, and only a required step with no allowed path counts), a budget cap `budget`, a credential or token failure, or a runtime-started run with no trusted claim under its run id, `auth`; never `takeover`, which only a runtime writes.
-- **`phases`:** one entry per step reached, in order (`gate`, `plan`, `work`, `verify`, `ship`, `deploy`, `record`), with the time you entered and left it; `ended_at` is `null` for the step the run stopped in. Note the times in the checklist as you go.
-- **`routing`:** optional, one entry per spawned phase: the policy's model and effort from [routing.md](routing.md) next to what actually ran. `deviation_reason` is required, non-empty, whenever `model` or `effort` differs from the policy's, else `null`. Check the file with this skill's `scripts/check-result.mjs <result.json>`. Note each deviation and its reason in the checklist as it happens.
+- **`phases`:** one entry per step reached, in order (`gate`, `plan`, `work`, `verify`, `ship`, `deploy`, `record`), each with both `started_at` and `ended_at` as ISO 8601 UTC times; `ended_at` is `null` for the step the run stopped in. Take them from the checklist; for a step it lacks (a compaction, a resumed run), from the timestamps the run already has, each step ending where the next starts:
+  - `gate`: from the run's start (its claim comment's `created_at` when it posted one).
+  - `plan`: to the plan comment's `created_at`, or for M and larger the owner's OK.
+  - `work`: to the last pushed commit (`git log -1 --format=%cI` on the branch).
+  - `verify`: to the passing verdict (its file's time, or its `factory:verdict` comment's `created_at`); all rounds are one step, their count is in `verifier`.
+  - `ship`: to the merge, merge wait included (`gh pr view <pr> --json mergedAt`).
+  - `deploy`: from `deploy.wait` to the last `deploy.verify`.
+  - `record`: to `finished_at`.
+
+  A time you cannot find is `null`, never a guess and never a dropped key or entry; say which one and why in the report.
+- **`finished_at`:** the UTC time you write the file (step 1), never `null`: `date -u +%Y-%m-%dT%H:%M:%SZ` (PowerShell: `(Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ', [cultureinfo]::InvariantCulture)`).
+- **`routing`:** optional, one entry per spawned phase: the policy's model and effort from [routing.md](routing.md) next to what actually ran. `deviation_reason` is required, non-empty, whenever `model` or `effort` differs from the policy's, else `null`. Note each deviation and its reason in the checklist as it happens.
 - **`mode`:** optional; write `"mode": "dev"` when `FACTORY_DEV=1` is set, else omit the key. `check-result.mjs` rejects any other value.
 - **`verifier`:** its last verdict and the number of rounds; `null` when the run stopped before the verifier.
 
-**Gate stops.** A run a runtime started (`FACTORY_RUN_ID` set) that stops at the gate still writes `result.json`, with `end_state` `failed`, the gate check that failed as `reason`, and `reason_code` `auth` when no trusted claim carries this run's id ([comments.md](comments.md#gate), whether or not the stop names a login), else the code that fits or `null`; `phases` holds `gate` alone. The Ready check is no stop: without acceptance criteria or a proof command the run asks on the ticket and parks (`parked`, `question`) like any question. It posts no result comment and leaves the claim label, which it never took: the runtime reads the file and releases its own claim. An attended run that stops at the gate tells the person and writes nothing.
+`check-result.mjs` rejects a missing or impossible `finished_at`, empty or out-of-order `phases`, a phase entry that is not an object, a missing time key, a deviation without its reason and a `mode` other than `dev`.
+
+**Gate stops.** A run a runtime started (`FACTORY_RUN_ID` set) that stops at the gate still writes `result.json`, with `end_state` `failed`, the gate check that failed as `reason`, and `reason_code` `auth` when no trusted claim carries this run's id ([comments.md](comments.md#gate), whether or not the stop names a login), else the code that fits or `null`; `phases` holds `gate` alone. It does steps 1 and 2 of the Record order (write, then `check-result.mjs`) but posts no result comment, so `posts` holds none, and leaves the claim label, which it never took: the runtime reads the file and releases its own claim. The Ready check is no stop: without acceptance criteria or a proof command the run asks on the ticket and parks (`parked`, `question`) like any question. An attended run that stops at the gate tells the person and writes nothing.
 
 A parked ticket keeps its worktree and pushed branch for the next run.

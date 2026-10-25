@@ -49,4 +49,4 @@ Every run that passed the gate ends with the result comment and `result.json`; a
 - **Changed:** what merged, deployed and was verified.
 - **Found:** decision-log rows other than plain fold-ins, follow-up issues, and problems outside the scope, which you never edit.
 
-Mark anything you could not confirm as unconfirmed, and say where you looked.
+Mark anything you could not confirm as unconfirmed, and say where you looked; name each `null` time in `result.json` and why.
