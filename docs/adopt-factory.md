@@ -27,7 +27,7 @@
    gh api repos/giocaizzi/harness/contents/plugins/factory/template/config.yaml -H "Accept: application/vnd.github.raw" | Set-Content -Encoding utf8 .factory/config.yaml
    Add-Content .gitignore "`n# factory run results (docs/factory.md in giocaizzi/harness)`n.factory/runs/"
    ```
-3. Edit `.factory/config.yaml`: replace every `<placeholder>`, list the repo's components with their checks and deploy commands, and set the risk tiers; delete the optional blocks you do not use (`writers`, `board`, `notify`, `telemetry`, `secrets`). Keys: [factory.md](factory.md#config-factoryconfigyaml). Check nothing is left:
+3. Edit `.factory/config.yaml`: replace every `<placeholder>`, list the repo's components with their checks and deploy commands, and set the risk tiers; delete the optional blocks you do not use (`writers`, `board`, `notify`, `telemetry`, `secrets`). If a runtime will run tickets here under its own login, keep `writers`: the approvers plus that login exactly as the REST API reports it, `<slug>[bot]` for a GitHub App (for example `example-bot[bot]`), never the bare slug; otherwise the runtime's runs stop at the gate with `reason_code: auth`. Keys: [factory.md](factory.md#config-factoryconfigyaml). Check nothing is left:
    ```bash
    grep -n '<' .factory/config.yaml
    ```
@@ -40,6 +40,7 @@
 - `gh label list` shows `agent-ok`, `factory-claimed`, `needs-owner`, `needs-grooming`, `factory-quarantine`, `factory-halt` and `factory-takeover`.
 - the placeholder search prints nothing, and `git check-ignore .factory/runs/x` prints the path.
 - On an open test issue with the approval label applied by you, `factory-status` lists it, and `ticket-run <number>` passes the gate and posts a plan comment.
+- With a runtime: a run it starts on the test issue passes the gate and edits the runtime's claim comment instead of posting a second; a stop with `reason_code: auth` means no trusted claim carries the run's id: the runtime's login is missing from `writers` (the stop names it when the claim label's timeline proves it; check it is the runtime's before adding it).
 
 ## Rollback
 
