@@ -312,6 +312,32 @@ try { Enter-HostSlot job; Set-Content $env:TEST_GOT (Get-Date).ToString('o') } f
     Remove-Item Env:SWEEP_SESSION_STARTS
     Test-Equal -Name 'a linked marketplace or plugin dir is kept whole' -Got "$(@($out | Where-Object { $_ -match 'cache.linked: a link|mkt.linkedp: a link' }).Count) $(Test-Path (Join-Path $tmp 'outside/a/b')) $(Test-Path (Join-Path $tmp 'outside2/1.0'))" -Want '2 True True'
     Test-Equal -Name 'a symlinked version loses its link, never its target' -Got "$(Test-Path (Join-Path $c2 'r/0.5'))$(Get-Content (Join-Path $precious 'file'))" -Want 'Falsekeep'
+    # --marketplace sweeps one marketplace and leaves the others (third-party plugins) alone.
+    $cfg3 = Join-Path $tmp 'claude3'
+    $c3 = Join-Path $cfg3 'plugins/cache'
+    foreach ($v in 'mine/a/1.0', 'mine/a/2.0', 'other/b/1.0') { New-Item -ItemType Directory -Force (Join-Path $c3 $v) | Out-Null }
+    $c3 = (Resolve-Path $c3).ProviderPath
+    @{ version = 2; plugins = @{ 'a@mine' = @(@{ scope = 'user'; installPath = (Join-Path $c3 'mine/a/2.0'); version = '2.0'; lastUpdated = '2026-01-01T00:00:00.000Z' }) } } | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $cfg3 'plugins/installed_plugins.json')
+    $env:CLAUDE_CONFIG_DIR = $cfg3
+    $env:SWEEP_SESSION_STARTS = ''
+    function Invoke-MktSweep { @(& $shell -NoProfile -File $sweep --plugins @args) }
+    function Get-Rel($Out) { (@($Out | Where-Object { $_ -like 'would remove*' }) | ForEach-Object { ($_ -replace '\\', '/').Replace(($c3 -replace '\\', '/') + '/', '') } | Sort-Object) -join ';' }
+    Test-Equal -Name "--marketplace lists only that marketplace's versions" -Got (Get-Rel (Invoke-MktSweep --marketplace mine)) -Want 'would remove mine/a/1.0'
+    & $shell -NoProfile -File $sweep --plugins --marketplace mine --apply | Out-Null
+    Test-Equal -Name '--marketplace --apply leaves a third-party version untouched' -Got "$(Test-Path (Join-Path $c3 'mine/a/1.0')) $(Test-Path (Join-Path $c3 'mine/a/2.0')) $(Test-Path (Join-Path $c3 'other/b/1.0'))" -Want 'False True True'
+    Test-Equal -Name 'without --marketplace every marketplace is swept' -Got (Get-Rel (Invoke-MktSweep)) -Want 'would remove other/b/1.0'
+    $out = @(& $shell -NoProfile -File $sweep --plugins --marketplace none --apply)
+    Test-Equal -Name 'an unknown marketplace removes nothing' -Got "$LASTEXITCODE $($out -join '') $(Test-Path (Join-Path $c3 'other/b/1.0'))" -Want "0 sweep: no marketplace none in $c3 True"
+    # Matched against the cache listing, never resolved: a case-insensitive filesystem opens cache/MINE as mine, and
+    # Windows trims trailing dots and spaces, so '...' would open the cache itself.
+    New-Item -ItemType Directory -Force (Join-Path $c3 'mine/a/1.0') | Out-Null
+    $out = @(& $shell -NoProfile -File $sweep --plugins --marketplace MINE --after-reload --apply)
+    Test-Equal -Name 'a marketplace named in another case removes nothing' -Got "$LASTEXITCODE $($out -join '') $(Test-Path (Join-Path $c3 'mine/a/1.0')) $(Test-Path (Join-Path $c3 'mine/a/2.0')) $(Test-Path (Join-Path $c3 'other/b/1.0'))" -Want "0 sweep: no marketplace MINE in $c3 True True True"
+    $codes = foreach ($bad in '', '.', '..', '...', ' ', '../other', 'a/b', '--apply') { & $shell -NoProfile -File $sweep --plugins --marketplace $bad 2>$null | Out-Null; $LASTEXITCODE }
+    & $shell -NoProfile -File $sweep --plugins --marketplace 2>$null | Out-Null; $codes += $LASTEXITCODE
+    & $shell -NoProfile -File $sweep --marketplace mine 2>$null | Out-Null; $codes += $LASTEXITCODE
+    Test-Equal -Name 'an empty, path-like, option-like or missing marketplace, or one without --plugins, is a usage error' -Got ($codes -join '') -Want '2222222222'
+    Remove-Item Env:SWEEP_SESSION_STARTS
     Remove-Item Env:CLAUDE_CONFIG_DIR
     Stop-Process -Id $pbusy.Id, $pargv.Id -ErrorAction SilentlyContinue
 } finally {

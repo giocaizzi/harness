@@ -861,6 +861,23 @@ function unreadableBody(args) {
   return !(/\/comments(?:\/\d+)?$/.test(path) || (path && !/(?:^|\/)(?:labels|issues)(?:\/|$)/.test(path)));
 }
 
+// A plain `gh` command whose real command the guard cannot see: an alias or extension (`gh <name>` that is not one of gh's
+// own commands), or one that makes, swaps or runs one (`gh alias set|import`, `gh extension install|upgrade|remove|exec`). Other lines are left to
+// touchesApprovalLabel, which denies a non-plain `gh` with an unknown subcommand already.
+export function ghUnseen(command, rules) {
+  const args = plainGh(command.replace(/\\\r?\n/g, ''));
+  if (!args) return false;
+  const positional = [];
+  for (let i = 0; i < args.length && positional.length < 2; i++) {
+    if (['-R', '--repo', '--hostname'].includes(args[i])) i++;
+    else if (!args[i].startsWith('-')) positional.push(args[i]);
+  }
+  const [cmd, sub] = positional;
+  if (cmd === undefined) return false;
+  if (!rules.factory.ghCommands.includes(cmd)) return true;
+  return (cmd === 'alias' && ['set', 'import'].includes(sub)) || (['extension', 'extensions', 'ext'].includes(cmd) && ['install', 'upgrade', 'remove', 'exec'].includes(sub));
+}
+
 // Fail closed while a factory run is active. A command that names the label, approval or takeover (in any quoting or case, as
 // GitHub compares), is denied unless it is one plain `gh` read; adding and removing alike are the owner's. A `gh` command with a
 // body the guard cannot read (`--input`, a `key=@file` field) is denied unless it is one plain `gh api` call writing to
@@ -983,6 +1000,7 @@ function changesLabels(command) {
 export function evaluateCommand({ command, loadedSkills = new Set(), state, host = {}, env = {}, worktrees = {}, branches = {}, regenerable = {}, refs = {}, tags = {}, python = null, readTool = false, factory = null, rules }) {
   // While a factory run is active the agent never touches the approval label: with an owner token it would count as the owner's.
   if (factory && touchesApprovalLabel(command, factory.approval)) return { action: 'deny', rule: 'factory-approval', reason: `${rules.factory.why} The \`${factory.approval}\` label is the owner's to apply or remove; ask on the ticket instead.` }
+  if (factory && ghUnseen(command, rules)) return { action: 'deny', rule: 'factory-approval', reason: `${rules.factory.ghUnseenWhy} Use gh's own subcommand (\`gh issue|pr|api …\`) instead of an alias or extension.` }
   // Nor the takeover label: an approver sets it to hand the ticket to an attended run, which removes it once it claimed.
   if (factory?.takeover && touchesApprovalLabel(command, factory.takeover)) return { action: 'deny', rule: 'factory-takeover', reason: `${rules.factory.takeoverWhy} The \`${factory.takeover}\` label is the owner's to apply; ask on the ticket instead.` }
   // A config the guard could not read fails closed: every label change is denied, and so is any name it could still find.

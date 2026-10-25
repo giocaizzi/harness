@@ -1,4 +1,4 @@
-# sweep-stale.ps1 [--branches | --plugins [--after-reload]] [--apply]   list (default) or remove stale git worktrees of the current repo
+# sweep-stale.ps1 [--branches | --plugins [--marketplace <name>] [--after-reload]] [--apply]   list (default) or remove stale git worktrees of the current repo
 #
 # --plugins sweeps the Claude Code plugin cache instead: version dirs under
 # $env:CLAUDE_CONFIG_DIR (default ~/.claude)/plugins/cache/<marketplace>/<plugin>/<version> that are
@@ -11,6 +11,10 @@
 # Session start times come from ps (Win32_Process on Windows), or SWEEP_SESSION_STARTS (epoch seconds, one per line)
 # when set. An unreadable installed_plugins.json or process list removes nothing. A linked marketplace or
 # plugin dir is kept whole; a linked version dir loses only its link. --apply removes them.
+# --marketplace <name> sweeps only cache/<name>, leaving every other marketplace's versions alone. The name
+# must equal a cache dir's name exactly (case included): it is matched against the listing, never resolved as a
+# path, so neither a case-insensitive filesystem nor Win32's trailing dot and space trimming can hand back a dir
+# under a spelling the installed check misses (or the cache itself).
 #
 # --branches sweeps branches instead: remote branches with no open PR (branches of closed or
 # never-opened PRs; GitHub only deletes on merge) and local branches whose upstream is gone.
@@ -29,12 +33,19 @@
 # Busy check: on Windows, renaming the worktree fails while any process has a file or its cwd
 # in it, so the sweep renames it and back; elsewhere it asks lsof.
 $ErrorActionPreference = 'Continue' # native stderr must not throw (Windows PowerShell 5.1)
-$apply = $args -contains '--apply'
-$branches = $args -contains '--branches'
-$plugins = $args -contains '--plugins'
-$afterReload = $args -contains '--after-reload'
-$unknown = @($args | Where-Object { $_ -notin '--apply', '--branches', '--plugins', '--after-reload' })
-if ($unknown.Count -or ($branches -and $plugins) -or ($afterReload -and -not $plugins)) { [Console]::Error.WriteLine('usage: sweep-stale.ps1 [--branches | --plugins [--after-reload]] [--apply]'); exit 2 }
+$marketplace = $null
+$flags = @(for ($i = 0; $i -lt $args.Count; $i++) {
+    if ($args[$i] -ne '--marketplace') { $args[$i]; continue }
+    # One dir name under the cache: an empty, path-like or option-like name is a usage error, never "all of them".
+    $marketplace = if ($i + 1 -lt $args.Count) { [string]$args[++$i] } else { '' }
+    if ($marketplace -match '^[. ]*$|^-|[\\/]') { '--bad-marketplace' }
+})
+$apply = $flags -contains '--apply'
+$branches = $flags -contains '--branches'
+$plugins = $flags -contains '--plugins'
+$afterReload = $flags -contains '--after-reload'
+$unknown = @($flags | Where-Object { $_ -notin '--apply', '--branches', '--plugins', '--after-reload' })
+if ($unknown.Count -or ($branches -and $plugins) -or (($afterReload -or $null -ne $marketplace) -and -not $plugins)) { [Console]::Error.WriteLine('usage: sweep-stale.ps1 [--branches | --plugins [--marketplace <name>] [--after-reload]] [--apply]'); exit 2 }
 if ($branches) {
     git fetch -q --prune origin
     if ($LASTEXITCODE) { [Console]::Error.WriteLine('sweep: fetch failed; nothing changed'); exit 1 }
@@ -88,6 +99,10 @@ if ($plugins) {
     $root = Join-Path $base 'plugins'
     $cache = Join-Path $root 'cache'
     if (-not (Test-Path -LiteralPath $cache)) { "sweep: no plugin cache at $cache"; exit 0 }
+    if ($marketplace) {
+        $mkts = @(Get-ChildItem -LiteralPath $cache -Directory | Where-Object { $_.Name -ceq $marketplace })
+        if ($mkts.Count -ne 1) { "sweep: no marketplace $marketplace in $cache"; exit 0 }
+    } else { $mkts = @(Get-ChildItem -LiteralPath $cache -Directory) }
     try { $doc = Get-Content -Raw -LiteralPath (Join-Path $root 'installed_plugins.json') -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop }
     catch { $doc = $null }
     if ($null -eq $doc -or $null -eq $doc.plugins) { [Console]::Error.WriteLine("sweep: cannot read $root/installed_plugins.json; nothing removed"); exit 1 }
@@ -143,7 +158,7 @@ if ($plugins) {
     $sep = [IO.Path]::DirectorySeparatorChar
     # Never descend through a link: a linked marketplace or plugin dir is kept whole, since its grandchildren live
     # outside the cache.
-    $versions = foreach ($m in @(Get-ChildItem -LiteralPath $cache -Directory)) {
+    $versions = foreach ($m in $mkts) {
         if ($m.LinkType) { Write-Output "keep $(Get-FullPath $m.FullName): a link; the sweep never follows links above a version"; continue }
         foreach ($p in @(Get-ChildItem -LiteralPath $m.FullName -Directory)) {
             if ($p.LinkType) { Write-Output "keep $(Get-FullPath $p.FullName): a link; the sweep never follows links above a version"; continue }
