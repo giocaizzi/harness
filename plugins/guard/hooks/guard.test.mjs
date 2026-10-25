@@ -619,6 +619,12 @@ test('FACTORY_RUN_ID set: a shell write to a protected path is denied; FACTORY_P
   assert.equal(decision(await inRun('infra/**')(write('echo x > ../infra/main.tf', sub))).permissionDecision, 'deny', 'an added glob from a subdirectory')
   assert.equal(decision(await inRun(undefined)(write(`echo x > ${slash(repo)}/.github/x`, sub))).permissionDecision, 'deny', 'an absolute path inside the repo')
   assert.notEqual(decision(await inRun(undefined)(write('cat .github/workflows/ci.yml')))?.permissionDecision, 'deny', 'reads pass')
+  // The run's own files under .factory/runs pass in every spelling; the rest of .factory stays protected; a listed glob wins (#302).
+  for (const c of ['echo x > .factory/runs/12/checklist.md', `echo x > ${slash(repo)}/.factory/runs/12/result.json`, 'echo x > $(git rev-parse --git-common-dir)/../.factory/runs/12/verdict-1.md', 'printf x | tee ./.factory/runs/12/a']) assert.notEqual(decision(await inRun(undefined)(write(c, sub)))?.permissionDecision, 'deny', c)
+  assert.notEqual(decision(await inRun(undefined)(write('echo x > ../.factory/runs/12/result.json', sub)))?.permissionDecision, 'deny', 'relative to the root, from a subdirectory')
+  for (const c of ['echo x > .factory/config.yaml', 'echo x > .factory/runs/../config.yaml', 'echo x > .factory/runs/x/../../config.yaml', `echo x > ${slash(repo)}/.factory/runs/../config.yaml`]) assert.equal(decision(await inRun(undefined)(write(c)))?.permissionDecision, 'deny', c)
+  assert.equal(decision(await inRun('.factory/runs/*/result.json')(write('echo x > .factory/runs/12/result.json')))?.permissionDecision, 'deny', 'a listed glob under runs/ protects it')
+  assert.notEqual(decision(await inRun('.factory/runs/*/result.json')(write('echo x > .factory/runs/12/checklist.md')))?.permissionDecision, 'deny', 'only what the glob names')
   assert.notEqual(decision(await setup({ env: {} })(write('echo x > .github/workflows/ci.yml')))?.permissionDecision, 'deny', 'no factory run: allowed')
 })
 

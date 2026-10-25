@@ -739,6 +739,8 @@ export function shellEdit(command, env = {}) {
 // Windows do. A target the shell globs is matched as a glob (`.g*` may name `.github`; a leading `*` or `?` never names
 // a dot file), a brace list is expanded (one group a level, 64 words at most), and one whose start is a variable or a
 // `cd` not followed is matched by the rest of its path anywhere (`$ROOT/.github/x`). A command that may write fails
+// A default glob is waived for `protect.exempt` (`.factory/runs/**`: the run's own files) when the normalised path is
+// spelled out; a glob in FACTORY_PROTECTED_PATHS (`protect.globs`) is never waived. It fails
 // closed past the limits (`rules.factory.protectedLimits`: targets, characters, milliseconds) or when the check throws,
 // since a hook that times out or emits nothing lets the command through; globs past the limits are ignored. Returns { target } (the first protected target as written), { unsure } (a limit it hit) or null.
 const PROTECT_RM = /^(?:rm|rmdir|unlink|remove-item|ri|del|erase|rd)$/;
@@ -854,7 +856,12 @@ const LIMITED = Symbol('limited');
 const MAY_WRITE = /[>]|(?:^|[^\w-])(?:tee|sed|perl|rm|rmdir|unlink|mv|cp|move|copy|set-content|add-content|out-file|tee-object|remove-item|move-item|copy-item|ri|mi|ci|cpi|del|erase|rd|sc|ac)(?![\w-])/i;
 export function protectedWrite(command, protect, env = {}, limits = { globs: 256, targets: 512, chars: 1024, ms: 2000 }) {
   // A setting past the limits is cut, not failed: globs over `chars` are dropped, then all past `globs` (defaults first).
-  const globs = protect.globs.filter((g) => g.length <= limits.chars).slice(0, limits.globs).map((g) => normalizeSegments(posixPath(g).replace(/\/$/, '/**')));
+  // `protect.defaults` come first and may be exempted (`protect.exempt`); `protect.globs` are explicit and never are.
+  const segsOf = (g) => normalizeSegments(posixPath(g).replace(/\/$/, '/**'));
+  const defaults = protect.defaults ?? [];
+  const tagged = [...defaults, ...protect.globs].map((g, i) => ({ g, base: i < defaults.length })).filter((x) => x.g.length <= limits.chars).slice(0, limits.globs);
+  const globs = tagged.map((x) => ({ segs: segsOf(x.g), base: x.base }));
+  const exempt = (protect.exempt ?? []).filter((g) => g.length <= limits.chars).map(segsOf);
   const until = Date.now() + limits.ms;
   let work = 0;
   let targets = 0;
@@ -867,7 +874,12 @@ export function protectedWrite(command, protect, env = {}, limits = { globs: 256
   };
   const hits = (target, dir, resolve, above) => {
     const at = repoSegments(resolve(target), dir, protect);
-    return at !== null && globs.some((g) => patternHits(g, at.segs, above, at.suffix, tick));
+    if (at === null) return false;
+    const hit = globs.filter((g) => patternHits(g.segs, at.segs, above, at.suffix, tick));
+    if (hit.some((g) => !g.base)) return true;
+    // A default glob is waived for the run's own files: the whole normalised path is spelled out (no wildcard, variable
+    // or brace, which could stand for `..`) and starts at the root, so `.factory/runs/../config.yaml` is no exemption.
+    return hit.length > 0 && !(at.segs.every((x) => !/[*?[\]{}$`%~]/.test(x)) && exempt.some((g) => patternHits(g, at.segs, false, false, tick)));
   };
   try {
     const target = scanWrites(command, env, count, hits);
@@ -1307,7 +1319,7 @@ export function evaluateCommand({ command, loadedSkills = new Set(), state, host
   // Nor the takeover label: an approver sets it to hand the ticket to an attended run, which removes it once it claimed.
   if (factory?.takeover && touchesApprovalLabel(command, factory.takeover)) return { action: 'deny', rule: 'factory-takeover', reason: `${rules.factory.takeoverWhy} The \`${factory.takeover}\` label is the owner's to apply; ask on the ticket instead.` }
   // Nor a protected path (`.github/**`, `.factory/**`, FACTORY_PROTECTED_PATHS) through a shell write: the runtime counts the deny.
-  const shielded = factory && protectedWrite(command, { ...factory.protect, globs: [...rules.factory.protectedPaths, ...(factory.protect?.extra ?? [])] }, env, rules.factory.protectedLimits)
+  const shielded = factory && protectedWrite(command, { ...factory.protect, defaults: rules.factory.protectedPaths, exempt: rules.factory.exemptPaths, globs: factory.protect?.extra ?? [] }, env, rules.factory.protectedLimits)
   if (shielded?.target) return { action: 'deny', rule: 'protected-path', reason: `${rules.factory.protectedWhy} \`${shielded.target}\` is a protected path in this run; leave it to the owner and say on the ticket what should change.` }
   if (shielded?.unsure) return { action: 'deny', rule: 'protected-path', reason: `${rules.factory.protectedWhy} The guard could not check this command's writes within its limits (${shielded.unsure}), so it denies them; split the command into smaller ones.` }
   // A config the guard could not read fails closed: every label change is denied, and so is any name it could still find.
