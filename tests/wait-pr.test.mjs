@@ -1,5 +1,5 @@
 // Tests for plugins/dev-tools/skills/land/scripts/wait-pr.{sh,ps1} against a scripted `gh` on PATH.
-// The .sh runs on macOS/Linux, the .ps1 wherever pwsh is installed.
+// The .sh runs on macOS/Linux, the .ps1 on Windows (CI's windows-scripts job), like the scripts themselves.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawn, spawnSync } from 'node:child_process'
@@ -58,7 +58,7 @@ writeFileSync(join(bin, 'gh'), `#!/bin/sh\nif [ -n "$SHIM_NOEXEC" ]; then node "
 chmodSync(join(bin, 'gh'), 0o755)
 writeFileSync(join(bin, 'gh.cmd'), '@node "%~dp0shim.mjs" %*\r\n')
 
-const pwsh = spawnSync('pwsh', ['-NoProfile', '-Command', 'exit 0']).status === 0
+const pwsh = win && spawnSync('pwsh', ['-NoProfile', '-Command', 'exit 0']).status === 0
 const runners = [
   ...(win ? [] : [['sh', (args) => ['bash', [join(scripts, 'wait-pr.sh'), ...args]]]]),
   ...(pwsh ? [['ps1', (args) => ['pwsh', ['-NoProfile', '-File', join(scripts, 'wait-pr.ps1'), ...args]]]] : []),
