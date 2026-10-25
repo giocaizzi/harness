@@ -39,6 +39,8 @@ A wait ends on every terminal outcome, never on success alone: a loop until a PR
 
 - **The deadline lives inside the command** (`wait-pr --timeout`, or a loop that counts its polls): the command exiting is what wakes the session. In an interactive Claude Code session the Bash tool's timeout is ignored for a background command; a Monitor wakes the session when its `timeout_ms` expires (at most 30 min).
 - Where a background exit is not known to wake the session (not checked in Copilot CLI, Codex, opencode or pi), also set that harness's own timer when it has one.
+- After a network or host drop, check each PR and session before resuming: `docs/network-drop.md` in the harness repo.
+- **Minors from a review.** One in a file the PR touches, or under about 20 changed lines, is fixed in the same PR before merge. The rest go in one rolled-up `review follow-ups: <plugin>` issue per plugin, never one issue each. A telemetry finding becomes an issue only with a reproduction (command text or corpus row) and the guard version it was seen on.
 
 ## Gotchas
 
