@@ -3,7 +3,9 @@
 #   and FACTORY_ATTENDED_TICKET (ticket-run copies the id into result.json and its claim), and
 #   appends factory.run_id, factory.ticket, factory.role=main and factory.mode=attended to
 #   OTEL_RESOURCE_ATTRIBUTES and its GUARD_OTEL_RESOURCE_ATTRIBUTES copy, then runs the command.
-#   Any factory.* pair already there is replaced. Example: attended.ps1 acme/app#12 claude
+#   Any factory.* pair already there is replaced (keys match case-sensitively, as OTel keys do); the other
+#   pairs are kept, trimmed of surrounding whitespace. Example: attended.ps1 acme/app#12 claude
+#   Windows PowerShell 5.1: powershell -ExecutionPolicy Bypass -File attended.ps1 ...
 $ErrorActionPreference = 'Stop'
 
 function Exit-Usage { [Console]::Error.WriteLine('usage: attended.ps1 <owner>/<repo>#<number> [--] <harness command...>'); exit 2 }
@@ -13,7 +15,7 @@ $ticket = [string]$argv[0]; $argv = @($argv | Select-Object -Skip 1)
 if ($argv.Count -gt 0 -and $argv[0] -eq '--') { $argv = @($argv | Select-Object -Skip 1) }
 if ($argv.Count -eq 0) { Exit-Usage }
 # Only these characters, so no value needs percent-encoding in the attribute list.
-if ($ticket -cnotmatch '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#([0-9]+)$') { [Console]::Error.WriteLine("attended: '$ticket' is not <owner>/<repo>#<number>"); exit 2 }
+if ($ticket -cnotmatch '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#([0-9]+)\z') { [Console]::Error.WriteLine("attended: '$ticket' is not <owner>/<repo>#<number>"); exit 2 }
 $number = $Matches[1]
 if ($env:FACTORY_RUN_ID) { [Console]::Error.WriteLine("attended: FACTORY_RUN_ID is set, so this is a runtime's run, not an attended one"); exit 2 }
 
@@ -23,7 +25,7 @@ $tags = "factory.run_id=$runId,factory.ticket=$ticket,factory.role=main,factory.
 
 # The pairs of $List without factory.*, then the run's tags.
 function Add-Tag([string]$List) {
-    $kept = @("$List" -split ',' | Where-Object { $_ -ne '' -and $_ -notlike 'factory.*=*' })
+    $kept = @("$List" -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' -and $_ -cnotlike 'factory.*=*' })
     (@($kept) + $tags) -join ','
 }
 

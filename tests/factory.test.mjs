@@ -2,7 +2,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { evaluateCommand, touchesApprovalLabel } from '../plugins/guard/core/engine.mjs'
@@ -276,10 +277,10 @@ test('result.json times: a finished run has finished_at and its phases, a missin
 // The attended launcher, run with a command that prints its environment.
 const SCRIPTS = join(repo, 'plugins/factory/skills/ticket-run/scripts')
 const hasPwsh = spawnSync('pwsh', ['-NoProfile', '-Command', 'exit 0']).status === 0
-const launch = (shell, args, env = {}) => {
+const launch = (shell, args, env = {}, cwd = undefined) => {
   const cmd = shell === 'sh' ? ['bash', join(SCRIPTS, 'attended.sh')] : ['pwsh', '-NoProfile', '-File', join(SCRIPTS, 'attended.ps1')]
   const base = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(FACTORY_|OTEL_RESOURCE_ATTRIBUTES$|GUARD_OTEL_RESOURCE_ATTRIBUTES$)/.test(k)))
-  const run = spawnSync(cmd[0], [...cmd.slice(1), ...args], { env: { ...base, ...env }, encoding: 'utf8' })
+  const run = spawnSync(cmd[0], [...cmd.slice(1), ...args], { env: { ...base, ...env }, encoding: 'utf8', cwd })
   return { status: run.status, stderr: run.stderr, env: run.status === 0 ? JSON.parse(run.stdout) : null }
 }
 const printEnv = [process.execPath, '-e', 'console.log(JSON.stringify(process.env))']
@@ -301,8 +302,37 @@ for (const shell of ['sh', 'ps1']) {
     assert.equal(runtime.status, 2)
     assert.match(runtime.stderr, /FACTORY_RUN_ID is set/)
     assert.equal(launch(shell, ['acme/app#12']).status, 2)
+    assert.equal(launch(shell, ['acme/app#12\n', ...printEnv]).status, 2, 'a trailing newline is no ticket')
+    // The harness's exit code comes back unchanged.
+    assert.equal(launch(shell, ['acme/app#12', process.execPath, '-e', 'process.exit(7)']).status, 7)
+  })
+
+  test(`attended launcher (${shell}): existing pairs are split on commas only, trimmed, and only case-sensitive factory.* keys replaced`, { skip: shell === 'ps1' && !hasPwsh && 'pwsh not found' }, () => {
+    const attrs = (value, cwd) => {
+      const { env } = launch(shell, ['acme/app#12', ...printEnv], { OTEL_RESOURCE_ATTRIBUTES: value }, cwd)
+      return env.OTEL_RESOURCE_ATTRIBUTES.split(',factory.run_id=')[0]
+    }
+    // A glob character in a value is never expanded against the working directory.
+    const dir = mkdtempSync(join(tmpdir(), 'attended-'))
+    for (const f of ['x=abc', 'x=def']) writeFileSync(join(dir, f), '')
+    assert.equal(attrs('x=*,factory.phase=old', dir), 'x=*')
+    rmSync(dir, { recursive: true })
+    assert.equal(attrs('a=b, factory.phase=old ,  c=d '), 'a=b,c=d', 'whitespace around a pair does not hide a stale factory.* key')
+    assert.equal(attrs('Factory.x=1,factory.y=2'), 'Factory.x=1', 'OTel keys are case-sensitive: Factory.x is another key')
   })
 }
+
+test('attended launcher (sh): no hostname binary falls back to uname -n, silently', { skip: process.platform === 'win32' && 'POSIX only' }, () => {
+  const bin = mkdtempSync(join(tmpdir(), 'attended-bin-'))
+  for (const tool of ['date', 'uname']) symlinkSync(spawnSync('sh', ['-c', `command -v ${tool}`], { encoding: 'utf8' }).stdout.trim(), join(bin, tool))
+  const bash = spawnSync('sh', ['-c', 'command -v bash'], { encoding: 'utf8' }).stdout.trim()
+  const run = spawnSync(bash, [join(SCRIPTS, 'attended.sh'), 'acme/app#12', ...printEnv], { env: { PATH: bin }, encoding: 'utf8' })
+  rmSync(bin, { recursive: true })
+  assert.equal(run.status, 0, run.stderr)
+  assert.doesNotMatch(run.stderr, /not found/)
+  const host = spawnSync('uname', ['-n'], { encoding: 'utf8' }).stdout.trim().split('.')[0]
+  assert.equal(JSON.parse(run.stdout).FACTORY_ATTENDED_RUN_ID.split('-12-')[0], host)
+})
 
 test('attended telemetry: the contract, ticket-run and the parity matrix agree on the launcher', () => {
   const section = doc.split('\n### Attended telemetry\n')[1].split('\n## ')[0]
@@ -312,6 +342,11 @@ test('attended telemetry: the contract, ticket-run and the parity matrix agree o
   const done = read('plugins/factory/skills/ticket-run/references/done.md').split('\n').find((l) => l.startsWith('- **`run_id`:**'))
   assert.match(done, /Else `FACTORY_ATTENDED_RUN_ID` when it is set and `FACTORY_ATTENDED_TICKET` is this ticket/)
   assert.match(done, /When `FACTORY_ATTENDED_TICKET` names another ticket, ignore both/)
+  assert.match(done, /compared ignoring case, as GitHub names are/)
+  assert.match(done, /Otherwise \(no launcher, or that mismatch\) the main session's id where the harness exposes one, else `<host>-<number>-<UTC timestamp>`/)
+  assert.match(read('plugins/factory/skills/ticket-run/SKILL.md'), /A session started through this skill's `scripts\/attended\.sh` \(or `attended\.ps1`\)/)
+  assert.ok(section.includes('powershell -ExecutionPolicy Bypass -File'), 'Windows PowerShell 5.1 needs the bypass')
+  assert.ok(section.includes('`skills/ticket-run/scripts/` under the plugin\'s directory'), 'says where the script sits in an installed plugin')
   assert.match(read("plugins/factory/skills/ticket-run/references/comments.md"), /Otherwise the run id is the one \[done\.md\]\(done\.md#record\) gives for `run_id`/)
   const row = read('docs/compatibility.md').split('\n').find((l) => l.startsWith('| `factory` attended telemetry tags'))
   assert.ok(row, 'docs/compatibility.md has the parity row')
