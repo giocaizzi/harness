@@ -10,6 +10,7 @@ The skills and agents here follow two posts: [The new rules of context engineeri
 - **Interfaces over examples.** Examples narrow what the agent tries. Make the scripts, make targets and parameters a skill points to expressive enough that no worked example is needed.
 - **Progressive disclosure.** Keep `SKILL.md` short and move detail to `references/` or `scripts/`, which the agent loads only when it needs them. A separate step, such as verification or review, gets its own skill.
 - **Say a thing once.** Usage instructions go in one place, such as the script or the skill description, and are not repeated elsewhere.
+- **Self-contained.** An installed skill ships without this repo's `docs/`, so no skill file points at them: what the skill needs to act goes in its `references/`, and a pointer that is only further reading is an absolute `https://github.com/giocaizzi/harness/blob/main/docs/...` link (`make validate` checks it).
 - **Rich references.** Point to code, tests or a rubric instead of describing them in prose.
 - **A description is a trigger.** Write a skill's `description` for the model, saying when to load it, early enough to fire before the work starts; an agent's `description` is its interface: when to use it, when not, and what not to pass.
 - **One category per skill.** A skill that mixes reference, policy and process confuses the agent: split it, or move the other parts to `references/`.

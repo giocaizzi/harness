@@ -26,6 +26,8 @@ Checks:
   9. pi reads the repo-root package.json: its `pi` key loads every plugin's skills and the guard extension.
  10. Parity: every skill and agent reaches Claude Code, Copilot CLI, Codex, opencode and pi through
      the repo's own packaging, each agent at one tier (delegates to scripts/parity.mjs).
+ 11. Skills are self-contained: no skill file (.md or script) points at this repo's docs/ (a `../docs`
+     path, or a relative `docs/<path>` that is a file here), since an installed skill ships without them.
 """
 
 from __future__ import annotations
@@ -347,6 +349,26 @@ def check_pi_package(r: Reporter) -> None:
         r.ok("pi package loads all skills and the guard extension")
 
 
+# A relative docs path, not one inside a URL or another path (`.../main/docs/x.md`).
+DOCS_POINTER = re.compile(r"(?<![\w/:.-])((?:\.\./)*)docs/([\w./-]*)")
+SKILL_TEXT = {".md", ".mjs", ".sh", ".ps1", ".py"}
+
+
+def check_skills_self_contained(r: Reporter) -> None:
+    r.section("Skills are self-contained (no pointer to this repo's docs/)")
+    found = 0
+    for path in sorted(p for p in PLUGINS_ROOT.glob("*/skills/**/*") if p.suffix in SKILL_TEXT):
+        for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            for m in DOCS_POINTER.finditer(line):
+                name = m.group(2).rstrip("./")
+                # A file only: generic advice about a target repo's docs/wip/ must not fail here.
+                if m.group(1) or (name and (REPO_ROOT / "docs" / name).is_file()):
+                    found += 1
+                    r.fail(f"{path.relative_to(REPO_ROOT)}:{n}: points at docs/{name}; move what the skill needs into its references/, or link https://github.com/giocaizzi/harness/blob/main/docs/{name}")
+    if not found:
+        r.ok("no skill file points at docs/")
+
+
 def check_parity(r: Reporter) -> None:
     r.section("Parity: every skill and agent reaches every harness")
     result = subprocess.run(
@@ -374,6 +396,7 @@ def main() -> None:
     check_vscode(r)
     check_pi_package(r)
     check_parity(r)
+    check_skills_self_contained(r)
     check_readme(r)
 
     print()

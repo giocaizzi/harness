@@ -7,7 +7,7 @@ description: Terse read-only list of the factory's tickets in a repo - whether t
 
 One screen on the tickets the factory works, read live from the forge: labels and the comments the `ticket-run` skill marks. Read-only: never edit labels or comments here. Argument: how many days of done tickets to show (default 7); it is the text after the skill name, repeated here when the harness fills it in: $ARGUMENTS
 
-Label names and the marker come from `.factory/config.yaml` (defaults `agent-ok`, `factory-claimed`, `needs-owner`, `needs-grooming`, `factory-quarantine`, `factory-halt`, `factory-takeover`, `<!-- factory -->`); if it is unreadable, say so and stop. Comment kinds and their tags: `docs/factory.md` in giocaizzi/harness. The commands are GitHub's, the only forge implemented.
+Label names and the marker come from `.factory/config.yaml` (defaults `agent-ok`, `factory-claimed`, `needs-owner`, `needs-grooming`, `factory-quarantine`, `factory-halt`, `factory-takeover`, `<!-- factory -->`); if it is unreadable, say so and stop. Comment kinds and their tags: `ticket-run`'s `references/comments.md`. The commands are GitHub's, the only forge implemented.
 
 ## Gather
 
