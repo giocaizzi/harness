@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# sweep-stale.sh [--branches | --plugins [--after-reload]] [--apply]   list (default) or remove stale git worktrees of the current repo
+# sweep-stale.sh [--branches | --plugins [--marketplace <name>] [--after-reload]] [--apply]   list (default) or remove stale git worktrees of the current repo
 #
 # --plugins sweeps the Claude Code plugin cache instead: version dirs under
 # ${CLAUDE_CONFIG_DIR:-~/.claude}/plugins/cache/<marketplace>/<plugin>/<version> that are not the
@@ -12,6 +12,7 @@
 # that keep. Session start times come from ps, or SWEEP_SESSION_STARTS (epoch seconds, one per
 # line) when set. An unreadable installed_plugins.json, no jq, lsof or ps, or a failing ps removes
 # nothing. A linked marketplace or plugin dir is kept whole; a linked version dir loses only its link.
+# --marketplace <name> sweeps only cache/<name>, leaving every other marketplace's versions alone.
 # --apply removes them (`rm -rf`).
 #
 # --branches sweeps branches instead: remote branches with no open PR (branches of closed or
@@ -29,13 +30,22 @@
 # registers, typically a remove that failed on read-only build files, with their size and the
 # command that reclaims them. It never runs that command, even with --apply.
 set -u
-apply='' branches='' plugins='' after_reload=''
-usage() { echo "usage: sweep-stale.sh [--branches | --plugins [--after-reload]] [--apply]" >&2; exit 2; }
-for a in "$@"; do
-  case $a in --apply) apply=1 ;; --branches) branches=1 ;; --plugins) plugins=1 ;; --after-reload) after_reload=1 ;; *) usage ;; esac
+apply='' branches='' plugins='' after_reload='' marketplace=''
+usage() { echo "usage: sweep-stale.sh [--branches | --plugins [--marketplace <name>] [--after-reload]] [--apply]" >&2; exit 2; }
+while [ $# -gt 0 ]; do
+  case $1 in
+    --apply) apply=1 ;; --branches) branches=1 ;; --plugins) plugins=1 ;; --after-reload) after_reload=1 ;;
+    --marketplace)
+      # One dir name under the cache: an empty, path-like or option-like name is a usage error, never "all of them".
+      case ${2-} in '' | -* | . | .. | */* | *\\*) usage ;; esac
+      marketplace=$2; shift ;;
+    *) usage ;;
+  esac
+  shift
 done
 [ -n "$branches" ] && [ -n "$plugins" ] && usage
 [ -n "$after_reload" ] && [ -z "$plugins" ] && usage
+[ -n "$marketplace" ] && [ -z "$plugins" ] && usage
 
 sweep_branches() {
   git fetch -q --prune origin || { echo "sweep: fetch failed; nothing changed" >&2; return 1; }
@@ -63,6 +73,11 @@ sweep_plugins() {
   command -v lsof >/dev/null || { echo "sweep: lsof not found; cannot tell busy versions, nothing removed" >&2; return 1; }
   command -v ps >/dev/null || { echo "sweep: ps not found; cannot tell running sessions, nothing removed" >&2; return 1; }
   [ -d "$root/cache" ] || { echo "sweep: no plugin cache at $root/cache"; return 0; }
+  local mkts=("$root"/cache/*/)
+  if [ -n "$marketplace" ]; then
+    [ -d "$root/cache/$marketplace" ] || { echo "sweep: no marketplace $marketplace in $root/cache"; return 0; }
+    mkts=("$root/cache/$marketplace/")
+  fi
   local installed updated starts procs table entry real key upd n m p
   installed=$(jq -r '.plugins[][] | .installPath // empty' "$root/installed_plugins.json") ||
     { echo "sweep: cannot read $root/installed_plugins.json; nothing removed" >&2; return 1; }
@@ -89,7 +104,7 @@ sweep_plugins() {
   procs=$(ps -axo command=) || { echo "sweep: ps failed; cannot tell running commands, nothing removed" >&2; return 1; }
   # Never descend through a link: a linked marketplace or plugin dir is kept whole, since its grandchildren
   # live outside the cache.
-  for m in "$root"/cache/*/; do
+  for m in "${mkts[@]}"; do
     [ -L "${m%/}" ] && { echo "keep ${m%/}: a link; the sweep never follows links above a version"; continue; }
     for p in "$m"*/; do
       [ -L "${p%/}" ] && { echo "keep ${p%/}: a link; the sweep never follows links above a version"; continue; }

@@ -425,6 +425,21 @@ check "a linked marketplace or plugin dir is kept whole" \
   "$(echo "$out" | grep -c -e 'cache/linked: a link' -e 'mkt/linkedp: a link')$([ -d "$tmp/outside/a/b" ] && [ -d "$tmp/outside2/1.0" ] && echo kept)" 2kept
 SWEEP_SESSION_STARTS='' CLAUDE_CONFIG_DIR=$cfg2 "$sweep" --plugins --after-reload --apply >/dev/null
 check "a symlinked version loses its link, never its target" "$([ -L "$c2/r/0.5" ] && echo link)$(cat "$tmp/precious/file")" keep
+# --marketplace sweeps one marketplace and leaves the others (third-party plugins) alone.
+cfg3=$tmp/claude3 c3=$tmp/claude3/plugins/cache
+mkdir -p "$c3/mine/a/1.0" "$c3/mine/a/2.0" "$c3/other/b/1.0"
+printf '{"version":2,"plugins":{"a@mine":[{"scope":"user","installPath":"%s","version":"2.0","lastUpdated":"2026-01-01T00:00:00.000Z"}]}}' "$c3/mine/a/2.0" >"$cfg3/plugins/installed_plugins.json"
+msweep() { SWEEP_SESSION_STARTS='' CLAUDE_CONFIG_DIR=$cfg3 "$sweep" --plugins "$@"; }
+check "--marketplace lists only that marketplace's versions" "$(msweep --marketplace mine | grep '^would remove' | sed "s|$c3/||")" "would remove mine/a/1.0"
+msweep --marketplace mine --apply >/dev/null
+check "--marketplace --apply leaves a third-party version untouched" "$(cd "$c3" && find . -mindepth 3 -maxdepth 3 | sort | tr '\n' ' ')" "./mine/a/2.0 ./other/b/1.0 "
+check "without --marketplace every marketplace is swept" "$(msweep | grep -c '/other/b/1.0$')" 1
+check "an unknown marketplace removes nothing" "$(msweep --marketplace none --apply; echo "$?"; find "$c3" -mindepth 3 -maxdepth 3 | wc -l | tr -d ' ')" \
+  "$(printf 'sweep: no marketplace none in %s\n0\n2' "$c3")"
+codes=''
+for bad in '' . .. ../other a/b --apply; do codes=$codes$(msweep --marketplace "$bad" 2>/dev/null; echo $?); done
+codes=$codes$(msweep --marketplace 2>/dev/null; echo $?)$("$sweep" --marketplace mine 2>/dev/null; echo $?)
+check "an empty, path-like, option-like or missing marketplace, or one without --plugins, is a usage error" "$codes" 22222222
 { kill_tree "$pbusy" "$pargv"; wait "$pbusy" "$pargv"; } 2>/dev/null
 
 exit "$fails"
