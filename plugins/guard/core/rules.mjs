@@ -350,7 +350,11 @@ export const rules = {
     "why": "A factory run must not touch the approval label: with an owner token the runtime would read it as the owner's approval.",
     "takeover": "factory-takeover",
     "takeoverWhy": "A runtime run must not touch the takeover label: it hands the ticket from a runtime to an attended run, and only an approver sets it.",
-    "unsureWhy": "The repo's .factory/config.yaml exists but could not be read, or its labels could not be parsed, so the guard cannot tell which labels a factory run must not touch."
+    "unsureWhy": "The repo's .factory/config.yaml exists but could not be read, or its labels could not be parsed, so the guard cannot tell which labels a factory run must not touch.",
+    // gh's own commands (gh 2.102 `gh help`, with the `ext`/`extensions` and default `co` aliases). Any other `gh <name>` is an
+    // alias or extension, and `gh alias set|import` or `gh extension exec` makes or runs one: the command it runs is unseen.
+    "ghCommands": ["agent-task", "alias", "api", "attestation", "auth", "browse", "cache", "co", "codespace", "completion", "config", "copilot", "discussion", "extension", "extensions", "ext", "gist", "gpg-key", "help", "issue", "label", "licenses", "org", "pr", "preview", "project", "release", "repo", "ruleset", "run", "search", "secret", "skill", "ssh-key", "stack", "status", "variable", "version", "workflow"],
+    "ghUnseenWhy": "In a factory run every gh command must be one the guard can read: a gh alias or extension can run any command, a label change included, out of its sight."
   },
   "titles": {
     "types": ["feat", "fix", "perf", "refactor", "revert", "docs", "style", "test", "build", "ci", "chore"],

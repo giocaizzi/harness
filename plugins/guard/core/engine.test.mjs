@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import { spawnSync } from 'node:child_process';
 import assert from 'node:assert/strict';
-import { touchesApprovalLabel, badTitle, branchFacts, cmdClass, branchTargets, codexRules, evaluateCommand, evaluateEdit, evaluateRouting, evaluateSpawn, nativeAsk, opencodeAsks, pureRead, refFacts, regenerableName, regenFacts, removalTargets, shellEdit, tagFacts, unattendedSet, usageLevel, worktreeFacts } from './engine.mjs';
+import { touchesApprovalLabel, ghUnseen, badTitle, branchFacts, cmdClass, branchTargets, codexRules, evaluateCommand, evaluateEdit, evaluateRouting, evaluateSpawn, nativeAsk, opencodeAsks, pureRead, refFacts, regenerableName, regenFacts, removalTargets, shellEdit, tagFacts, unattendedSet, usageLevel, worktreeFacts } from './engine.mjs';
 import { rules } from './rules.mjs';
 
 const fresh = () => ({ reminded: new Set() });
@@ -1183,6 +1183,17 @@ test('factory run: a command naming the approval label is denied unless it only 
   }
   assert.equal(run('gh issue edit 7 --add-label ready', { approval: 'ready' }).action, 'deny', 'a configured label');
   assert.equal(run('gh issue edit 7 --add-label agent-ok', null).action, 'allow', 'no factory run: allowed');
+});
+
+test('factory run: a gh alias or extension is denied, gh\'s own commands pass (#273)', () => {
+  const run = (command, factory = { approval: 'agent-ok' }) => evaluateCommand({ command, state: fresh(), host: calm, factory, rules });
+  for (const c of ['gh tag 1', 'gh alias set t "issue list"', 'gh alias import a.yml', 'gh extension exec t', 'gh ext exec t', 'gh -R o/r tag', 'gh my-ext --flag']) {
+    assert.equal(ghUnseen(c, rules), true, c);
+    assert.equal(run(c).rule, 'factory-approval', c);
+    assert.match(run(c).reason, /alias or extension/, c);
+  }
+  for (const c of ['gh alias list', 'gh alias delete t', 'gh extension list', 'gh pr view 1', 'gh -R o/r issue list', 'gh api user', 'gh', 'gh --version', 'gh help', 'echo gh tag']) assert.equal(ghUnseen(c, rules), false, c);
+  assert.equal(run('gh tag 1', null).action, 'allow', 'no factory run');
 });
 
 test('factory run: the takeover label is denied like the approval label, reads pass', () => {

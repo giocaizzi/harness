@@ -12,7 +12,7 @@ import { readFileSync } from 'node:fs'
 import { branchFacts, evaluateCommand, pureRead, refFacts, regenFacts, worktreeFacts } from './engine.mjs'
 import { rules } from './rules.mjs'
 
-const OPEN = new Set(['G30'])
+const OPEN = new Set([])
 
 const corpus = JSON.parse(readFileSync(new URL('./corpus.json', import.meta.url), 'utf8'))
 // Every directory a `cd` names exists.
