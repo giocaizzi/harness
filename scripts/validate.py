@@ -15,7 +15,7 @@ Checks:
      (repo policy: both must be auto-discovered), and no plugin has a `bin/` (claude.ai and Cowork skip it).
   4. marketplace.json lists every plugins/<dir> with matching versions and source paths.
   5. The root README links to every plugin, and each plugin's README lists all its skills and agents.
-  6. Generated files are in sync with agents/*.md, their .yaml overrides and the manifests (delegates to build_agents.py --check).
+  6. Generated files are in sync with agents/*.md, their .yaml overrides, the manifests and the cross-plugin copies (delegates to build_agents.py --check).
   7. Every file a plugin's hooks/hooks.json names (command scripts, mod modules) exists.
   8. VS Code reads each plugin as Claude format: no `.plugin/plugin.json` or root
      `plugin.json` (they win VS Code's format detection), skill `name` is kebab-case
@@ -314,7 +314,7 @@ def check_vscode(r: Reporter) -> None:
 
 
 def check_build_sync(r: Reporter) -> None:
-    r.section("Generated files <-> agents/*.md and manifests")
+    r.section("Generated files <-> agents/*.md, manifests and cross-plugin copies")
     result = subprocess.run(
         [sys.executable, str(REPO_ROOT / "scripts" / "build_agents.py"), "--check"],
         capture_output=True,
