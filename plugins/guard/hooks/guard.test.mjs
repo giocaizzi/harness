@@ -622,7 +622,7 @@ test('FACTORY_RUN_ID set: a shell write to a protected path is denied; FACTORY_P
   assert.notEqual(decision(await setup({ env: {} })(write('echo x > .github/workflows/ci.yml')))?.permissionDecision, 'deny', 'no factory run: allowed')
 })
 
-test('FACTORY_RUN_ID set: the protected-path check answers within the hook budget on worst cases (#213 review)', () => {
+test('FACTORY_RUN_ID set: the protected-path check denies within the hook budget on worst cases (#213 review)', () => {
   // Through the real entry point, in a child with a timeout: a hook that times out lets the command through.
   const script = fileURLToPath(new URL('./guard.mjs', import.meta.url))
   const repo = mkdtempSync(join(tmpdir(), 'guard-protect-'))
@@ -636,14 +636,19 @@ test('FACTORY_RUN_ID set: the protected-path check answers within the hook budge
     [254, 'rm ' + Array.from({ length: 500 }, (_, i) => `x${i}/${'*/'.repeat(40)}y`).join(' ')],
     [254, 'echo x > ' + '*a'.repeat(50000)],
     [254, Array(500).fill('cd src && echo x > a/b/c').join('; ')],
+    [254, 'echo ' + '{a,b}'.repeat(4000)],
+    [254, 'rm ' + '{a,b}'.repeat(4000)],
     [5000, 'echo x > a'],
   ]
-  for (const [n, command] of cases) {
+  for (const [n, plain] of cases) {
+    // Each case ends in a protected write, so the only right answer is a deny, whatever limit it hits first.
+    const command = `${plain}; echo x > .github/workflows/ci.yml`
     const started = Date.now()
     const r = spawnSync(process.execPath, [script, 'PreToolUse'], { input: JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command }, cwd: repo, session_id: 's' }), encoding: 'utf8', timeout: 20000, env: { ...process.env, FACTORY_RUN_ID: 'r1', FACTORY_PROTECTED_PATHS: globs(n), GUARD_OTEL: 'off', FACTORY_EVENTS_FILE: '', CLAUDE_PLUGIN_DATA: mkdtempSync(join(tmpdir(), 'guard-test-')) } })
     assert.equal(r.signal, null, `timed out: ${command.slice(0, 40)}`)
     assert.equal(r.status, 0, r.stderr)
     assert.ok(Date.now() - started < 10000, `${Date.now() - started} ms: ${command.slice(0, 40)}`)
+    assert.match(r.stdout, /"permissionDecision":"deny"/, `no deny: ${command.slice(0, 40)}`)
   }
 })
 

@@ -1264,19 +1264,41 @@ test('factory run: protected-path reads past reserved words, keeps above to lite
   for (const c of ['rm src/a.js', 'mv src/a.js src/b.js', 'rm -f *.log', 'rm -rf dist', 'rm -rf node_modules', 'rm -f $TMPDIR/x', 'cd .github && cp workflows/ci.yml /tmp/ci.yml', 'cd .github && grep -r on: . > /tmp/out', 'rm {a,b}/c']) assert.equal(hit(c), null, c);
 });
 
-test('factory run: protected-path fails closed past its limits (#213 review)', () => {
+test('factory run: protected-path fails closed past its limits, for a command that may write only (#213 review)', () => {
   const g = (extra = []) => ({ globs: ['.github/**', ...extra], root: '/r', cwd: '/r' });
   const limits = { globs: 256, targets: 512, chars: 1024, ms: 2000 };
-  assert.match(protectedWrite('echo x > a', g(Array(256).fill('x/**')), {}, limits).unsure, /globs/, 'too many globs');
-  assert.match(protectedWrite('echo x > a', g(['a'.repeat(1025)]), {}, limits).unsure, /globs/, 'a glob too long');
-  assert.match(protectedWrite('rm ' + Array(513).fill('a').join(' '), g(), {}, limits).unsure, /targets/, 'too many targets');
-  assert.match(protectedWrite('echo x > ' + 'a'.repeat(1025), g(), {}, limits).unsure, /targets/, 'a target too long');
-  assert.match(protectedWrite('rm ' + 'x{' + Array(65).fill('a').join(',') + '}', g(), {}, limits).unsure, /targets/, 'a brace list too long');
-  assert.match(protectedWrite('rm ' + Array(400).fill('a/'.repeat(100) + 'b').join(' '), g(Array(200).fill('**/q*/**/z')), {}, { ...limits, ms: 0 }).unsure, /ms/, 'out of time');
-  assert.equal(protectedWrite('rm ' + Array(512).fill('a').join(' '), g(), {}, limits), null, 'at the limit: checked');
+  const pw = (c, p = g(), l = limits) => protectedWrite(c, p, {}, l);
+  // A setting past the limits is cut: globs over the length dropped, the rest kept up to the cap, defaults first.
+  const many = g([...Array(255).fill('x/**'), 'late/**']);
+  assert.equal(pw('echo x > late/a', many), null, 'a glob past the cap is ignored');
+  assert.notEqual(pw('echo x > .github/a', many), null, 'the defaults stay');
+  assert.notEqual(pw('echo x > x/a', many), null, 'globs within the cap stay');
+  assert.equal(pw('echo x > ' + 'a'.repeat(1025), g()).unsure !== undefined, true, 'a target too long');
+  assert.equal(pw('echo x > a', g(['a'.repeat(1025)])), null, 'a glob too long is dropped');
+  assert.match(pw('rm ' + Array(513).fill('a').join(' ')).unsure, /targets/, 'too many targets');
+  assert.equal(pw('rm ' + Array(512).fill('a').join(' ')), null, 'at the limit: checked');
+  assert.equal(pw('mv ' + Array(511).fill('a').join(' ') + ' b'), null, 'an mv operand counts once');
+  assert.match(pw('rm x{' + Array(65).fill('a').join(',') + '}').unsure, /brace/, 'a brace list too long');
+  assert.match(pw('rm ' + Array(400).fill('a/'.repeat(100) + 'b').join(' '), g(Array(200).fill('**/q*/**/z')), { ...limits, ms: 0 }).unsure, /ms/, 'out of time');
+  // A command with no write passes whatever its size.
+  for (const c of ['ls ' + Array(600).fill('a').join(' '), 'printf %s x{' + Array(200).fill('a').join(',') + '}', 'echo ' + 'a'.repeat(5000), 'git status']) assert.equal(pw(c), null, c.slice(0, 30));
+  // Thousands of brace groups (once a stack overflow, which emitted no decision): a deny, never a throw.
+  const groups = '{a,b}'.repeat(4000);
+  assert.deepEqual(pw(`echo ${groups}; echo x > .github/a`), { target: '.github/a' });
+  assert.match(pw(`rm ${groups}; echo x > .github/a`).unsure, /brace/);
+  assert.match(pw(`tee ${'{a..b}'.repeat(4000)}`).unsure, /brace/);
+  assert.equal(pw(`echo ${groups}`), null, 'no write: passes');
+  // A list after a group that is no list still expands; a variable glued to a protected name may be empty.
+  assert.notEqual(pw('rm -rf x{y}/../{.github,z}'), null);
+  assert.notEqual(pw('echo x > $P.github/a'), null);
+  assert.equal(pw('echo x > $P/a'), null);
+  // GNU destination spellings.
+  for (const c of ['cp -rt .github x', 'cp -vt .github/ x', 'mv --target=.github x', 'cp --target-dir .github x', 'cp -rt.github x']) assert.notEqual(pw(c), null, c);
+  for (const c of ['cp -T x y', 'Copy-Item -Path .github/a -Destination /tmp/a']) assert.equal(pw(c), null, c);
   const d = evaluateCommand({ command: 'rm ' + Array(600).fill('a').join(' '), state: fresh(), host: calm, factory: { approval: 'agent-ok' }, rules });
   assert.equal(d.rule, 'protected-path');
   assert.match(d.reason, /could not check/);
+  assert.notEqual(evaluateCommand({ command: 'ls ' + Array(600).fill('a').join(' '), state: fresh(), host: calm, factory: { approval: 'agent-ok', protect: { extra: Array(300).fill('x/**') } }, rules }).rule, 'protected-path', 'a read with too many globs passes');
 });
 
 test('factory run: the takeover label is denied like the approval label, reads pass', () => {

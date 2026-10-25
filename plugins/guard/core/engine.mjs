@@ -737,15 +737,13 @@ export function shellEdit(command, env = {}) {
 // glob's literal leading segments only (`**/*.tf` puts no directory above it). Letter case is ignored, as macOS and
 // Windows do. A target the shell globs is matched as a glob (`.g*` may name `.github`; a leading `*` or `?` never names
 // a dot file), a brace list is expanded (one group a level, 64 words at most), and one whose start is a variable or a
-// `cd` not followed is matched by the rest of its path anywhere (`$ROOT/.github/x`). Fails closed past the limits
-// (`rules.factory.protectedLimits`: globs, targets, characters, milliseconds), since a hook that times out lets the
-// command through. Returns { target } (the first protected target as written), { unsure } (a limit it hit) or null.
+// `cd` not followed is matched by the rest of its path anywhere (`$ROOT/.github/x`). A command that may write fails
+// closed past the limits (`rules.factory.protectedLimits`: targets, characters, milliseconds) or when the check throws,
+// since a hook that times out or emits nothing lets the command through; globs past the limits are ignored. Returns { target } (the first protected target as written), { unsure } (a limit it hit) or null.
 const PROTECT_RM = /^(?:rm|rmdir|unlink|remove-item|ri|del|erase|rd)$/;
 const PROTECT_MV = /^(?:mv|move-item|mi|move)$/;
 const PROTECT_CP = /^(?:cp|copy-item|ci|copy|cpi)$/;
 const PROTECT_PS = /^(?:set-content|add-content|out-file|tee-object|sc|ac)$/;
-// cp's `-T` takes no directory; PowerShell's `-Destination` is any case.
-const PROTECT_DEST = /^(?:-t|--target-directory|-[Dd][Ee][Ss][Tt][Ii][Nn][Aa][Tt][Ii][Oo][Nn])$/;
 const SEG_GLOB = /[*?[]/;
 const posixPath = (p) => p.replace(/\\/g, '/');
 function normalizeSegments(path) {
@@ -764,7 +762,11 @@ function normalizeSegments(path) {
 function repoSegments(target, dir, protect) {
   const p = posixPath(target);
   const cwdRel = protect.root && protect.cwd ? relativeTo(posixPath(protect.root), posixPath(protect.cwd)) : [];
-  if (/^[$~%`]/.test(p)) return { segs: normalizeSegments(p).slice(1), suffix: true };
+  // A first segment that is only a variable or `~user` is dropped; one with text after the variable stays (`$P.github`).
+  if (/^[$~%`]/.test(p)) {
+    const segs = normalizeSegments(p);
+    return { segs: /^(?:\$(?:\{[^}]*\}|\w+|\([^)]*\))|%\w+%|~[\w.-]*|`[^`]*`)$/.test(segs[0] ?? '') ? segs.slice(1) : segs, suffix: true };
+  }
   // An absolute target is where it says, whatever directory a `cd` reached.
   if (dir === UNKNOWN_DIR && !ABS_DIR.test(p)) return { segs: normalizeSegments(p), suffix: true };
   const full = dir && !ABS_DIR.test(p) ? `${posixPath(dir).replace(/\/+$/, '')}/${p}` : p;
@@ -796,10 +798,11 @@ function globsMayMeet(a, b) {
   return agree(head(a), head(b), false) && agree(tail(a), tail(b), true);
 }
 // Whether one target segment may be one protected-pattern segment.
+// A variable may hold a leading dot, so only a written `*`, `?` or `[` at the start keeps a dot file out.
 function segMayMatch(pat, seg) {
-  const glob = seg.replace(/\$(?:\{[^}]*\}|\w+|\([^)]*\))|`[^`]*`/g, '*');
+  const glob = seg.replace(/\$(?:\{[^}]*\}|\w+|\([^)]*\))|%\w+%|`[^`]*`/g, '*');
   if (SEG_GLOB.test(glob)) {
-    if (/^[*?[]/.test(glob) && pat.startsWith('.')) return false;
+    if (/^[*?[]/.test(seg) && pat.startsWith('.')) return false;
     return SEG_GLOB.test(pat) ? globsMayMeet(glob, pat) : globMatches(glob, pat.toLowerCase());
   }
   return SEG_GLOB.test(pat) ? globMatches(pat, glob.toLowerCase()) : pat.toLowerCase() === glob.toLowerCase();
@@ -824,66 +827,88 @@ function patternHits(pat, segs, above, suffix, tick) {
   // An unknown start (a variable, a `cd` not followed, an absolute path with no known root): any tail of the path.
   return segs.some((_, j) => f(0, j));
 }
-// The words a brace list expands to (one group a level, as bash reads them), a range kept as a glob; null past `limit`.
+// The words a brace list expands to, innermost list first, a range kept as a glob and a group that is no list left as
+// written; null past `limit` words or with more than `limit` groups. Iterative: a word of thousands of groups must not
+// overflow the stack.
 function expandBraces(text, limit = 64) {
-  const m = /\{([^{}]*)\}/.exec(text);
-  if (!m || !/,|\.\./.test(m[1])) return [text];
-  const head = text.slice(0, m.index);
-  const tail = text.slice(m.index + m[0].length);
-  if (!m[1].includes(',')) return expandBraces(`${head}*${tail}`, limit);
-  const out = [];
-  for (const part of m[1].split(',')) {
-    const more = expandBraces(head + part + tail, limit);
-    if (!more || out.push(...more) > limit) return null;
+  if ((text.match(/\{/g) ?? []).length > limit) return null;
+  const done = [];
+  const todo = [text];
+  while (todo.length) {
+    const word = todo.pop();
+    const m = [...word.matchAll(/\{([^{}]*)\}/g)].find((g) => /,|\.\./.test(g[1]));
+    if (!m) {
+      done.push(word);
+      continue;
+    }
+    const head = word.slice(0, m.index);
+    const tail = word.slice(m.index + m[0].length);
+    for (const part of m[1].includes(',') ? m[1].split(',') : ['*']) todo.push(head + part + tail);
+    if (done.length + todo.length > limit) return null;
   }
-  return out;
+  return done;
 }
 const LIMITED = Symbol('limited');
+// A command that may write at all: an output redirection or a writer's name. Only such a command can fail closed.
+const MAY_WRITE = /[>]|(?:^|[^\w-])(?:tee|sed|perl|rm|rmdir|unlink|mv|cp|move|copy|set-content|add-content|out-file|tee-object|remove-item|move-item|copy-item|ri|mi|ci|cpi|del|erase|rd|sc|ac)(?![\w-])/i;
 export function protectedWrite(command, protect, env = {}, limits = { globs: 256, targets: 512, chars: 1024, ms: 2000 }) {
-  if (protect.globs.length > limits.globs || protect.globs.some((g) => g.length > limits.chars)) return { unsure: `more than ${limits.globs} protected globs, or one over ${limits.chars} characters` };
-  const globs = protect.globs.map((g) => normalizeSegments(posixPath(g).replace(/\/$/, '/**')));
+  // A setting past the limits is cut, not failed: globs over `chars` are dropped, then all past `globs` (defaults first).
+  const globs = protect.globs.filter((g) => g.length <= limits.chars).slice(0, limits.globs).map((g) => normalizeSegments(posixPath(g).replace(/\/$/, '/**')));
   const until = Date.now() + limits.ms;
   let work = 0;
   let targets = 0;
   const tick = () => {
     if ((++work & 255) === 0 && Date.now() > until) throw LIMITED;
   };
+  // One write target as written: counted, and checked for length, once however many spellings it has.
+  const count = (w) => {
+    if (++targets > limits.targets || w.val.length > limits.chars) throw LIMITED;
+  };
   const hits = (target, dir, resolve, above) => {
-    if (++targets > limits.targets || target.length > limits.chars) throw LIMITED;
     const at = repoSegments(resolve(target), dir, protect);
     return at !== null && globs.some((g) => patternHits(g, at.segs, above, at.suffix, tick));
   };
   try {
-    const target = scanWrites(command, env, hits);
+    const target = scanWrites(command, env, count, hits);
     return target === null ? null : { target };
   } catch (e) {
-    if (e !== LIMITED) throw e;
-    return { unsure: `more than ${limits.targets} write targets, one over ${limits.chars} characters, or over ${limits.ms} ms to check` };
+    // Any failure (a limit, a stack overflow, a bug) denies a command that may write, and lets the rest through.
+    if (!MAY_WRITE.test(command)) return null;
+    return { unsure: e === LIMITED ? `more than ${limits.targets} write targets, one over ${limits.chars} characters, a brace list of more than 64 words, or over ${limits.ms} ms to check` : 'the check failed' };
   }
 }
-function scanWrites(command, env, hits) {
+// PowerShell and cmd keep a backslash (`.github\ci.yml`) that a POSIX shell reads as an escape: both spellings count. A
+// brace list the shell expands counts as each word it yields; past the limit, the command fails closed.
+function spellings(w) {
+  const out = [w.val, ...(w.raw.includes('\\') ? [w.raw.replace(/['"]/g, '')] : [])];
+  if (!/\{/.test(w.val) || !dynamicText(w.raw)) return out;
+  const words = expandBraces(w.val);
+  if (!words) throw LIMITED;
+  return [...out, ...words];
+}
+const POSIX_MOVERS = /^(?:cp|mv)$/;
+function scanWrites(command, env, count, hits) {
   for (const { words, redirs = [], dir, remote, resolve } of segments(command, env)) {
     if (remote) continue;
-    // PowerShell and cmd keep a backslash (`.github\ci.yml`) that a POSIX shell reads as an escape: both spellings
-    // count. A brace list the shell expands counts as each word it yields; past the limit, as protected.
-    const spellings = (w) => {
-      const out = [w.val, ...(w.raw.includes('\\') ? [w.raw.replace(/['"]/g, '')] : [])];
-      if (!/\{/.test(w.val) || !dynamicText(w.raw)) return out;
-      const words = expandBraces(w.val);
-      if (!words) throw LIMITED;
-      return [...out, ...words];
-    };
-    for (const w of redirs) for (const t of spellings(w)) if (!NOT_A_FILE.test(t) && hits(t, dir, resolve, false)) return t;
+    for (const w of redirs) {
+      if (NOT_A_FILE.test(w.val)) continue;
+      count(w);
+      for (const t of spellings(w)) if (!NOT_A_FILE.test(t) && hits(t, dir, resolve, false)) return t;
+    }
     // Past reserved words (`then rm …`, `{ cp …`, `! tee …`), as the hidden-gh check reads them.
     const cw = commandWords(dropReserved(words));
     if (!cw.length) continue;
     const name = cw[0].val.replace(/^.*[\\/]/, '').replace(/\.exe$/i, '').toLowerCase();
+    const inPlace = (name === 'sed' && cw.some((w) => /^(?:-[Enrsuz]*[iI]|--in-place)/.test(w.val))) || (name === 'perl' && cw.some((w) => /^-[0-9aelnpsw]*i/.test(w.val)));
+    if (!(name === 'tee' || inPlace || PROTECT_PS.test(name) || PROTECT_RM.test(name) || PROTECT_MV.test(name) || PROTECT_CP.test(name))) continue;
+    // Only a writer's words are counted and expanded: a read-only command never fails closed.
+    for (const w of cw.slice(1)) if (!w.val.startsWith('-')) count(w);
     const args = cw.slice(1).flatMap(spellings);
     const operands = args.filter((a) => !a.startsWith('-'));
     let writes = [];
     let removes = [];
     if (name === 'tee') writes = operands;
-    else if ((name === 'sed' && args.some((a) => /^(?:-[Enrsuz]*[iI]|--in-place)/.test(a))) || (name === 'perl' && args.some((a) => /^-[0-9aelnpsw]*i/.test(a)))) {
+    else if (inPlace) {
       const files = inPlaceFiles(name, args.join(' '));
       writes = files.length ? files : operands;
     } else if (PROTECT_PS.test(name)) {
@@ -891,17 +916,22 @@ function scanWrites(command, env, hits) {
       const end = args.findIndex((x, i) => i > k && x.startsWith('-'));
       writes = k >= 0 ? args.slice(k + 1, end < 0 ? undefined : end) : operands.slice(0, 2);
     } else if (PROTECT_RM.test(name)) removes = operands;
-    else if (PROTECT_MV.test(name) || PROTECT_CP.test(name)) {
+    else {
       let dest = null;
       const sources = [];
       for (let k = 0; k < args.length; k++) {
-        const glued = /^(?:--target-directory=|-t(?=[^-]))(.+)$/.exec(args[k]);
-        if (glued) dest = glued[1];
-        else if (PROTECT_DEST.test(args[k])) dest = args[++k] ?? null;
-        else if (!args[k].startsWith('-')) sources.push(args[k]);
+        const a = args[k];
+        // GNU: `--target-directory` or any prefix of it down to `--t`, glued with `=` or not; a short-flag cluster
+        // ending in `t` (`-rt DIR`) or holding it with its value glued (`-tDIR`, `-rtDIR`).
+        const long = /^(--[a-z-]+)(?:=(.*))?$/.exec(a);
+        const short = POSIX_MOVERS.test(name) && /^-([A-Za-z]*?)t(.*)$/.exec(a);
+        if (long && long[1].length >= 3 && '--target-directory'.startsWith(long[1])) dest = long[2] ?? args[++k] ?? null;
+        else if (short && /^[a-su-zA-Z]*$/.test(short[1])) dest = short[2] || (args[++k] ?? null);
+        else if (/^-destination$/i.test(a)) dest = args[++k] ?? null;
+        else if (!a.startsWith('-')) sources.push(a);
       }
       if (dest === null) dest = sources.pop() ?? null;
-      if (dest !== null) writes = [dest, ...sources.map((s) => `${dest}/${posixPath(s).replace(/\/+$/, '').split('/').pop()}`)];
+      if (dest !== null) writes = [dest, ...sources.map((src) => `${dest}/${posixPath(src).replace(/\/+$/, '').split('/').pop()}`)];
       if (PROTECT_MV.test(name)) removes = sources;
     }
     for (const t of writes) if (hits(t, dir, resolve, false)) return t;

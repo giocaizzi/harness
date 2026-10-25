@@ -405,5 +405,10 @@
   ["cd src && echo x > /Users/me/repo/.github/x", "deny:protected-path", "G32", "review #286: an absolute target after cd (no root known, matched by its tail)", {"factory": "readable"}],
   ["cp -T b .github", "deny:protected-path", "G32", "review #286: cp -T takes no target directory", {"factory": "readable"}],
   ["rm {.github,x}/CODEOWNERS", "deny:protected-path", "G32", "review #286: a brace list", {"factory": "readable"}],
-  ["cd .github && cp workflows/ci.yml /tmp/ci.yml", "allow", "G32", "control: an absolute target after cd is not joined to it", {"factory": "readable"}]
+  ["cd .github && cp workflows/ci.yml /tmp/ci.yml", "allow", "G32", "control: an absolute target after cd is not joined to it", {"factory": "readable"}],
+  ["cp -rt .github/workflows ci.yml", "deny:protected-path", "G32", "review #286 round 2: -t at the end of a short-flag cluster", {"factory": "readable"}],
+  ["mv --target=.github/workflows ci.yml", "deny:protected-path", "G32", "review #286 round 2: an abbreviated --target-directory", {"factory": "readable"}],
+  ["echo x > $P.github/workflows/ci.yml", "deny:protected-path", "G32", "review #286 round 2: a variable glued to a protected name may be empty", {"factory": "readable"}],
+  ["rm -rf x{y}/../{.github,z}", "deny:protected-path", "G32", "review #286 round 2: a list after a group that is no list", {"factory": "readable"}],
+  ["printf '%s\\n' {a,b}{c,d}{e,f}{g,h}{i,j}{k,l}{m,n}", "allow", "G32", "control: a large brace list in a command that writes nothing", {"factory": "readable"}]
 ]
