@@ -327,5 +327,22 @@
   ["echo hi; env G'H' api repos/o/r/issues/1/labels --input b.json", "deny:factory-approval", "G31", "#274: a wrapped gh in another case", {"factory": "readable"}],
   ["\"gh\" issue view 1", "allow", "G31", "control: a quoted gh the text check reads", {"factory": "readable"}],
   ["ls *.md && wc -l [a-c]*.txt", "allow", "G31", "control: globs and commands that are not gh", {"factory": "readable"}],
-  ["GH api user", "allow", "G31", "control: no factory run"]
+  ["GH api user", "allow", "G31", "control: no factory run"],
+  ["if true; then GH api repos/o/r/issues/1/labels --input b.json; fi", "deny:factory-approval", "G31", "review #277: gh in another case after then", {"factory": "readable"}],
+  ["if false; then :; else GH api repos/o/r/issues/1/labels --input b.json; fi", "deny:factory-approval", "G31", "review #277: gh in another case after else", {"factory": "readable"}],
+  ["while GH api repos/o/r/issues/1/labels --input b.json; do :; done", "deny:factory-approval", "G31", "review #277: gh in another case after while", {"factory": "readable"}],
+  ["for i in 1; do GH api repos/o/r/issues/1/labels --input b.json; done", "deny:factory-approval", "G31", "review #277: gh in another case after do", {"factory": "readable"}],
+  ["{ GH api repos/o/r/issues/1/labels --input b.json; }", "deny:factory-approval", "G31", "review #277: gh in another case inside braces", {"factory": "readable"}],
+  ["! GH api repos/o/r/issues/1/labels --input b.json", "deny:factory-approval", "G31", "review #277: gh in another case after !", {"factory": "readable"}],
+  ["f() { GH api repos/o/r/issues/1/labels --input b.json; }; f", "deny:factory-approval", "G31", "review #277: gh in another case in a function body", {"factory": "readable"}],
+  ["coproc GH api repos/o/r/issues/1/labels --input b.json", "deny:factory-approval", "G31", "review #277: gh in another case after coproc", {"factory": "readable"}],
+  ["sudo -E GH api repos/o/r/issues/1/labels --input b.json", "deny:factory-approval", "G31", "review #277: gh in another case after sudo -E", {"factory": "readable"}],
+  ["caffeinate -i GH api repos/o/r/issues/1/labels --input b.json", "deny:factory-approval", "G31", "review #277: gh in another case after caffeinate -i", {"factory": "readable"}],
+  ["command -p GH api repos/o/r/issues/1/labels --input b.json", "deny:factory-approval", "G31", "review #277: gh in another case after command -p", {"factory": "readable"}],
+  ["time -p GH api repos/o/r/issues/1/labels --input b.json", "deny:factory-approval", "G31", "review #277: gh in another case after time -p", {"factory": "readable"}],
+  ["timeout -s KILL 5 GH api repos/o/r/issues/1/labels --input b.json", "deny:factory-approval", "G31", "review #277: gh in another case after a timeout option and duration", {"factory": "readable"}],
+  ["[[:alpha:]]h api repos/o/r/issues/1/labels --input b.json", "deny:factory-approval", "G31", "review #277: a POSIX bracket class", {"factory": "readable"}],
+  ["GH. api repos/o/r/issues/1/labels --input b.json", "deny:factory-approval", "G31", "review #277: gh in another case a trailing dot", {"factory": "readable"}],
+  ["if make; then echo ok; fi", "allow", "G31", "control: reserved words around commands that are not gh", {"factory": "readable"}],
+  ["timeout 5 ls *; cp x{,.bak}", "allow", "G31", "control: a duration, a glob argument and a brace list", {"factory": "readable"}]
 ]

@@ -1195,6 +1195,19 @@ test('factory run: a command that resolves to gh without spelling it is denied (
   assert.equal(run('GH api user', null).action, 'allow', 'no factory run');
 });
 
+test('factory run: the hidden-gh check stays fast on stars and brace lists (#274 review)', () => {
+  // In a child with a timeout: a regex per glob backtracked on a word of a hundred stars and hung the hook.
+  const script = `
+    import { evaluateCommand } from ${JSON.stringify(new URL('./engine.mjs', import.meta.url).href)};
+    import { rules } from ${JSON.stringify(new URL('./rules.mjs', import.meta.url).href)};
+    const lines = ['*'.repeat(150) + 'x api', '{' + Array(64).fill('*'.repeat(30) + 'x').join(',') + '} api', ('*'.repeat(100) + 'x; ').repeat(200), 'g' + '*'.repeat(10000) + 'q api', '[' + 'a'.repeat(5000) + ']h api'];
+    for (const command of lines) evaluateCommand({ command, state: { reminded: new Set() }, host: {}, factory: { approval: 'agent-ok' }, rules });
+  `;
+  const r = spawnSync(process.execPath, ['--input-type=module', '-e', script], { timeout: 10000, encoding: 'utf8' });
+  assert.equal(r.signal, null, 'timed out');
+  assert.equal(r.status, 0, r.stderr);
+});
+
 test('factory run: the takeover label is denied like the approval label, reads pass', () => {
   const run = (command, factory = { approval: 'agent-ok', takeover: 'factory-takeover' }) => evaluateCommand({ command, state: fresh(), host: calm, factory, rules });
   for (const c of [

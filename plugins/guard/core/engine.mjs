@@ -861,10 +861,55 @@ function unreadableBody(args) {
   return !(/\/comments(?:\/\d+)?$/.test(path) || (path && !/(?:^|\/)(?:labels|issues)(?:\/|$)/.test(path)));
 }
 
-// Whether a glob or brace word (basename) could name `gh` or `gh.exe`, ignoring case as macOS and Windows do. One level of
-// `{a,b}` is expanded, at most 64 alternatives; `{a..b}` and anything deeper count as a match.
+// Whether one glob alternative matches `target` (lowercase), ignoring case as macOS and Windows do. Linear: the pattern is
+// read once into tokens, runs of `*` collapse, and a table over the short target replaces regex backtracking (a word of
+// a hundred stars hung the hook). A POSIX class (`[[:alpha:]]`) is not parsed: it counts as a match.
+function globMatches(pattern, target) {
+  const tokens = [];
+  for (let i = 0; i < pattern.length; i++) {
+    const c = pattern[i];
+    if (c === '*') {
+      if (tokens.at(-1) !== '*') tokens.push('*');
+    } else if (c === '?') tokens.push((ch) => true);
+    else if (c === '[' && pattern.indexOf(']', i + 2) > 0) {
+      const end = pattern.indexOf(']', i + 2);
+      let body = pattern.slice(i + 1, end);
+      if (body.includes('[:') || body.includes('[=') || body.includes('[.')) return true;
+      const negate = /^[!^]/.test(body);
+      if (negate) body = body.slice(1);
+      const has = (ch) => {
+        for (let k = 0; k < body.length; k++) {
+          if (body[k + 1] === '-' && k + 2 < body.length) {
+            if (ch >= body[k] && ch <= body[k + 2]) return true;
+            k += 2;
+          } else if (body[k] === ch) return true;
+        }
+        return false;
+      };
+      tokens.push((ch) => (has(ch) || has(ch.toUpperCase())) !== negate);
+      i = end;
+    } else {
+      const lower = c.toLowerCase();
+      tokens.push((ch) => ch === lower);
+    }
+  }
+  let dp = Array.from({ length: target.length + 1 }, (_, j) => j === 0);
+  for (const t of tokens) {
+    const next = new Array(target.length + 1).fill(false);
+    if (t === '*') {
+      let any = false;
+      for (let j = 0; j <= target.length; j++) next[j] = any = any || dp[j];
+    } else for (let j = 0; j < target.length; j++) next[j + 1] = dp[j] && t(target[j]);
+    dp = next;
+  }
+  return dp[target.length];
+}
+
+// Whether a glob or brace word (basename) could name `gh` or `gh.exe`. One level of `{a,b}` is expanded, at most 64
+// alternatives; `{a..b}`, a second brace group or a word over 256 characters counts as a match.
 function globMatchesGh(word) {
   const name = word.split('/').pop();
+  if (name.length > 256) return true;
   const brace = /\{([^{}]*)\}/.exec(name);
   let alts = [name];
   if (brace) {
@@ -872,38 +917,29 @@ function globMatchesGh(word) {
     if (brace[1].includes('..') || /[{}]/.test(name.slice(brace.index + brace[0].length)) || parts.length > 64) return true;
     alts = parts.map((p) => name.slice(0, brace.index) + p + name.slice(brace.index + brace[0].length));
   }
-  return alts.some((alt) => {
-    let re = '';
-    for (let i = 0; i < alt.length; i++) {
-      const c = alt[i];
-      if (c === '*') re += '.*';
-      else if (c === '?') re += '.';
-      else if (c === '[') {
-        const end = alt.indexOf(']', i + 2);
-        if (end < 0) { re += '\\['; continue; }
-        re += `[${alt.slice(i + 1, end).replace(/^!/, '^').replace(/\\/g, '\\\\')}]`;
-        i = end;
-      } else re += c.replace(/[.+^${}()|\\]/g, '\\$&');
-    }
-    try {
-      return new RegExp(`^(?:${re})$`, 'i').test('gh') || new RegExp(`^(?:${re})$`, 'i').test('gh.exe');
-    } catch {
-      return true;
-    }
-  });
+  return alts.some((alt) => globMatches(alt, 'gh') || globMatches(alt, 'gh.exe'));
 }
 
-// A command, at any depth, that the shell may resolve to `gh` though its text does not spell `gh`: a name that decodes to
-// `gh` only with case folded or an ANSI-C string read (`GH`, `$'g\x68'`), or a glob or brace list that could match it.
-// The text checks above never see such a call. A name the shell builds from a variable (`$GH`) stays out of sight.
+// Whether one word may name `gh` without spelling it: a name that decodes to `gh` (or `gh.exe`, trailing dots allowed,
+// which Windows drops) only with case folded, an ANSI-C string read or a trailing dot, or a glob or brace list that
+// could match it.
+function hidesGh(w) {
+  const spelled = w.raw.replace(/['"\\]/g, '');
+  if (/^gh(?:\.exe)?\.*$/i.test(w.val.split('/').pop()) && !/(?:^|\/)gh(?:\.exe)?$/.test(spelled)) return true;
+  return !/[$`]/.test(w.raw) && dynamicText(w.raw) && globMatchesGh(w.val);
+}
+
+// A command, at any depth, that the shell may resolve to `gh` though its text does not spell `gh` (hidesGh). The text
+// checks above never see such a call. Every word up to the command is read, past reserved words (`then`, `{`, `!`,
+// `coproc`) and wrappers, so a wrapper option the reader takes for one with a value (`time -p`, `sudo -E`) cannot hide
+// the real command. A name the shell builds from a variable (`$GH`) stays out of sight.
 export function ghHidden(command) {
-  const a = analyze(command);
-  for (const { cmd } of units(a)) {
-    const w = commandWords(cmd.words)[0];
-    if (!w) continue;
-    const spelled = w.raw.replace(/['"\\]/g, '');
-    if (/^gh(?:\.exe)?$/i.test(w.val.split('/').pop()) && !/(?:^|\/)gh(?:\.exe)?$/.test(spelled)) return true;
-    if (!/[$`]/.test(w.raw) && dynamicText(w.raw) && globMatchesGh(w.val)) return true;
+  for (const { cmd } of units(analyze(command))) {
+    const words = dropReserved(cmd.words);
+    let at = words.length - commandWords(words).length;
+    // A word the reader took for the command that is an option or a duration (`time -p X`, `timeout -s KILL 5 X`): read on.
+    while (at < words.length - 1 && (words[at].val.startsWith('-') || /^\d+(?:\.\d+)?[smhd]?$/.test(words[at].val))) at++;
+    if (words.slice(0, at + 1).some((w) => !w.val.startsWith('-') && !/^[A-Za-z_]\w*=/.test(w.val) && hidesGh(w))) return true;
   }
   return false;
 }
@@ -964,8 +1000,8 @@ function unquotedExpansion(raw) {
   return false;
 }
 // Words that open a compound command or negate one: the reader keeps them in front of the command they hold
-// (`{ gh …`, `then gh …`, `! gh …`, `function f { gh …`).
-const RESERVED = new Set(['{', '(', '!', 'do', 'then', 'else', 'elif', 'if', 'while', 'until', 'time']);
+// (`{ gh …`, `then gh …`, `! gh …`, `coproc gh …`, `function f { gh …`).
+const RESERVED = new Set(['{', '(', '!', 'do', 'then', 'else', 'elif', 'if', 'while', 'until', 'time', 'coproc']);
 function dropReserved(words) {
   let i = 0;
   while (i < words.length) {
