@@ -33,6 +33,13 @@ A workflow skill that defines its own gate, question channel, round cap or model
 - **Open questions go to the user, one at a time.** A `driver` or `escalate` reports the decisions that are the user's instead of guessing. Attended, name the spawn so it can be messaged, ask the user each question with the question tool, then send the answers to the same spoke so it keeps its context. Where it cannot be messaged, a new spawn's brief carries its report, the answers, and its worktree and branch, so it continues instead of starting over. Unattended, `unattended-runs` decides.
 - Other running sessions, channels between agents, verdicts and review rounds: [references/collaboration.md](references/collaboration.md).
 
+## Waiting on other agents
+
+A wait ends on every terminal outcome, never on success alone: a loop until a PR merges never returns once a required check fails. Wait on a PR with `land`'s `wait-pr` script. Inside a teammate, wait in the foreground ([collaboration.md](references/collaboration.md#durable-verdicts)).
+
+- **The deadline lives inside the command** (`wait-pr --timeout`, or a loop that counts its polls): the command exiting is what wakes the session. In an interactive Claude Code session the Bash tool's timeout is ignored for a background command; a Monitor wakes the session when its `timeout_ms` expires (at most 30 min).
+- Where a background exit is not known to wake the session (not checked in Copilot CLI, Codex, opencode or pi), also set that harness's own timer when it has one.
+
 ## Gotchas
 
 - Built-in Plan and Explore agents run on the session's model and ignore `CLAUDE_CODE_SUBAGENT_MODEL`: plan with `driver`, look up with `scout`.
