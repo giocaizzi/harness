@@ -154,10 +154,21 @@ Template with placeholders: [`plugins/factory/template/config.yaml`](../plugins/
 | `size_label_prefix` | no | Label prefix that carries the ticket's size (`XS`, `S`, `M`, `L`, `XL`). Without it, the plan estimates the size. |
 | `board` | no | `owner`, `project` (number), `status_field` and the `status` option names for `in_progress`, `blocked` and `backlog`. Omit when there is no board. |
 | `components` | yes | Per component: `paths` (globs), `checks` (commands that prove a change), and optional `deploy` with `wait`, `verify` (commands; `$SHA` is the merge commit) and `rollback`. |
-| `notify` | no | How a runtime tells the owner a question waits: `command` (reads the message on stdin) or `url`. Unused by attended runs. |
+| `notify` | no | How a runtime tells the owner a question waits: `topic` (a name, never a URL, that the runtime's host config maps to a keyring reference for the destination) or `command` (reads the message on stdin). A `url`, or any other key, is flagged: a runtime sends nothing to an address the repo supplies. Reminders are host settings, not repo keys ([Notifications](#notifications)). Unused by attended runs. |
 | `telemetry` | no | `resource_attributes` a runtime sets on a run's telemetry. The OTLP endpoint comes from the environment (`OTEL_EXPORTER_OTLP_ENDPOINT`), never from this file. |
 | `secrets` | no | Name to `{provider, ref}`: secrets the deploy and verify commands need, by reference through the `secrets-handling` providers, never values. |
 | `risk` | yes | Tiers lowest first, each with `tier`, `paths` (globs) and `merge` (`auto` or `owner`). A change takes the highest tier any path matches; unmatched paths are `medium`. |
+
+## Notifications
+
+A repo names where its notices go, never how to reach it: `notify.topic` is a plain name (for example `factory`), and the runtime's host config maps it to a keyring reference holding the real destination, so no URL, token or address enters the repo. A `notify.url` in repo config is flagged as a contract error and gets no message.
+
+Reminders belong to the host, so one owner gets the same cadence across repos. In the runtime's host config, not in `.factory/config.yaml`:
+
+| Host key | Meaning |
+|---|---|
+| `notify.remind_after` | How long a question stays unanswered before the runtime notifies again. |
+| `notify.remind_max` | How many reminders it sends at most for one question; after the last, the ticket stays parked and nothing more is sent. |
 
 ## Layers and what is not built yet
 
