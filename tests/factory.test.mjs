@@ -225,11 +225,23 @@ test('result.json times: a finished run has finished_at and its phases, a missin
   assert.match(timeErrors({ ...done, phases: [step('implement', '2026-10-25T09:00:00Z', null)] })[0], /name must be one of/)
   assert.match(timeErrors({ ...done, phases: [step('gate', 'yesterday', null)] })[0], /ISO 8601/)
   assert.match(timeErrors({ ...done, phases: [step('gate', '2026-10-25T09:00:00Z', '2026-10-25T08:00:00Z')] })[0], /before started_at/)
+  // A non-object entry is an error, not a throw.
+  for (const bad of [null, 5, 'gate', ['gate']]) assert.match(timeErrors({ ...done, phases: [bad] })[0], /must be an object/)
+  assert.match(timeErrors({ ...done, phases: [...done.phases.slice(0, 2), 7] })[0], /phases\[2\]: must be an object/)
+  // An impossible date or time is rejected, not rolled over; a real leap day passes.
+  for (const t of ['2026-02-30T09:00:00Z', '2026-02-29T09:00:00Z', '2026-04-31T09:00:00Z', '2026-13-01T09:00:00Z', '2026-10-25T24:00:00Z', '2026-10-25T09:60:00Z']) {
+    assert.match(timeErrors({ ...done, finished_at: t })[0], /finished_at/, t)
+    assert.match(timeErrors({ ...done, phases: [step('gate', t, null)] })[0], /ISO 8601/, t)
+  }
+  assert.deepEqual(timeErrors({ ...done, finished_at: '2028-02-29T23:59:59+02:00' }), [])
   // done.md names every check the script makes, and where each time comes from.
   const record = read('plugins/factory/skills/ticket-run/references/done.md').split('## Record')[1]
   for (const s of ['gate', 'plan', 'work', 'verify', 'ship', 'deploy', 'record']) assert.match(record, new RegExp(`- \`${s}\`: `), `done.md gives no source for ${s}`)
-  assert.match(record, /\*\*`finished_at`:\*\* the UTC time you write the file, never `null`/)
-  assert.match(record, /before posting the result comment/)
+  assert.match(record, /\*\*`finished_at`:\*\* the UTC time you write the file \(step 1\), never `null`/)
+  // The order: write (finished_at set), check, post, then add the post and re-check; gate stops check but never post.
+  assert.match(record, /1\. Write `\.factory\/runs\/N\/result\.json`.*`finished_at` set to the time of this write[\s\S]*2\. Check it with this skill's `scripts\/check-result\.mjs[\s\S]*3\. Post the result comment[\s\S]*4\. Add the comment to `posts`.*This edit finalizes the file/)
+  assert.match(record, /\*\*Gate stops\.\*\*[^\n]*steps 1 and 2 of the Record order \(write, then `check-result\.mjs`\) but posts no result comment/)
+  assert.match(record, /\[cultureinfo\]::InvariantCulture/)
 })
 
 test('result.json mode: only dev or absent passes validation', async () => {

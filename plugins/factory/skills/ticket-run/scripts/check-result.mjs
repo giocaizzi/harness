@@ -7,8 +7,10 @@ import { fileURLToPath } from 'node:url'
 const fields = ['phase', 'policy_model', 'policy_effort', 'model', 'effort']
 
 const STEPS = ['gate', 'plan', 'work', 'verify', 'ship', 'deploy', 'record']
-const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})$/
-const isTime = (v) => typeof v === 'string' && ISO.test(v) && !Number.isNaN(Date.parse(v))
+const ISO = /^\d{4}-\d{2}-\d{2}T(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})$/
+// Date.parse rolls an impossible day over (2026-02-30 → 03-02): the date must round-trip unchanged.
+const isTime = (v) =>
+  typeof v === 'string' && ISO.test(v) && !Number.isNaN(Date.parse(v)) && new Date(`${v.slice(0, 10)}T00:00:00Z`).toISOString().startsWith(v.slice(0, 10))
 
 export const timeErrors = (result) => {
   const errors = isTime(result.finished_at) ? [] : ['finished_at must be an ISO 8601 time']
@@ -16,14 +18,15 @@ export const timeErrors = (result) => {
   let last = -1
   result.phases.forEach((p, i) => {
     const at = `phases[${i}]`
-    const step = STEPS.indexOf(p?.name)
+    if (p === null || typeof p !== 'object' || Array.isArray(p)) return errors.push(`${at}: must be an object with name, started_at and ended_at`)
+    const step = STEPS.indexOf(p.name)
     if (step <= last) errors.push(`${at}: name must be one of ${STEPS.join(', ')}, in that order, each once`)
     last = Math.max(last, step)
     for (const key of ['started_at', 'ended_at']) {
-      if (!(key in (p ?? {}))) errors.push(`${at}: ${key} missing (write null when unknown)`)
+      if (!(key in p)) errors.push(`${at}: ${key} missing (write null when unknown)`)
       else if (p[key] !== null && !isTime(p[key])) errors.push(`${at}: ${key} must be an ISO 8601 time or null`)
     }
-    if (isTime(p?.started_at) && isTime(p?.ended_at) && Date.parse(p.ended_at) < Date.parse(p.started_at)) errors.push(`${at}: ended_at is before started_at`)
+    if (isTime(p.started_at) && isTime(p.ended_at) && Date.parse(p.ended_at) < Date.parse(p.started_at)) errors.push(`${at}: ended_at is before started_at`)
   })
   return errors
 }
