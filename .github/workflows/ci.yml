@@ -68,15 +68,16 @@ jobs:
         with:
           node-version: 22
       - run: pwsh -NoProfile -File tests/host-hygiene.test.ps1
-      # node passes a run whose tests all skipped or none matched: each step fails unless some test ran and none skipped.
+      # node passes a run whose tests all skipped, or where none matched (it then counts the file as one passing
+      # test): each step expects its exact count, so a renamed or lost test, or a missing pwsh, fails it.
       - shell: bash
         run: |
           node --test --test-reporter=tap tests/wait-pr-ps1.test.mjs | tee tap.txt
-          if ! grep -q '^# pass [1-9]' tap.txt || ! grep -qx '# skipped 0' tap.txt; then echo "::error::no wait-pr.ps1 test ran, or one skipped"; exit 1; fi
+          if ! grep -qx '# tests 14' tap.txt || ! grep -qx '# pass 14' tap.txt; then echo "::error::expected 14 wait-pr.ps1 tests to pass"; exit 1; fi
       - shell: bash
         run: |
           node --test --test-reporter=tap --test-name-pattern='attended launcher \(ps1\)' tests/factory.test.mjs | tee tap.txt
-          if ! grep -q '^# pass [1-9]' tap.txt || ! grep -qx '# skipped 0' tap.txt; then echo "::error::no attended launcher (ps1) test ran, or one skipped"; exit 1; fi
+          if ! grep -qx '# tests 2' tap.txt || ! grep -qx '# pass 2' tap.txt; then echo "::error::expected 2 attended launcher (ps1) tests to pass"; exit 1; fi
 
   make-check:
     runs-on: ubuntu-latest
