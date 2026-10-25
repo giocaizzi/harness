@@ -60,7 +60,8 @@ The other three harnesses read the same sources differently (details in [docs/co
 │           ├── copilot/<name>.agent.md   Copilot agents
 │           ├── codex/<name>.toml         Codex agents (scripts/install.mjs copies them)
 │           ├── codex/hooks.json          Codex hooks file
-│           └── opencode/<name>.md        opencode subagents (scripts/install.mjs copies them)
+│           ├── opencode/<name>.md        opencode subagents (scripts/install.mjs copies them)
+│           └── factory/check-result.mjs  guard only: factory's result checker, for the stop hook's result gate
 │
 ├── scripts/
 │   ├── build_agents.py           agents/*.md (+ .yaml) and manifests → .generated/, .github/plugin/, .codex-plugin/
@@ -83,7 +84,7 @@ The other three harnesses read the same sources differently (details in [docs/co
 | `plugins/<plugin>/.claude-plugin/plugin.json` | Authored | Read by Claude. **No `skills` field** (Claude rejects it) and **no `agents` field** (build provides the Copilot override separately). |
 | `plugins/<plugin>/agents/<name>.md`, `<name>.yaml` | Authored | The Claude agent, and the other harnesses' overrides. |
 | `plugins/<plugin>/.github/plugin/plugin.json`, `.codex-plugin/plugin.json` | **Generated** | Copilot and Codex manifests. Never edit. |
-| `plugins/<plugin>/.generated/` | **Generated** | Copilot, Codex and opencode agents, Codex hooks file. Never edit. |
+| `plugins/<plugin>/.generated/` | **Generated** | Copilot, Codex and opencode agents, Codex hooks file, guard's copy of factory's `check-result.mjs` (plugins install separately, so a hook never imports across plugin dirs). Never edit. |
 | `plugins/<plugin>/hooks/`, `core/` | Authored | Hooks: `hooks.json` for Claude, Copilot, VS Code; `opencode.mjs`, `pi.mjs` over `bridge.mjs` for the in-process harnesses. See [docs/guard.md](docs/guard.md). |
 | `package.json` | Authored | pi package: `pi.skills` and `pi.extensions`. |
 | `plugins/<plugin>/hooks/pi.mjs`, `plugins/dev-tools/pi/subagent.mjs` | Authored | pi extensions; tests beside them (`make test` globs `plugins/*/pi/*.test.mjs` too). |
@@ -123,6 +124,7 @@ If `make validate` fails, check the common drift points first:
 - Use `${CLAUDE_PLUGIN_ROOT}` in commands and `CLAUDE_PLUGIN_DATA` for state: both CLIs set them; VS Code sets only `CLAUDE_PLUGIN_ROOT`, so read `CLAUDE_PLUGIN_DATA` with a fallback.
 - VS Code ignores `matcher`: every hook of an event runs, so each script checks `tool_name` itself. One `command` field runs under bash and PowerShell, so keep it to `node "<path>" <args>`.
 - Codex reads `.generated/codex/hooks.json`, generated from `hooks.json`; opencode and pi run `hooks/opencode.mjs` and `hooks/pi.mjs`, which go through `hooks/bridge.mjs` to the same handlers. A new hook script needs its event mapped in both adapters (and a case in `adapters.test.mjs`), or a row in docs/compatibility.md saying why not.
+- The stop hook's factory result gate runs `plugins/guard/.generated/factory/check-result.mjs`, which `make build` copies from `plugins/factory/skills/ticket-run/scripts/`: after editing the checker, run `make build`. Probe a stop with `GUARD_RESULT_GATE=off` unless you test the gate.
 - Rules are data in `plugins/guard/core/rules.mjs`; `core/engine.mjs` stays pure (no I/O). Bump the `guard` version (plugin.json + marketplace entry) for every behaviour change: installed caches update only on a version change.
 - To probe a harness from this checkout (`claude -p "What skills are available?"`, a hook check), set `GUARD_STOP_CHECK=off`: otherwise the probe's Stop hook runs `make check` and the probe tries to fix what fails, editing files here.
 - Probe the guard (spawning `hooks/guard.mjs`, importing the engine) with `GUARD_OTEL=off`: the hook otherwise posts its decisions to the collector your shell exports, and fake sessions pollute the real telemetry. `make test` sets it, and empties `FACTORY_EVENTS_FILE` so a factory run's events file gets no fake decisions; do the same in a probe.

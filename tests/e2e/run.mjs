@@ -268,6 +268,19 @@ async function check(name) {
       if (prompt.includes('Harness plugins updated')) failures.push(`stale: a note without an update\n${prompt.slice(prompt.indexOf('Harness plugins updated'), prompt.indexOf('Harness plugins updated') + 200)}`)
       rmSync(join(root, 'mock.jsonl'), { force: true })
     }
+    // The guard's factory result gate: a runtime's run in a git repo with no result.json is held at its stop, and the
+    // gate's reason reaches the model (a blocked stop on Copilot CLI and Codex, a new message on pi). Not on opencode:
+    // `opencode run` exits once the session goes idle, before the re-prompt is answered (adapters.test.mjs covers it).
+    if (name !== 'opencode') {
+      const dir = join(root, 'gateproj')
+      mkdirSync(dir, { recursive: true })
+      sh('git', ['init', '-q', dir])
+      const m = await mock('echo hi', root)
+      const out = h.run({ ...env, FACTORY_RUN_ID: `e2e-${name}`, FACTORY_TICKET: 'acme/app#12' }, dir, m.port)
+      m.stop()
+      if (!m.entries().some((e) => e.prompt.includes('Factory result gate (block 1 of 2)'))) failures.push(`result gate: the block did not reach the model\n${out.stdout?.slice(-600)}\n${out.stderr?.slice(-600)}`)
+      rmSync(join(root, 'mock.jsonl'), { force: true })
+    }
     // sounds' Stop hook ran from the installed plugin: it keeps the session's alert levels in the plugin data dir.
     if (name === 'codex' && !readdirSync(join(root, 'home'), { recursive: true }).some((f) => /sounds-codex-.*\.json$/.test(f))) failures.push('sounds: the Stop hook left no state')
     if (name === 'codex') failures.push(...(await codexOnly(h, env, root)))

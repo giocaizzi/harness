@@ -117,7 +117,7 @@ You never call guard. You see it when it denies or asks:
 | `pip`/`poetry` denied: "This repo uses uv" | The repo has `uv.lock` (or a plain `pyproject.toml`). In a poetry or pip repo it runs, with a one-time note. | Nothing: the agent switches to `uv`. |
 | A heavy build or test run denied once | Load over 30, CPU over 90 % or under 20 GB free disk. | Wait, or let the agent wrap it in `heavy.sh`. |
 | Subagent spawn refused (Claude Code) | A plan window is at 90 %. | Wait for the reset. |
-| The agent keeps working after it said "done" | `make check` failed on stop (only when the repo changed since the last green run). | Nothing: it fixes the failure once, then may stop. |
+| The agent keeps working after it said "done" | `make check` failed on stop (only when the repo changed since the last green run), or in a factory run its `result.json` is missing or invalid. | Nothing: it fixes the failure once (the result file within two tries), then may stop. |
 | Shellcheck/PSScriptAnalyzer findings after an edit | An edited `.sh`/`.bash`/`.ps1` has lint findings. | Nothing: advice for the agent. |
 
 It also keeps the machine awake while the harness runs.
@@ -128,6 +128,7 @@ Settings are env vars, set in the shell that starts the harness (or the `env` bl
 |---|---|---|
 | `GUARD_UNATTENDED=1` | off | Every risky ask becomes a deny, and Claude Code parks its permission asks at once. Use for overnight and headless runs (`unattended-runs` skill). Set it in the launching shell or Claude Code's settings `env`; a command that exports it in the session holds for the rest of the session ([guard.md](guard.md#unattended-and-auto-approve-runs)). |
 | `GUARD_STOP_CHECK=off` | on | Turns off `make check` on stop; `force` runs it even on a strained host (CI). |
+| `GUARD_RESULT_GATE=off` | on | Turns off the factory result gate: in a factory run, a stop is held at most twice while the run's `result.json` is missing or invalid. A verifier or other side session started with the run's variables sets it. |
 | `GUARD_STOP_TIMEOUT_MS` | `300000` | Time limit for that check; a timeout defers it to the next stop, never blocks. |
 | `GUARD_ASK_TIMEOUT_MS` | `60000` | Claude Code: an unanswered permission prompt is parked after this (the agent is told nobody answered and to carry on, not that you denied it); `0` turns it off. |
 | `GUARD_OTEL=off` | on | Sends no guard telemetry, whatever the OTel endpoint (`make test` sets it). |

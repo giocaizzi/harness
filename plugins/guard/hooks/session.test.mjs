@@ -1,11 +1,11 @@
 import { after, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { fingerprint, runDetached, stopCheck, takeLock } from './stop.mjs'
+import { fingerprint, resultGate, runDetached, stopCheck, takeLock } from './stop.mjs'
 import { lintFile } from './lint.mjs'
 import { harnessPid, keepAwake, keeperArgv } from './awake.mjs'
 
@@ -18,6 +18,8 @@ after(() => rmSync(LINT_ROOT, { recursive: true, force: true }))
 // The stop tests expect the check to run; a developer's own GUARD_STOP_CHECK=off must not leak in.
 delete process.env.GUARD_STOP_CHECK
 delete process.env.GUARD_STOP_TIMEOUT_MS
+// Nor a factory run's own variables: the result gate would hold every stop test to its result file.
+for (const k of ['FACTORY_RUN_ID', 'FACTORY_TICKET', 'FACTORY_ATTENDED_RUN_ID', 'FACTORY_ATTENDED_TICKET', 'GUARD_RESULT_GATE']) delete process.env[k]
 
 const stopRun = (calls, make, git = { status: 0, stdout: 'x' }, targets = ['check']) => (cmd, args) => {
   calls.push(`${cmd} ${args.join(' ')}`)
@@ -144,6 +146,108 @@ test('stop: GUARD_STOP_CHECK=off disables it', async () => {
     assert.equal(await stopCheck({}, () => assert.fail('must not run')), null)
   } finally {
     delete process.env.GUARD_STOP_CHECK
+  }
+})
+
+// A git repo with a factory result for ticket 12 (none when `result` is undefined); the gate's counter in its own dir.
+const gateRepo = (result) => {
+  const repo = tmp()
+  execFileSync('git', ['init', '-q', repo])
+  if (result !== undefined) {
+    mkdirSync(join(repo, '.factory', 'runs', '12'), { recursive: true })
+    writeFileSync(join(repo, '.factory', 'runs', '12', 'result.json'), typeof result === 'string' ? result : JSON.stringify(result))
+  }
+  process.env.CLAUDE_PLUGIN_DATA = tmp()
+  return repo
+}
+const validResult = (over = {}) => ({
+  schema: 2,
+  ticket: 'acme/app#12',
+  run_id: 'run-1',
+  end_state: 'done',
+  reason: '',
+  reason_code: null,
+  phases: [{ name: 'gate', started_at: '2026-10-25T10:00:00Z', ended_at: '2026-10-25T10:01:00Z' }],
+  finished_at: '2026-10-25T10:02:00Z',
+  ...over,
+})
+const RUNTIME = { FACTORY_RUN_ID: 'run-1', FACTORY_TICKET: 'acme/app#12' }
+const ATTENDED = { FACTORY_ATTENDED_RUN_ID: 'run-1', FACTORY_ATTENDED_TICKET: 'acme/app#12' }
+
+test('result gate: a runtime run with no result.json is blocked twice, then may stop', async () => {
+  const cwd = gateRepo()
+  try {
+    const first = await resultGate({ cwd }, undefined, RUNTIME)
+    assert.match(first, /block 1 of 2\): .*result\.json is not a valid result for run run-1:\nno such file\n/)
+    assert.match(first, /write-result\.mjs, never by hand/)
+    const events = []
+    assert.match(await resultGate({ cwd, stop_hook_active: true }, undefined, RUNTIME, (e) => events.push(e)), /block 2 of 2[\s\S]*A subagent \(such as the verifier\) ignores this/)
+    assert.equal(await resultGate({ cwd }, undefined, RUNTIME, (e) => events.push(e)), null)
+    assert.deepEqual(events, [{ result: 'block', target: 'result-gate', runner: 'runtime', blocks: 2 }, { result: 'capped', target: 'result-gate', runner: 'runtime' }])
+    // The count is per run id: another run starts over.
+    assert.match(await resultGate({ cwd }, undefined, { ...RUNTIME, FACTORY_RUN_ID: 'run-2' }), /block 1 of 2/)
+  } finally {
+    delete process.env.CLAUDE_PLUGIN_DATA
+  }
+})
+
+test("result gate: a runtime run's invalid result, broken JSON or another run's file blocks with the errors; a valid one passes", async () => {
+  try {
+    assert.match(await resultGate({ cwd: gateRepo(validResult({ ticket: 12 })) }, undefined, RUNTIME), /ticket must be a string of the form/)
+    assert.match(await resultGate({ cwd: gateRepo('{"schema": 2,') }, undefined, RUNTIME), /not valid JSON/)
+    assert.match(await resultGate({ cwd: gateRepo(validResult({ run_id: 'run-0' })) }, undefined, RUNTIME), /run_id "run-0" differs from FACTORY_RUN_ID "run-1"/)
+    assert.equal(await resultGate({ cwd: gateRepo(validResult()) }, undefined, RUNTIME), null)
+  } finally {
+    delete process.env.CLAUDE_PLUGIN_DATA
+  }
+})
+
+test("result gate: an attended run is held only to an invalid file carrying its own run id", async () => {
+  try {
+    assert.equal(await resultGate({ cwd: gateRepo() }, undefined, ATTENDED), null)
+    assert.equal(await resultGate({ cwd: gateRepo('not json') }, undefined, ATTENDED), null)
+    assert.equal(await resultGate({ cwd: gateRepo(validResult({ run_id: 'other', ticket: 12 })) }, undefined, ATTENDED), null)
+    assert.equal(await resultGate({ cwd: gateRepo(validResult()) }, undefined, ATTENDED), null)
+    assert.match(await resultGate({ cwd: gateRepo(validResult({ ticket: 12 })) }, undefined, ATTENDED), /block 1 of 2[\s\S]*ticket must be a string/)
+  } finally {
+    delete process.env.CLAUDE_PLUGIN_DATA
+  }
+})
+
+test('result gate: off, a subagent, no factory run, a bad ticket or no git checkout pass', async () => {
+  try {
+    const cwd = gateRepo()
+    assert.equal(await resultGate({ cwd }, undefined, { ...RUNTIME, GUARD_RESULT_GATE: 'off' }), null)
+    assert.equal(await resultGate({ cwd, agent_id: 'a1' }, undefined, RUNTIME), null)
+    assert.equal(await resultGate({ cwd, hook_event_name: 'SubagentStop' }, undefined, RUNTIME), null)
+    assert.equal(await resultGate({ cwd }, undefined, {}), null)
+    assert.equal(await resultGate({ cwd }, undefined, { ...RUNTIME, FACTORY_TICKET: '12' }), null)
+    assert.equal(await resultGate({ cwd }, () => ({ status: 128, stdout: '' }), RUNTIME), null)
+    const events = []
+    assert.equal(await resultGate({ cwd }, () => assert.fail('a gate error fails open'), RUNTIME, (e) => events.push(e)), null)
+    assert.deepEqual(events.map((e) => [e.result, e.target]), [['error', 'result-gate']])
+  } finally {
+    delete process.env.CLAUDE_PLUGIN_DATA
+  }
+})
+
+test('result gate: runs before make check, and both reasons go in one block', async () => {
+  const cwd = gateRepo()
+  Object.assign(process.env, RUNTIME)
+  try {
+    const run = (cmd, args, opts) => (cmd === 'make' ? stopRun([], { status: 2, stdout: 'FAIL z\n' }, { status: 2 })(cmd, args) : spawnSync(cmd, args, opts))
+    const events = []
+    const out = await stopCheck({ cwd }, run, { strain: () => null, report: (e) => events.push(e) })
+    assert.deepEqual(events.map((e) => `${e.target}:${e.result}`), ['result-gate:block', 'check:fail'])
+    assert.equal(out.decision, 'block')
+    assert.match(out.reason, /^Factory result gate \(block 1 of 2\)[\s\S]*\n\nmake check failed[\s\S]*FAIL z$/)
+    assert.deepEqual(out.hookSpecificOutput, { hookEventName: 'Stop', decision: 'block', reason: out.reason })
+    // stop_hook_active skips make check, not the gate.
+    assert.match((await stopCheck({ cwd, stop_hook_active: true }, run)).reason, /^Factory result gate \(block 2 of 2\)[^]*write-result\.mjs[^]*\.$/)
+    assert.equal(await stopCheck({ cwd, stop_hook_active: true }, run), null)
+  } finally {
+    for (const k of Object.keys(RUNTIME)) delete process.env[k]
+    delete process.env.CLAUDE_PLUGIN_DATA
   }
 })
 

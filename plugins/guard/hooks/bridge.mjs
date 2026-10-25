@@ -67,7 +67,7 @@ export function createGuard({ harness, noAsk = false, dataDir = DATA_DIR, deps =
         return null
       }
     },
-    // The reason to keep going (make check failed), or null. `active` is true when the last stop was already blocked.
+    // The reason to keep going (the factory result gate or make check), or null. `active` is true when the last stop was already blocked.
     // Async: make runs detached, so the harness's event loop keeps going meanwhile.
     async stop({ cwd, active }) {
       try {

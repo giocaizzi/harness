@@ -6,14 +6,16 @@
 // reads /dev/tty fails at once instead of hanging the session.
 // It never becomes the bottleneck: on a strained host (the guard's host caps), while another stop check runs in the
 // same repo, or past the timeout it is deferred, not failed: nothing is marked green, so the next stop runs it.
-// Every outcome goes to telemetry as guard.stop (result, target, duration_ms).
+// Every outcome goes to telemetry as guard.stop (result, target, duration_ms); the result gate's blocks, its cap and
+// its own errors too, as target result-gate.
 // Env: GUARD_STOP_CHECK=off disables it, =force runs it on a strained host too (CI, where load is high by design);
 // GUARD_STOP_TIMEOUT_MS overrides the timeout (default 300 s).
+// Before it, in a factory run, the result gate (resultGate below) blocks a stop that leaves no valid result.json.
 import { spawn, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { mkdirSync, readFileSync, rmSync, statfsSync, writeFileSync } from 'node:fs'
 import { loadavg, platform } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { emit } from '../core/otel.mjs'
 import { rules } from '../core/rules.mjs'
@@ -138,9 +140,75 @@ export function takeLock(file) {
   }
 }
 
+const RESULT_GATE_MAX = 2 // blocks per run id, so a run that cannot write a valid file still ends
+const TICKET_NUMBER = /^[\w.-]+\/[\w.-]+#([1-9]\d*)$/
+
+// The factory result gate: why a factory run may not stop yet, or null. A runtime's run (FACTORY_RUN_ID and
+// FACTORY_TICKET) needs a valid <main checkout>/.factory/runs/<n>/result.json carrying its run id; an attended run
+// (FACTORY_ATTENDED_RUN_ID and FACTORY_ATTENDED_TICKET) is held only to a present file that carries its id and is
+// invalid. The checks are factory's check-result.mjs, which `make build` copies into .generated/factory/ (the plugins
+// install separately). A subagent's stop, GUARD_RESULT_GATE=off, a run already blocked RESULT_GATE_MAX times and any
+// error of the gate itself pass. `onEvent(attrs)` gets each block, cap and error, for telemetry.
+export async function resultGate(input, run = spawnSync, env = process.env, onEvent = () => {}) {
+  const event = (result, attrs = {}) => onEvent({ result, target: 'result-gate', ...attrs })
+  try {
+    if (env.GUARD_RESULT_GATE === 'off' || input.agent_id || /^subagentstop$/i.test(input.hook_event_name ?? '')) return null
+    const runtime = (env.FACTORY_RUN_ID ?? '').trim()
+    const runId = runtime || (env.FACTORY_ATTENDED_RUN_ID ?? '').trim()
+    const number = TICKET_NUMBER.exec((runtime ? env.FACTORY_TICKET : env.FACTORY_ATTENDED_TICKET)?.trim() ?? '')?.[1]
+    if (!runId || !number) return null
+    const git = run('git', ['rev-parse', '--path-format=absolute', '--git-common-dir'], { cwd: input.cwd || process.cwd(), encoding: 'utf8', windowsHide: true })
+    if (git.status !== 0 || !String(git.stdout ?? '').trim()) return null
+    const file = join(dirname(String(git.stdout).trim()), '.factory', 'runs', number, 'result.json')
+    const { report, resultErrors } = await import('../.generated/factory/check-result.mjs')
+    let errors
+    try {
+      const result = JSON.parse(readFileSync(file, 'utf8').replace(/^\uFEFF/, ''))
+      if (!runtime && result?.run_id !== runId) return null
+      errors = resultErrors(result, runtime ? env : {})
+    } catch (e) {
+      if (!runtime) return null
+      errors = [e.code === 'ENOENT' ? 'no such file' : e instanceof SyntaxError ? `not valid JSON (${e.message})` : `cannot read (${e.code ?? e.message})`]
+    }
+    if (!errors.length) return null
+    const counter = join(pluginDataDir(), 'result-gate', `${sha(runId).slice(0, 16)}.txt`)
+    let blocks = 0
+    try {
+      blocks = Number(readFileSync(counter, 'utf8')) || 0
+    } catch {
+      // no block yet
+    }
+    if (blocks >= RESULT_GATE_MAX) {
+      event('capped', { runner: runtime ? 'runtime' : 'attended' })
+      return null
+    }
+    mkdirSync(dirname(counter), { recursive: true })
+    writeFileSync(counter, String(blocks + 1))
+    event('block', { runner: runtime ? 'runtime' : 'attended', blocks: blocks + 1 })
+    return [
+      `Factory result gate (block ${blocks + 1} of ${RESULT_GATE_MAX}): ${file} is not a valid result for run ${runId}:`,
+      ...report(errors),
+      "Write it with the ticket-run skill's scripts/write-result.mjs, never by hand: put the judgment fields in a JSON file and run `node <skill dir>/scripts/write-result.mjs <file>` from the repo; fix the input, never the written file, until it exits 0.",
+      'A subagent (such as the verifier) ignores this and ends its turn: the main session writes the file.',
+    ].join('\n')
+  } catch (e) {
+    event('error', { why: scrub(String(e?.message ?? e)).slice(0, 200) })
+    return null
+  }
+}
+
+// The result gate, then make check; when both block, one block carries both reasons.
+export async function stopCheck(input, run = spawnSync, opts = {}) {
+  const gate = await resultGate(input, run, process.env, opts.report)
+  const check = await makeCheck(input, run, opts)
+  if (!gate) return check
+  const reason = check?.decision === 'block' ? `${gate}\n\n${check.reason}` : gate
+  return { ...(check?.systemMessage ? { systemMessage: check.systemMessage } : {}), decision: 'block', reason, hookSpecificOutput: { hookEventName: 'Stop', decision: 'block', reason } }
+}
+
 // `run` runs git and `make -n` (sync); `exec` runs the check itself (async, detached; tests pass a stub through
 // `run`). `strain(cwd)` and `report(attrs)` are injected by tests and the in-process bridge.
-export async function stopCheck(input, run = spawnSync, { exec = run === spawnSync ? runDetached : async (c, a, o) => run(c, a, o), strain = hostStrain, report = () => {} } = {}) {
+async function makeCheck(input, run = spawnSync, { exec = run === spawnSync ? runDetached : async (c, a, o) => run(c, a, o), strain = hostStrain, report = () => {} } = {}) {
   if (input.stop_hook_active || process.env.GUARD_STOP_CHECK === 'off') return null
   const cwd = input.cwd || process.cwd()
   const timeout = Number(process.env.GUARD_STOP_TIMEOUT_MS) || DEFAULT_TIMEOUT_MS
@@ -184,12 +252,12 @@ export async function stopCheck(input, run = spawnSync, { exec = run === spawnSy
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
   try {
     const input = JSON.parse(readFileSync(0, 'utf8') || '{}')
-    let event = null
-    const out = await stopCheck(input, spawnSync, { report: (attrs) => (event = attrs) })
+    const events = []
+    const out = await stopCheck(input, spawnSync, { report: (attrs) => events.push(attrs) })
     // Codex rejects a Stop output with keys it does not know: it gets the top-level decision and reason only.
     const codex = harnessName() === 'codex'
     if (out) process.stdout.write(JSON.stringify(codex && out.decision ? { decision: out.decision, reason: out.reason } : out))
-    if (event) await emit(process.env, 'guard.stop', recordAttrs({ ...event, cmd_class: 'stop', session_id: input.session_id }, input.cwd || process.cwd(), harnessName()))
+    for (const event of events) await emit(process.env, 'guard.stop', recordAttrs({ ...event, cmd_class: 'stop', session_id: input.session_id }, input.cwd || process.cwd(), harnessName()))
   } catch {
     // unreadable payload: let the agent stop
   }

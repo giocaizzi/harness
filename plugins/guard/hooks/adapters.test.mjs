@@ -1,6 +1,7 @@
 // The in-process adapters (opencode, pi) over a fake harness API: the guard's decisions reach the harness.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -11,6 +12,7 @@ import guardExtension from './pi.mjs'
 // unattended session's GUARD_UNATTENDED=1 must not leak in. The unattended case passes its env explicitly.
 delete process.env.GUARD_STOP_CHECK
 delete process.env.GUARD_UNATTENDED
+for (const k of ['FACTORY_RUN_ID', 'FACTORY_TICKET', 'FACTORY_ATTENDED_RUN_ID', 'FACTORY_ATTENDED_TICKET', 'GUARD_RESULT_GATE']) delete process.env[k]
 
 const dir = (files = {}) => {
   const d = mkdtempSync(join(tmpdir(), 'adapter-test-'))
@@ -105,6 +107,30 @@ test("opencode: a subagent's idle session (it has a parent) runs no check", asyn
   assert.equal(sent.length, 0)
 })
 
+// A runtime's factory run in a git repo with no result.json: neither harness can block a stop, so the result gate's
+// reason is sent back as a new message, at most twice per run id. Its counter goes to a data dir of its own.
+const factoryRun = async (id, fn) => {
+  const cwd = dir()
+  execFileSync('git', ['init', '-q', cwd])
+  Object.assign(process.env, { FACTORY_RUN_ID: id, FACTORY_TICKET: 'acme/app#12', CLAUDE_PLUGIN_DATA: dir() })
+  try {
+    await fn(cwd)
+  } finally {
+    for (const k of ['FACTORY_RUN_ID', 'FACTORY_TICKET', 'CLAUDE_PLUGIN_DATA']) delete process.env[k]
+  }
+}
+
+test('opencode: a factory run without a valid result.json is sent the result gate on idle, twice at most', async () => {
+  await factoryRun('oc-run', async (cwd) => {
+    const sent = []
+    const client = { session: { prompt: async (p) => sent.push(p) } }
+    const hooks = await GuardPlugin({ client, directory: cwd }, deps())
+    for (let i = 0; i < 3; i++) await hooks.event({ event: { type: 'session.idle', properties: { sessionID: 's' } } })
+    assert.equal(sent.length, 2)
+    assert.match(sent[0].body.parts[0].text, /^Factory result gate \(block 1 of 2\)[\s\S]*write-result\.mjs/)
+  })
+})
+
 const fakePi = () => {
   const handlers = {}
   const sent = []
@@ -157,6 +183,16 @@ test('pi: a failing make check on settle is sent back once, an aborted run is le
   await handlers.agent_settled({ aborted: false }, ctx)
   assert.equal(sent.length, 1)
   assert.match(sent[0], /make check failed/)
+})
+
+test('pi: a factory run without a valid result.json is sent the result gate on settle, twice at most', async () => {
+  await factoryRun('pi-run', async (cwd) => {
+    const { handlers, sent, api } = fakePi()
+    guardExtension(api, deps())
+    for (let i = 0; i < 3; i++) await handlers.agent_settled({ aborted: false }, { cwd })
+    assert.equal(sent.length, 2)
+    assert.match(sent[1], /^Factory result gate \(block 2 of 2\)/)
+  })
 })
 
 test('usage: opencode and pi report each assistant message once, as their own service', async () => {
