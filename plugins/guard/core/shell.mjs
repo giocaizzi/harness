@@ -12,7 +12,7 @@ const MAX_DEPTH = 3
 const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'mksh', 'ash', 'fish', 'busybox'])
 const POWERSHELLS = new Set(['pwsh', 'powershell', 'pwsh.exe', 'powershell.exe'])
 // Words that run the next word as the command: skipped to find what actually runs.
-const WRAPPERS = new Set(['sudo', 'env', 'command', 'exec', 'nohup', 'time', 'nice', 'timeout', 'xargs', 'doas', 'caffeinate'])
+export const WRAPPERS = new Set(['sudo', 'env', 'command', 'exec', 'nohup', 'time', 'nice', 'timeout', 'xargs', 'doas', 'caffeinate'])
 // Options of the wrappers above that take a value.
 const WRAPPER_VALUE = new Set(['-u', '-g', '-C', '-h', '-p', '-n', '-I', '-L', '-P', '-d', '-E', '-s', '-a', '-S', '--user', '--group', '-k', '-i', '-w', '-t'])
 // ssh options that take a value (OpenSSH): everything else is a flag.

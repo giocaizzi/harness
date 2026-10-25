@@ -3,7 +3,7 @@
 // apply the decision. `state.reminded` (a Set) is mutated: each rule fires once
 // per session ("remind once, then let it through").
 
-import { analyze, commandWords, scan, units } from './shell.mjs';
+import { analyze, commandWords, scan, units, WRAPPERS } from './shell.mjs';
 
 const bare = (skill) => skill.split(':').pop();
 
@@ -861,6 +861,94 @@ function unreadableBody(args) {
   return !(/\/comments(?:\/\d+)?$/.test(path) || (path && !/(?:^|\/)(?:labels|issues)(?:\/|$)/.test(path)));
 }
 
+// Whether one glob alternative matches `target` (lowercase), ignoring case as macOS and Windows do. Linear: the pattern is
+// read once into tokens, runs of `*` collapse, and a table over the short target replaces regex backtracking (a word of
+// a hundred stars hung the hook). A POSIX class (`[[:alpha:]]`) is not parsed: it counts as a match.
+function globMatches(pattern, target) {
+  const tokens = [];
+  for (let i = 0; i < pattern.length; i++) {
+    const c = pattern[i];
+    if (c === '*') {
+      if (tokens.at(-1) !== '*') tokens.push('*');
+    } else if (c === '?') tokens.push((ch) => true);
+    else if (c === '[' && pattern.indexOf(']', i + 2) > 0) {
+      const end = pattern.indexOf(']', i + 2);
+      let body = pattern.slice(i + 1, end);
+      if (body.includes('[:') || body.includes('[=') || body.includes('[.')) return true;
+      const negate = /^[!^]/.test(body);
+      if (negate) body = body.slice(1);
+      const has = (ch) => {
+        for (let k = 0; k < body.length; k++) {
+          if (body[k + 1] === '-' && k + 2 < body.length) {
+            if (ch >= body[k] && ch <= body[k + 2]) return true;
+            k += 2;
+          } else if (body[k] === ch) return true;
+        }
+        return false;
+      };
+      // Either case may name the file: a class matches when it takes either one, a negated class when it lacks either.
+      tokens.push((ch) => (negate ? !(has(ch) && has(ch.toUpperCase())) : has(ch) || has(ch.toUpperCase())));
+      i = end;
+    } else {
+      const lower = c.toLowerCase();
+      tokens.push((ch) => ch === lower);
+    }
+  }
+  let dp = Array.from({ length: target.length + 1 }, (_, j) => j === 0);
+  for (const t of tokens) {
+    const next = new Array(target.length + 1).fill(false);
+    if (t === '*') {
+      let any = false;
+      for (let j = 0; j <= target.length; j++) next[j] = any = any || dp[j];
+    } else for (let j = 0; j < target.length; j++) next[j + 1] = dp[j] && t(target[j]);
+    dp = next;
+  }
+  return dp[target.length];
+}
+
+// Whether a glob or brace word (basename) could name `gh` or `gh.exe`. One level of `{a,b}` is expanded, at most 64
+// alternatives; `{a..b}`, a second brace group or a word over 256 characters counts as a match.
+function globMatchesGh(word) {
+  const name = word.split('/').pop();
+  if (name.length > 256) return true;
+  const brace = /\{([^{}]*)\}/.exec(name);
+  let alts = [name];
+  if (brace) {
+    const parts = brace[1].split(',');
+    if (brace[1].includes('..') || /[{}]/.test(name.slice(brace.index + brace[0].length)) || parts.length > 64) return true;
+    alts = parts.map((p) => name.slice(0, brace.index) + p + name.slice(brace.index + brace[0].length));
+  }
+  return alts.some((alt) => globMatches(alt, 'gh') || globMatches(alt, 'gh.exe'));
+}
+
+// Whether one word may name `gh` without spelling it: a name that decodes to `gh` (or `gh.exe`, trailing dots allowed,
+// which Windows drops) only with case folded, an ANSI-C string read or a trailing dot, or a glob or brace list that
+// could match it.
+function hidesGh(w) {
+  const spelled = w.raw.replace(/['"\\]/g, '');
+  if (/^gh(?:\.exe)?\.*$/i.test(w.val.split('/').pop()) && !/(?:^|\/)gh(?:\.exe)?$/.test(spelled)) return true;
+  return !/[$`]/.test(w.raw) && dynamicText(w.raw) && globMatchesGh(w.val);
+}
+
+// A command, at any depth, that the shell may resolve to `gh` though its text does not spell `gh` (hidesGh). The text
+// checks above never see such a call. Every word up to the command is read, past reserved words (`then`, `{`, `!`,
+// `coproc`), and a unit that starts with a known wrapper is read whole, since the reader cannot tell a wrapper's option
+// values from the command (`sudo -E -u x …`, `timeout -s KILL 5 nice …`). A name the shell builds from a variable
+// (`$GH`) stays out of sight, and so does a command behind a wrapper the reader does not know (`stdbuf`, `watch`).
+export function ghHidden(command) {
+  const plain = (w) => !w.val.startsWith('-') && !/^[A-Za-z_]\w*=/.test(w.val);
+  for (const { cmd } of units(analyze(command))) {
+    const words = dropReserved(cmd.words);
+    const head = words.find(plain);
+    let at = words.length - commandWords(words).length;
+    // A word the reader took for the command that is an option or a duration (`time -p X`, `timeout -s KILL 5 X`): read on.
+    while (at < words.length - 1 && (words[at].val.startsWith('-') || /^\d+(?:\.\d+)?[smhd]?$/.test(words[at].val))) at++;
+    const read = head && WRAPPERS.has(head.val.replace(/^.*[\\/]/, '').toLowerCase()) ? words : words.slice(0, at + 1);
+    if (read.some((w) => plain(w) && hidesGh(w))) return true;
+  }
+  return false;
+}
+
 // A plain `gh` command whose real command the guard cannot see: an alias or extension (`gh <name>` that is not one of gh's
 // own commands), or one that makes, swaps or runs one (`gh alias set|import`, `gh extension install|upgrade|remove|exec`). Other lines are left to
 // touchesApprovalLabel, which denies a non-plain `gh` with an unknown subcommand already.
@@ -934,12 +1022,14 @@ function unquotedExpansion(raw) {
   return false;
 }
 // Words that open a compound command or negate one: the reader keeps them in front of the command they hold
-// (`{ gh …`, `then gh …`, `! gh …`, `function f { gh …`).
-const RESERVED = new Set(['{', '(', '!', 'do', 'then', 'else', 'elif', 'if', 'while', 'until', 'time']);
+// (`{ gh …`, `then gh …`, `! gh …`, `coproc gh …`, `function f { gh …`).
+const RESERVED = new Set(['{', '(', '!', 'do', 'then', 'else', 'elif', 'if', 'while', 'until', 'time', 'coproc']);
 function dropReserved(words) {
   let i = 0;
   while (i < words.length) {
-    if (RESERVED.has(words[i].val) && !dynamicText(words[i].raw)) i++;
+    // A named coprocess (`coproc NAME { … }`): the name is not the command.
+    if (words[i].val === 'coproc' && /^[{(]$/.test(words[i + 2]?.val ?? '')) i += 2;
+    else if (RESERVED.has(words[i].val) && !dynamicText(words[i].raw)) i++;
     else if (words[i].val === 'function') i += 2;
     else break;
   }
@@ -1000,6 +1090,7 @@ function changesLabels(command) {
 export function evaluateCommand({ command, loadedSkills = new Set(), state, host = {}, env = {}, worktrees = {}, branches = {}, regenerable = {}, refs = {}, tags = {}, python = null, readTool = false, factory = null, rules }) {
   // While a factory run is active the agent never touches the approval label: with an owner token it would count as the owner's.
   if (factory && touchesApprovalLabel(command, factory.approval)) return { action: 'deny', rule: 'factory-approval', reason: `${rules.factory.why} The \`${factory.approval}\` label is the owner's to apply or remove; ask on the ticket instead.` }
+  if (factory && ghHidden(command)) return { action: 'deny', rule: 'factory-approval', reason: `${rules.factory.why} This command may run \`gh\` under a spelling the guard cannot read (another letter case, an escape, a glob or brace list); spell \`gh\` literally.` }
   if (factory && ghUnseen(command, rules)) return { action: 'deny', rule: 'factory-approval', reason: `${rules.factory.ghUnseenWhy} Use gh's own subcommand (\`gh issue|pr|api …\`) instead of an alias or extension.` }
   // Nor the takeover label: an approver sets it to hand the ticket to an attended run, which removes it once it claimed.
   if (factory?.takeover && touchesApprovalLabel(command, factory.takeover)) return { action: 'deny', rule: 'factory-takeover', reason: `${rules.factory.takeoverWhy} The \`${factory.takeover}\` label is the owner's to apply; ask on the ticket instead.` }
