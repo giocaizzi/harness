@@ -1,6 +1,6 @@
 // Claude Code mod (hooks.json `modules`; Copilot ignores the key): the usage throttle and the ask timeout.
 // The command guards run as command hooks for both harnesses; this holds only what needs the mods API.
-import { cmdClass, evaluateSpawn } from '../core/engine.mjs'
+import { cmdClass, evaluateSpawn, throttleMode } from '../core/engine.mjs'
 import { logRequest, otelOff, repoSlug } from '../core/otel.mjs'
 import { rules } from '../core/rules.mjs'
 
@@ -59,7 +59,9 @@ async function emitRecord($, event, attrs) {
   }
 }
 
-const emitThrottle = ($, w) => emitRecord($, 'guard.throttle', { action: 'deny', rule: 'usage-throttle', cmd_class: 'spawn', window: w?.kind, percent: w?.percentUsed })
+// `action` is what happened to the spawn (warn: it ran; allow or deny), `mode` the GUARD_THROTTLE that decided it,
+// `result` the dialog's answer in ask mode.
+const emitThrottle = ($, w, attrs) => emitRecord($, 'guard.throttle', { rule: 'usage-throttle', cmd_class: 'spawn', window: w?.kind, percent: w?.percentUsed, ...attrs })
 // The class of an asked call: its shell command's, else `tool`.
 const askClass = (e) => (typeof e.input?.command === 'string' ? cmdClass(null, e.input.command) : 'tool')
 
@@ -102,6 +104,15 @@ async function unattendedEnv($) {
   }
 }
 
+// GUARD_THROTTLE in the environment Claude Code was launched with; unreadable env: the default mode.
+async function throttleModeEnv($) {
+  try {
+    return throttleMode(await $.env.get('GUARD_THROTTLE'), rules)
+  } catch {
+    return throttleMode(undefined, rules)
+  }
+}
+
 // What the agent is told when nobody answered: the user may be busy elsewhere, so the call is parked, not refused.
 // It names the call, not the tool: "Bash was not run" read as "Bash is unavailable", and an agent gave up the task.
 const noAnswer = (input, why) => {
@@ -109,18 +120,25 @@ const noAnswer = (input, why) => {
   return `No answer: ${why}, so this call${call ? ` (${call})` : ''} was not run; other calls still run. This is not a refusal. Carry on with the rest of the task without it, or park it: say in your report that it is waiting for the user's approval.`
 }
 
+// Asks Allow/Deny in the plugin's own dialog: allow, deny, timeout (nobody answered within `ms`; 0 waits for an
+// answer) or unavailable.
+async function askAllow($, question, ms) {
+  let expire
+  const timedOut = new Promise((resolve) => (expire = resolve))
+  const timer = ms ? $.clock.after(ms, () => expire('timeout')) : null
+  // A dialog that cannot show (headless, a host without one) or is dismissed rejects: nobody answered.
+  const asked = $.ui.ask(question, ['Allow', 'Deny']).catch(() => 'unavailable')
+  const answer = await Promise.race([asked, timedOut])
+  timer?.cancel()
+  // Text typed under "Other" counts as a deny, and never reaches telemetry.
+  return answer === 'Allow' ? 'allow' : answer === 'timeout' || answer === 'unavailable' ? answer : 'deny'
+}
+
 // Puts the ask in the plugin's own dialog and denies when nobody answers within `ms`. Every outcome is reported as
 // guard.ask_result (allow, deny, timeout, unavailable) with how long it waited.
 async function askWithTimeout($, e, reason, ms) {
   const started = await $.clock.now().catch(() => NaN)
-  let expire
-  const timedOut = new Promise((resolve) => (expire = resolve))
-  const timer = $.clock.after(ms, () => expire('timeout'))
-  // A dialog that cannot show (headless, a host without one) or is dismissed rejects: nobody answered.
-  const asked = $.ui.ask(`Allow ${e.tool}? ${summary(e.input)}\n${reason ?? ''}\nParked after ${ms / 1000} s without an answer.`, ['Allow', 'Deny']).catch(() => 'unavailable')
-  const answer = await Promise.race([asked, timedOut])
-  timer.cancel()
-  const result = answer === 'Allow' ? 'allow' : answer === 'Deny' ? 'deny' : answer
+  const result = await askAllow($, `Allow ${e.tool}? ${summary(e.input)}\n${reason ?? ''}\nParked after ${ms / 1000} s without an answer.`, ms)
   const waited = (await $.clock.now().catch(() => NaN)) - started
   // Not awaited: a slow collector never delays the decision.
   void emitRecord($, 'guard.ask_result', { result, wait_ms: Number.isFinite(waited) ? waited : undefined, tool: e.tool, cmd_class: askClass(e), tool_use_id: e.tool_use_id })
@@ -153,13 +171,28 @@ export function register(on) {
     return ms ? askWithTimeout($, e, r.reason, ms) : r
   }).catch(($, e, next) => next(e))
 
-  // Usage throttle: no new subagents at the throttle level.
+  // Usage throttle: at the throttle level a spawn runs with a toast (warn, the default), asks, or is refused, as
+  // GUARD_THROTTLE says.
   on('agent.spawn', async ($, e, next) => {
     const { rateLimits } = await $.session.usage()
     const w = worstWindow(rateLimits)
-    const d = evaluateSpawn({ usagePercent: w?.percentUsed, resetsAt: w?.resetsAt, rules })
-    if (d.action !== 'deny') return next(e)
-    await emitThrottle($, w)
+    const mode = await throttleModeEnv($)
+    const d = evaluateSpawn({ usagePercent: w?.percentUsed, resetsAt: w?.resetsAt, rules, mode })
+    if (d.action === 'allow') return next(e)
+    if (d.action === 'warn') {
+      $.ui.toast(`${d.reason} Subagent started anyway (GUARD_THROTTLE=warn).`)
+      await emitThrottle($, w, { action: 'warn', mode })
+      return next(e)
+    }
+    if (d.action === 'ask') {
+      const ms = await askTimeoutMs($)
+      const result = (await unattendedEnv($)) ? 'unavailable' : await askAllow($, `Start subagent "${e.description}"? ${d.reason}${ms ? `\nParked after ${ms / 1000} s without an answer.` : ''}`, ms)
+      await emitThrottle($, w, { action: result === 'allow' ? 'allow' : 'deny', mode, result })
+      if (result === 'allow') return next(e)
+      if (result === 'deny') return { deny: `${d.reason} The user declined this subagent. Do the work in this session instead, or wait for the reset.` }
+      return { deny: `${d.reason} Nobody answered whether to start this subagent, so it was not started. This is not a refusal: do the work in this session, or park it and say in your report that it is waiting for the user.` }
+    }
+    await emitThrottle($, w, { action: 'deny', mode })
     return { deny: d.reason }
   }).catch(($, e, next) => next(e)) // usage unreadable: fail open
 }

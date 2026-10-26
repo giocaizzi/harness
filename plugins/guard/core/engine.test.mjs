@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import { spawnSync } from 'node:child_process';
 import assert from 'node:assert/strict';
-import { touchesApprovalLabel, protectedWrite, ghHidden, ghUnseen, badTitle, branchFacts, cmdClass, branchTargets, codexRules, evaluateCommand, evaluateEdit, evaluateRouting, evaluateSpawn, nativeAsk, opencodeAsks, pureRead, refFacts, regenerableName, regenFacts, removalTargets, shellEdit, tagFacts, unattendedSet, usageLevel, worktreeFacts } from './engine.mjs';
+import { touchesApprovalLabel, protectedWrite, ghHidden, ghUnseen, badTitle, branchFacts, cmdClass, branchTargets, codexRules, evaluateCommand, evaluateEdit, evaluateRouting, evaluateSpawn, nativeAsk, opencodeAsks, pureRead, refFacts, regenerableName, regenFacts, removalTargets, shellEdit, tagFacts, throttleMode, unattendedSet, usageLevel, worktreeFacts } from './engine.mjs';
 import { rules } from './rules.mjs';
 
 const fresh = () => ({ reminded: new Set() });
@@ -156,11 +156,22 @@ test('usage levels and spawn throttling', () => {
   assert.equal(usageLevel(95, rules), 'throttle');
   assert.equal(usageLevel(undefined, rules), 'unknown');
   assert.equal(evaluateSpawn({ usagePercent: 75, rules }).action, 'allow');
-  const d = evaluateSpawn({ usagePercent: 95, resetsAt: '2030-01-01T00:00:00Z', rules });
+  const d = evaluateSpawn({ usagePercent: 95, resetsAt: '2030-01-01T00:00:00Z', mode: 'deny', rules });
   assert.equal(d.action, 'deny');
   assert.match(d.reason, /95%/);
   assert.match(d.reason, /resets/);
-  assert.doesNotMatch(evaluateSpawn({ usagePercent: 95, rules }).reason, /resets/);
+  assert.doesNotMatch(evaluateSpawn({ usagePercent: 95, mode: 'deny', rules }).reason, /resets/);
+});
+
+test('the throttle mode decides the spawn at the throttle level, warn by default', () => {
+  assert.equal(throttleMode(undefined, rules), 'warn');
+  assert.equal(throttleMode(' ASK ', rules), 'ask');
+  assert.equal(throttleMode('bogus', rules), 'warn');
+  assert.equal(evaluateSpawn({ usagePercent: 95, rules }).action, 'warn');
+  for (const mode of ['warn', 'ask', 'deny']) assert.equal(evaluateSpawn({ usagePercent: 95, mode, rules }).action, mode);
+  assert.equal(evaluateSpawn({ usagePercent: 95, mode: 'off', rules }).action, 'allow');
+  assert.equal(evaluateSpawn({ usagePercent: 75, mode: 'deny', rules }).action, 'allow');
+  assert.match(evaluateSpawn({ usagePercent: 95, rules }).reason, /95%/);
 });
 
 test('Windows hosts are judged on cpu percent instead of load average', () => {

@@ -380,6 +380,7 @@ export const rules = {
   },
   "usage": {
     "warnPercent": 70,
-    "throttlePercent": 90
+    "throttlePercent": 90,
+    "throttleMode": "warn"
   }
 }
