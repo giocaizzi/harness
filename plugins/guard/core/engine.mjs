@@ -1470,18 +1470,23 @@ export function usageLevel(percent, rules) {
   return 'ok';
 }
 
-// Spawning a subagent: deny once usage is at the throttle level, never before.
-export function evaluateSpawn({ usagePercent, resetsAt, rules }) {
+// What the throttle does at its level, from GUARD_THROTTLE: `warn` (the spawn runs), `ask`, `deny` or `off`. Any
+// other value, unset included, is the default in the rules.
+export function throttleMode(value, rules) {
+  const v = String(value ?? '').trim().toLowerCase();
+  return ['warn', 'ask', 'deny', 'off'].includes(v) ? v : rules.usage.throttleMode;
+}
+
+// Spawning a subagent: once usage is at the throttle level, the mode's action (warn, ask or deny), never before.
+export function evaluateSpawn({ usagePercent, resetsAt, rules, mode = rules.usage.throttleMode }) {
   const level = usageLevel(usagePercent, rules);
-  if (level !== 'throttle') return { action: 'allow', level };
+  if (level !== 'throttle' || mode === 'off') return { action: 'allow', level };
   // resetsAt: ISO string (Claude mods API) or epoch seconds (status line)
   const ms = typeof resetsAt === 'number' ? resetsAt * 1000 : Date.parse(resetsAt);
   const when = Number.isFinite(ms) ? ` (resets ${new Date(ms).toLocaleString()})` : '';
-  return {
-    action: 'deny',
-    level,
-    reason: `Plan usage is at ${Math.round(usagePercent)}%${when}. Do the work in this session instead of spawning subagents, or wait for the reset.`,
-  };
+  const usage = `Plan usage is at ${Math.round(usagePercent)}%${when}.`;
+  if (mode !== 'deny') return { action: mode, level, reason: usage };
+  return { action: 'deny', level, reason: `${usage} Do the work in this session instead of spawning subagents, or wait for the reset.` };
 }
 
 // Whether the host rule judges this command: a heavy command, not already run through the heavy wrapper (which waits

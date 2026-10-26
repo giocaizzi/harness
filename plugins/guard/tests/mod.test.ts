@@ -8,16 +8,92 @@ const usage = (percent: number) => ({
   },
 })
 
-test('subagents are refused at the throttle level', async ($, on) => {
+// GUARD_THROTTLE as `mode`, every other variable unset.
+const throttle = (on: Parameters<Parameters<typeof test>[1]>[1], mode?: string, extra: Record<string, string> = {}) =>
+  on('env.get', (_$, e) => ({ value: e.name === 'GUARD_THROTTLE' ? mode : extra[e.name] }))
+
+test('at the throttle level a spawn runs with a toast by default (warn)', async ($, on) => {
   on('session.usage', () => usage(95))
   on('agent.spawn', () => ({ model: 'haiku', agentId: 'a1' }))
+  throttle(on, undefined)
+  const toasts: string[] = []
+  on('ui.toast', (_$, e) => (toasts.push(e.text), { value: undefined }))
+  const r = await $.agent.spawn({ prompt: 'x' })
+  expect(r.deny).toBeUndefined()
+  expect(toasts.length).toBe(1)
+  expect(toasts[0]).toContain('95%')
+})
+
+test('an unknown GUARD_THROTTLE value falls back to warn', async ($, on) => {
+  on('session.usage', () => usage(95))
+  on('agent.spawn', () => ({ model: 'haiku', agentId: 'a1' }))
+  throttle(on, 'bogus')
+  expect((await $.agent.spawn({ prompt: 'x' })).deny).toBeUndefined()
+})
+
+test('GUARD_THROTTLE=deny refuses subagents at the throttle level', async ($, on) => {
+  on('session.usage', () => usage(95))
+  on('agent.spawn', () => ({ model: 'haiku', agentId: 'a1' }))
+  throttle(on, 'deny')
   const r = await $.agent.spawn({ prompt: 'x' })
   expect(r.deny).toContain('95%')
+})
+
+test('GUARD_THROTTLE=off lets spawns run without a toast', async ($, on) => {
+  on('session.usage', () => usage(95))
+  on('agent.spawn', () => ({ model: 'haiku', agentId: 'a1' }))
+  throttle(on, 'off')
+  on('ui.toast', () => {
+    throw new Error('must not toast')
+  })
+  expect((await $.agent.spawn({ prompt: 'x' })).deny).toBeUndefined()
+})
+
+test('GUARD_THROTTLE=ask starts the subagent the person allows', async ($, on) => {
+  mock.clock(on)
+  on('session.usage', () => usage(95))
+  on('agent.spawn', () => ({ model: 'haiku', agentId: 'a1' }))
+  throttle(on, 'ask')
+  answer(on, 'Allow')
+  expect((await $.agent.spawn({ prompt: 'x', description: 'review' })).deny).toBeUndefined()
+})
+
+test('GUARD_THROTTLE=ask refuses the subagent the person denies', async ($, on) => {
+  mock.clock(on)
+  on('session.usage', () => usage(95))
+  on('agent.spawn', () => ({ model: 'haiku', agentId: 'a1' }))
+  throttle(on, 'ask')
+  answer(on, 'Deny')
+  expect((await $.agent.spawn({ prompt: 'x', description: 'review' })).deny).toContain('The user declined')
+})
+
+test('GUARD_THROTTLE=ask parks the spawn nobody answers, never called a user deny', async ($, on) => {
+  const clock = mock.clock(on)
+  on('session.usage', () => usage(95))
+  on('agent.spawn', () => ({ model: 'haiku', agentId: 'a1' }))
+  throttle(on, 'ask')
+  on('tool.call', { tool: 'AskUserQuestion' }, () => new Promise(() => {}))
+  const pending = $.agent.spawn({ prompt: 'x', description: 'review' })
+  await clock.advance(60_000)
+  const r = await pending
+  expect(r.deny).toContain('not a refusal')
+  expect(r.deny).not.toContain('declined')
+})
+
+test('GUARD_THROTTLE=ask unattended parks the spawn without showing the dialog', async ($, on) => {
+  on('session.usage', () => usage(95))
+  on('agent.spawn', () => ({ model: 'haiku', agentId: 'a1' }))
+  throttle(on, 'ask', { GUARD_UNATTENDED: '1' })
+  on('tool.call', { tool: 'AskUserQuestion' }, () => {
+    throw new Error('must not ask')
+  })
+  expect((await $.agent.spawn({ prompt: 'x', description: 'review' })).deny).toContain('not a refusal')
 })
 
 test('subagents are allowed below the throttle level', async ($, on) => {
   on('session.usage', () => usage(40))
   on('agent.spawn', () => ({ model: 'haiku', agentId: 'a1' }))
+  throttle(on, 'deny')
   const r = await $.agent.spawn({ prompt: 'x' })
   expect(r.deny).toBeUndefined()
 })
@@ -25,7 +101,7 @@ test('subagents are allowed below the throttle level', async ($, on) => {
 test('a throttle denial posts a record to the collector when the session exports to one', async ($, on) => {
   on('session.usage', () => usage(95))
   on('agent.spawn', () => ({ model: 'haiku', agentId: 'a1' }))
-  on('env.get', (_$, e) => ({ value: e.name === 'OTEL_EXPORTER_OTLP_ENDPOINT' ? 'http://collector' : undefined }))
+  on('env.get', (_$, e) => ({ value: ({ OTEL_EXPORTER_OTLP_ENDPOINT: 'http://collector', GUARD_THROTTLE: 'deny' } as Record<string, string>)[e.name] }))
   const posted: string[] = []
   on('http.fetch', (_$, e) => {
     posted.push(e.url)
@@ -39,7 +115,7 @@ test('a throttle denial posts a record to the collector when the session exports
 test('without an endpoint a throttle denial posts nothing', async ($, on) => {
   on('session.usage', () => usage(95))
   on('agent.spawn', () => ({ model: 'haiku', agentId: 'a1' }))
-  on('env.get', () => ({ value: undefined }))
+  throttle(on, 'deny')
   on('http.fetch', () => {
     throw new Error('must not post')
   })
@@ -289,4 +365,16 @@ test("auto mode's own asks stay with its classifier", async ($, on) => {
   on('classic.UserPromptSubmit', () => ({}))
   await $.classic.UserPromptSubmit({ prompt: 'x', permission_mode: 'auto' } as never)
   expect((await $.tool.check(call)).decision).toBe('ask')
+})
+
+test('a throttle record says what happened to the spawn and which mode decided it', async ($, on) => {
+  on('session.usage', () => usage(95))
+  on('agent.spawn', () => ({ model: 'haiku', agentId: 'a1' }))
+  const env: Record<string, string> = { OTEL_EXPORTER_OTLP_ENDPOINT: 'http://collector' }
+  const posted = collector(on, env)
+  await $.agent.spawn({ prompt: 'x' })
+  env.GUARD_THROTTLE = 'deny'
+  await $.agent.spawn({ prompt: 'x' })
+  await settle()
+  expect(posted.map((p) => [p.action, p.mode])).toEqual([['warn', 'warn'], ['deny', 'deny']])
 })

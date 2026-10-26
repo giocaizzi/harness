@@ -116,7 +116,7 @@ You never call guard. You see it when it denies or asks:
 | A permission prompt naming `secrets-handling` | A command that reads or prints a secret: `bw`/`bws` get/list/run/unlock/login/export, `security find-generic-password -w`, `chezmoi secret keyring get`, `op read`, `pass show`, `gcloud secrets versions access`, `az keyvault secret show`, `gh auth token`, `gcloud auth print-access-token`, a bare `env`/`printenv` dump, `printenv`/`env \| grep TOKEN`, `echo $GITHUB_TOKEN`, any reader of `.env`, `~/.aws/credentials` or a private ssh key. A token injected with `VAR="$(…)" ./script` does not ask. | Allow when the task needs it; the value must not reach the chat. |
 | `pip`/`poetry` denied: "This repo uses uv" | The repo has `uv.lock` (or a plain `pyproject.toml`). In a poetry or pip repo it runs, with a one-time note. | Nothing: the agent switches to `uv`. |
 | A heavy build or test run denied once | Load over 30, CPU over 90 % or under 20 GB free disk. | Wait, or let the agent wrap it in `heavy.sh`. |
-| Subagent spawn refused (Claude Code) | A plan window is at 90 %. | Wait for the reset. |
+| A toast "Plan usage is at 9x %" on a subagent spawn (Claude Code) | A plan window is at 90 %; the subagent still starts (`GUARD_THROTTLE=warn`, the default). With `ask` you get an Allow/Deny prompt; with `deny` the spawn is refused. | Nothing, or pick another `GUARD_THROTTLE` mode. |
 | The agent keeps working after it said "done" | `make check` failed on stop (only when the repo changed since the last green run), or in a factory run its `result.json` is missing or invalid. | Nothing: it fixes the failure once (the result file within two tries), then may stop. |
 | Shellcheck/PSScriptAnalyzer findings after an edit | An edited `.sh`/`.bash`/`.ps1` has lint findings. | Nothing: advice for the agent. |
 
@@ -131,6 +131,7 @@ Settings are env vars, set in the shell that starts the harness (or the `env` bl
 | `GUARD_RESULT_GATE=off` | on | Turns off the factory result gate: in a factory run, a stop is held at most twice while the run's `result.json` is missing or invalid. A verifier or other side session started with the run's variables sets it. |
 | `GUARD_STOP_TIMEOUT_MS` | `300000` | Time limit for that check; a timeout defers it to the next stop, never blocks. |
 | `GUARD_ASK_TIMEOUT_MS` | `60000` | Claude Code: an unanswered permission prompt is parked after this (the agent is told nobody answered and to carry on, not that you denied it); `0` turns it off. |
+| `GUARD_THROTTLE` | `warn` | Claude Code: what a subagent spawn does once a plan window is at 90 %. `warn` starts it with a toast, `ask` puts it in an Allow/Deny prompt (parked like any ask: after `GUARD_ASK_TIMEOUT_MS`, at once under `GUARD_UNATTENDED`), `deny` refuses it, `off` turns the throttle off. Any other value is `warn`. |
 | `GUARD_OTEL=off` | on | Sends no guard telemetry, whatever the OTel endpoint (`make test` sets it). |
 | `GUARD_OTEL_EXPORTER_OTLP_ENDPOINT`, `GUARD_OTEL_EXPORTER_OTLP_HEADERS` | unset | Send each deny and ask to Grafana as logs ([guard.md](guard.md#grafana)). |
 
