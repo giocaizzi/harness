@@ -43,7 +43,11 @@ const piCommand = () => (process.argv[1] && existsSync(process.argv[1]) ? [proce
 // The child's environment: the guard's stop check and factory result gate are off there, since the parent's own stop
 // runs them once the subagent's work is part of its turn; and the guard keeps the child's reminders as its own agent's within the
 // parent session, so the skills either loads count for both.
-export const childEnv = (env = process.env, { session, agent } = {}) => ({ ...env, GUARD_STOP_CHECK: 'off', GUARD_RESULT_GATE: 'off', ...(session ? { GUARD_PARENT_SESSION: session, GUARD_AGENT_ID: agent } : {}) })
+// `PI_SUBAGENT_DEPTH` counts the nesting: an agent without a `tools` list (driver, escalate) gets this tool again in its
+// child, so a driver can fan out to workers, and the tool refuses past `MAX_DEPTH` (Claude Code's default limit).
+export const MAX_DEPTH = 3
+export const depthOf = (env = process.env) => Number.parseInt(env.PI_SUBAGENT_DEPTH ?? '0', 10) || 0
+export const childEnv = (env = process.env, { session, agent } = {}) => ({ ...env, GUARD_STOP_CHECK: 'off', GUARD_RESULT_GATE: 'off', PI_SUBAGENT_DEPTH: String(depthOf(env) + 1), ...(session ? { GUARD_PARENT_SESSION: session, GUARD_AGENT_ID: agent } : {}) })
 
 function run(argv, cwd, signal, ids) {
   return new Promise((resolve) => {
@@ -73,6 +77,7 @@ export default function subagentExtension(pi, deps = {}) {
     async execute(id, params, signal, onUpdate, ctx) {
       const agent = agents.find((a) => a.name === params.agent)
       if (!agent) throw new Error(`Unknown agent ${params.agent}; one of ${agents.map((a) => a.name).join(', ')}`)
+      if (depthOf() >= MAX_DEPTH) throw new Error(`Subagents nest at most ${MAX_DEPTH} deep; return the split to your caller instead of spawning ${agent.name}`)
       const dir = mkdtempSync(join(tmpdir(), 'pi-subagent-'))
       try {
         const file = join(dir, `${agent.name}.md`)
