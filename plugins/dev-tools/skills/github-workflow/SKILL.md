@@ -11,7 +11,7 @@ This skill is the GitHub mechanics. The repo checklist (aggregate `check`, title
 
 ## Landing a change
 
-1. **One PR per batch, by default.** Open issues or tasks that can land cleanly in one review go in one PR, with no size cap: every extra PR costs a CI run, a serial merge or queue slot, and another re-merge and review round on a moving base, so speed beats small diffs. The body carries one `Closes #n` or `Refs: #n` line per issue; the commits are grouped per issue, and tests and docs ship in the same PR. Split only when parts can land independently in parallel, touch unrelated areas with different reviewers or risk tiers, or conflict; stack the parts when they are layers (schema → API → UI). A workflow skill that scopes a PR to one approved ticket keeps its own rule.
+1. **One PR per batch, by default.** Related issues or tasks in your scope that can land cleanly in one review go in one PR, with no size cap: every extra PR costs a CI run, a serial merge or queue slot, and another re-merge and review round on a moving base, so speed beats small diffs. The body carries one `Closes #n` or `Refs: #n` line per issue; the commits are grouped per issue, and tests and docs ship in the same PR; with release-please, list each change in the body (`release-please`). Split only when parts can land independently in parallel, touch unrelated areas with different reviewers or risk tiers, or conflict. Work with more than one reviewable layer (schema → API → UI) is stacked, a layer per PR. A workflow skill that scopes a PR to one approved ticket keeps its own rule.
 2. **Auto-merge, not manual merge.** Open the PR, then `gh pr merge <n> --auto --squash --delete-branch`. It merges when required checks pass. Do not poll and merge by hand, except where auto-merge is unavailable (private repos on the Free plan): then `land` merges directly once every check passed, never with `--admin`.
 3. **Merge queue when the repo has one.** With a queue, the same command enqueues the PR; do not pass a merge method the queue overrides.
 4. **Never bypass.** No admin override, no `--admin`, no disabling a rule to get a PR through. A failing required check is fixed, or the check is corrected in its own PR.
@@ -94,6 +94,6 @@ Roll out in the order `repo-standard` gives, labels with the settings, and re-ru
 
 ## Before handoff
 
-- PR carries every issue that could land with it (Landing a change), is titled as a Conventional Commit (see `conventional-commits`), and auto-merge is armed.
+- PR carries the whole batch the task named (Landing a change), is titled as a Conventional Commit (see `conventional-commits`), and auto-merge is armed.
 - Required checks are green or running; nothing was bypassed.
 - Stacked work was submitted as a stack, not as independent PRs targeting each other by hand.
