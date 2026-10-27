@@ -13,5 +13,9 @@
   "askResults": "sum by (harness, result) (count_over_time({service_name=\"guard\"} | event_name=\"guard.ask_result\" [$r]))",
   "approvals": "sum by (tool_name) (count_over_time({service_name=\"claude-code\"} | event_name=\"tool_result\" | decision_source=~\"user_.*\" [$r]))",
   "failing": "topk(15, sum by (bash_command) (count_over_time({service_name=\"claude-code\"} | event_name=\"tool_result\" | success=\"false\" | tool_name=\"Bash\" | line_format \"{{.tool_parameters}}\" | json bash_command [$r])))",
-  "rateLimits": "sum(count_over_time({service_name=\"claude-code\"} | event_name=\"api_error\" | status_code=\"429\" [$r]))"
+  "rateLimits": "sum(count_over_time({service_name=\"claude-code\"} | event_name=\"api_error\" | status_code=\"429\" [$r]))",
+  "agentIds": "sum by (agent_id, agent_type, model) (count_over_time({service_name=\"claude-code\", deployment_environment_name!=\"test\"} | event_name=\"subagent_completed\" [$r]))",
+  "agentEdits": "sum by (agent_id) (count_over_time({service_name=\"claude-code\", deployment_environment_name!=\"test\"} | event_name=\"tool_result\" | tool_name=~\"Edit|Write|MultiEdit|NotebookEdit\" | agent_id!=\"\" [$r]))",
+  "agentSpawns": "sum by (agent_id, agent) (count_over_time({service_name=\"claude-code\", deployment_environment_name!=\"test\"} | event_name=\"tool_result\" | tool_name=\"Agent\" | agent_id!=\"\" | line_format \"{{.tool_input}}\" | regexp `\"subagent_type\":\"(?P<agent>[^\"]+)\"` [$r]))",
+  "agentCost": "sum by (agent_id, query_source, model, effort) (sum_over_time({service_name=\"claude-code\", deployment_environment_name!=\"test\"} | event_name=\"api_request\" | query_source=~\"agent.*\" | agent_id!=\"\" | unwrap cost_usd | __error__=\"\" [$r]))"
 }

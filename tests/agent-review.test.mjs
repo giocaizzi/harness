@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { endpoint, parsePairs, collect, knownSkills, skillUse, report, evalStubs, QUERIES } from '../scripts/agent-review.mjs'
+import { endpoint, parsePairs, collect, knownSkills, skillUse, report, evalStubs, routingShape, QUERIES } from '../scripts/agent-review.mjs'
 
 const empty = () => Object.fromEntries(Object.keys(QUERIES).map((k) => [k, []]))
 const row = (labels, value) => ({ labels, value })
@@ -85,4 +85,42 @@ test('evalStubs targets skills the model never loads itself', () => {
   const stubs = evalStubs(data, ['dev-tools:ship', 'dev-tools:pr-fix'])
   assert.deepEqual(stubs.map((s) => s.dir), ['dev-tools/evals/pr-fix-trigger'])
   assert.match(stubs[0].files['graders/skill-fired.md'], /input_match: '"skill"\\s\*:\\s\*"\(\?:\[\\w-\]\+:\)\?pr-fix"'/)
+})
+
+test('routingShape joins spawns on agent id and reports aggregates only', () => {
+  const data = empty()
+  data.agentIds = [
+    row({ agent_id: 'd1', agent_type: 'dev-tools:driver', model: 'claude-opus-5-5' }, 2), // resumed: counted once
+    row({ agent_id: 'd2', agent_type: 'dev-tools:driver', model: 'claude-opus-5-5' }, 1),
+    row({ agent_id: 'w1', agent_type: 'dev-tools:worker', model: 'claude-sonnet-5-5' }, 1),
+    row({ agent_id: 'w2', agent_type: 'dev-tools:worker', model: 'claude-sonnet-5-5' }, 1),
+    row({ agent_id: 'w3', agent_type: 'dev-tools:worker', model: 'claude-sonnet-5-5' }, 1),
+    row({ agent_id: 'r1', agent_type: 'dev-tools:reviewer', model: 'claude-sonnet-5-5' }, 1),
+    row({ agent_id: 'r2', agent_type: 'dev-tools:reviewer', model: 'claude-opus-5-5' }, 1),
+  ]
+  data.agentSpawns = [row({ agent_id: 'd1', agent: 'dev-tools:worker' }, 2), row({ agent_id: 'w1', agent: 'dev-tools:scout' }, 1)]
+  data.agentEdits = [row({ agent_id: 'd1' }, 1), row({ agent_id: 'w1' }, 4), row({ agent_id: 'w2' }, 5)]
+  data.agentCost = [
+    row({ agent_id: 'd1', query_source: 'agent:custom', model: 'claude-opus-5-5', effort: 'medium' }, 6),
+    row({ agent_id: 'd1', query_source: 'agent_summary', model: 'claude-opus-5-5', effort: 'medium' }, 2),
+    row({ agent_id: 'r2', query_source: 'agent:custom', model: 'claude-opus-5-5', effort: 'high' }, 1),
+  ]
+  data.costBySource = [row({ query_source: 'agent:custom', model: 'claude-opus-5-5' }, 17), row({ query_source: 'agent_summary', model: 'claude-opus-5-5' }, 2), row({ query_source: 'repl_main_thread', model: 'claude-opus-5-5' }, 50)]
+  const s = routingShape(data)
+  assert.equal(s.drivers, 2)
+  assert.equal(s.workerPerDriver, 1.5)
+  assert.equal(s.nestedShare, 2 / 3)
+  assert.equal(s.driverEditShare, 0.1)
+  assert.equal(s.medianDriverEdits, 0.5)
+  assert.equal(s.opusPerDriver, 4)
+  assert.equal(s.reviewerSonnetShare, 0.5)
+  assert.deepEqual(s.high, { 'dev-tools:reviewer': 1 })
+  assert.equal(s.summaryShare, 2 / 19)
+  assert.equal(s.untracked, 10)
+  const md = report(data, [], '7d')
+  assert.match(md, /\| workers per driver \| 1\.50 \|/)
+  assert.match(md, /\| workers spawned by a driver \| 67% \|/)
+  assert.match(md, /effort high or above, by agent .*: dev-tools:reviewer 1\./)
+  assert.match(md, /\$10\.00 of it without an agent id either: agent-team teammates/)
+  assert.ok(!/\b[dwr][12]\b/.test(md), 'no agent ids in the report')
 })
