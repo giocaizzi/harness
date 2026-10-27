@@ -668,7 +668,7 @@ test('through the real hook, a risky command behind a wrapper option asks; the s
     return r.stdout ? JSON.parse(r.stdout).hookSpecificOutput.permissionDecision : 'allow'
   }
   for (const c of ["sudo -E bash -c 'rm -rf /x'", "caffeinate -i bash -c 'rm -rf /x'", "time -p bash -c 'git reset --hard'", "timeout -s KILL 5 bash -c 'rm -rf /x'", "env -S 'rm -rf /x'", "watch 'rm -rf /x'", "stdbuf -oL bash -c 'rm -rf /x'", "taskset 1 bash -c 'rm -rf /x'", 'sudo --frobnicate ls']) assert.equal(run(c), 'ask', c)
-  for (const c of ['sudo -E make test', 'watch -n 2 git status', 'time make']) assert.equal(run(c), 'allow', c)
+  for (const c of ['sudo -E git status', 'watch -n 2 git status', 'time -p git status']) assert.equal(run(c), 'allow', c)
 })
 
 test('through the real hook, time before a reserved word and chrt without a priority hide no command (#282 review)', () => {

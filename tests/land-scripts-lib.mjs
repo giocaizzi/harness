@@ -15,9 +15,12 @@ export const win = process.platform === 'win32'
 export const CONCURRENCY = 4
 
 // The shim. SHIM_SCENARIO is { required: [ruleset names], classic: [protection names], prs: { <n>: [step...] },
-// noAutoMerge? }; each GraphQL query for a PR takes its next step (the last one repeats). A step is 'error' or
-// { state, merge, base, queue, queued, checks: {name: bucket} }; noAutoMerge refuses `gh pr merge --auto`.
-// A step with `queued: 'after-enqueue'` reports true once that PR was enqueued. Calls go to <scenario>.log.
+// noAutoMerge?, expected?: { <n>: count } }; each GraphQL query for a PR takes its next step (the last one repeats).
+// A step is 'error' or { state, merge, base, queue, queued, checks: {name: bucket}, runs: {workflow: suite status} };
+// every head also carries a queued app suite with no workflow run, which never blocks. noAutoMerge refuses
+// `gh pr merge --auto`; expected refuses that PR's first <count> enqueues and merges with gh's
+// `Required status check ... is expected`. A step with `queued: 'after-enqueue'` reports true once that PR was
+// enqueued. Calls go to <scenario>.log.
 const shim = `
 import { readFileSync, writeFileSync, appendFileSync, existsSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
@@ -27,6 +30,16 @@ const argv = process.argv.slice(2)
 const log = (l) => appendFileSync(file + '.log', l + '\\n')
 const field = (k) => { for (let i = 0; i < argv.length - 1; i++) if ((argv[i] === '-f' || argv[i] === '-F') && argv[i + 1].startsWith(k + '=')) return argv[i + 1].slice(k.length + 1) }
 const jq = argv.indexOf('--jq')
+// refuse(n): true (after logging it) while that PR still has \`is expected\` refusals left in the scenario.
+const refuse = (n) => {
+  const f = file + '.refused-' + n
+  const done = existsSync(f) ? Number(readFileSync(f, 'utf8')) : 0
+  if (done >= (sc.expected?.[n] ?? 0)) return false
+  writeFileSync(f, String(done + 1))
+  log('refused ' + n)
+  process.stderr.write('GraphQL: Required status check "check" is expected. (mergePullRequest)\\n')
+  return true
+}
 const out = (data) => {
   let text = typeof data === 'string' ? data : JSON.stringify(data)
   if (jq >= 0) text = spawnSync('jq', ['-r', argv[jq + 1]], { input: text, encoding: 'utf8' }).stdout.replace(/\\n$/, '')
@@ -36,6 +49,7 @@ const out = (data) => {
 if (argv[0] === 'repo' && argv[1] === 'view') out({ nameWithOwner: 'acme/app', defaultBranchRef: { name: 'main' } })
 if (argv[0] === 'pr' && argv[1] === 'merge') {
   if (sc.noAutoMerge && argv.includes('--auto')) { process.stderr.write('GraphQL: Auto merge is not allowed for this repository (enablePullRequestAutoMerge)\\n'); process.exit(1) }
+  if (refuse(argv[2])) process.exit(1)
   log('merge ' + argv.slice(2).join(' ')); process.exit(0)
 }
 if (argv[0] === 'api' && argv[1] === 'repos/acme/app/branches/main') out({ name: 'main', protection: { required_status_checks: { contexts: sc.classic ?? [] } } })
@@ -47,6 +61,7 @@ if (argv[0] === 'api' && argv[1] === 'graphql') {
   const q = field('query')
   if (q.startsWith('mutation')) {
     const n = field('id').replace('PR_', '')
+    if (refuse(n)) process.exit(1)
     log('enqueue ' + n + ' ' + field('head'))
     appendFileSync(file + '.enq-' + n, 'x')
     out({ data: { enqueuePullRequest: { mergeQueueEntry: { position: 1 } } } })
@@ -63,8 +78,10 @@ if (argv[0] === 'api' && argv[1] === 'graphql') {
   const nodes = Object.entries(s.checks ?? {}).map(([name, b]) => b === 'status-fail'
     ? { __typename: 'StatusContext', context: name, state: 'FAILURE', targetUrl: 'https://ci.example/' + name }
     : { __typename: 'CheckRun', name, status: b === 'pending' ? 'IN_PROGRESS' : 'COMPLETED', conclusion: b === 'pending' ? null : b === 'pass' ? 'SUCCESS' : 'FAILURE', detailsUrl: 'https://ci.example/' + name })
+  const suites = [{ status: 'QUEUED', workflowRun: null }, ...Object.entries(s.runs ?? {}).map(([name, status]) => ({ status, workflowRun: { workflow: { name } } }))]
   out({ data: { repository: { pullRequest: { id: 'PR_' + n, state: s.state ?? 'OPEN', mergeStateStatus: s.merge ?? 'BLOCKED', headRefOid: 'head' + n, baseRefName: s.base ?? 'main',
-    isInMergeQueue: queued, isMergeQueueEnabled: s.queue ?? true, mergeCommit: s.state === 'MERGED' ? { oid: 'sha' + n } : null, statusCheckRollup: { contexts: { nodes } } } } } })
+    isInMergeQueue: queued, isMergeQueueEnabled: s.queue ?? true, mergeCommit: s.state === 'MERGED' ? { oid: 'sha' + n } : null,
+    commits: { nodes: [{ commit: { checkSuites: { nodes: suites } } }] }, statusCheckRollup: { contexts: { nodes } } } } } })
 }
 process.stderr.write('shim: unexpected ' + argv.join(' ') + '\\n')
 process.exit(64)
@@ -161,6 +178,32 @@ export function landManyTests(kind) {
     const r = await landMany(kind, { noAutoMerge: true, prs: { 11: [{ checks: { check: 'pass', e2e: 'pending' }, queue: false }, { checks: { check: 'pass', e2e: 'pass' }, queue: false }, merged] } })
     assert.equal(r.code, 0, r.err)
     assert.deepEqual(r.log.filter((l) => l.startsWith('merge')), ['merge 11 --squash --match-head-commit head11'])
+  })
+
+  test(`${kind} land-many: a workflow run still running on the head holds the enqueue, even with the required checks green`, async () => {
+    const r = await landMany(kind, { prs: { 11: [{ ...green, runs: { e2e: 'IN_PROGRESS', ci: 'COMPLETED' } }, { ...green, runs: { deploy: 'WAITING' } }, queued, merged] } })
+    assert.equal(r.code, 0, r.err)
+    assert.deepEqual(r.log.filter((l) => l.startsWith('poll') || l.startsWith('enqueue')).slice(0, 4), ['poll 11', 'poll 11', 'poll 11', 'enqueue 11 head11'])
+  })
+
+  test(`${kind} land-many: without a queue it never arms or merges while a run is in progress, and TIMEOUT names the run`, async () => {
+    const r = await landMany(kind, { prs: { 11: [{ ...green, queue: false, runs: { e2e: 'IN_PROGRESS', ci: 'COMPLETED' } }], 12: [{ ...green, queue: false, runs: { e2e: 'QUEUED' } }] } },
+      ['--interval', '1', '--timeout', '2', '11', '12'])
+    assert.equal(r.code, 1, r.err)
+    assert.match(r.out, /PR 11: TIMEOUT after 2s, OPEN BLOCKED, running: e2e\n/)
+    assert.match(r.out, /PR 12: TIMEOUT after 2s, OPEN BLOCKED, running: e2e\n/)
+    assert.ok(!r.log.some((l) => l.startsWith('merge')))
+  })
+
+  test(`${kind} land-many: gh's "required check is expected" refusal waits like a pending check, and TIMEOUT names it`, async () => {
+    const q = await landMany(kind, { expected: { 11: 3 }, prs: { 11: [queued, queued, queued, queued, queued, merged] } })
+    assert.equal(q.code, 0, q.err + q.out)
+    assert.equal(q.log.filter((l) => l.startsWith('refused')).length, 3)
+    assert.deepEqual(q.log.filter((l) => l.startsWith('enqueue')), ['enqueue 11 head11'])
+    const r = await landMany(kind, { expected: { 11: 99 }, prs: { 11: [{ ...green, queue: false }] } }, ['--interval', '1', '--timeout', '3', '11'])
+    assert.equal(r.code, 1, r.err)
+    assert.match(r.out, /^PR 11: TIMEOUT after 3s, OPEN BLOCKED, waiting: GraphQL: Required status check "check" is expected\. \(mergePullRequest\)\n$/)
+    assert.ok(!r.log.some((l) => l.startsWith('merge')))
   })
 
   test(`${kind} land-many: a PR based on another branch is STACKED, never merged into it`, async () => {
