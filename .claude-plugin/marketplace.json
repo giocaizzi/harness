@@ -65,7 +65,7 @@
       "name": "dev-tools",
       "source": "./plugins/dev-tools",
       "description": "General development tooling — git, GitHub, conventional commits, semantic versioning",
-      "version": "1.43.4",
+      "version": "1.44.0",
       "keywords": [
         "git",
         "github",

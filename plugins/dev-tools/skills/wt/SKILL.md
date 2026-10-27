@@ -5,7 +5,7 @@ description: Start a task in its own git worktree and branch, from an issue numb
 
 # Worktree
 
-Argument: a GitHub issue number or a short slug. The argument is the text after the skill name, repeated here when the harness fills it in: $ARGUMENTS
+Argument: a GitHub issue number or a short slug. A task can be a batch of related issues that land in one PR (`github-workflow`): one worktree and branch for the whole batch. The argument is the text after the skill name, repeated here when the harness fills it in: $ARGUMENTS
 
 There is no fixed cap on worktrees or agents; throttle on availability instead. Heavy repos make each worktree costly, so reuse before creating.
 
