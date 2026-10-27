@@ -150,7 +150,7 @@ function Request-MergeAsync([int]$I, $Pr) {
     $script:stacked[$I] = 1; $script:armed[$I] = 'async'
     $action = if ($Pr.isMergeQueueEnabled) { @('-f', 'merge_action=merge_queue') } else { @('-f', 'merge_action=default', '-f', 'merge_method=squash') }
     $body = Invoke-GhBody (@('api', '-X', 'PUT', "repos/$repo/pulls/$($prs[$I])/merge-async", '-H', "X-GitHub-Api-Version: $apiVersion") + $action + @('-f', "sha=$($Pr.headRefOid)"))
-    Complete-Async $I $body $Pr
+    Complete-Async -I $I -Body $body -Pr $Pr
 }
 $deadline = [DateTime]::UtcNow.AddSeconds($timeout)
 try {
@@ -167,7 +167,8 @@ try {
             if ($p.state -ceq 'CLOSED') { Complete-Pr $i 'CLOSED'; continue }
             # A merge-async request still pending: poll it until it ends.
             if ($uuid[$i]) {
-                Complete-Async $i (Invoke-GhBody @('api', "repos/$repo/pulls/$pr/merge-async/$($uuid[$i])", '-H', "X-GitHub-Api-Version: $apiVersion")) $p
+                $body = Invoke-GhBody @('api', "repos/$repo/pulls/$pr/merge-async/$($uuid[$i])", '-H', "X-GitHub-Api-Version: $apiVersion")
+                Complete-Async -I $i -Body $body -Pr $p
                 continue
             }
             if ($p.baseRefName -cne $default) { Complete-Pr $i "STACKED on $($p.baseRefName): land it with gh stack merge, or retarget it (land step 3)"; continue }
