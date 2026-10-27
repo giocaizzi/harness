@@ -1,0 +1,10 @@
+schema_version: "1.0"
+name: routing-review-safety
+description: A review of a change to token verification (an auth path) raises the reviewer to Opus at effort high on the spawn.
+tags: [routing, routing-dev, routing-shape]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  prompt: "Get the change on branch feat/token-expiry reviewed against main before I merge it, and write the verdict to review.md in the repo root. Do not fix anything yet."
+  max_turns: 12
+  allowed_tools: [Read, Glob, Grep, Skill, Agent, Bash, Edit, Write]

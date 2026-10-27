@@ -1,0 +1,17 @@
+schema_version: "1.0"
+name: routing-batch-holdout
+description: A config rollout over four services, already decided, goes to one worker per service, spawned together.
+tags: [routing, routing-holdout, routing-shape]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  prompt: |
+    Roll out the approved config change to the four services under services/ (api, billing, mailer, search). In each service, and only there:
+
+    - config.yaml: rename the key timeout to timeout_seconds, same value, and add retries: 3 below it.
+    - main.py: read cfg["timeout_seconds"] instead of cfg["timeout"], and pass retries=cfg["retries"] to connect().
+    - test_main.py: update the test to the new keys.
+
+    Nothing else changes. Run each service's test when done.
+  max_turns: 15
+  allowed_tools: [Read, Glob, Grep, Skill, Agent, Bash, Edit, Write]

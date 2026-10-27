@@ -1,0 +1,17 @@
+schema_version: "1.0"
+name: routing-batch
+description: An approved plan of three file-disjoint edit units goes to three workers spawned together, not to one agent or the driver.
+tags: [routing, routing-dev, routing-shape]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  prompt: |
+    The plan below is approved; every decision in it is made. Carry it out and run the tests.
+
+    1. src/shop/pricing.py: add apply_discount(price, pct) returning price * (1 - pct / 100) rounded to 2 decimals; raise ValueError when pct is below 0 or above 100. Tests in tests/test_pricing.py: 10% off 50.0 is 45.0, and pct 101 raises.
+    2. src/shop/shipping.py: add shipping_cost(weight_kg) returning 4.90 up to 1 kg, 7.50 up to 5 kg, else 7.50 + 1.20 per started kg above 5. Tests in tests/test_shipping.py: 0.5 kg, 5 kg, 6.2 kg (9.90).
+    3. src/shop/tax.py: add vat(amount, country) using the RATES dict already in the file, rounded to 2 decimals; raise KeyError for an unknown country. Tests in tests/test_tax.py: vat(100, "IT") is 22.0, and "XX" raises.
+
+    The three units touch separate files.
+  max_turns: 15
+  allowed_tools: [Read, Glob, Grep, Skill, Agent, Bash, Edit, Write]
