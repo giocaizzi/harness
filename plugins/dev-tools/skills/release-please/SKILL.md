@@ -22,6 +22,7 @@ To force a specific version (a prerelease such as `1.0.0-rc.1`, or skipping ahea
 - A mistyped commit type gives the wrong bump. Revert and recommit with the right type; do not amend a merged commit.
 - `BREAKING CHANGE:` must be a real footer line with no leading whitespace, or the major bump is missed.
 - Version-bearing files beyond the `release-type` default (another `pyproject.toml`, a `version.py`, Helm `Chart.yaml`, a Dockerfile `LABEL`) must be listed in `extra-files`, added in the same PR that introduces them, or they drift.
+- A squash-merged PR that batches several changes gives one changelog entry, typed by its title: put every change, one Conventional Commit header each, between `BEGIN_COMMIT_OVERRIDE` and `END_COMMIT_OVERRIDE` lines in the PR body (editable after the merge, before the Release PR is merged).
 - Cross-cutting `chore` commits touch no package and produce no bump in monorepos.
 - **`uv.lock` goes stale after every release** in a uv project unless listed in `extra-files`: it records the project's own version. Add one `toml` entry per `[[package]]` that carries a version you bump, filtering on `@.name.value` (the TOML parser wraps strings, so `@.name=='x'` matches nothing). Recipe in `references/config-recipes.md`.
 - Hidden types (`docs`, `chore`, ...) trigger no release and no changelog entry by default; surface one via `changelog-sections` with `"hidden": false`.

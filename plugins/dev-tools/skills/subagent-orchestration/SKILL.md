@@ -29,6 +29,7 @@ A workflow skill that defines its own gate, question channel, round cap or model
 ## Briefs and reports
 
 - Fan out independent units; don't parallelize tightly coupled edits. Parallel editors each get their own worktree (`isolation: worktree`, `wt`).
+- Brief a batch, not one issue per spawn: related issues that can land in one review go to one agent, one worktree and one PR (`github-workflow`, Landing a change), and the brief says so.
 - Say in every brief whether the run is attended, and check each report's evidence before relying on it.
 - **Open questions go to the user, one at a time.** A `driver` or `escalate` reports the decisions that are the user's instead of guessing. Attended, name the spawn so it can be messaged, ask the user each question with the question tool, then send the answers to the same spoke so it keeps its context. Where it cannot be messaged, a new spawn's brief carries its report, the answers, and its worktree and branch, so it continues instead of starting over. Unattended, `unattended-runs` decides.
 - Other running sessions, channels between agents, verdicts and review rounds: [references/collaboration.md](references/collaboration.md).
