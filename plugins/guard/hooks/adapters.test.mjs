@@ -107,6 +107,38 @@ test("opencode: a subagent's idle session (it has a parent) runs no check", asyn
   assert.equal(sent.length, 0)
 })
 
+// A git repo whose committed make check fails, then a change: docs only (no message) or code too (the failure).
+test('opencode and pi: a docs-only change runs no check on idle or settle; a code change does', async () => {
+  const repo = () => {
+    const cwd = dir({ Makefile: 'check:\n\t@false\n', 'a.py': 'a = 1\n' })
+    const git = (...args) => execFileSync('git', ['-c', 'user.email=a@b', '-c', 'user.name=a', ...args], { cwd, stdio: 'ignore' })
+    git('init', '-q')
+    git('add', '.')
+    git('commit', '-qm', 'init')
+    writeFileSync(join(cwd, 'README.md'), '# docs\n')
+    return cwd
+  }
+  // force: a busy host would defer the code change's check instead of failing it; the docs skip applies either way.
+  Object.assign(process.env, { CLAUDE_PLUGIN_DATA: dir(), GUARD_STOP_CHECK: 'force' })
+  try {
+    const sent = []
+    const docs = repo()
+    const hooks = await GuardPlugin({ client: { session: { prompt: async (p) => sent.push(p) } }, directory: docs }, deps())
+    await hooks.event({ event: { type: 'session.idle', properties: { sessionID: 's' } } })
+    const { handlers, sent: piSent, api } = fakePi()
+    guardExtension(api, deps())
+    await handlers.agent_settled({ aborted: false }, { cwd: docs })
+    assert.equal(sent.length + piSent.length, 0)
+    const code = repo()
+    writeFileSync(join(code, 'a.py'), 'a = 2\n')
+    await handlers.agent_settled({ aborted: false }, { cwd: code })
+    assert.match(piSent[0], /make check failed/)
+  } finally {
+    delete process.env.CLAUDE_PLUGIN_DATA
+    delete process.env.GUARD_STOP_CHECK
+  }
+})
+
 // A runtime's factory run in a git repo with no result.json: neither harness can block a stop, so the result gate's
 // reason is sent back as a new message, at most twice per run id. Its counter goes to a data dir of its own.
 const factoryRun = async (id, fn) => {
