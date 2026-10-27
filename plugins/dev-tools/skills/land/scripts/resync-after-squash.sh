@@ -11,12 +11,12 @@
 # or the proof fails (the commit stays, for review), 2 on usage.
 set -u
 usage() { echo "usage: resync-after-squash.sh <last-integration-sha> [<base>]" >&2; exit 2; }
-[ $# -ge 1 ] && [ $# -le 2 ] || usage
+if [ $# -lt 1 ] || [ $# -gt 2 ]; then usage; fi
 case $1 in -*) usage ;; esac
 die() { echo "resync-after-squash: $*" >&2; exit 1; }
 base=${2:-}
 if [ -z "$base" ]; then
-  base=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null) && base=${base#origin/} || base=main
+  if base=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null); then base=${base#origin/}; else base=main; fi
 fi
 sha=$(git rev-parse --verify --quiet "$1^{commit}") || die "$1 is not a commit"
 [ -z "$(git status --porcelain --untracked-files=no)" ] || die "the working tree has uncommitted changes"
