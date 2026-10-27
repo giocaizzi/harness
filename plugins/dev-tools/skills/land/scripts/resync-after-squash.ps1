@@ -6,8 +6,8 @@
 # (`git diff <sha> origin/<base>`), and commit. Then prove it: the files the merge changed must be exactly the
 # files the base changed since the sha; both lists are printed.
 # <base> defaults to origin's default branch. Refuses on a dirty tree or a branch that does not contain the sha.
-# Exits 0 when proven or already up to date, 1 when refused, the patch does not apply (the merge is aborted)
-# or the proof fails (the commit stays, for review), 2 on usage.
+# Exits 0 when proven or already up to date, 1 when refused, when the patch does not apply (the merge is aborted)
+# or when the proof fails (the commit is reset away), 2 on usage. An empty patch is fine: the base only gained the squash.
 $ErrorActionPreference = 'Stop'
 $argv = @($args)
 if ($argv.Count -lt 1 -or $argv.Count -gt 2 -or "$($argv[0])".StartsWith('-')) {
@@ -19,14 +19,17 @@ if (-not $base) {
     $head = git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>$null
     $base = if ($LASTEXITCODE -eq 0 -and $head) { "$head" -replace '^origin/', '' } else { 'main' }
 }
+$null = git check-ref-format --branch $base 2>$null
+if ($base.StartsWith('-') -or $LASTEXITCODE -ne 0) { [Console]::Error.WriteLine('usage: resync-after-squash.ps1 <last-integration-sha> [<base>]'); exit 2 }
+$diff = @('diff', '--no-ext-diff', '--no-color', '--no-textconv', '--src-prefix=a/', '--dst-prefix=b/')
 $sha = git rev-parse --verify --quiet "$($argv[0])^{commit}"
 if ($LASTEXITCODE -ne 0 -or -not $sha) { Exit-Resync "$($argv[0]) is not a commit" }
 if (git status --porcelain --untracked-files=no) { Exit-Resync 'the working tree has uncommitted changes' }
 $null = git merge-base --is-ancestor $sha HEAD
 if ($LASTEXITCODE -ne 0) { Exit-Resync "the current branch does not contain $sha" }
-$null = git fetch --quiet origin $base
+$null = git fetch --quiet origin -- $base
 if ($LASTEXITCODE -ne 0) { Exit-Resync "git fetch origin $base failed" }
-$upstream = git rev-parse --verify "origin/$base"
+$upstream = git rev-parse --verify --quiet "refs/remotes/origin/$base^{commit}"
 if ($LASTEXITCODE -ne 0) { Exit-Resync "origin/$base not found" }
 $null = git merge-base --is-ancestor $upstream HEAD
 if ($LASTEXITCODE -eq 0) { "already up to date with origin/$base"; exit 0 }
@@ -36,7 +39,8 @@ if ($LASTEXITCODE -ne 0) { Exit-Resync "git merge -s ours origin/$base failed" }
 # The patch goes through a file: a PowerShell pipe between native commands re-encodes the bytes.
 $patch = [IO.Path]::GetTempFileName()
 try {
-    $null = git diff --binary --output=$patch $sha $upstream
+    $null = git @diff --binary --output=$patch $sha $upstream --
+    if ($LASTEXITCODE -ne 0) { $null = git merge --abort; Exit-Resync 'git diff failed' }
     $null = git apply --index --allow-empty $patch
     if ($LASTEXITCODE -ne 0) {
         $null = git merge --abort
@@ -45,9 +49,12 @@ try {
 } finally { Remove-Item -Force -ErrorAction SilentlyContinue $patch }
 $null = git commit --quiet -m "Merge origin/$base after the integration branch's squash merge" -m "Applied only git diff $sha origin/$base on top of $old."
 if ($LASTEXITCODE -ne 0) { Exit-Resync 'git commit failed' }
-$merged = @(git diff --name-only $old HEAD)
-$expected = @(git diff --name-only $sha $upstream)
+$merged = @(git @diff --name-only $old HEAD --)
+$expected = @(git @diff --name-only $sha $upstream --)
 "files changed by the merge ($old..HEAD):"; $merged | ForEach-Object { "  $_" }
 "files the base changed since the sha ($sha..origin/$base):"; $expected | ForEach-Object { "  $_" }
-if (($merged -join "`n") -ne ($expected -join "`n")) { Exit-Resync 'the lists differ: review HEAD before pushing' }
+if (($merged -join "`n") -cne ($expected -join "`n")) {
+    $null = git reset --quiet --hard $old
+    Exit-Resync 'the lists differ: the merge commit was reset away, merge by hand'
+}
 'proven: the merge brings only the base''s changes'
