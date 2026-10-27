@@ -13,8 +13,10 @@ This skill is the GitHub mechanics. The repo checklist (aggregate `check`, title
 
 1. **One PR per batch, by default.** Related issues or tasks in your scope that can land cleanly in one review go in one PR, with no size cap: every extra PR costs a CI run, a serial merge or queue slot, and another re-merge and review round on a moving base, so speed beats small diffs. The body carries one `Closes #n` or `Refs: #n` line per issue; the commits are grouped per issue, and tests and docs ship in the same PR; with release-please, list each change in the body (`release-please`). Split only when parts can land independently in parallel, touch unrelated areas with different reviewers or risk tiers, or conflict. Work with more than one reviewable layer (schema → API → UI) is stacked, a layer per PR. A workflow skill that scopes a PR to one approved ticket keeps its own rule.
 2. **Auto-merge, not manual merge.** Open the PR, then `gh pr merge <n> --auto --squash --delete-branch`. It merges when required checks pass. Do not poll and merge by hand, except where auto-merge is unavailable (private repos on the Free plan): then `land` merges directly once every check passed, never with `--admin`.
-3. **Merge queue when the repo has one.** With a queue, the same command enqueues the PR; do not pass a merge method the queue overrides.
-4. **Never bypass.** No admin override, no `--admin`, no disabling a rule to get a PR through. A failing required check is fixed, or the check is corrected in its own PR.
+3. **Merge queue when the repo has one.** With a queue, the same command enqueues the PR; do not pass a merge method the queue overrides. See Merge queue speed.
+4. **Dependent work is a stack, independent work is not.** A PR that needs another PR's change goes on top of it with `gh stack` where the repo has stacked PRs enabled (Stacked PRs; `gh stack` exits 9 otherwise): the stack gives the chain view and retargets each layer as the one below merges. Where it is not enabled, follow Stacks without `gh stack`. A PR that does not need another one targets the default branch directly, so it lands in parallel.
+5. **Check the tree it will merge into.** The queue, or a required up-to-date branch, re-runs the required checks on the PR merged with the current default branch, not on the branch as approved. Before pushing, and again before enqueueing a PR whose base moved, merge `origin/<default>` into a scratch copy (or the branch) and run the full check there.
+6. **Never bypass.** No admin override, no `--admin`, no disabling a rule to get a PR through. A failing required check is fixed, or the check is corrected in its own PR.
 
 ## Stacked PRs
 
@@ -80,6 +82,12 @@ Start with `"enforcement": "evaluate"` where available, then switch to `"active"
 
 With squash-only repos, the PR title is the commit on `main` and drives release automation. Require a `Validate PR title` check next to `check` and pin the squash commit to the PR title and body; the settings and gotchas are in `conventional-commits`.
 
+## Merge queue speed
+
+A queue builds several entries at once and merges them in groups, so the speed comes from enqueueing every ready PR together: a loop that enqueues one PR and waits for it to merge before the next pays a full queue CI run per PR. Land a batch with `land`'s `land-many` script.
+
+Read the queue's settings from the branch rules before planning around them: `gh api repos/OWNER/REPO/rules/branches/main --jq '.[] | select(.type == "merge_queue") | .parameters'`. `max_entries_to_build` is how many entries run CI at once, `min_entries_to_merge` / `max_entries_to_merge` the group size, `min_entries_to_merge_wait_minutes` how long the queue waits to fill a group, `grouping_strategy` (`ALLGREEN` or `HEADGREEN`) whether every entry of a group must pass, and `check_response_timeout_minutes` when a silent check fails the entry. An entry whose merge-group run fails is removed and the entries behind it are rebuilt.
+
 ## Merge queue availability
 
 Merge queue is a repository-level ruleset rule and is not offered on every repository: it depends on ownership and plan (for example organization-owned repos; private repos need a qualifying plan). On a repo that cannot have one, fall back to auto-merge + required checks + "require branches to be up to date". Check availability before promising a queue.
@@ -96,4 +104,5 @@ Roll out in the order `repo-standard` gives, labels with the settings, and re-ru
 
 - PR carries the whole batch the task named (Landing a change), is titled as a Conventional Commit (see `conventional-commits`), and auto-merge is armed.
 - Required checks are green or running; nothing was bypassed.
-- Stacked work was submitted as a stack, not as independent PRs targeting each other by hand.
+- Stacked work was submitted as a stack, not as independent PRs targeting each other by hand; independent PRs target the default branch.
+- The full check passed on the branch merged with the current default branch.

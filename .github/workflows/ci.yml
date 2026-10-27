@@ -101,6 +101,10 @@ jobs:
         run: |
           node --test --test-reporter=tap tests/wait-pr-ps1.test.mjs | tee tap.txt
           if ! grep -qx '# tests 14' tap.txt || ! grep -qx '# pass 14' tap.txt; then echo "::error::expected 14 wait-pr.ps1 tests to pass"; exit 1; fi
+      - shell: bash
+        run: |
+          node --test --test-reporter=tap tests/land-scripts-ps1.test.mjs | tee tap.txt
+          if ! grep -qx '# tests 15' tap.txt || ! grep -qx '# pass 15' tap.txt; then echo "::error::expected 15 land-many.ps1 and resync-after-squash.ps1 tests to pass"; exit 1; fi
       # The factory's ps1 launcher, and its result writer and checker (Node scripts that handle Windows paths and CRLF).
       - shell: bash
         run: |
