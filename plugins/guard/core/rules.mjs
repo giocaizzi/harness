@@ -106,13 +106,14 @@ export const rules = {
   // model and effort, as `plugin:name`. A bare name matches too (Codex and opencode drop the plugin), except a Codex
   // built-in role (`codexBuiltin`) on `spawn_agent`; `aliases` are names an agent registers under elsewhere (Codex
   // `dev-tools-worker`). `overrides` are the spawn values the `subagent-orchestration` and `ticket-run` routing tables
-  // allow them. `untyped` are the generic agents (Codex `default`).
+  // allow them; `modelNeeds` is the effort a spawn's model is allowed only with (a sensitive review: Opus at `high`).
+  // `untyped` are the generic agents (Codex `default`).
   "routing": {
     "tools": ["agent", "task", "spawn_agent", "runsubagent"],
     "typed": ["dev-tools:scout", "dev-tools:worker", "dev-tools:driver", "dev-tools:reviewer", "dev-tools:escalate", "api:api-reviewer", "factory:verifier"],
     "aliases": { "dev-tools-worker": "dev-tools:worker" },
     "codexBuiltin": ["default", "worker", "explorer"],
-    "overrides": { "factory:verifier": { "model": "sonnet|opus", "effort": ["medium", "high"] }, "dev-tools:reviewer": { "effort": ["medium", "high"] } },
+    "overrides": { "factory:verifier": { "model": "sonnet|opus", "effort": ["medium", "high"] }, "dev-tools:reviewer": { "model": "opus", "modelNeeds": "high", "effort": ["medium", "high"] } },
     "untyped": ["general-purpose", "claude", "task", "default"],
     "plan": ["plan"],
     "judgementModel": "opus|fable|\\bsol\\b|\\bastra\\b",
