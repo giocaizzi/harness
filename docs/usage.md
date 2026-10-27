@@ -94,9 +94,9 @@ For a repo adopted per [adopt-factory.md](adopt-factory.md): you approve a ticke
 | Agent | Plugin | Used when | Model |
 |---|---|---|---|
 | `scout` | `dev-tools` | you need something found or read: code, logs, test output. Read-only; answers with `file:line` evidence. | cheapest (Claude: Haiku, `low`) |
-| `worker` | `dev-tools` | an edit whose every decision is made: a written plan, a rename, a config rollout. Stops on any unsettled choice. | routine tier (Claude: Sonnet, `medium`) |
-| `driver` | `dev-tools` | a hub hands off judgement work: investigate, plan, implement, integrate, fix review findings | driver tier (Claude: Opus) |
-| `reviewer` | `dev-tools` | a change needs review by someone who did not write it (not a factory ticket) | driver tier (Claude: Opus) |
+| `worker` | `dev-tools` | an edit whose every decision is made: a written plan, a rename, a config rollout, one unit of a driver's split (several run in parallel). Stops on any unsettled choice. | routine tier (Claude: Sonnet, `medium`) |
+| `driver` | `dev-tools` | a hub hands off judgement work: investigate, plan, split, fan the edits out to `worker`s, integrate, fix review findings | driver tier (Claude: Opus) |
+| `reviewer` | `dev-tools` | a change needs review by someone who did not write it (not a factory ticket) | routine tier (Claude: Sonnet, `medium`); a sensitive review raises it on the spawn to Opus at `high` |
 | `escalate` | `dev-tools` | a `driver` failed twice on the same problem | strongest (Claude: Fable) |
 | `api-reviewer` | `api` | you want an API security review: vulnerabilities, RBAC leaks, compliance. Read-only; posts a verdict like `reviewer` | driver (Claude: Opus, `medium`) |
 | `verifier` | `factory` | a ticket's change is ready to ship and needs a gate that did not write it ([factory.md](factory.md#verification)) | driver (Claude: Opus, `medium`; per-change overrides in `ticket-run`'s `references/routing.md`) |

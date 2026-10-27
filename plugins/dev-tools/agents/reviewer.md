@@ -1,9 +1,9 @@
 ---
 name: reviewer
-description: Fresh-context code reviewer at the driver tier - reads a diff or PR it did not write, runs its checks and posts a verdict with severities where the waiting side can read it. Use to review a change before it merges; spawn it without a `model`. Never on your own change, and not where a workflow names its own gate.
+description: Fresh-context code reviewer at the routine tier, raised per spawn for a sensitive review - reads a diff or PR it did not write, runs its checks and posts a verdict with severities where the waiting side can read it. Use to review a change before it merges; spawn it without a `model` or `effort`, except a sensitive review (security, auth, secrets, kill switch, merge or release gates, protected paths, a core process, a large or hard-to-reverse change), which the spawn raises to Opus at effort `high`. Never on your own change, and not where a workflow names its own gate.
 tools: Read, Grep, Glob, Bash
 effort: medium
-model: opus
+model: sonnet
 ---
 
 # Role
