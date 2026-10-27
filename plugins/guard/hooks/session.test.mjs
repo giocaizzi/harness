@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { fingerprint, resultGate, runDetached, stopCheck, takeLock } from './stop.mjs'
 import { lintFile } from './lint.mjs'
@@ -376,6 +376,102 @@ test('stop: the fingerprint changes when an untracked file changes', () => {
   assert.ok(before)
   assert.notEqual(fingerprint(dir), before)
 })
+
+// A real git repo with a committed Makefile and source file; make is stubbed (status `make.status`), git is real.
+const docsRepo = () => {
+  const dir = tmp()
+  const git = (...args) => execFileSync('git', ['-c', 'user.email=a@b', '-c', 'user.name=a', ...args], { cwd: dir, stdio: 'ignore' })
+  git('init', '-q')
+  mkdirSync(join(dir, 'src'))
+  mkdirSync(join(dir, 'docs'))
+  writeFileSync(join(dir, 'Makefile'), 'check:\n\t@true\n')
+  writeFileSync(join(dir, 'src', 'a.py'), 'a = 1\n')
+  writeFileSync(join(dir, 'README.md'), '# r\n')
+  git('add', '.')
+  git('commit', '-q', '-m', 'init')
+  const checks = []
+  const run = (cmd, args, opts) => {
+    if (cmd !== 'make') return spawnSync(cmd, args, opts)
+    if (args[0] === '-n') return { status: args[1] === 'check' ? 0 : 2 }
+    checks.push(args[0])
+    return { status: 0, stdout: '', stderr: '' }
+  }
+  const stop = () => stopCheck({ cwd: dir }, run, { strain: () => null })
+  return { dir, git, checks, stop, write: (p, s) => (mkdirSync(dirname(join(dir, p)), { recursive: true }), writeFileSync(join(dir, p), s)) }
+}
+
+const withData = async (fn) => {
+  process.env.CLAUDE_PLUGIN_DATA = tmp()
+  try {
+    await fn()
+  } finally {
+    delete process.env.CLAUDE_PLUGIN_DATA
+  }
+}
+
+test('stop: a docs-only change skips make check; a code change, a mixed one or none runs it', () =>
+  withData(async () => {
+    const r = docsRepo()
+    await r.stop() // clean tree, no green run yet: an empty change set runs it, as before
+    assert.equal(r.checks.length, 1)
+    r.write('README.md', '# changed\n')
+    r.write('docs/guide.md', 'new\n') // untracked
+    r.write('docs/a.png', 'x')
+    await r.stop()
+    assert.equal(r.checks.length, 1, 'docs only: skipped')
+    r.write('src/a.py', 'a = 2\n')
+    await r.stop()
+    assert.equal(r.checks.length, 2, 'mixed: runs')
+  }))
+
+test('stop: a code commit since the last green run is not hidden by a docs-only working tree', () =>
+  withData(async () => {
+    const r = docsRepo()
+    await r.stop()
+    r.write('src/a.py', 'a = 3\n')
+    r.git('commit', '-qam', 'code')
+    r.write('README.md', '# after\n')
+    await r.stop()
+    assert.equal(r.checks.length, 2, 'the diff is taken against the green run, not HEAD')
+    r.write('README.md', '# docs commit\n')
+    r.git('commit', '-qam', 'docs')
+    await r.stop()
+    assert.equal(r.checks.length, 2, 'only a docs commit since the last green run: skipped')
+  }))
+
+test('stop: a code file renamed into docs/ still runs the check (renames count as delete and add)', () =>
+  withData(async () => {
+    const r = docsRepo()
+    r.git('mv', 'src/a.py', 'docs/a.py')
+    await r.stop()
+    assert.equal(r.checks.length, 1)
+  }))
+
+test("stop: the repo's .stop-check-ignore keeps matching docs checked and extends the skip list", () =>
+  withData(async () => {
+    const r = docsRepo()
+    r.write('.stop-check-ignore', '!docs/**\nsite/**\n')
+    r.git('add', '.stop-check-ignore')
+    r.git('commit', '-qm', 'rules')
+    r.write('site/index.html', '<p>')
+    await r.stop()
+    assert.equal(r.checks.length, 0, 'extended skip list')
+    r.write('docs/guide.md', 'x\n')
+    await r.stop()
+    assert.equal(r.checks.length, 1, '`!docs/**`: runs')
+  }))
+
+test('stop: GUARD_STOP_CHECK=off still disables it and force still skips only the strain deferral', () =>
+  withData(async () => {
+    const r = docsRepo()
+    r.write('README.md', '# x\n')
+    process.env.GUARD_STOP_CHECK = 'force'
+    try {
+      await stopCheck({ cwd: r.dir }, (c, a, o) => (c === 'make' && a[0] !== '-n' ? assert.fail('docs only') : c === 'make' ? { status: a[1] === 'check' ? 0 : 2 } : spawnSync(c, a, o)), { strain: () => 'load 99' })
+    } finally {
+      delete process.env.GUARD_STOP_CHECK
+    }
+  }))
 
 test("stop: of two stops taking over a dead holder's lock, only one wins", () => {
   const file = join(tmp(), 'x.lock')
