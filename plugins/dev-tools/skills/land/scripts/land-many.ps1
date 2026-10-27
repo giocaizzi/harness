@@ -2,14 +2,17 @@
 #
 # Every poll (one per interval) walks all PRs still open, in the repo `gh repo view` names ($env:GH_REPO selects
 # another). A PR whose required checks (the base branch's rulesets and classic protection, never a hardcoded name)
-# passed on its current head, with no check failing, is enqueued with the enqueuePullRequest mutation when its
+# passed on its current head, with no check failing and no GitHub Actions run on that head still running (WAITING
+# counts; app check suites without a workflow run do not), is enqueued with the enqueuePullRequest mutation when its
 # base has a merge queue, or gets `gh pr merge --auto --squash` once when it has none; where auto-merge is not
 # allowed, it is merged directly once every check passed. A PR that falls out of the queue is enqueued again, up to
-# LAND_MANY_REQUEUES (2) times. Nothing is bypassed. One line per PR, as soon as it ends:
+# LAND_MANY_REQUEUES (2) times. gh refusing with `Required status check ... is expected` is waited on like a pending
+# check, never counted as a gh failure. Nothing is bypassed. One line per PR, as soon as it ends:
 #   PR <n>: MERGED <sha> | CLOSED | DIRTY | BEHIND | STACKED <base> | FAILED <why> | ERROR <gh error> | TIMEOUT <state>
 # DIRTY is a conflict; BEHIND (only without a queue) needs the base merged in; STACKED is a PR based on another
 # branch than the default one (land it with `gh stack merge`, or retarget it as `land` step 3 says); ERROR is gh
-# failing 3 polls in a row. Exits 0 when every PR merged, 1 otherwise, 2 on usage. Needs gh.
+# failing 3 polls in a row; TIMEOUT names what it waited on (pending required checks, running workflows, gh's
+# refusal). Exits 0 when every PR merged, 1 otherwise, 2 on usage. Needs gh.
 # --interval (1-3600) and --timeout (1-86400) default to LAND_MANY_INTERVAL (30) and LAND_MANY_TIMEOUT (7200) seconds.
 $ErrorActionPreference = 'Stop'
 function Exit-Usage { [Console]::Error.WriteLine('usage: land-many.ps1 [--interval <1-3600 s>] [--timeout <1-86400 s>] <pr>...'); exit 2 }
@@ -52,6 +55,7 @@ $repo = $view.nameWithOwner; $default = $view.defaultBranchRef.name
 $owner, $name = $repo -split '/', 2
 $query = 'query($owner:String!,$name:String!,$n:Int!){repository(owner:$owner,name:$name){pullRequest(number:$n){' +
     'id state mergeStateStatus headRefOid baseRefName isInMergeQueue isMergeQueueEnabled mergeCommit{oid} ' +
+    'commits(last:1){nodes{commit{checkSuites(first:100){nodes{status workflowRun{workflow{name}}}}}}} ' +
     'statusCheckRollup{contexts(first:100){nodes{__typename ' +
     '... on CheckRun{name status conclusion detailsUrl} ... on StatusContext{context state targetUrl}}}}}}}'
 $mutation = 'mutation($id:ID!,$head:GitObjectID!){enqueuePullRequest(input:{pullRequestId:$id,expectedHeadOid:$head}){mergeQueueEntry{position}}}'
@@ -92,6 +96,12 @@ function Complete-Pr([int]$I, [string]$What) {
     $script:done[$I] = 1; $script:left--
     if (-not $What.StartsWith('MERGED')) { $script:status = 1 }
 }
+# True when gh refused because a required check is not reported yet; the PR then waits like a pending one.
+function Test-Expected([int]$I, $Pr) {
+    if (-not (Select-String -Quiet -Pattern 'Required status check .* is expected' -Path $errFile)) { return $false }
+    $script:last[$I] = "$($Pr.state) $($Pr.mergeStateStatus), waiting: $(Get-Err)"; $script:fails[$I] = 0
+    $true
+}
 function Add-Strike([int]$I) {
     $script:fails[$I]++
     if ($script:fails[$I] -ge 3) { Complete-Pr $I "ERROR $(Get-Err)" }
@@ -123,22 +133,27 @@ try {
                     $c = @($rollup | Where-Object { $_.name -ceq $r })
                     @($c | Where-Object { $_.s -ceq 'pass' }).Count -eq 0 -or @($c | Where-Object { $_.s -ceq 'pending' }).Count })
             if ($pending.Count) { $last[$i] = "$($p.state) $($p.mergeStateStatus), pending: $($pending -join ',')"; $fails[$i] = 0; continue }
+            # Any workflow run on the head still running holds the PR, even with every required check green.
+            $running = @(@($p.commits.nodes) | Where-Object { $_ } | ForEach-Object { @($_.commit.checkSuites.nodes) } |
+                Where-Object { $_ -and $null -ne $_.workflowRun -and $_.status -cne 'COMPLETED' } |
+                ForEach-Object { $_.workflowRun.workflow.name } | Sort-Object -Unique -CaseSensitive)
+            if ($running.Count) { $last[$i] = "$($p.state) $($p.mergeStateStatus), running: $($running -join ',')"; $fails[$i] = 0; continue }
             $allPassed = @($rollup | Where-Object { $_.s -ceq 'pending' }).Count -eq 0
             if ($p.isMergeQueueEnabled) {
                 if ($p.isInMergeQueue) { $fails[$i] = 0; continue }
                 if ($enq[$i] -gt $requeues) { Complete-Pr $i "FAILED left the merge queue $($enq[$i]) times (read its merge_group run)"; continue }
-                if ($null -eq (Invoke-Gh @('api', 'graphql', '-f', "query=$mutation", '-f', "id=$($p.id)", '-f', "head=$($p.headRefOid)"))) { Add-Strike $i; continue }
+                if ($null -eq (Invoke-Gh @('api', 'graphql', '-f', "query=$mutation", '-f', "id=$($p.id)", '-f', "head=$($p.headRefOid)"))) { if (-not (Test-Expected $i $p)) { Add-Strike $i }; continue }
                 $enq[$i]++; $last[$i] = "$($p.state) $($p.mergeStateStatus), queued"
             } elseif ($armed[$i] -ceq '0') {
                 if ($null -eq (Invoke-Gh @('pr', 'merge', $pr, '--auto', '--squash', '--match-head-commit', $p.headRefOid))) {
-                    if (-not (Select-String -Quiet -SimpleMatch 'Auto merge is not allowed' -Path $errFile)) { Add-Strike $i; continue }
+                    if (-not (Select-String -Quiet -SimpleMatch 'Auto merge is not allowed' -Path $errFile)) { if (-not (Test-Expected $i $p)) { Add-Strike $i }; continue }
                     $armed[$i] = 'direct'
                 } else { $armed[$i] = '1'; $last[$i] = "$($p.state) $($p.mergeStateStatus), auto-merge armed" }
             }
             # Auto-merge unavailable: merge directly once every check on the head passed, as `land` step 4 does.
             if ($armed[$i] -ceq 'direct') {
                 if (-not $allPassed) { $last[$i] = "$($p.state) $($p.mergeStateStatus), waiting for every check before a direct merge"; $fails[$i] = 0; continue }
-                if ($null -eq (Invoke-Gh @('pr', 'merge', $pr, '--squash', '--match-head-commit', $p.headRefOid))) { Add-Strike $i; continue }
+                if ($null -eq (Invoke-Gh @('pr', 'merge', $pr, '--squash', '--match-head-commit', $p.headRefOid))) { if (-not (Test-Expected $i $p)) { Add-Strike $i }; continue }
             }
             $fails[$i] = 0
         }
