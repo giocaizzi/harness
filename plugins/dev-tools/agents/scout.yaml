@@ -6,6 +6,7 @@ copilot:
     - search
     - execute
 codex:
+  # Ignored by Codex today: a subagent inherits the parent's sandbox (docs/compatibility.md). Kept for when it applies.
   sandbox_mode: read-only
   model_reasoning_effort: low
 opencode:

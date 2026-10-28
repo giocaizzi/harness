@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import subagentExtension, { childEnv, loadAgents, piArgs } from './subagent.mjs'
+import subagentExtension, { childEnv, loadAgents, piArgs, MAX_DEPTH } from './subagent.mjs'
 
 test('loadAgents: every plugin agent, with Claude tools mapped to pi tools', () => {
   const agents = Object.fromEntries(loadAgents().map((a) => [a.name, a]))
@@ -46,14 +46,31 @@ test('the tool runs the agent and returns its answer, or throws on failure', asy
 })
 
 test("a subagent's pi runs without the guard's stop check and result gate: the parent's stop runs them", () => {
-  assert.deepEqual(childEnv({ PATH: '/bin' }), { PATH: '/bin', GUARD_STOP_CHECK: 'off', GUARD_RESULT_GATE: 'off' })
+  assert.deepEqual(childEnv({ PATH: '/bin' }), { PATH: '/bin', GUARD_STOP_CHECK: 'off', GUARD_RESULT_GATE: 'off', PI_SUBAGENT_DEPTH: '1' })
 })
 
 test("the child names the parent session and itself, so the guard keeps its reminders apart and shares its skills (#172)", async () => {
-  assert.deepEqual(childEnv({}, { session: 's1', agent: 'scout-t1' }), { GUARD_STOP_CHECK: 'off', GUARD_RESULT_GATE: 'off', GUARD_PARENT_SESSION: 's1', GUARD_AGENT_ID: 'scout-t1' })
+  assert.deepEqual(childEnv({}, { session: 's1', agent: 'scout-t1' }), { GUARD_STOP_CHECK: 'off', GUARD_RESULT_GATE: 'off', PI_SUBAGENT_DEPTH: '1', GUARD_PARENT_SESSION: 's1', GUARD_AGENT_ID: 'scout-t1' })
   let tool
   let ids
   subagentExtension({ registerTool: (t) => (tool = t) }, { loadAgents: () => [{ name: 'scout', description: 'd', tools: null, prompt: 'p' }], run: async (_argv, _cwd, _signal, i) => ((ids = i), { code: 0, out: 'ok', err: '' }) })
   await tool.execute('t1', { agent: 'scout', task: 'x' }, undefined, undefined, { cwd: '/', sessionManager: { getSessionId: () => 's1' } })
   assert.deepEqual(ids, { session: 's1', agent: 'scout-t1' })
+})
+
+test('nesting is counted in the child and refused past MAX_DEPTH, so a driver can fan out but a loop cannot', async () => {
+  assert.equal(childEnv({ PI_SUBAGENT_DEPTH: '1' }).PI_SUBAGENT_DEPTH, '2')
+  let tool
+  const agents = [{ name: 'worker', description: 'd', tools: ['read'], prompt: 'p' }]
+  subagentExtension({ registerTool: (t) => (tool = t) }, { loadAgents: () => agents, run: async () => ({ code: 0, out: 'ok', err: '' }) })
+  const saved = process.env.PI_SUBAGENT_DEPTH
+  try {
+    process.env.PI_SUBAGENT_DEPTH = String(MAX_DEPTH - 1)
+    assert.equal((await tool.execute('id', { agent: 'worker', task: 'x' }, undefined, undefined, {})).content[0].text, 'ok')
+    process.env.PI_SUBAGENT_DEPTH = String(MAX_DEPTH)
+    await assert.rejects(tool.execute('id', { agent: 'worker', task: 'x' }, undefined, undefined, {}), /nest at most 3 deep; return the split/)
+  } finally {
+    if (saved === undefined) delete process.env.PI_SUBAGENT_DEPTH
+    else process.env.PI_SUBAGENT_DEPTH = saved
+  }
 })

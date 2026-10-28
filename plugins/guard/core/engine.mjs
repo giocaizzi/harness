@@ -1452,7 +1452,9 @@ export function evaluateRouting({ type, model, effort, tool, state, rules }) {
     }
   } else if (typed) {
     const allowed = r.overrides[typed] ?? {};
-    const over = [m && !(allowed.model && new RegExp(`\\b(?:${allowed.model})\\b`, 'i').test(m)) && `\`model: ${m}\``, e && !(allowed.effort ?? []).includes(e) && `\`effort: ${e}\``].filter(Boolean);
+    const fits = allowed.model && new RegExp(`\\b(?:${allowed.model})\\b`, 'i').test(m);
+    const modelOk = fits && (!allowed.modelNeeds || e === allowed.modelNeeds);
+    const over = [m && !modelOk && `\`model: ${m}\`${fits ? ` without \`effort: ${allowed.modelNeeds}\`` : ''}`, e && !(allowed.effort ?? []).includes(e) && `\`effort: ${e}\``].filter(Boolean);
     if (over.length) {
       rule = 'routing-override';
       say = `\`${type}\` carries its model and effort in its definition, and this spawn's ${over.join(' and ')} overrides it. Drop ${over.length > 1 ? 'them' : 'it'} from the spawn`;

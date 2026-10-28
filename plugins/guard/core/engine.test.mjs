@@ -558,6 +558,15 @@ test('a spawn that bypasses the typed agents gets one routing hint per case and 
   for (const m of ['claude-sonnet-4.6', 'Claude Sonnet 4.6 (copilot)', 'claude-opus-4.7']) assert.equal(rule('factory:verifier', m, fresh(), 'high'), undefined, m);
   assert.equal(rule('factory:verifier', 'Claude Haiku 4.5 (copilot)'), 'routing-override');
   assert.equal(rule('dev-tools:reviewer', undefined, fresh(), 'high'), undefined);
+  // The reviewer: routine tier as defined; a sensitive review raises it to Opus, only together with effort high.
+  assert.equal(rule('dev-tools:reviewer', 'opus', fresh(), 'high'), undefined);
+  assert.equal(rule('reviewer', 'claude-opus-5-5', fresh(), 'high'), undefined);
+  assert.equal(rule('dev-tools:reviewer', 'opus'), 'routing-override');
+  assert.equal(rule('dev-tools:reviewer', 'opus', fresh(), 'medium'), 'routing-override');
+  assert.equal(rule('dev-tools:reviewer', 'sonnet', fresh(), 'high'), 'routing-override');
+  assert.equal(rule('dev-tools:reviewer', 'fable', fresh(), 'high'), 'routing-override');
+  assert.match(evaluateRouting({ type: 'dev-tools:reviewer', model: 'opus', effort: 'medium', state: fresh(), rules }).context, /`model: opus` without `effort: high` overrides it/);
+  assert.match(evaluateRouting({ type: 'dev-tools:reviewer', model: 'sonnet', state: fresh(), rules }).context, /spawn's `model: sonnet` overrides it/);
   assert.equal(rule('Explore', 'opus'), undefined);
   assert.equal(rule('other:scout', 'opus'), undefined); // another plugin's agent
   assert.equal(rule(undefined), undefined); // a Codex fork
