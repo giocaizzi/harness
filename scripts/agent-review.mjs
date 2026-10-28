@@ -110,6 +110,23 @@ export function routingShape(data) {
   }
 }
 
+// LSP share: LSP tool calls against grep searches (Grep tool plus Bash rg/grep), per agent type, joined on agent_id.
+// An empty agent_id is the main session. Ids never leave this function.
+export function lspShare(data) {
+  const type = new Map()
+  for (const r of data.agentIds) if (!type.has(r.labels.agent_id)) type.set(r.labels.agent_id, r.labels.agent_type)
+  const typeOf = (id) => (id ? (type.has(id) ? type.get(id).replace(/^.*:/, '') : '(unknown)') : 'main')
+  const by = {}
+  const add = (id, k, v) => { const t = typeOf(id); by[t] ??= { lsp: 0, grep: 0 }; by[t][k] += v }
+  for (const r of data.agentLsp) add(r.labels.agent_id, r.labels.tool_name === 'LSP' ? 'lsp' : 'grep', r.value)
+  for (const r of data.agentGrep) add(r.labels.agent_id, 'grep', r.value)
+  const types = Object.entries(by).map(([agent, c]) => ({ agent, ...c, share: c.lsp + c.grep ? c.lsp / (c.lsp + c.grep) : 0 }))
+    .sort((a, b) => b.lsp + b.grep - (a.lsp + a.grep))
+  const lsp = types.reduce((a, t) => a + t.lsp, 0), grep = types.reduce((a, t) => a + t.grep, 0)
+  const ops = sum(data.lspOps)
+  return { types, lsp, grep, share: lsp + grep ? lsp / (lsp + grep) : 0, ops, failureRate: ops ? sum(data.lspOps.filter((r) => r.labels.success === 'false')) / ops : 0 }
+}
+
 const pct = (v) => `${Math.round(v * 100)}%`
 
 export function report(data, known, range) {
@@ -119,6 +136,7 @@ export function report(data, known, range) {
   const opusSub = data.costBySource.filter((r) => /^agent/.test(r.labels.query_source) && /opus|fable/.test(r.labels.model))
   const unnamed = data.subagentCost.filter((r) => !r.labels.agent_name)
   const shape = routingShape(data)
+  const lspS = lspShare(data)
   return [
     `# Agent review (last ${range})`,
     '',
@@ -153,6 +171,12 @@ export function report(data, known, range) {
     ]),
     '',
     `Spawns at effort high or above, by agent (only the sensitive-review agents belong here): ${Object.entries(shape.high).map(([t, n]) => `${t} ${n}`).join(', ') || 'none'}.`,
+    '',
+    '### LSP share',
+    'Target: LSP share >= 5% for main, driver, scout, worker and reviewer once at least 30 searches ran; LSP failures <= 10%.',
+    table(['agent', 'LSP', 'grep searches', 'share'], [...lspS.types.map((t) => [t.agent, t.lsp, t.grep, pct(t.share)]), ['all', lspS.lsp, lspS.grep, pct(lspS.share)]]),
+    '',
+    `LSP operations: ${lspS.ops}; failure rate ${pct(lspS.failureRate)}.`,
     '',
     '### Subagent cost by agent',
     `Unattributed: ${usd(sum(unnamed))} without an agent name; ${usd(shape.untracked)} of it without an agent id either: agent-team teammates (a named spawn while agent teams are on), which telemetry cannot tie to an agent.`,

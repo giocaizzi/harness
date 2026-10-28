@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { endpoint, parsePairs, collect, knownSkills, skillUse, report, evalStubs, routingShape, QUERIES } from '../scripts/agent-review.mjs'
+import { endpoint, parsePairs, collect, knownSkills, skillUse, report, evalStubs, routingShape, lspShare, QUERIES } from '../scripts/agent-review.mjs'
 
 const empty = () => Object.fromEntries(Object.keys(QUERIES).map((k) => [k, []]))
 const row = (labels, value) => ({ labels, value })
@@ -123,4 +123,27 @@ test('routingShape joins spawns on agent id and reports aggregates only', () => 
   assert.match(md, /effort high or above, by agent .*: dev-tools:reviewer 1\./)
   assert.match(md, /\$10\.00 of it without an agent id either: agent-team teammates/)
   assert.ok(!/\b[dwr][12]\b/.test(md), 'no agent ids in the report')
+})
+
+test('lspShare joins on agent id, counts Bash greps and reports aggregates only', () => {
+  const data = empty()
+  data.agentIds = [row({ agent_id: 'd1', agent_type: 'dev-tools:driver', model: 'claude-opus-5-5' }, 1)]
+  data.agentLsp = [
+    row({ agent_id: '', tool_name: 'LSP' }, 2), row({ agent_id: '', tool_name: 'Grep' }, 8),
+    row({ agent_id: 'd1', tool_name: 'LSP' }, 1), row({ agent_id: 'x9', tool_name: 'Grep' }, 3),
+  ]
+  data.agentGrep = [row({ agent_id: '' }, 10), row({ agent_id: 'd1' }, 3)]
+  data.lspOps = [row({ op: 'goToDefinition', success: 'true' }, 3), row({ op: 'hover', success: 'false' }, 1)]
+  const s = lspShare(data)
+  const t = Object.fromEntries(s.types.map((x) => [x.agent, x]))
+  assert.deepEqual([t.main.lsp, t.main.grep, t.main.share], [2, 18, 0.1])
+  assert.deepEqual([t.driver.lsp, t.driver.grep, t.driver.share], [1, 3, 0.25])
+  assert.equal(t['(unknown)'].grep, 3)
+  assert.equal(s.types[0].agent, 'main')
+  assert.equal(s.failureRate, 0.25)
+  const md = report(data, [], '7d')
+  assert.match(md, /### LSP share/)
+  assert.match(md, /\| main \| 2 \| 18 \| 10% \|/)
+  assert.match(md, /LSP operations: 4; failure rate 25%\./)
+  assert.ok(!/\b(d1|x9)\b/.test(md), 'no agent ids in the report')
 })

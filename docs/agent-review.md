@@ -17,6 +17,8 @@ One source for both paths: [queries.json](../.agents/skills/agent-review/referen
 
 The routing-shape section (`agentIds`, `agentEdits`, `agentSpawns`, `agentCost`) reads one row per subagent and joins them on `agent_id`: `subagent_completed` names each agent's type and model, while `tool_result` and `api_request` carry the id of the agent that made the call, so an edit, a nested spawn or an `agent_summary` request is tied to the driver, worker or reviewer behind it. A resumed agent completes more than once, so the section counts unique ids. It prints aggregates only; the ids stay in memory.
 
+The LSP-share section (`agentLsp`, `agentGrep`, `lspOps`) joins the same way: per agent type, LSP tool calls against Grep-tool and Bash `rg`/`grep` searches, plus the LSP failure rate; an empty agent id is the main session.
+
 A telemetry finding becomes an issue only with a reproduction (command text or a corpus row) and the guard version it was seen on.
 
 ## Tracing hook_prompt spend
