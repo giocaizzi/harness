@@ -1,0 +1,6 @@
+# The guard's stop check skips a docs-only change (docs/guard.md). make validate and make test read these, so a
+# change to them runs make check even when it is Markdown: skills, agents, plugin READMEs, the root README's tables.
+!plugins/**
+!.agents/**
+!tests/**
+!README.md

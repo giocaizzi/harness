@@ -1,6 +1,7 @@
 // Stop hook (Claude Code and VS Code Stop, Copilot agentStop): run `make check-fast` (when the Makefile
 // defines it; large repos keep the full suite for CI) or else `make check` before the agent stops, but only
-// when the repo changed since the last green run. On failure, block the stop once and hand back the output
+// when the repo changed since the last green run, and the change is not docs only (core/docsonly.mjs, plus the repo's
+// `.stop-check-ignore`). On failure, block the stop once and hand back the output
 // tail; a second stop (stop_hook_active) always passes, so it cannot loop. No make, no Makefile or neither
 // target: nothing to do. make runs detached from the terminal (stdin closed, its own session), so a recipe that
 // reads /dev/tty fails at once instead of hanging the session.
@@ -17,6 +18,7 @@ import { mkdirSync, readFileSync, rmSync, statfsSync, writeFileSync } from 'node
 import { loadavg, platform } from 'node:os'
 import { dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { docsOnly } from '../core/docsonly.mjs'
 import { emit } from '../core/otel.mjs'
 import { rules } from '../core/rules.mjs'
 import { pluginDataDir } from './data.mjs'
@@ -80,21 +82,46 @@ export function runDetached(cmd, args, { cwd, timeout }) {
   })
 }
 
+// The paths changed since `base` (the last green run's HEAD; HEAD when there is none): `git diff` against it with
+// renames split into delete and add, plus untracked files, all relative to the repo root, and the text of the repo's
+// `.stop-check-ignore` ('' when it has none). Null when git cannot say, which means "run the check".
+export function changes(cwd, base, run = spawnSync) {
+  const git = (args, at) => run('git', args, { cwd: at, encoding: 'utf8', windowsHide: true })
+  const top = git(['rev-parse', '--show-toplevel'], cwd)
+  const root = top.status === 0 ? String(top.stdout ?? '').trim() : ''
+  if (!root) return null
+  const commit = /^[0-9a-f]{40,64}$/.test(base ?? '') ? base : 'HEAD'
+  const diff = git(['diff', '--name-only', '--no-renames', '-z', commit, '--'], root)
+  const untracked = git(['ls-files', '-o', '--exclude-standard', '-z'], root)
+  if (diff.status !== 0 || untracked.status !== 0) return null
+  const paths = `${diff.stdout ?? ''}\0${untracked.stdout ?? ''}`.split('\0').filter(Boolean)
+  let rules = ''
+  try {
+    rules = readFileSync(join(root, '.stop-check-ignore'), 'utf8')
+  } catch {
+    // no repo rules: the defaults alone
+  }
+  return { paths, rules }
+}
+
 const stateFile = (cwd) =>
   join(pluginDataDir(), 'stop', `${sha(cwd).slice(0, 16)}.txt`)
 
+// The last green run: { fp, head } (its fingerprint and HEAD; a file from an older guard has no head), or {}.
 function lastGreen(cwd) {
   try {
-    return readFileSync(stateFile(cwd), 'utf8').trim()
+    const [fp, head] = readFileSync(stateFile(cwd), 'utf8').trim().split('\n')
+    return { fp, head }
   } catch {
-    return null
+    return {}
   }
 }
 
-function markGreen(cwd, fp) {
+function markGreen(cwd, fp, run) {
   try {
+    const head = run('git', ['rev-parse', 'HEAD'], { cwd, encoding: 'utf8', windowsHide: true })
     mkdirSync(join(stateFile(cwd), '..'), { recursive: true })
-    writeFileSync(stateFile(cwd), fp)
+    writeFileSync(stateFile(cwd), head.status === 0 ? `${fp}\n${String(head.stdout ?? '').trim()}` : fp)
   } catch {
     // best effort: the next stop just runs the check again
   }
@@ -216,7 +243,11 @@ async function makeCheck(input, run = spawnSync, { exec = run === spawnSync ? ru
   const target = ['check-fast', 'check'].find((t) => run('make', ['-n', t], opts).status === 0)
   if (!target) return null
   const fp = fingerprint(cwd, run)
-  if (fp && fp === lastGreen(cwd)) return null
+  const green = lastGreen(cwd)
+  if (fp && fp === green.fp) return null
+  // Only docs changed since the last green run: nothing to check, and nothing is marked green.
+  const changed = changes(cwd, green.head, run)
+  if (changed && docsOnly(changed.paths, changed.rules)) return null
   const deferred = (why, attrs = {}) => {
     report({ result: 'deferred', target, why, ...attrs })
     return { systemMessage: `make ${target} deferred (${why}); it runs at the next stop. Run it before you ship.` }
@@ -234,7 +265,7 @@ async function makeCheck(input, run = spawnSync, { exec = run === spawnSync ? ru
   }
   const done = (result) => report({ result, target, duration_ms: Date.now() - started })
   if (r.status === 0) {
-    if (fp) markGreen(cwd, fp)
+    if (fp) markGreen(cwd, fp, run)
     done('pass')
     return null
   }
