@@ -1,0 +1,10 @@
+schema_version: "1.0"
+name: routing-review-routine-holdout
+description: A review of a small CLI flag in a dev tool spawns the reviewer as defined, with no model or effort on the spawn.
+tags: [routing, routing-holdout, routing-shape]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  prompt: "Get the change on branch feat/quiet-flag reviewed against main before I merge it, and write the verdict to review.md in the repo root. Do not fix anything yet."
+  max_turns: 12
+  allowed_tools: [Read, Glob, Grep, Skill, Agent, Bash, Edit, Write]

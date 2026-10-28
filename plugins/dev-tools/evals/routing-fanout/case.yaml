@@ -1,0 +1,10 @@
+schema_version: "1.0"
+name: routing-fanout
+description: A feature that splits into file-disjoint parts goes to the driver, which plans it and fans the edits out to workers instead of making them itself.
+tags: [routing, routing-dev, routing-shape]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  prompt: "Add CSV, JSON and Markdown export to the report tool: one exporter module per format under src/report/exporters/, a --format option in src/report/cli.py that picks one, and tests for each exporter. Hand it to the driver to plan and build. This run is unattended: nobody will answer questions before it ends, so take cheap-to-undo choices as assumptions and list them in your answer."
+  max_turns: 15
+  allowed_tools: [Read, Glob, Grep, Skill, Agent, Bash, Edit, Write]

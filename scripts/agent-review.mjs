@@ -70,12 +70,55 @@ export function skillUse(data, known) {
   return use
 }
 
+// Routing shape: per-spawn rows joined on agent_id (subagent_completed names the type; tool_result and api_request
+// carry the calling agent's id), reduced to aggregates. Ids never leave this function.
+const isType = (name, t) => new RegExp(`(^|:)${t}$`).test(name ?? '') || (t === 'worker' && name === 'dev-tools-worker')
+const median = (xs) => { const s = [...xs].sort((a, b) => a - b); return s.length ? (s.length % 2 ? s[(s.length - 1) / 2] : (s[s.length / 2 - 1] + s[s.length / 2]) / 2) : 0 }
+export function routingShape(data) {
+  const type = new Map(), model = new Map()
+  for (const r of data.agentIds) if (!type.has(r.labels.agent_id)) { type.set(r.labels.agent_id, r.labels.agent_type); model.set(r.labels.agent_id, r.labels.model) }
+  const ids = (t) => [...type.keys()].filter((id) => isType(type.get(id), t))
+  const drivers = ids('driver'), workers = ids('worker'), reviewers = ids('reviewer')
+  const nested = sum(data.agentSpawns.filter((r) => isType(r.labels.agent, 'worker') && isType(type.get(r.labels.agent_id), 'driver')))
+  const edits = new Map(data.agentEdits.map((r) => [r.labels.agent_id, r.value]))
+  const driverEdits = drivers.reduce((a, id) => a + (edits.get(id) ?? 0), 0)
+  // The effort a spawn ran at: the one most of its spend went to.
+  const effortOf = new Map(), spend = new Map()
+  for (const r of data.agentCost) {
+    const k = `${r.labels.agent_id}\u0000${r.labels.effort}`
+    spend.set(k, (spend.get(k) ?? 0) + r.value)
+    const cur = effortOf.get(r.labels.agent_id)
+    if (!cur || spend.get(k) > spend.get(`${r.labels.agent_id}\u0000${cur}`)) effortOf.set(r.labels.agent_id, r.labels.effort)
+  }
+  const high = {}
+  for (const [id, e] of effortOf) if (/high|max/.test(e ?? '')) { const t = type.get(id) ?? '(unknown)'; high[t] = (high[t] ?? 0) + 1 }
+  const opusDriver = sum(data.agentCost.filter((r) => drivers.includes(r.labels.agent_id) && /opus/.test(r.labels.model)))
+  const subagentSpend = sum(data.costBySource.filter((r) => /^agent/.test(r.labels.query_source)))
+  const summary = sum(data.costBySource.filter((r) => r.labels.query_source === 'agent_summary'))
+  const tracked = sum(data.agentCost.filter((r) => /^agent:/.test(r.labels.query_source)))
+  const untracked = Math.max(0, sum(data.costBySource.filter((r) => /^agent:/.test(r.labels.query_source))) - tracked)
+  return {
+    drivers: drivers.length, workers: workers.length,
+    workerPerDriver: drivers.length ? workers.length / drivers.length : 0,
+    nestedShare: workers.length ? nested / workers.length : 0,
+    driverEditShare: sum(data.agentEdits) ? driverEdits / sum(data.agentEdits) : 0,
+    medianDriverEdits: median(drivers.map((id) => edits.get(id) ?? 0)),
+    opusPerDriver: drivers.length ? opusDriver / drivers.length : 0,
+    reviewers: reviewers.length,
+    reviewerSonnetShare: reviewers.length ? reviewers.filter((id) => /sonnet/.test(model.get(id))).length / reviewers.length : 0,
+    high, summaryShare: subagentSpend ? summary / subagentSpend : 0, untracked,
+  }
+}
+
+const pct = (v) => `${Math.round(v * 100)}%`
+
 export function report(data, known, range) {
   const use = skillUse(data, known)
   const unused = Object.entries(use).filter(([, u]) => u.user + u.model + u.nested === 0).map(([s]) => s)
   const userOnly = Object.entries(use).filter(([, u]) => u.user + u.nested > 0 && u.model === 0).map(([s]) => s)
   const opusSub = data.costBySource.filter((r) => /^agent/.test(r.labels.query_source) && /opus|fable/.test(r.labels.model))
   const unnamed = data.subagentCost.filter((r) => !r.labels.agent_name)
+  const shape = routingShape(data)
   return [
     `# Agent review (last ${range})`,
     '',
@@ -96,8 +139,23 @@ export function report(data, known, range) {
     `Subagent spend on Opus or Fable: ${usd(sum(opusSub))}. Lookups belong on Haiku, routine edits on Sonnet (subagent-orchestration).`,
     table(['agent', 'model', 'runs'], top(data.subagents).map((r) => [r.labels.agent_type, r.labels.model, r.value])),
     '',
+    '### Routing shape',
+    'Unique spawns joined on agent id (Claude Code). Targets: workers per driver >= 1.5, nested workers >= 50%, driver share of subagent edits <= 30%, median edits per driver <= 3, routine reviews on Sonnet >= 80%, agent_summary <= 10% of subagent spend.',
+    table(['measure', 'value'], [
+      ['drivers / workers (unique)', `${shape.drivers} / ${shape.workers}`],
+      ['workers per driver', shape.workerPerDriver.toFixed(2)],
+      ['workers spawned by a driver', pct(shape.nestedShare)],
+      ['driver share of subagent Edit/Write', pct(shape.driverEditShare)],
+      ['median edits per driver', shape.medianDriverEdits],
+      ['Opus per driver (incl. agent_summary)', usd(shape.opusPerDriver)],
+      ['reviewers on Sonnet', `${pct(shape.reviewerSonnetShare)} of ${shape.reviewers}`],
+      ['agent_summary share of subagent spend', pct(shape.summaryShare)],
+    ]),
+    '',
+    `Spawns at effort high or above, by agent (only the sensitive-review agents belong here): ${Object.entries(shape.high).map(([t, n]) => `${t} ${n}`).join(', ') || 'none'}.`,
+    '',
     '### Subagent cost by agent',
-    `Unattributed: ${usd(sum(unnamed))}, spent by spawns given a \`name\` (Claude Code drops their agent name from api_request).`,
+    `Unattributed: ${usd(sum(unnamed))} without an agent name; ${usd(shape.untracked)} of it without an agent id either: agent-team teammates (a named spawn while agent teams are on), which telemetry cannot tie to an agent.`,
     table(['agent', 'model', 'cost'], top(data.subagentCost).map((r) => [r.labels.agent_name || '(named spawn)', r.labels.model, usd(r.value)])),
     '',
     '### Spawns with no model pinned',

@@ -6,7 +6,11 @@
 | Claude Code cost by source | `hook_prompt`, `away_summary` or `prompt_suggestion` are a large share: background spend no task asked for. |
 | hook_prompt by plugin | A plugin's row is a large share: its mod forks the session (`$.model.fork`) or runs a prompt hook, each a full-context request on the session's model. A fork stays on the session's model to share its cache, so cut its triggers (a mod option such as a minimum answer length) or disable it. For a `type: prompt` or `agent` hook, pin a cheaper model on the hook or disable it. An empty plugin is a session on Claude Code before 2.1.310, which did not label these requests: match the sessions' dates against when a mod was enabled. |
 | Subagent routing | Subagent spend on Opus or Fable is high: lookups belong on Haiku, routine edits on Sonnet (`subagent-orchestration`). |
-| Subagent cost by agent | The unattributed (named spawn) share is large: spawns get a `name` they did not need, and their cost cannot be traced. |
+| Routing shape | Fewer than 1.5 workers per driver, under half of the workers spawned by a driver, drivers making over 30% of subagent edits or a median above 3 edits each: drivers edit instead of fanning out to `worker`s (`subagent-orchestration`, the driver prompt). Track Opus per driver against the previous window: it should fall as edits move to workers. |
+| Reviewer tier | Under 80% of reviewers on Sonnet: hubs raise the reviewer for routine changes; `model: opus` with `effort: high` belongs only to the sensitive-review set. |
+| Effort high | A row for any agent outside the reviewers and verifiers (`reviewer`, `api-reviewer`, `verifier`): a spawn raised its effort where the routing table does not. |
+| agent_summary share | Above 10% of subagent spend: the background summaries of running subagents, priced on each subagent's model; long Opus drivers drive it. |
+| Subagent cost by agent | Spend without an agent id is agent-team teammates: with agent teams on, a named spawn becomes a teammate that telemetry cannot tie to an agent. Turn agent teams off, or name a spawn only when you will message it. |
 | Spawns with no model pinned | Any row: the spawn ran on the session's model. Fix the skill or brief that spawned it. |
 | Model swaps | Any row: a subagent finished on a fallback model; a factory run records it as a routing deviation. |
 | Skills: never loaded | Not used in the window. Keep a skill at least 30 days before pruning it; check it is still installed. |
