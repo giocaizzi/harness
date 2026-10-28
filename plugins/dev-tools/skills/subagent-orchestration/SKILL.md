@@ -1,6 +1,6 @@
 ---
 name: subagent-orchestration
-description: Load first, before reading or editing code, whenever the user asks you to plan, design, investigate, find a root cause, fix a bug, build a feature, carry out an approved plan or a change across several files, or review a change - the main session routes that work to a typed agent instead of doing it. Also when spawning subagents, splitting work in parallel, escalating after failed attempts, coordinating with other running sessions, waiting on a review verdict, or choosing a model or effort. Claude Code, Copilot CLI, Codex, opencode and pi.
+description: Load first, before reading or editing code, whenever the user asks you to plan, design, investigate, find a root cause, fix a bug, build a feature or review a change - the main session routes that work to a typed agent instead of doing it. Also when spawning subagents, splitting work in parallel, escalating after failed attempts, coordinating with other running sessions, waiting on a review verdict, or choosing a model or effort. Claude Code, Copilot CLI, Codex, opencode and pi.
 ---
 
 # Subagent orchestration
