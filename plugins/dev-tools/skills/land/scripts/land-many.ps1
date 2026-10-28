@@ -7,12 +7,15 @@
 # base has a merge queue, or gets `gh pr merge --auto --squash` once when it has none; where auto-merge is not
 # allowed, it is merged directly once every check passed. A PR that falls out of the queue is enqueued again, up to
 # LAND_MANY_REQUEUES (2) times. gh refusing with `Required status check ... is expected` is waited on like a pending
-# check, never counted as a gh failure. Nothing is bypassed. One line per PR, as soon as it ends:
+# check, never counted as a gh failure. A PR in a stack, which gh refuses with `part of a stack`, goes through the
+# asynchronous merge REST API instead (PUT pulls/<n>/merge-async with the head sha: merge_queue with a queue, else
+# default with squash), which lands the stack up to that PR atomically; the refusal is never a gh failure, and the
+# request is polled until merged, enqueued or failed. Nothing is bypassed. One line per PR, as soon as it ends:
 #   PR <n>: MERGED <sha> | CLOSED | DIRTY | BEHIND | STACKED <base> | FAILED <why> | ERROR <gh error> | TIMEOUT <state>
 # DIRTY is a conflict; BEHIND (only without a queue) needs the base merged in; STACKED is a PR based on another
 # branch than the default one (land it with `gh stack merge`, or retarget it as `land` step 3 says); ERROR is gh
 # failing 3 polls in a row; TIMEOUT names what it waited on (pending required checks, running workflows, gh's
-# refusal). Exits 0 when every PR merged, 1 otherwise, 2 on usage. Needs gh.
+# refusal, a merge-async request still pending). Exits 0 when every PR merged, 1 otherwise, 2 on usage. Needs gh.
 # --interval (1-3600) and --timeout (1-86400) default to LAND_MANY_INTERVAL (30) and LAND_MANY_TIMEOUT (7200) seconds.
 $ErrorActionPreference = 'Stop'
 function Exit-Usage { [Console]::Error.WriteLine('usage: land-many.ps1 [--interval <1-3600 s>] [--timeout <1-86400 s>] <pr>...'); exit 2 }
@@ -47,6 +50,11 @@ function Invoke-Gh([string[]]$GhArgs) {
     if ($LASTEXITCODE -ne 0) { return $null }
     ($out -join "`n")
 }
+# Invoke-GhBody <args>: gh's stdout as one string even when it failed (a merge-async 409 carries a pending request).
+function Invoke-GhBody([string[]]$GhArgs) {
+    $out = & gh @GhArgs 2>$errFile
+    ($out -join "`n")
+}
 function Get-Err { $e = @(Get-Content $errFile -ErrorAction SilentlyContinue); if ($e.Count) { $e[0] } else { 'unknown error' } }
 $view = Invoke-Gh @('repo', 'view', '--json', 'nameWithOwner,defaultBranchRef')
 if (-not $view) { [Console]::Error.WriteLine('land-many: gh repo view failed'); exit 1 }
@@ -58,6 +66,7 @@ $query = 'query($owner:String!,$name:String!,$n:Int!){repository(owner:$owner,na
     'commits(last:1){nodes{commit{checkSuites(first:100){nodes{status workflowRun{workflow{name}}}}}}} ' +
     'statusCheckRollup{contexts(first:100){nodes{__typename ' +
     '... on CheckRun{name status conclusion detailsUrl} ... on StatusContext{context state targetUrl}}}}}}}'
+$apiVersion = '2026-03-10' # the REST version whose docs define merge-async
 $mutation = 'mutation($id:ID!,$head:GitObjectID!){enqueuePullRequest(input:{pullRequestId:$id,expectedHeadOid:$head}){mergeQueueEntry{position}}}'
 $requiredByBase = @{}
 # The required check names on a branch, from its rulesets and classic protection; $null when gh failed.
@@ -91,6 +100,7 @@ function Get-Rollup($Pr) {
 $n = $prs.Count
 $left = $n; $status = 0
 $done = @(0) * $n; $enq = @(0) * $n; $fails = @(0) * $n; $armed = @('0') * $n; $last = @('unknown') * $n
+$stacked = @(0) * $n; $uuid = @('') * $n
 function Complete-Pr([int]$I, [string]$What) {
     "PR $($prs[$I]): $What"
     $script:done[$I] = 1; $script:left--
@@ -106,6 +116,42 @@ function Add-Strike([int]$I) {
     $script:fails[$I]++
     if ($script:fails[$I] -ge 3) { Complete-Pr $I "ERROR $(Get-Err)" }
 }
+# True when gh refused because the PR is part of a stack, which only merge-async can land.
+function Test-Stacked { Select-String -Quiet -SimpleMatch 'part of a stack' -Path $errFile }
+# Act on a merge-async reply (the request or a poll of it): pending keeps its uuid, enqueued counts as one enqueue,
+# merged and failed end the PR; a reply without a status is a strike. A 409 (a request already pending) carries that
+# request's uuid, so gh failing is read the same way.
+function Complete-Async([int]$I, [string]$Body, $Pr) {
+    $r = $null
+    try { $r = ConvertFrom-Json -InputObject $Body } catch { $r = $null }
+    $u = ''; $s = ''; $m = '-'; $c = '-'
+    if ($null -ne $r) {
+        $u = if ($r.details.uuid) { "$($r.details.uuid)" } elseif ($r.uuid) { "$($r.uuid)" } else { '' }
+        $s = if ($r.status) { "$($r.status)" } elseif ($u) { 'pending' } else { '' }
+        $m = if ($r.details.message) { "$($r.details.message)" } elseif ($r.message) { "$($r.message)" } else { '-' }
+        $c = if ($r.details.sha) { "$($r.details.sha)" } else { '-' }
+    }
+    $state = "$($Pr.state) $($Pr.mergeStateStatus)"
+    if ($s -ceq 'pending') { $script:uuid[$I] = $u; $script:last[$I] = "$state, merge-async pending $u" }
+    elseif ($s -ceq 'enqueued') { $script:uuid[$I] = ''; $script:enq[$I]++; $script:last[$I] = "$state, queued through merge-async" }
+    elseif ($s -ceq 'merged') { Complete-Pr $I "MERGED $c" }
+    elseif ($s -ceq 'failed') { Complete-Pr $I "FAILED merge-async: $m" }
+    else {
+        if (-not (Get-Content $errFile -ErrorAction SilentlyContinue)) {
+            $b = if ($Body.Length -gt 200) { $Body.Substring(0, 200) } else { $Body }
+            Set-Content -Path $errFile -Value "merge-async: unexpected reply $b"
+        }
+        Add-Strike $I; return
+    }
+    $script:fails[$I] = 0
+}
+# Request the asynchronous merge of that PR's head (enqueue with a queue, else the default action).
+function Request-MergeAsync([int]$I, $Pr) {
+    $script:stacked[$I] = 1; $script:armed[$I] = 'async'
+    $action = if ($Pr.isMergeQueueEnabled) { @('-f', 'merge_action=merge_queue') } else { @('-f', 'merge_action=default', '-f', 'merge_method=squash') }
+    $body = Invoke-GhBody (@('api', '-X', 'PUT', "repos/$repo/pulls/$($prs[$I])/merge-async", '-H', "X-GitHub-Api-Version: $apiVersion") + $action + @('-f', "sha=$($Pr.headRefOid)"))
+    Complete-Async -I $I -Body $body -Pr $Pr
+}
 $deadline = [DateTime]::UtcNow.AddSeconds($timeout)
 try {
     while ($true) {
@@ -119,6 +165,12 @@ try {
             $last[$i] = "$($p.state) $($p.mergeStateStatus)"
             if ($p.state -ceq 'MERGED') { $sha = if ($p.mergeCommit.oid) { $p.mergeCommit.oid } else { '-' }; Complete-Pr $i "MERGED $sha"; continue }
             if ($p.state -ceq 'CLOSED') { Complete-Pr $i 'CLOSED'; continue }
+            # A merge-async request still pending: poll it until it ends.
+            if ($uuid[$i]) {
+                $body = Invoke-GhBody @('api', "repos/$repo/pulls/$pr/merge-async/$($uuid[$i])", '-H', "X-GitHub-Api-Version: $apiVersion")
+                Complete-Async -I $i -Body $body -Pr $p
+                continue
+            }
             if ($p.baseRefName -cne $default) { Complete-Pr $i "STACKED on $($p.baseRefName): land it with gh stack merge, or retarget it (land step 3)"; continue }
             if ($p.mergeStateStatus -ceq 'DIRTY') { Complete-Pr $i 'DIRTY'; continue }
             if ($p.mergeStateStatus -ceq 'BEHIND' -and -not $p.isMergeQueueEnabled) { Complete-Pr $i 'BEHIND'; continue }
@@ -142,10 +194,15 @@ try {
             if ($p.isMergeQueueEnabled) {
                 if ($p.isInMergeQueue) { $fails[$i] = 0; continue }
                 if ($enq[$i] -gt $requeues) { Complete-Pr $i "FAILED left the merge queue $($enq[$i]) times (read its merge_group run)"; continue }
-                if ($null -eq (Invoke-Gh @('api', 'graphql', '-f', "query=$mutation", '-f', "id=$($p.id)", '-f', "head=$($p.headRefOid)"))) { if (-not (Test-Expected $i $p)) { Add-Strike $i }; continue }
+                if ($stacked[$i]) { Request-MergeAsync $i $p; continue }
+                if ($null -eq (Invoke-Gh @('api', 'graphql', '-f', "query=$mutation", '-f', "id=$($p.id)", '-f', "head=$($p.headRefOid)"))) {
+                    if (Test-Stacked) { Request-MergeAsync $i $p } elseif (-not (Test-Expected $i $p)) { Add-Strike $i }
+                    continue
+                }
                 $enq[$i]++; $last[$i] = "$($p.state) $($p.mergeStateStatus), queued"
             } elseif ($armed[$i] -ceq '0') {
                 if ($null -eq (Invoke-Gh @('pr', 'merge', $pr, '--auto', '--squash', '--match-head-commit', $p.headRefOid))) {
+                    if (Test-Stacked) { Request-MergeAsync $i $p; continue }
                     if (-not (Select-String -Quiet -SimpleMatch 'Auto merge is not allowed' -Path $errFile)) { if (-not (Test-Expected $i $p)) { Add-Strike $i }; continue }
                     $armed[$i] = 'direct'
                 } else { $armed[$i] = '1'; $last[$i] = "$($p.state) $($p.mergeStateStatus), auto-merge armed" }
@@ -153,7 +210,10 @@ try {
             # Auto-merge unavailable: merge directly once every check on the head passed, as `land` step 4 does.
             if ($armed[$i] -ceq 'direct') {
                 if (-not $allPassed) { $last[$i] = "$($p.state) $($p.mergeStateStatus), waiting for every check before a direct merge"; $fails[$i] = 0; continue }
-                if ($null -eq (Invoke-Gh @('pr', 'merge', $pr, '--squash', '--match-head-commit', $p.headRefOid))) { if (-not (Test-Expected $i $p)) { Add-Strike $i }; continue }
+                if ($null -eq (Invoke-Gh @('pr', 'merge', $pr, '--squash', '--match-head-commit', $p.headRefOid))) {
+                    if (Test-Stacked) { Request-MergeAsync $i $p } elseif (-not (Test-Expected $i $p)) { Add-Strike $i }
+                    continue
+                }
             }
             $fails[$i] = 0
         }

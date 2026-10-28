@@ -20,7 +20,9 @@ export const CONCURRENCY = 4
 // every head also carries a queued app suite with no workflow run, which never blocks. noAutoMerge refuses
 // `gh pr merge --auto`; expected refuses that PR's first <count> enqueues and merges with gh's
 // `Required status check ... is expected`. A step with `queued: 'after-enqueue'` reports true once that PR was
-// enqueued. Calls go to <scenario>.log.
+// enqueued. stacked: [n...] refuses those PRs' enqueues and merges as part of a stack; async: { <n>: [reply...] }
+// answers that PR's merge-async request and then each poll of it (the last one repeats), a reply being 'pending',
+// 'enqueued' (which counts as an enqueue), 'merged' or 'failed'. Calls go to <scenario>.log.
 const shim = `
 import { readFileSync, writeFileSync, appendFileSync, existsSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
@@ -40,6 +42,13 @@ const refuse = (n) => {
   process.stderr.write('GraphQL: Required status check "check" is expected. (mergePullRequest)\\n')
   return true
 }
+// stack(n): true (after logging it) when that PR is in a stack, which gh refuses to merge or enqueue.
+const stack = (n) => {
+  if (!(sc.stacked ?? []).includes(Number(n))) return false
+  log('stack-refused ' + n)
+  process.stderr.write('GraphQL: This pull request is part of a stack and must be enqueued using the asynchronous merge REST API (mergePullRequest)\\n')
+  return true
+}
 const out = (data) => {
   let text = typeof data === 'string' ? data : JSON.stringify(data)
   if (jq >= 0) text = spawnSync('jq', ['-r', argv[jq + 1]], { input: text, encoding: 'utf8' }).stdout.replace(/\\n$/, '')
@@ -48,6 +57,7 @@ const out = (data) => {
 }
 if (argv[0] === 'repo' && argv[1] === 'view') out({ nameWithOwner: 'acme/app', defaultBranchRef: { name: 'main' } })
 if (argv[0] === 'pr' && argv[1] === 'merge') {
+  if (stack(argv[2])) process.exit(1)
   if (sc.noAutoMerge && argv.includes('--auto')) { process.stderr.write('GraphQL: Auto merge is not allowed for this repository (enablePullRequestAutoMerge)\\n'); process.exit(1) }
   if (refuse(argv[2])) process.exit(1)
   log('merge ' + argv.slice(2).join(' ')); process.exit(0)
@@ -57,11 +67,29 @@ if (argv[0] === 'api' && argv[1].startsWith('repos/acme/app/rules/branches/')) {
   log('rules ' + argv[1].split('/').pop())
   out([{ type: 'deletion' }, { type: 'required_status_checks', parameters: { required_status_checks: sc.required.map((context) => ({ context, integration_id: 1 })) } }])
 }
+const asyncPath = argv[0] === 'api' && argv.map((a) => a.split('/')).find((p) => p.slice(0, 4).join('/') === 'repos/acme/app/pulls' && p[5] === 'merge-async')
+if (asyncPath) {
+  const [, , , , n, , id] = asyncPath
+  const h = argv.indexOf('-H')
+  const version = h >= 0 ? argv[h + 1] : 'no version'
+  if (id) log('merge-async-poll ' + n + ' ' + id + ' ' + version)
+  else log('merge-async ' + n + ' ' + argv.filter((a, i) => argv[i - 1] === '-f').join(' ') + ' ' + version)
+  const counter = file + '.async-' + n
+  const i = existsSync(counter) ? Number(readFileSync(counter, 'utf8')) : 0
+  writeFileSync(counter, String(i + 1))
+  const replies = sc.async[n]
+  const r = replies[Math.min(i, replies.length - 1)]
+  if (r === 'enqueued') appendFileSync(file + '.enq-' + n, 'x')
+  out(r === 'pending' ? { status: 'pending', details: { message: 'Merge requested', uuid: 'u' + n, merge_method: 'squash', merge_action: 'default', expected_head_sha: 'head' + n } }
+    : r === 'enqueued' ? { status: 'enqueued', details: { message: 'Added to the merge queue' } }
+    : r === 'merged' ? { status: 'merged', details: { message: 'Merged', sha: 'sha' + n } }
+    : { status: 'failed', details: { message: 'Required status check "check" is failing' } })
+}
 if (argv[0] === 'api' && argv[1] === 'graphql') {
   const q = field('query')
   if (q.startsWith('mutation')) {
     const n = field('id').replace('PR_', '')
-    if (refuse(n)) process.exit(1)
+    if (stack(n) || refuse(n)) process.exit(1)
     log('enqueue ' + n + ' ' + field('head'))
     appendFileSync(file + '.enq-' + n, 'x')
     out({ data: { enqueuePullRequest: { mergeQueueEntry: { position: 1 } } } })
@@ -211,6 +239,37 @@ export function landManyTests(kind) {
     assert.equal(r.code, 1, r.err)
     assert.match(r.out, /^PR 11: STACKED on feat\/schema: land it with gh stack merge/)
     assert.ok(!r.log.some((l) => l.startsWith('merge') || l.startsWith('enqueue')))
+  })
+
+  const v = 'X-GitHub-Api-Version: 2026-03-10'
+  test(`${kind} land-many: a PR gh refuses as part of a stack goes through merge-async, enqueued with a queue, merged without one`, async () => {
+    const r = await landMany(kind, { stacked: [11, 12], async: { 11: ['pending', 'enqueued'], 12: ['pending', 'pending', 'merged'] }, prs: {
+      11: [queued, queued, queued, merged], 12: [{ ...green, queue: false }] } })
+    assert.equal(r.code, 0, r.err + r.out)
+    assert.match(r.out, /^PR 12: MERGED sha12\nPR 11: MERGED sha11\n$/)
+    assert.deepEqual(r.log.filter((l) => /^(stack-refused|merge-async|enqueue|merge )/.test(l)), [
+      'stack-refused 11', `merge-async 11 merge_action=merge_queue sha=head11 ${v}`,
+      'stack-refused 12', `merge-async 12 merge_action=default merge_method=squash sha=head12 ${v}`,
+      `merge-async-poll 11 u11 ${v}`, `merge-async-poll 12 u12 ${v}`, `merge-async-poll 12 u12 ${v}`])
+  })
+
+  test(`${kind} land-many: a failed merge-async request ends the PR with its message`, async () => {
+    const r = await landMany(kind, { stacked: [11], async: { 11: ['pending', 'failed'] }, prs: { 11: [green] } })
+    assert.equal(r.code, 1, r.err)
+    assert.match(r.out, /^PR 11: FAILED merge-async: Required status check "check" is failing\n$/)
+  })
+
+  test(`${kind} land-many: a merge-async request still pending at the deadline is a TIMEOUT naming it, never an ERROR`, async () => {
+    const r = await landMany(kind, { stacked: [11], async: { 11: ['pending'] }, prs: { 11: [green] } }, ['--interval', '1', '--timeout', '4', '11'])
+    assert.equal(r.code, 1, r.err)
+    assert.match(r.out, /^PR 11: TIMEOUT after 4s, OPEN BLOCKED, merge-async pending u11\n$/)
+    assert.equal(r.log.filter((l) => l.startsWith('merge-async ')).length, 1)
+  })
+
+  test(`${kind} land-many: a PR outside a stack never calls merge-async`, async () => {
+    const r = await landMany(kind, { stacked: [], async: {}, prs: { 11: [queued, merged], 12: [{ ...green, queue: false }, merged] } })
+    assert.equal(r.code, 0, r.err)
+    assert.deepEqual(r.log.filter((l) => /^(stack-refused|merge-async|enqueue|merge )/.test(l)), ['enqueue 11 head11', 'merge 12 --auto --squash --match-head-commit head12'])
   })
 
   test(`${kind} land-many: gh failing 3 polls in a row is an ERROR`, async () => {
