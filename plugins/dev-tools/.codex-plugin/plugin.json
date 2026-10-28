@@ -1,6 +1,6 @@
 {
   "name": "dev-tools",
-  "version": "1.45.4",
+  "version": "1.46.0",
   "description": "General development tooling \u2014 git, GitHub, conventional commits, semantic versioning",
   "author": {
     "name": "giocaizzi",
