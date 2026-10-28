@@ -6,6 +6,7 @@ tools:
 - edit
 - execute
 - search
+- lsp
 ---
 
 # Role
