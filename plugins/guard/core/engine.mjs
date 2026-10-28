@@ -1315,9 +1315,115 @@ function changesLabels(command) {
   return !args || ghAction(args) !== 'read';
 }
 
+// Symbol search: a grep-family command (or search tool call) whose pattern names a declaration or an identifier in code.
+const LSP_VALUE_SHORT = { grep: 'efABCmdD', rg: 'efABCmgtTdjMrE' };
+const LSP_VALUE_LONG = new Set(['regexp', 'file', 'max-count', 'after-context', 'before-context', 'context', 'include', 'exclude', 'exclude-dir', 'exclude-from', 'directories', 'devices', 'label', 'binary-files', 'type', 'type-not', 'glob', 'iglob', 'max-depth', 'replace', 'threads', 'encoding', 'pre', 'ignore-file', 'sort', 'max-filesize', 'colors']);
+
+const lspExt = (glob, rules) => {
+  const m = /(?:^|\/)\*\.(?:\{([\w,]+)\}|(\w+))$/.exec(glob);
+  return !!m && (m[1] ?? m[2]).split(',').some((e) => rules.lsp.ext.includes(e));
+};
+const lspPathExt = (path, rules) => rules.lsp.ext.some((e) => path.endsWith(`.${e}`));
+
+// patterns: the search patterns; word: whole-word match; filtered: a language filter; skip: a non-code path.
+function lspMatch({ patterns, word, filtered, skip, rules }) {
+  if (skip) return false;
+  const { declaration, identifier, stop } = rules.lsp;
+  const decl = new RegExp(declaration);
+  const ident = new RegExp(identifier);
+  return patterns.some((p) => {
+    if (decl.test(p)) return true;
+    if (!filtered) return false;
+    if (ident.test(p) && !stop.includes(p)) return true;
+    const bare = /^(?:\\b)?([A-Za-z_]\w*)(?:\\b)?$/.exec(p);
+    return !!bare && (word || (p.startsWith('\\b') && p.endsWith('\\b'))) && !stop.includes(bare[1]);
+  });
+}
+
+function lspSimple(words, rules) {
+  const vals = words.map((w) => w.val);
+  const prog = vals[0] === 'git' && vals[1] === 'grep' ? 'git grep' : vals[0];
+  if (!rules.lsp.programs.includes(prog)) return false;
+  const args = vals.slice(prog === 'git grep' ? 2 : 1);
+  const valueShort = prog === 'rg' ? LSP_VALUE_SHORT.rg : LSP_VALUE_SHORT.grep;
+  const patterns = [];
+  const operands = [];
+  let word = false;
+  let filtered = false;
+  let fromFile = false;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === '--') {
+      operands.push(...args.slice(i + 1));
+      break;
+    }
+    if (a.startsWith('--')) {
+      const eq = a.indexOf('=');
+      const name = eq < 0 ? a.slice(2) : a.slice(2, eq);
+      if (name === 'invert-match' || name === 'files') return false;
+      if (name === 'word-regexp') word = true;
+      let value = eq < 0 ? undefined : a.slice(eq + 1);
+      if (value === undefined && LSP_VALUE_LONG.has(name)) value = args[++i] ?? '';
+      if (value === undefined) continue;
+      if (name === 'regexp') patterns.push(value);
+      else if (name === 'file') fromFile = true;
+      else if (name === 'include' || name === 'glob' || name === 'iglob') filtered ||= lspExt(value, rules);
+      else if (name === 'type') filtered ||= rules.lsp.types.includes(value);
+      continue;
+    }
+    if (a.length > 1 && a[0] === '-') {
+      for (let k = 1; k < a.length; k++) {
+        const c = a[k];
+        if (c === 'v') return false;
+        if (c === 'w') word = true;
+        if (!valueShort.includes(c)) continue;
+        const value = k + 1 < a.length ? a.slice(k + 1) : (args[++i] ?? '');
+        if (c === 'e') patterns.push(value);
+        else if (c === 'f') fromFile = true;
+        else if (c === 'g' && prog === 'rg') filtered ||= lspExt(value, rules);
+        else if (c === 't' && prog === 'rg') filtered ||= rules.lsp.types.includes(value);
+        break;
+      }
+      continue;
+    }
+    operands.push(a);
+  }
+  if (!patterns.length && !fromFile && operands.length) patterns.push(operands.shift());
+  const skip = new RegExp(rules.lsp.skipPaths);
+  if (operands.some((o) => skip.test(o))) return false;
+  filtered ||= operands.some((o) => lspPathExt(o, rules) || lspExt(o, rules));
+  return lspMatch({ patterns, word, filtered, skip: false, rules });
+}
+
+// True when a top-level command of `command` is a grep-family search for a symbol; false on anything unreadable.
+export function symbolSearch(command, rules) {
+  try {
+    return scan(command).some((cmd) => cmd.sep !== '|' && cmd.sep !== '|&' && lspSimple(commandWords(cmd.words), rules));
+  } catch {
+    return false;
+  }
+}
+
+// A search tool call (Claude `Grep`: pattern, glob, type, path; opencode and Copilot `grep`: pattern, include as `glob`, path):
+// a once-per-agent hint toward the LSP tool when the pattern looks like a symbol. `lspTool`: the harness's LSP tool, or none.
+export function evaluateSearch({ pattern, glob, type, path, state, lspTool, rules }) {
+  try {
+    if (!lspTool || state.reminded.has('lsp') || typeof pattern !== 'string') return { action: 'allow' };
+    const p = String(path ?? '');
+    const skip = !!p && new RegExp(rules.lsp.skipPaths).test(p);
+    const filtered = (typeof glob === 'string' && lspExt(glob, rules)) || rules.lsp.types.includes(type) || (!!p && lspPathExt(p, rules));
+    if (!lspMatch({ patterns: [pattern], word: false, filtered, skip, rules })) return { action: 'allow' };
+    state.reminded.add('lsp');
+    return { action: 'allow', rule: 'lsp', remind: true, context: rules.lsp.say.replace('{tool}', lspTool) };
+  } catch {
+    return { action: 'allow' };
+  }
+}
+
 // `readTool`: the harness has a file-read tool (all but Codex), so a shell read gets a once-per-session hint.
+// `lspTool`: the harness's LSP tool (null where it has none), so a shell symbol search gets a once-per-session hint.
 // `worktrees`, `branches`, `regenerable`: facts the adapters gather (worktreeFacts, branchFacts, regenFacts).
-export function evaluateCommand({ command, loadedSkills = new Set(), state, host = {}, env = {}, worktrees = {}, branches = {}, regenerable = {}, refs = {}, tags = {}, python = null, readTool = false, factory = null, rules }) {
+export function evaluateCommand({ command, loadedSkills = new Set(), state, host = {}, env = {}, worktrees = {}, branches = {}, regenerable = {}, refs = {}, tags = {}, python = null, readTool = false, lspTool = null, factory = null, rules }) {
   // While a factory run is active the agent never touches the approval label: with an owner token it would count as the owner's.
   if (factory && touchesApprovalLabel(command, factory.approval)) return { action: 'deny', rule: 'factory-approval', reason: `${rules.factory.why} The \`${factory.approval}\` label is the owner's to apply or remove; ask on the ticket instead.` }
   if (factory && ghHidden(command)) return { action: 'deny', rule: 'factory-approval', reason: `${rules.factory.why} This command may run \`gh\` under a spelling the guard cannot read (another letter case, an escape, a glob or brace list); spell \`gh\` literally.` }
@@ -1406,6 +1512,10 @@ export function evaluateCommand({ command, loadedSkills = new Set(), state, host
   if (!note && readTool && !state.reminded.has('read') && SHELL_READ.test(command)) {
     state.reminded.add('read');
     return { action: 'allow', rule: 'read', remind: true, context: 'Read files with the harness\'s read tool, not cat/head/tail/sed: it shows line numbers, pages large files and a wrong path is a plain error, not a failed shell command.' };
+  }
+  if (!note && lspTool && !state.reminded.has('lsp') && symbolSearch(command, rules)) {
+    state.reminded.add('lsp');
+    return { action: 'allow', rule: 'lsp', remind: true, context: rules.lsp.say.replace('{tool}', lspTool) };
   }
   if (!note && !state.reminded.has('edit') && shellEdit(command, env)) {
     state.reminded.add('edit');
@@ -1564,7 +1674,7 @@ const RULE_FAMILY = {
   docker: 'infra', k8s: 'infra', 'cloud-delete': 'infra', terraform: 'infra', disk: 'infra', 'gh-delete': 'infra', merge: 'infra',
   secrets: 'secrets', 'secrets-env': 'secrets', opaque: 'opaque', title: 'title', host: 'host', pip: 'python', poetry: 'python',
   commit: 'skill', pr: 'skill', ruleset: 'skill', worktree: 'skill', release: 'skill',
-  'pr-fix': 'hint', pytest: 'hint', 'go-test': 'hint', 'go-lint': 'hint', read: 'hint', edit: 'hint', docs: 'hint', 'guard-error': 'guard-error',
+  'pr-fix': 'hint', pytest: 'hint', 'go-test': 'hint', 'go-lint': 'hint', read: 'hint', edit: 'hint', lsp: 'hint', docs: 'hint', 'guard-error': 'guard-error',
   'routing-plan': 'routing', 'routing-model': 'routing', 'routing-override': 'routing',
 };
 const PROGRAM_FAMILY = {
