@@ -13,7 +13,7 @@
       "name": "python",
       "source": "./plugins/python",
       "description": "Python development and testing best practices",
-      "version": "1.6.0",
+      "version": "1.6.2",
       "keywords": [
         "python",
         "development",
@@ -38,7 +38,7 @@
       "name": "javascript",
       "source": "./plugins/javascript",
       "description": "JavaScript, TypeScript, React and Next.js development",
-      "version": "1.5.0",
+      "version": "1.5.2",
       "keywords": [
         "javascript",
         "typescript",
@@ -51,7 +51,7 @@
       "name": "go",
       "source": "./plugins/go",
       "description": "Go development and testing best practices",
-      "version": "1.1.0",
+      "version": "1.1.2",
       "keywords": [
         "go",
         "golang",
@@ -65,7 +65,7 @@
       "name": "dev-tools",
       "source": "./plugins/dev-tools",
       "description": "General development tooling — git, GitHub, conventional commits, semantic versioning",
-      "version": "1.46.2",
+      "version": "1.47.1",
       "keywords": [
         "git",
         "github",
@@ -80,7 +80,7 @@
       "name": "guard",
       "source": "./plugins/guard",
       "description": "Agent guardrails for Claude Code, Copilot CLI, VS Code, Codex, opencode and pi: skill enforcer, title guard, pip deny, host guard, risky-command ask, make check on stop, post-edit lint, keep-awake; Claude-only usage throttle",
-      "version": "0.65.0",
+      "version": "0.66.1",
       "keywords": [
         "hooks",
         "guardrails",
