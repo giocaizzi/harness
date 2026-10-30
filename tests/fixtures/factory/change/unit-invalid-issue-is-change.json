@@ -1,0 +1,44 @@
+{
+  "unit": "change_fix",
+  "version": 1,
+  "run_id": "rt-14-1",
+  "change": "acme/app#14",
+  "pr": "https://github.com/acme/app/pull/14",
+  "issues": [
+    "acme/app#14"
+  ],
+  "branch": "factory/12-add-export",
+  "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "trigger": "changes_requested",
+  "attempt": 1,
+  "max_attempts": 3,
+  "items": [
+    {
+      "source": "https://github.com/acme/app/pull/14#pullrequestreview-1001",
+      "kind": "review",
+      "author": "owner-login",
+      "role": "approver",
+      "path": null,
+      "line": null,
+      "text": "The export drops empty rows; keep them."
+    },
+    {
+      "source": "https://github.com/acme/app/pull/14#discussion_r2001",
+      "kind": "review_comment",
+      "author": "owner-login",
+      "role": "approver",
+      "path": "src/export.py",
+      "line": 42,
+      "text": "This filter removes empty rows."
+    },
+    {
+      "source": "https://github.com/acme/app/pull/14#issuecomment-3001",
+      "kind": "comment",
+      "author": "drive-by-reviewer",
+      "role": "reviewer",
+      "path": null,
+      "line": null,
+      "text": "Same thing happens in the CSV writer."
+    }
+  ]
+}
