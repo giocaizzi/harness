@@ -242,6 +242,8 @@ const within = (promise, ms, fallback) =>
 const FACTS_MS = 20_000
 const ALLOW_SAMPLE = 10
 const PREVIEW_MS = 3_000
+// The stacked-PR hint's lookups: a hint never holds a PR command back for long.
+const STACK_MS = 5_000
 
 // Unattended: GUARD_UNATTENDED in the environment the harness was launched with, or set by a command in this session
 // (`export GUARD_UNATTENDED=1`), which a hook cannot otherwise see: each hook is its own process. The command's own
@@ -336,7 +338,7 @@ async function onShell(input, state, deps) {
     }
     // The stacked-PR hint (once per agent) costs a few git and gh lookups, on `gh pr create|merge` only.
     if (!/^(0|false|off)$/i.test(deps.env?.GUARD_STACK_HINT ?? '') && !state.reminded.includes('stack') && stackTargets(command, rules, facts.env).length) {
-      facts.stack = await within(stackFacts(command, rules, inCwd, facts.env), deps.factsMs ?? FACTS_MS, {})
+      facts.stack = await within(stackFacts(command, rules, inCwd, facts.env), deps.factsMs ?? STACK_MS, {})
     }
     // A `git tag -f`/`-d` of a tag no remote has is not a release (one `ls-remote` per remote, same budget).
     if (tagTargets(command, rules, facts.env).some((t) => !t.name.startsWith('<'))) {
