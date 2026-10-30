@@ -3,9 +3,10 @@
 // the PR that fixes a bug drops its id from OPEN. Every new false ask or missed command found in telemetry or
 // transcripts becomes a row here.
 // Row: [command, expected ('allow' | 'allow:<hint>' | 'ask:<rule>' | 'deny:<rule>'), bug id, source, options?]
-// options: { python: 'uv' } the repo's Python manager; { hints: true } the read, edit and LSP hints not yet shown;
+// options: { python: 'uv' } the repo's Python manager; { hints: true } the read and edit hints not yet shown;
 // { read: false } the command must not get the plain-read allow (`pureRead`), so the harness's own prompt decides.
 // { factory: 'readable' | 'unsure' } a factory run whose config was read, or could not be.
+// { stack: <facts> } the stacked-PR facts `stackFacts` gathered: { below: { number, branch }, base }, or {} for none.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
@@ -31,10 +32,10 @@ const run = async (argv) => {
 }
 
 const FACTORY = { readable: { approval: 'agent-ok', takeover: 'factory-takeover' }, unsure: { approval: 'agent-ok', takeover: 'factory-takeover', unsure: true, extra: [] } }
-const decide = async (command, { python = null, hints = false, factory = null } = {}) => {
+const decide = async (command, { python = null, hints = false, factory = null, stack = null } = {}) => {
   const [worktrees, branches, regenerable, refs] = await Promise.all([worktreeFacts(command, env, rules, run), branchFacts(command, rules, run, env), regenFacts(command, env, rules, run), refFacts(command, rules, run, env)])
-  const state = { reminded: new Set(hints ? [] : ['read', 'edit', 'lsp']) }
-  const d = evaluateCommand({ command, loadedSkills, state, env, worktrees, branches, regenerable, refs, python, lspTool: 'LSP', factory: FACTORY[factory] ?? null, rules })
+  const state = { reminded: new Set(hints ? [] : ['read', 'edit']) }
+  const d = evaluateCommand({ command, loadedSkills, state, env, worktrees, branches, regenerable, refs, python, stack, factory: FACTORY[factory] ?? null, rules })
   return d.action + (d.rule && !(d.action === 'allow' && !d.remind) ? `:${d.rule}` : '')
 }
 

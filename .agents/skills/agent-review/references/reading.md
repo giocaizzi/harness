@@ -11,6 +11,7 @@
 | Reviewer tier | Under 80% of reviewers on Sonnet: hubs raise the reviewer for routine changes; `model: opus` with `effort: high` belongs only to the sensitive-review set. |
 | Effort high | A row for any agent outside the reviewers and verifiers (`reviewer`, `api-reviewer`, `verifier`): a spawn raised its effort where the routing table does not. |
 | agent_summary share | Above 10% of subagent spend: the background summaries of running subagents, priced on each subagent's model; long Opus drivers drive it. |
+| By plugin version | Against the previous version, cost per session or the Opus share of subagent cost rises, workers per driver falls, or effort high+ or agent_summary share rises: a dev-tools change (agent prompts, routing rules) moved routing; read that version's changes. `(unknown)` large: sessions on a guard without `guard.session` or started before the window; only Claude Code sessions are joined. |
 | Subagent cost by agent | Spend without an agent id is agent-team teammates: with agent teams on, a named spawn becomes a teammate that telemetry cannot tie to an agent. Turn agent teams off, or name a spawn only when you will message it. |
 | Spawns with no model pinned | Any row: the spawn ran on the session's model. Fix the skill or brief that spawned it. |
 | Model swaps | Any row: a subagent finished on a fallback model; a factory run records it as a routing deviation. |
@@ -21,6 +22,7 @@
 | Guard asks answered | `timeout` or `unavailable` is a large share of asks: the asks land while the user is away; look at which rule asks (decisions, `via`) before raising the timeout. A rule whose asks are nearly all `allow` is a false positive. |
 | Manual approvals | A tool approved often by hand is a candidate for an allow rule in the harness settings. |
 | Failing shell commands | A tool that is missing, a wrong flag, or reads done through the shell. |
+| PR graph | Should-have-been-stacked pairs are above 0 or rise, or the stacked share falls: dependent PRs were opened against the default branch instead of as a stack (`github-workflow`, the guard `stack` hint). Manifest-only pairs are parallel PRs bumping the same version, which the versioning rules handle, not stacking. |
 
 File each action as a GitHub issue, or fix it in a PR the same day.
 

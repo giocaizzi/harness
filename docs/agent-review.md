@@ -19,7 +19,13 @@ The routing-shape section (`agentIds`, `agentEdits`, `agentSpawns`, `agentCost`)
 
 The LSP-share section (`agentLsp`, `agentGrep`, `lspOps`) joins the same way: per agent type, LSP tool calls against Grep-tool and Bash `rg`/`grep` searches, plus the LSP failure rate; an empty agent id is the main session (agent-team teammates land there too).
 
+The by-plugin-version section (`sessionVersions`, `sessionCost`, `sessionSubagentCost`, plus the session id on `agentIds`) joins Claude Code sessions to the guard's `guard.session` record on `session_id` and prints cost per session and routing shares per dev-tools version, aggregates only. It needs a guard that sends `guard.session` ([guard.md](guard.md#grafana)); sessions without one land under `(unknown)`.
+
 A telemetry finding becomes an issue only with a reproduction (command text or a corpus row) and the guard version it was seen on.
+
+## PR graph
+
+`make pr-graph [RANGE=30d]` measures how consistently dependent PRs are stacked. It reads your own PRs through the `gh` GraphQL search on every authenticated host, across all owners, and prints aggregates only: the stacked share, open-together pairs already stacked, and should-have-been-stacked pairs (open together, sharing a file, not stacked), with the manifest-only ones split out. `node scripts/pr-graph.mjs --repos` adds a per-repo table for local reading; never paste it into a PR, issue or committed file. It needs no Loki and skips cleanly, printing one line, without `gh` authentication.
 
 ## Tracing hook_prompt spend
 

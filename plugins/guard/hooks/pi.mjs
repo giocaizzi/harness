@@ -55,7 +55,16 @@ export default function guardExtension(pi, deps) {
     await guard.usage({ sessionId: sessionOf(ctx), model: m.responseModel ?? m.model, provider: m.provider, tokens: { input: u.input, output: u.output, cacheRead: u.cacheRead, cacheWrite: u.cacheWrite, reasoning: u.reasoning }, costUsd: u.cost?.total })
   })
 
-  pi.on('session_start', () => void guard.awake())
+  pi.on('session_start', async (_event, ctx) => {
+    guard.awake()
+    // A dev-tools subagent child belongs to its parent session, which announces. The handler must not throw.
+    if (process.env.GUARD_PARENT_SESSION) return
+    try {
+      await guard.sessionStart({ sessionId: sessionOf(ctx), cwd: ctx?.cwd })
+    } catch {
+      // a missing record changes nothing
+    }
+  })
   pi.on('session_shutdown', async (_event, ctx) => void (await guard.sessionEnd({ sessionId: sessionOf(ctx) })))
 
   // The Stop hook: when make check fails, send the failure back as a follow-up once; the next settle passes. The factory

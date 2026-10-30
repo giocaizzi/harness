@@ -100,21 +100,6 @@ export const rules = {
       "why": "docs, runbooks, README and AGENTS.md follow the change in the same PR"
     }
   ],
-  // A once-per-agent hint toward the harness's LSP tool when a search looks for a symbol, not text. `programs` are the
-  // shell searchers (`git grep` is `git` + `grep`); a search matches on a `declaration` pattern (`def name`, `class\s+Name`),
-  // or on an `identifier` (camelCase, snake_case, PascalCase) or a whole-word name together with a language filter
-  // (`ext` as a glob or path suffix, `types` as rg's `-t`). `stop` are markers that look like identifiers but are text;
-  // `skipPaths` are non-code paths and directories, where a search is plain text; a filter or path with an extension outside `ext` (or a type outside `types`) cancels too. `{tool}` is the harness's LSP tool.
-  "lsp": {
-    "programs": ["grep", "egrep", "rg", "ugrep", "git grep"],
-    "declaration": "^\\^?\\s*(?:export\\s+(?:default\\s+)?)?(?:async\\s+)?(?:def|class|function|func|interface|struct|trait|enum)(?:\\s+|\\\\s[+*]?|\\[\\[:space:\\]\\][+*]?)(?:\\([^)]*\\)\\s*)?[A-Za-z_]\\w*",
-    "identifier": "^(?:[a-z][a-z0-9]*(?:[A-Z][a-z0-9]*)+|[A-Za-z][A-Za-z0-9]*(?:_[A-Za-z0-9]+)+|[A-Z][a-z0-9]+(?:[A-Z][a-z0-9]*)+)$",
-    "ext": ["py", "pyi", "ts", "tsx", "mts", "cts", "js", "jsx", "mjs", "cjs", "go"],
-    "types": ["py", "python", "ts", "typescript", "js", "go"],
-    "stop": ["TODO", "FIXME", "XXX", "HACK", "NOTE", "self", "cls", "None", "True", "False", "import", "from", "return", "this", "null", "undefined", "nil", "err", "ctx", "main", "init"],
-    "skipPaths": "\\.(?:md|mdx|txt|json|ya?ml|toml|lock|log|csv|ini|cfg)$|(?:^|/)(?:node_modules|dist|build|\\.git|\\.github|logs?|docs)(?:/|$)",
-    "say": "This looks like a symbol search: use the `{tool}` tool (definitions, references, callers, workspace symbols) where a language server covers the file; keep grep for text, config and languages without one."
-  },
   // Subagent spawns that bypass the typed agents: a once-per-session hint per case, never a deny. `tools` are the
   // spawn tools whose input names the agent type and model: Claude Code `Agent` (`Task` before 2.1.63, `subagent_type`),
   // Copilot CLI `task` and Codex `spawn_agent` (`agent_type`), VS Code `runSubagent` (`agentName`). `typed` are the agents that carry their own
@@ -133,6 +118,11 @@ export const rules = {
     "plan": ["plan"],
     "judgementModel": "opus|fable|\\bsol\\b|\\bastra\\b",
     "skill": "subagent-orchestration"
+  },
+  // The stacked-PR hint on `gh pr create|merge`: the engine builds the text from the facts (the open PR below, the default branch).
+  "stack": {
+    "match": "\\bgh\\s+pr\\s+(create|merge)\\b",
+    "why": "this branch builds on your open PR #<n> (`<below>`) but this PR targets `<default>`, so it carries #<n>'s commits. Build dependent work as a stack: `gh stack init`/`add`/`submit` where the repo has stacked PRs enabled (one small buildable PR per layer, the bottom layer on `<default>`, merged bottom-up with `gh stack merge`), otherwise base this PR on `<below>` and follow github-workflow, Stacks without `gh stack`."
   },
   "deny": [
     {

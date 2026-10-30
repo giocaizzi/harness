@@ -8,13 +8,13 @@ import { statfs } from 'node:fs/promises'
 import { cpus, homedir, loadavg, platform } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { analysis, branchFacts, cdDirs, cmdClass, codexRules, deniedBy, deniedDir, evaluateCommand, evaluateEdit, evaluateRouting, evaluateSearch, hostJudged, isHeavy, isRisky, nativeAsk, previewCommand, pureRead, refFacts, tagFacts, tagTargets, regenFacts, unattendedSet, withPreview, worktreeFacts } from '../core/engine.mjs'
+import { analysis, branchFacts, cdDirs, cmdClass, codexRules, deniedBy, deniedDir, evaluateCommand, evaluateEdit, evaluateRouting, hostJudged, isHeavy, isRisky, nativeAsk, previewCommand, pureRead, refFacts, stackFacts, stackTargets, tagFacts, tagTargets, regenFacts, unattendedSet, withPreview, worktreeFacts } from '../core/engine.mjs'
 import { cpuPercentFrom } from '../core/host.mjs'
 import { commandWords, units } from '../core/shell.mjs'
 import { emit } from '../core/otel.mjs'
 import { rules } from '../core/rules.mjs'
 import { pluginDataDir } from './data.mjs'
-import { staleCheck } from './stale.mjs'
+import { installedVersions, staleCheck } from './stale.mjs'
 import { appendDecision, commandHash, harnessName, recordAttrs } from './telemetry.mjs'
 
 // Claude Bash/PowerShell, Copilot bash/powershell, VS Code run_in_terminal. VS Code ignores matchers, so every
@@ -61,12 +61,6 @@ const readerArgs = (command) =>
     return reader ? args : []
   })
 const EDITS = new Set(['edit', 'write', 'multiedit', 'create', 'create_file', 'replace_string_in_file', 'insert_edit_into_file'])
-// Search tools (Claude Code `Grep`, Copilot CLI `grep`/`rg`, opencode `grep`): the LSP hint on a symbol search.
-const SEARCHES = new Set(['grep', 'rg'])
-// Each harness's LSP tool, named in the hint; Codex has none.
-export const LSP_TOOLS = { claude: 'LSP', copilot: 'lsp', vscode: '#search/usages' }
-// Copilot CLI sets CLAUDE_PLUGIN_DATA beside its own COPILOT_PLUGIN_DATA, so its variable decides first.
-export const lspToolFor = (env, noAsk = false) => (noAsk ? null : env.COPILOT_PLUGIN_DATA ? LSP_TOOLS.copilot : (LSP_TOOLS[harnessName(process.argv, env)] ?? null))
 const WEEK_MS = 7 * 24 * 3600 * 1000
 
 // This marketplace's skill names, from the plugins beside this one: `plugins/<p>/skills/<s>` in a checkout,
@@ -132,17 +126,20 @@ export function sessionStore(dir, sessionId, agentId, processId) {
         // keeps its id but is a new process, which loaded what was installed then.
         // The directory this process started in, which picks the plugin installs that apply to it.
         if (typeof fact.cwd === 'string' && String(fact.process ?? '') === proc) seen.cwd ??= fact.cwd
+        // `guard.session` went out for this process.
+        if (fact.announced === true && String(fact.process ?? '') === proc) seen.announced = true
         if (typeof fact.plugin === 'string' && typeof fact.version === 'string') {
           seen.processes.add(String(fact.process ?? ''))
           if (String(fact.process ?? '') === proc) seen.plugins[fact.plugin] ??= fact.version
         }
       }
-      return { reminded: [...new Set(seen.reminded)], loaded: [...new Set(seen.loaded)], unattended: seen.unattended, plugins: { ...seen.plugins }, startCwd: seen.cwd }
+      return { reminded: [...new Set(seen.reminded)], loaded: [...new Set(seen.loaded)], unattended: seen.unattended, plugins: { ...seen.plugins }, startCwd: seen.cwd, announced: seen.announced }
     },
     // Appends the facts `state` adds to what load() read.
     save(state) {
       if (!file) return
       const lines = [
+        ...(state.announced && !seen.announced ? [JSON.stringify({ announced: true, process: processId })] : []),
         ...[...new Set(state.loaded)].filter((s) => !seen.loaded.includes(s)).map((s) => JSON.stringify({ loaded: s })),
         ...[...new Set(state.reminded)].filter((r) => !seen.reminded.includes(r)).map((r) => JSON.stringify({ reminded: r, agent })),
         ...(typeof state.unattended === 'boolean' && state.unattended !== seen.unattended ? [JSON.stringify({ unattended: state.unattended })] : []),
@@ -209,8 +206,8 @@ export function pythonManager(cwd) {
 }
 
 // Blast-radius previews and worktree git checks: argv only (no shell), short timeout, null on failure.
-export const run = (argv, cwd) =>
-  new Promise((resolve) => execFile(argv[0], argv.slice(1), { cwd, timeout: 5000 }, (err, stdout) => resolve(err ? null : stdout)))
+export const run = (argv, cwd, ms = 5000) =>
+  new Promise((resolve) => execFile(argv[0], argv.slice(1), { cwd, timeout: ms }, (err, stdout) => resolve(err ? null : stdout)))
 
 // The host facts behind a host deny: what the caps were compared with.
 const hostAttrs = (host) => ({ load1: host.load1, cpu_percent: host.cpuPercent, free_gb: host.freeGb })
@@ -248,6 +245,8 @@ const within = (promise, ms, fallback) =>
 const FACTS_MS = 20_000
 const ALLOW_SAMPLE = 10
 const PREVIEW_MS = 3_000
+// The stacked-PR hint's lookups: a hint never holds a PR command back for long.
+const STACK_MS = 5_000
 
 // Unattended: GUARD_UNATTENDED in the environment the harness was launched with, or set by a command in this session
 // (`export GUARD_UNATTENDED=1`), which a hook cannot otherwise see: each hook is its own process. The command's own
@@ -329,9 +328,9 @@ async function onShell(input, state, deps) {
     let unfinished = false
     const facts = { env: { TMPDIR: deps.env.TMPDIR, TEMP: deps.env.TEMP, TMP: deps.env.TMP, HOME: deps.env.HOME || deps.env.USERPROFILE } }
     facts.env.dirs = existingDirs(command, facts.env, input.cwd)
+    // A lookup's own directory (a `cd` the engine followed) is relative to the call's cwd.
+    const inCwd = (argv, cwd, ms) => deps.run(argv, cwd == null ? input.cwd : resolve(input.cwd || '.', cwd), ms)
     if (isRisky(command, rules)) {
-      // A lookup's own directory (a `cd` the engine followed) is relative to the call's cwd.
-      const inCwd = (argv, cwd) => deps.run(argv, cwd == null ? input.cwd : resolve(input.cwd || '.', cwd))
       const gathered = await within(
         Promise.all([worktreeFacts(command, facts.env, rules, inCwd), branchFacts(command, rules, inCwd, facts.env), regenFacts(command, facts.env, rules, inCwd), refFacts(command, rules, inCwd, facts.env)]),
         deps.factsMs ?? FACTS_MS,
@@ -339,6 +338,16 @@ async function onShell(input, state, deps) {
       )
       if (gathered) [facts.worktrees, facts.branches, facts.regenerable, facts.refs] = gathered
       else unfinished = true
+    }
+    // The stacked-PR hint (once per agent) costs a few git and gh lookups, on `gh pr create|merge` only.
+    if (!/^(0|false|off)$/i.test(deps.env?.GUARD_STACK_HINT ?? '') && !state.reminded.includes('stack') && stackTargets(command, rules, facts.env).length) {
+      const budget = deps.factsMs ?? STACK_MS
+      const deadline = Date.now() + budget
+      const stackRun = (argv, cwd) => {
+        const left = deadline - Date.now()
+        return left <= 0 ? Promise.resolve(null) : inCwd(argv, cwd, left)
+      }
+      facts.stack = await within(stackFacts(command, rules, stackRun, facts.env), budget, {})
     }
     // A `git tag -f`/`-d` of a tag no remote has is not a release (one `ls-remote` per remote, same budget).
     if (tagTargets(command, rules, facts.env).some((t) => !t.name.startsWith('<'))) {
@@ -354,7 +363,7 @@ async function onShell(input, state, deps) {
     const held = input.permission_mode === 'auto' ? ['read', 'edit'].filter((r) => !state.reminded.includes(r)) : []
     const reminded = new Set([...state.reminded, ...held])
     const judged = hostJudged(command, rules, reminded)
-    const d = evaluateCommand({ command, loadedSkills: new Set(state.loaded), state: { reminded }, host, readTool: deps.readTool ?? true, lspTool: deps.lspTool ?? null, ...facts, factory: deps.env?.FACTORY_RUN_ID ? { ...factoryLabels(input.cwd), protect: protectFacts(deps.env, input.cwd) } : null, rules })
+    const d = evaluateCommand({ command, loadedSkills: new Set(state.loaded), state: { reminded }, host, readTool: deps.readTool ?? true, ...facts, factory: deps.env?.FACTORY_RUN_ID ? { ...factoryLabels(input.cwd), protect: protectFacts(deps.env, input.cwd) } : null, rules })
     state.reminded = [...reminded].filter((r) => !held.includes(r))
     if (unfinished && d.action !== 'allow') d.reason += '\nChecks unfinished: the worktree, branch and build-output lookups ran out of time, so a safe case could not be shown.'
     // Logged after the harness-specific transforms, so `action` is what happened: an ask that became a deny is a deny,
@@ -428,17 +437,6 @@ async function onEdit(input, state, deps) {
   return note(d.context)
 }
 
-// A search tool call that looks for a symbol: a once-per-agent hint toward the harness's LSP tool.
-function onSearch(input, state, deps) {
-  const t = input.tool_input ?? {}
-  const reminded = new Set(state.reminded)
-  const d = evaluateSearch({ pattern: t.pattern, glob: t.glob ?? t.include, type: t.type, path: t.path, state: { reminded }, lspTool: deps.lspTool ?? null, rules })
-  state.reminded = [...reminded]
-  if (!d.remind) return {}
-  fire(deps, 'guard.reminder', { rule: d.rule, cmd_class: 'hint', tool: String(input.tool_name ?? ''), session_id: input.session_id, tool_use_id: input.tool_use_id }, input.cwd)
-  return note(d.context)
-}
-
 // A subagent spawn (Claude Code `Agent`/`Task`, Copilot CLI `task`, Codex `spawn_agent`, VS Code `runSubagent`) that
 // bypasses the typed agents: a hint, never a deny.
 function onSpawn(input, state, deps) {
@@ -496,7 +494,21 @@ export async function handle(input, deps) {
     store.sweep()
     return out
   }
-  if (event === 'UserPromptSubmit') {
+  if (event === 'SessionStart') {
+    // Joins cost telemetry to plugin versions by session: one record per session id and harness process (a compact
+    // keeps both; a resume is a new process and may run newer versions). Nothing on stdout: it would reach the model.
+    if (!state.announced) {
+      try {
+        const { self, installed } = installedVersions(deps.pluginRoot, input.cwd)
+        if (self.versioned && self.version) installed[self.name] = self.version
+        const attrs = Object.fromEntries(Object.entries(installed).map(([p, v]) => [`plugin_version_${p.replace(/[^a-z0-9]/g, '_')}`, v]))
+        fire(deps, 'guard.session', { session_id: input.session_id, source: input.source, ...attrs }, input.cwd)
+        state.announced = true
+      } catch {
+        // a missing record changes nothing
+      }
+    }
+  } else if (event === 'UserPromptSubmit') {
     // A skill the user named counts as loaded: `/name` (Claude, Copilot, opencode), `/skill:name` (pi), `$name` (Codex).
     const m = /^\s*(?:\/(?:skill:)?|\$)([\w:-]+)/.exec(input.prompt ?? '')
     if (m) state.loaded.push(m[1])
@@ -510,7 +522,6 @@ export async function handle(input, deps) {
     if (tool === 'skill' && (t.skill || t.name)) state.loaded.push(String(t.skill || t.name))
     else if (SHELLS.has(tool)) out = await onShell(input, state, deps)
     else if (EDITS.has(tool)) out = await onEdit(input, state, deps)
-    else if (SEARCHES.has(tool)) out = onSearch(input, state, deps)
     else if (rules.routing.tools.includes(tool)) out = onSpawn(input, state, deps)
     else if (TASKS.has(tool)) {
       const command = taskCommand(tool, t, input.cwd)
@@ -593,7 +604,7 @@ async function main() {
   // `--no-ask` comes from the Codex hooks file (.generated/codex/hooks.json), which build_agents.py generates.
   const noAsk = process.argv.includes('--no-ask')
   // Codex (`--no-ask`) is the one harness without a file-read tool.
-  const out = await handle(input, { dataDir, harness: noAsk ? 'codex' : harnessName(), env: process.env, hostFacts, run, pythonManager, noAsk, readTool: !noAsk, lspTool: lspToolFor(process.env, noAsk), nativeAsk: noAsk ? (command, rule) => codexAsks(process.env, input.transcript_path)?.(command, rule) ?? false : null, emit: (event, attrs, cwd) => new Promise((r) => setImmediate(r)).then(() => emit(process.env, event, recordAttrs(attrs, cwd, noAsk ? 'codex' : harnessName()))) }).catch(() => ({}))
+  const out = await handle(input, { dataDir, harness: noAsk ? 'codex' : harnessName(), env: process.env, hostFacts, run, pythonManager, noAsk, readTool: !noAsk, nativeAsk: noAsk ? (command, rule) => codexAsks(process.env, input.transcript_path)?.(command, rule) ?? false : null, emit: (event, attrs, cwd) => new Promise((r) => setImmediate(r)).then(() => emit(process.env, event, recordAttrs(attrs, cwd, noAsk ? 'codex' : harnessName()))) }).catch(() => ({}))
   if (out.stdout) process.stdout.write(out.stdout)
   if (out.stderr) process.stderr.write(out.stderr)
 }
