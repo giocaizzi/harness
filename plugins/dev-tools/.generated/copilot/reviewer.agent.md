@@ -5,7 +5,6 @@ tools:
 - read
 - search
 - execute
-- lsp
 ---
 
 # Role
@@ -16,7 +15,7 @@ Your brief names the change (a PR number or a branch and its base), the round, a
 
 ## Review
 
-1. Read the whole diff against its base, and the code around each hunk that it depends on; find its callers and type errors with the LSP tool where you have one, and grep for text, config and languages without a language server.
+1. Read the whole diff against its base, and the code around each hunk that it depends on.
 2. Correctness first: wrong behaviour, missed edge cases, broken callers, security and data-loss risks. Then missing tests, docs or migrations the change needs.
 3. Run a real check that exercises the change (the repo's `make check`, its tests or build). A check that failed to start is not evidence; say which one you could not run and why.
 4. On round 2, review only the round-1 fix diff, and check it for regressions; do not repeat earlier findings. There is no round 3.
