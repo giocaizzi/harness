@@ -571,7 +571,10 @@ export async function refFacts(command, rules, run, env = {}) {
 
 // The `gh pr create|merge` units of a command, for the stacked-PR hint: { verb, dir, base, pr, repo }. `base` is
 // create's --base/-B, `pr` merge's operand (number, URL or branch), `repo` the -R/--repo value. Not on another host.
-const STACK_VALUE = new Set(['-B', '--base', '-R', '--repo', '-t', '--title', '-b', '--body', '-F', '--body-file', '-H', '--head', '-r', '--reviewer', '-a', '--assignee', '-l', '--label', '-m', '--milestone', '-p', '--project', '--match-head-commit', '--subject', '-A', '--author-email']);
+const STACK_VALUE = {
+  create: ['-B', '--base', '-R', '--repo', '-t', '--title', '-b', '--body', '-F', '--body-file', '-H', '--head', '-r', '--reviewer', '-a', '--assignee', '-l', '--label', '-m', '--milestone', '-p', '--project', '-T', '--template'],
+  merge: ['-R', '--repo', '-t', '--subject', '-b', '--body', '-F', '--body-file', '-A', '--author-email', '--match-head-commit'],
+};
 export function stackTargets(command, rules, env = {}) {
   const re = new RegExp(rules.stack.match);
   return segments(command, env)
@@ -579,14 +582,16 @@ export function stackTargets(command, rules, env = {}) {
     .flatMap(({ words, dir }) => {
       const vals = commandWords(words).map((w) => w.val);
       if (vals[0] !== 'gh' || vals[1] !== 'pr' || !['create', 'merge'].includes(vals[2])) return [];
-      const t = { verb: vals[2], dir, base: null, pr: null, repo: null };
+      const t = { verb: vals[2], dir, base: null, pr: null, repo: null, head: null };
+      const valued = new Set(STACK_VALUE[vals[2]]);
       for (let k = 3; k < vals.length; k++) {
         const v = vals[k];
-        const [flag, inline] = /^--[\w-]+=/.test(v) ? [v.slice(0, v.indexOf('=')), v.slice(v.indexOf('=') + 1)] : [v, undefined];
+        const [flag, inline] = /^--[\w-]+=/.test(v) ? [v.slice(0, v.indexOf('=')), v.slice(v.indexOf('=') + 1)] : /^-[A-Za-z]./.test(v) && valued.has(v.slice(0, 2)) ? [v.slice(0, 2), v.slice(2).replace(/^=/, '')] : [v, undefined];
         const val = () => inline ?? vals[++k];
         if (flag === '-B' || flag === '--base') t.base = val();
         else if (flag === '-R' || flag === '--repo') t.repo = val();
-        else if (STACK_VALUE.has(flag)) val();
+        else if (flag === '-H' || flag === '--head') t.head = val();
+        else if (valued.has(flag)) val();
         else if (!v.startsWith('-')) t.pr ??= v;
       }
       return [t];
@@ -600,11 +605,12 @@ export async function stackFacts(command, rules, run, env = {}) {
     const t = stackTargets(command, rules, env).find((x) => PLAIN_PATH.test(x.dir || '.'));
     if (!t) return {};
     const plain = (v) => typeof v === 'string' && /^[\w./@+-]+$/.test(v) && !v.startsWith('-');
-    const repo = t.repo == null ? [] : /^[\w.-]+(?:\/[\w.-]+){1,2}$/.test(t.repo) ? ['-R', t.repo] : null;
+    if (t.verb === 'create' && t.head != null) return {};
+    const repo = t.repo == null ? [] : /^[\w][\w.-]*(?:\/[\w.-]+){1,2}$/.test(t.repo) ? ['-R', t.repo] : null;
     if (repo === null || (t.base != null && !plain(t.base)) || (t.pr != null && !plain(t.pr) && !/^https:\/\/[\w.\/-]+$/.test(t.pr))) return {};
     const sh = (argv) => Promise.resolve().then(() => run(argv, t.dir || undefined)).catch(() => null);
     let def = (await sh(['git', 'symbolic-ref', '--short', 'refs/remotes/origin/HEAD']))?.trim().replace(/^origin\//, '');
-    if (!def) def = (await sh(['gh', 'repo', 'view', ...(t.repo ? [t.repo] : []), '--json', 'defaultBranchRef', '-q', '.defaultBranchRef.name']))?.trim();
+    if (!def) def = (await sh(['gh', 'repo', 'view', ...(repo.length ? [t.repo] : []), '--json', 'defaultBranchRef', '-q', '.defaultBranchRef.name']))?.trim();
     if (!plain(def)) return {};
     let head;
     let base = t.base ?? def;

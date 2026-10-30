@@ -92,3 +92,25 @@ test('opencode and pi: the hint reaches the model through the tool output, once'
   await call('t2')
   assert.equal(await result('t2'), undefined)
 })
+
+test('the hint lookups share one deadline: no call starts after it, and each timeout fits what is left', async () => {
+  const seen = []
+  const run = async (argv, cwd, ms) => {
+    seen.push(ms)
+    await new Promise((r) => setTimeout(r, 40))
+    if (argv[1] === 'symbolic-ref') return 'origin/main\n'
+    if (argv[1] === 'rev-parse') return 'feat/b\n'
+    if (argv[2] === 'list') return JSON.stringify([{ number: 7, headRefName: 'feat/a' }])
+    return null
+  }
+  const dataDir = tmp()
+  const h = (input) => handle(input, { dataDir, env: {}, hostFacts: async () => ({}), run, pythonManager, factsMs: 100 })
+  await h(load())
+  const out = await h(pre('gh pr create --fill'))
+  assert.equal(decision(out), undefined)
+  assert.ok(seen.length >= 1)
+  assert.ok(seen.every((ms) => typeof ms === 'number' && ms > 0 && ms <= 100), String(seen))
+  const n = seen.length
+  await new Promise((r) => setTimeout(r, 200))
+  assert.equal(seen.length, n, 'no call starts after the deadline')
+})

@@ -9,7 +9,7 @@ const env = { HOME: '/Users/me', dirs: { has: () => true } }
 
 test('stackTargets reads create and merge units: base, operand, repo, cd', () => {
   const t = (c) => stackTargets(c, rules, env)
-  assert.deepEqual(t('gh pr create --fill'), [{ verb: 'create', dir: '', base: null, pr: null, repo: null }])
+  assert.deepEqual(t('gh pr create --fill'), [{ verb: 'create', dir: '', base: null, pr: null, repo: null, head: null }])
   assert.equal(t('gh pr create --base feat/a --title "x y" --fill')[0].base, 'feat/a')
   assert.equal(t('gh pr create --base=feat/a --fill')[0].base, 'feat/a')
   assert.equal(t('gh pr create --title main --fill')[0].base, null)
@@ -40,6 +40,28 @@ const fake = ({ def = 'origin/main\n', onTop = ['feat/a', 'feat/old'], inDefault
   }
   return { run, calls }
 }
+
+test('stackTargets parses value flags per verb, attached values included', () => {
+  const t = (c) => stackTargets(c, rules, env)[0]
+  assert.equal(t('gh pr merge -m 12').pr, '12')
+  assert.equal(t('gh pr merge -r 12').pr, '12')
+  assert.equal(t('gh pr merge -s -d 12').pr, '12')
+  assert.equal(t('gh pr merge -t subj 12').pr, '12')
+  assert.equal(t('gh pr merge --match-head-commit abc 12').pr, '12')
+  assert.equal(t('gh pr create -Racme/app --fill').repo, 'acme/app')
+  assert.equal(t('gh pr create -Bfeat/a --fill').base, 'feat/a')
+  assert.equal(t('gh pr create -m ms -T tpl -p proj --fill').base, null)
+  assert.equal(t('gh pr create --head feat/x --fill').head, 'feat/x')
+  assert.equal(t('gh pr create -H feat/x --fill').head, 'feat/x')
+})
+
+test('stackFacts: a repo starting with a dash, or a create with --head, gives {} without a lookup', async () => {
+  const { run, calls } = fake()
+  assert.deepEqual(await stackFacts('gh pr create -R -wb/x --fill', rules, run, env), {})
+  assert.deepEqual(await stackFacts('gh pr create --head feat/x --fill', rules, run, env), {})
+  assert.deepEqual(await stackFacts('gh pr create -H feat/x --fill', rules, run, env), {})
+  assert.deepEqual(calls, [])
+})
 
 test('stackFacts: a create that builds on an open PR not in the default branch gives the PR below', async () => {
   const { run, calls } = fake()
