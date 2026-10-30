@@ -6,5 +6,7 @@ copilot:
     - edit
     - execute
     - search
+    # Copilot CLI's code-intelligence tool (registered as "lsp"); present when a language server is configured.
+    - lsp
 codex:
   model_reasoning_effort: medium

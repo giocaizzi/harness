@@ -8,6 +8,7 @@ description: "House rules for TypeScript, JavaScript and Node.js: strict typing,
 - TypeScript with `strict` on. Type definitions and constants live in `types.ts` / `constants.ts` inside their feature folder, so types stay next to the code they describe.
 - JSDoc on public functions (purpose, params, returns, errors). Comments explain why, not what; keep them short.
 - Tooling: `eslint` + `prettier` (quality/format), `knip` (unused deps/exports), `tsc` (type check).
+- Navigate code by symbol with the LSP tool where you have one (definitions, references, callers, type errors) before grep; grep for text, config and languages without a language server.
 
 ## Type-safety escape hatches are off limits
 

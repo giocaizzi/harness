@@ -14,6 +14,7 @@ The floor is the oldest supported Go release (two are supported at a time; 1.26 
 - **Every linter on**, the way Python starts from ruff `ALL`: `linters.default: all`, then `disable` a linter only with the reason inline. Start from [references/golangci.yml](./references/golangci.yml). Silence one finding with `//nolint:<linter> // reason`; `nolintlint` rejects a bare one.
 - **Make is the command surface**: `help`, `fmt`, `lint`, `vuln`, `test`, `check` (= `lint` + `test`), `build`. `lint` runs golangci-lint once per target `GOOS`, because files behind `//go:build windows` are invisible to a Linux or macOS run. `vuln` needs the network, so it runs in CI as its own job, not inside `check`.
 - `go fix ./...` (the modernizers since 1.26) runs in `make fmt`: it rewrites code to current idioms (`for range n`, `min`/`max`, `slices`, `strings.Cut`, `wg.Go`). Accept its diff; the `modernize` linter flags what it would change.
+- Navigate code by symbol with the LSP tool where you have one (definitions, references, callers, type errors) before grep; grep for text, config and languages without a language server.
 
 Read [references/PROJECT_SETUP.md](./references/PROJECT_SETUP.md) when scaffolding: layout, `go.mod`, the tool modfile, the Makefile, CI and Dependabot.
 

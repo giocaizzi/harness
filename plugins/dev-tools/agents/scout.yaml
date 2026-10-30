@@ -5,6 +5,8 @@ copilot:
     - read
     - search
     - execute
+    # Copilot CLI's code-intelligence tool (registered as "lsp"); present when a language server is configured.
+    - lsp
 codex:
   # Ignored by Codex today: a subagent inherits the parent's sandbox (docs/compatibility.md). Kept for when it applies.
   sandbox_mode: read-only
