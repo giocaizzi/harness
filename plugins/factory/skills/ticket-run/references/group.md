@@ -7,6 +7,7 @@ A group run works several approved tickets in one session and ships at most one 
 - **A malformed handoff parks only that member.** A brief or result that fails the check, or a member that returned no JSON, becomes a `parked` entry with `reason_code: handoff` and the first error as its `reason`; the other members go on. `check-handoff.mjs`'s `memberTask` makes that entry.
 - **Released means unchanged.** A `released` member goes back to the queue as it was before the run: the runtime releases its claim (removes the claim label) as at any run end, and the member gets no result comment, no `needs-owner` and no other label or comment from the run.
 - **No done member ships nothing.** When no entry is `done`, the run opens no PR (`pr` is `null`, every `pr_link` is `null`), `end_state` is not `done`, and `reason` says why no member finished.
+- **No subagent.** Where a harness runs no subagent, each member runs as a separate session given its brief, in the foreground, its last message the member result.
 - **One PR.** The PR carries every `done` member's branch and names each member per its entry's `pr_link`: `Closes #N` for `closes` (done), `Refs #N` for `refs` (parked or released).
 
 ## Member brief

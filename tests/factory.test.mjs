@@ -21,10 +21,19 @@ const resultKeys = () => rowKeys(contract)
 
 test('result.json template: valid JSON whose keys are exactly the documented contract', () => {
   const result = JSON.parse(read('plugins/factory/template/result.json'))
-  // `mode` is set only by a dev run, so the prod template omits it.
-  assert.deepEqual(Object.keys(result).sort(), resultKeys().filter((k) => k !== 'mode').sort())
+  // `mode` is set only by a dev run, so the prod template omits it; `tasks` is written only by a group run, so the template stays single-ticket schema 2.
+  assert.deepEqual(Object.keys(result).sort(), resultKeys().filter((k) => k !== 'mode' && k !== 'tasks').sort())
   assert.ok(['done', 'parked', 'failed'].includes(result.end_state))
   assert.equal(result.schema, 2)
+})
+
+test('group runs: the contract, ticket-run and the docs agree', () => {
+  const section = doc.split('\n## Group runs')[1]?.split('\n## ')[0] ?? ''
+  assert.ok(section.includes('](../plugins/factory/skills/ticket-run/references/group.md)'), 'docs/factory.md has a Group runs section linking group.md')
+  assert.ok(read('plugins/factory/skills/ticket-run/SKILL.md').includes('](references/group.md)'), 'ticket-run links group.md')
+  const group = read('plugins/factory/skills/ticket-run/references/group.md')
+  assert.match(group, /Released means unchanged[\s\S]*no result comment/)
+  assert.match(group, /No done member ships nothing[\s\S]*opens no PR/)
 })
 
 test('ticket-run names exactly the documented result keys', () => {
@@ -82,7 +91,7 @@ test('notify: a repo names a topic or a command, a notify.url is flagged, remind
 
 test('reason_code: ticket-run maps every documented code, and only those', () => {
   const row = contract.split('\n').find((l) => l.startsWith('| `reason_code`'))
-  const documented = [...row.split('asks one):')[1].split(';')[0].matchAll(/`([a-z_]+)`/g)].map((m) => m[1])
+  const documented = [...row.split('asks one):')[1].replace(/\([^)]*\)/g, '').split(';')[0].matchAll(/`([a-z_]+)`/g)].map((m) => m[1])
   const line = read('plugins/factory/skills/ticket-run/references/done.md').split('\n').find((l) => l.startsWith('- **`reason_code`:**'))
   const mapped = [...new Set([...line.split('asks one:')[1].matchAll(/`([a-z_]+)`/g)].map((m) => m[1]))]
   assert.deepEqual(mapped.sort(), documented.sort())
@@ -574,7 +583,7 @@ test('check-result: core fields, from the contract\'s lists, and one entry point
   const { coreErrors, resultErrors, END_STATES, REASON_CODES } = await checker()
   const row = (key) => contract.split('\n').find((l) => l.startsWith(`| \`${key}\``))
   assert.deepEqual([...END_STATES].sort(), [...row('end_state').split(' | ')[1].matchAll(/`([a-z_]+)`/g)].map((m) => m[1]).sort())
-  assert.deepEqual([...REASON_CODES].sort(), [...row('reason_code').split('asks one):')[1].split(';')[0].matchAll(/`([a-z_]+)`/g)].map((m) => m[1]).sort())
+  assert.deepEqual([...REASON_CODES].sort(), [...row('reason_code').split('asks one):')[1].replace(/\([^)]*\)/g, '').split(';')[0].matchAll(/`([a-z_]+)`/g)].map((m) => m[1]).sort())
   assert.deepEqual(resultErrors(valid, {}), [])
   assert.deepEqual(resultErrors({ ...valid, end_state: 'halted', reason_code: 'takeover' }, {}), [], 'a runtime may check its own results')
   assert.deepEqual(resultErrors(valid, { FACTORY_RUN_ID: 'r-1', FACTORY_TICKET: 'acme/app#12' }), [])
