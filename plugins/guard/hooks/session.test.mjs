@@ -31,7 +31,7 @@ const stopRun = (calls, make, git = { status: 0, stdout: 'x' }, targets = ['chec
 test('stop: blocks once with the output tail when make check fails', async () => {
   const calls = []
   const make = { status: 2, stdout: 'ok\n'.repeat(50) + 'FAIL x\n', stderr: '' }
-  const out = await stopCheck({ cwd: '/r' }, stopRun(calls, make, { status: 2 }))
+  const out = await stopCheck({ cwd: '/r' }, stopRun(calls, make, { status: 2 }), { strain: () => null })
   assert.equal(out.decision, 'block')
   assert.match(out.reason, /make check failed[\s\S]*FAIL x$/)
   assert.deepEqual(out.hookSpecificOutput, { hookEventName: 'Stop', decision: 'block', reason: out.reason }) // VS Code
@@ -51,7 +51,7 @@ test('stop: a failure is reported with the failing target and its last line, scr
 test('stop: prefers make check-fast when the Makefile defines it', async () => {
   const calls = []
   const make = { status: 2, stdout: 'FAIL y\n', stderr: '' }
-  const out = await stopCheck({ cwd: '/r' }, stopRun(calls, make, { status: 2 }, ['check-fast', 'check']))
+  const out = await stopCheck({ cwd: '/r' }, stopRun(calls, make, { status: 2 }, ['check-fast', 'check']), { strain: () => null })
   assert.match(out.reason, /^make check-fast failed/)
   assert.deepEqual(calls.filter((c) => c.startsWith('make')), ['make -n check-fast', 'make check-fast'])
 })
@@ -64,7 +64,7 @@ test('stop: passes when stop_hook_active, no check target, no make, or green', a
     assert.equal(await stopCheck({ stop_hook_active: true }, never), null)
     assert.equal(await stopCheck({}, () => ({ status: 2 })), null)
     assert.equal(await stopCheck({}, () => ({ status: null, error: new Error('ENOENT') })), null)
-    assert.equal(await stopCheck({}, () => ({ status: 0 })), null)
+    assert.equal(await stopCheck({}, () => ({ status: 0 }), { strain: () => null }), null)
   } finally {
     delete process.env.CLAUDE_PLUGIN_DATA
   }
@@ -76,12 +76,12 @@ test('stop: skips make check when the repo is unchanged since the last green run
   try {
     const calls = []
     const run = stopRun(calls, { status: 0 })
-    assert.equal(await stopCheck({ cwd: '/r' }, run), null)
+    assert.equal(await stopCheck({ cwd: '/r' }, run, { strain: () => null }), null)
     assert.equal(calls.filter((c) => c === 'make check').length, 1)
-    assert.equal(await stopCheck({ cwd: '/r' }, run), null) // same fingerprint: skipped
+    assert.equal(await stopCheck({ cwd: '/r' }, run, { strain: () => null }), null) // same fingerprint: skipped
     assert.equal(calls.filter((c) => c === 'make check').length, 1)
     const changed = stopRun(calls, { status: 0 }, { status: 0, stdout: 'y' })
-    assert.equal(await stopCheck({ cwd: '/r' }, changed), null) // changed tree: runs again
+    assert.equal(await stopCheck({ cwd: '/r' }, changed, { strain: () => null }), null) // changed tree: runs again
     assert.equal(calls.filter((c) => c === 'make check').length, 2)
   } finally {
     delete process.env.CLAUDE_PLUGIN_DATA
@@ -117,10 +117,10 @@ test('stop: a timeout is deferred, not blocked, and never marks green', async ()
   try {
     const calls = []
     const make = { status: null, error: Object.assign(new Error('spawnSync make ETIMEDOUT'), { code: 'ETIMEDOUT' }) }
-    const out = await stopCheck({ cwd: '/r' }, stopRun(calls, make))
+    const out = await stopCheck({ cwd: '/r' }, stopRun(calls, make), { strain: () => null })
     assert.equal(out.decision, undefined)
     assert.match(out.systemMessage, /make check deferred \(did not finish within 5 s\)/)
-    await stopCheck({ cwd: '/r' }, stopRun(calls, { status: 0 }))
+    await stopCheck({ cwd: '/r' }, stopRun(calls, { status: 0 }), { strain: () => null })
     assert.equal(calls.filter((c) => c === 'make check').length, 2) // not skipped
   } finally {
     delete process.env.CLAUDE_PLUGIN_DATA
@@ -243,8 +243,8 @@ test('result gate: runs before make check, and both reasons go in one block', as
     assert.match(out.reason, /^Factory result gate \(block 1 of 2\)[\s\S]*\n\nmake check failed[\s\S]*FAIL z$/)
     assert.deepEqual(out.hookSpecificOutput, { hookEventName: 'Stop', decision: 'block', reason: out.reason })
     // stop_hook_active skips make check, not the gate.
-    assert.match((await stopCheck({ cwd, stop_hook_active: true }, run)).reason, /^Factory result gate \(block 2 of 2\)[^]*write-result\.mjs[^]*\.$/)
-    assert.equal(await stopCheck({ cwd, stop_hook_active: true }, run), null)
+    assert.match((await stopCheck({ cwd, stop_hook_active: true }, run, { strain: () => null })).reason, /^Factory result gate \(block 2 of 2\)[^]*write-result\.mjs[^]*\.$/)
+    assert.equal(await stopCheck({ cwd, stop_hook_active: true }, run, { strain: () => null }), null)
   } finally {
     for (const k of Object.keys(RUNTIME)) delete process.env[k]
     delete process.env.CLAUDE_PLUGIN_DATA
