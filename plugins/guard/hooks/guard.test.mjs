@@ -753,3 +753,23 @@ test('FACTORY_RUN_ID set: the approval and takeover labels (default or the repo\
   assert.equal(decision(await setup({ env: {} })(add('needs-owner', flow))), undefined, 'outside a run: unchanged')
   assert.equal(decision(await setup({ env: {} })(add('agent-ok', cwd))), undefined, 'no run active: allowed')
 })
+
+test('SessionStart: one guard.session per session and process, with the plugin versions', async () => {
+  const cache = join(mkdtempSync(join(tmpdir(), 'guard-test-')), 'cache', 'mkt')
+  for (const [p, v] of [['guard', '1.2.3'], ['dev-tools', '4.5.6']]) {
+    mkdirSync(join(cache, p, v, '.claude-plugin'), { recursive: true })
+    writeFileSync(join(cache, p, v, '.claude-plugin', 'plugin.json'), JSON.stringify({ name: p, version: v }))
+  }
+  const events = []
+  const dataDir = mkdtempSync(join(tmpdir(), 'guard-test-'))
+  const h = (processId, pluginRoot = join(cache, 'guard', '1.2.3')) =>
+    handle({ session_id: 's1', cwd: '/', hook_event_name: 'SessionStart', source: 'startup' }, { dataDir, env: {}, hostFacts: calm, run: async () => null, pythonManager, processId, pluginRoot, emit: async (...a) => events.push(a) })
+  const out = await h(10)
+  assert.deepEqual(out, {})
+  assert.deepEqual(events.map(([e, a]) => [e, a.session_id, a.source, a.plugin_version_guard, a.plugin_version_dev_tools]), [['guard.session', 's1', 'startup', '1.2.3', '4.5.6']])
+  await h(10)
+  assert.equal(events.length, 1, 'a compact or second hook of the same process is silent')
+  await h(11)
+  assert.equal(events.length, 2, 'a resume is a new process')
+  assert.deepEqual(await h(12, join(cache, 'missing', 'nothing')), {}, 'an unreadable plugin root never throws and prints nothing')
+})

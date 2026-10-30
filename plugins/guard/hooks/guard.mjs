@@ -14,7 +14,7 @@ import { commandWords, units } from '../core/shell.mjs'
 import { emit } from '../core/otel.mjs'
 import { rules } from '../core/rules.mjs'
 import { pluginDataDir } from './data.mjs'
-import { staleCheck } from './stale.mjs'
+import { installedVersions, staleCheck } from './stale.mjs'
 import { appendDecision, commandHash, harnessName, recordAttrs } from './telemetry.mjs'
 
 // Claude Bash/PowerShell, Copilot bash/powershell, VS Code run_in_terminal. VS Code ignores matchers, so every
@@ -126,17 +126,20 @@ export function sessionStore(dir, sessionId, agentId, processId) {
         // keeps its id but is a new process, which loaded what was installed then.
         // The directory this process started in, which picks the plugin installs that apply to it.
         if (typeof fact.cwd === 'string' && String(fact.process ?? '') === proc) seen.cwd ??= fact.cwd
+        // `guard.session` went out for this process.
+        if (fact.announced === true && String(fact.process ?? '') === proc) seen.announced = true
         if (typeof fact.plugin === 'string' && typeof fact.version === 'string') {
           seen.processes.add(String(fact.process ?? ''))
           if (String(fact.process ?? '') === proc) seen.plugins[fact.plugin] ??= fact.version
         }
       }
-      return { reminded: [...new Set(seen.reminded)], loaded: [...new Set(seen.loaded)], unattended: seen.unattended, plugins: { ...seen.plugins }, startCwd: seen.cwd }
+      return { reminded: [...new Set(seen.reminded)], loaded: [...new Set(seen.loaded)], unattended: seen.unattended, plugins: { ...seen.plugins }, startCwd: seen.cwd, announced: seen.announced }
     },
     // Appends the facts `state` adds to what load() read.
     save(state) {
       if (!file) return
       const lines = [
+        ...(state.announced && !seen.announced ? [JSON.stringify({ announced: true, process: processId })] : []),
         ...[...new Set(state.loaded)].filter((s) => !seen.loaded.includes(s)).map((s) => JSON.stringify({ loaded: s })),
         ...[...new Set(state.reminded)].filter((r) => !seen.reminded.includes(r)).map((r) => JSON.stringify({ reminded: r, agent })),
         ...(typeof state.unattended === 'boolean' && state.unattended !== seen.unattended ? [JSON.stringify({ unattended: state.unattended })] : []),
@@ -479,7 +482,21 @@ export async function handle(input, deps) {
     store.sweep()
     return out
   }
-  if (event === 'UserPromptSubmit') {
+  if (event === 'SessionStart') {
+    // Joins cost telemetry to plugin versions by session: one record per session id and harness process (a compact
+    // keeps both; a resume is a new process and may run newer versions). Nothing on stdout: it would reach the model.
+    if (!state.announced) {
+      try {
+        const { self, installed } = installedVersions(deps.pluginRoot, input.cwd)
+        if (self.versioned && self.version) installed[self.name] = self.version
+        const attrs = Object.fromEntries(Object.entries(installed).map(([p, v]) => [`plugin_version_${p.replace(/[^a-z0-9]/g, '_')}`, v]))
+        fire(deps, 'guard.session', { session_id: input.session_id, source: input.source, ...attrs }, input.cwd)
+        state.announced = true
+      } catch {
+        // a missing record changes nothing
+      }
+    }
+  } else if (event === 'UserPromptSubmit') {
     // A skill the user named counts as loaded: `/name` (Claude, Copilot, opencode), `/skill:name` (pi), `$name` (Codex).
     const m = /^\s*(?:\/(?:skill:)?|\$)([\w:-]+)/.exec(input.prompt ?? '')
     if (m) state.loaded.push(m[1])
