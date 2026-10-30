@@ -6,7 +6,7 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'n
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { BRIEF_KEYS, RESULT_KEYS, briefErrors, memberResultErrors, memberTask } from '../plugins/factory/skills/ticket-run/scripts/check-handoff.mjs'
+import { BRIEF_KEYS, RESULT_KEYS, RUN_KEYS, briefErrors, memberResultErrors, memberTask, runFileErrors } from '../plugins/factory/skills/ticket-run/scripts/check-handoff.mjs'
 
 const repo = join(dirname(fileURLToPath(import.meta.url)), '..')
 const script = join(repo, 'plugins/factory/skills/ticket-run/scripts/check-handoff.mjs')
@@ -33,11 +33,38 @@ const invalidResults = {
   'done-with-reason': /reason must be empty/,
 }
 
+const invalidRuns = {
+  'lead-not-first': /members\[0\] must be the lead/,
+  duplicate: /duplicate ticket/,
+  'lead-missing': /members\[0\] must be the lead/,
+  'empty-members': /members must be a non-empty array/,
+  'bad-ticket': /members\[1\]: ticket must be/,
+  'extra-key': /unknown key "priority"/,
+  schema: /schema must be 1/,
+}
+
 const on = (prefix) => readdirSync(fixtures).filter((f) => f.startsWith(prefix)).map((f) => f.slice(prefix.length, -'.json'.length)).sort()
 
 test('handoff: the invalid-fixture maps cover exactly the invalid files on disk', () => {
   assert.deepEqual(on('brief-invalid-'), Object.keys(invalidBriefs).sort())
   assert.deepEqual(on('result-invalid-'), Object.keys(invalidResults).sort())
+  assert.deepEqual(on('run-invalid-'), Object.keys(invalidRuns).sort())
+})
+
+test('handoff: the run file fixture is valid and each invalid one names its fault', () => {
+  assert.deepEqual(runFileErrors(fixture('run-valid'), {}), [])
+  for (const [slug, re] of Object.entries(invalidRuns)) {
+    const errors = runFileErrors(fixture(`run-invalid-${slug}`), {})
+    assert.ok(errors.some((e) => re.test(e)), `${slug}: ${errors.join(' | ')}`)
+  }
+  assert.equal(runFileErrors(null, {}).length, 1)
+})
+
+test('handoff: the run file must match FACTORY_RUN_ID and FACTORY_TICKET when set', () => {
+  const valid = fixture('run-valid')
+  assert.deepEqual(runFileErrors(valid, { FACTORY_RUN_ID: 'r-1', FACTORY_TICKET: 'acme/app#12' }), [])
+  assert.ok(runFileErrors(valid, { FACTORY_RUN_ID: 'r-2' }).some((e) => /differs from FACTORY_RUN_ID/.test(e)))
+  assert.ok(runFileErrors(valid, { FACTORY_TICKET: 'acme/app#13' }).some((e) => /differs from FACTORY_TICKET/.test(e)))
 })
 
 test('handoff: valid fixtures have no errors', () => {
@@ -73,6 +100,7 @@ const tableKeys = (heading) =>
 test('handoff: the keys in the code equal the key columns of the tables in group.md', () => {
   assert.deepEqual([...BRIEF_KEYS].sort(), tableKeys('Member brief').sort())
   assert.deepEqual([...RESULT_KEYS].sort(), tableKeys('Member result').sort())
+  assert.deepEqual([...RUN_KEYS].sort(), tableKeys('Run file').sort())
 })
 
 test('handoff: memberTask parks a malformed or missing handoff and keeps a valid one', () => {
@@ -135,6 +163,18 @@ test('handoff: the CLI exits 0 for valid files, 1 for invalid or unreadable, 2 f
   assert.equal(run('brief').status, 2)
   assert.equal(run('result', at('brief-valid')).status, 2)
   assert.equal(run('other', 'x').status, 2)
+})
+
+test('handoff: the CLI checks a run file from its argument or from FACTORY_RUN_FILE', () => {
+  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('FACTORY_')))
+  const go = (args, extra = {}) => spawnSync(process.execPath, [script, ...args], { encoding: 'utf8', env: { ...env, ...extra } })
+  assert.equal(go(['run', at('run-valid')]).status, 0)
+  const invalid = go(['run', at('run-invalid-duplicate')])
+  assert.equal(invalid.status, 1)
+  assert.match(invalid.stderr, /duplicate/)
+  assert.equal(go(['run'], { FACTORY_RUN_FILE: at('run-valid') }).status, 0)
+  assert.equal(go(['run'], { FACTORY_RUN_FILE: at('run-invalid-schema') }).status, 1)
+  assert.equal(go(['run']).status, 2)
 })
 
 test('handoff: check-handoff.mjs imports only node: modules and ./check-result.mjs', () => {
