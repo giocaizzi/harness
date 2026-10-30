@@ -14,7 +14,7 @@
     ],
     "PreToolUse": [
       {
-        "matcher": "Bash|PowerShell|Skill|Edit|Write|MultiEdit|Agent|Task|bash|powershell|skill|edit|create|task|spawn_agent|Grep|grep|rg",
+        "matcher": "Bash|PowerShell|Skill|Edit|Write|MultiEdit|Agent|Task|bash|powershell|skill|edit|create|task|spawn_agent",
         "hooks": [
           {
             "type": "command",
