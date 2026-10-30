@@ -125,6 +125,12 @@ test('routingShape joins spawns on agent id and reports aggregates only', () => 
   assert.ok(!/\b[dwr][12]\b/.test(md), 'no agent ids in the report')
 })
 
+test('lspShare survives a row without a type and counts the Codex worker name as worker', () => {
+  const data = { agentIds: [{ labels: { agent_id: 'a1' }, value: 1 }, { labels: { agent_id: 'a2', agent_type: 'dev-tools-worker' }, value: 1 }], agentLsp: [{ labels: { agent_id: 'a1', tool_name: 'LSP' }, value: 2 }], agentGrep: [{ labels: { agent_id: 'a2' }, value: 3 }], lspOps: [] }
+  const s = lspShare(data)
+  assert.deepEqual(s.types.map((t) => t.agent).sort(), ['(unknown)', 'worker'])
+})
+
 test('lspShare joins on agent id, counts Bash greps and reports aggregates only', () => {
   const data = empty()
   data.agentIds = [row({ agent_id: 'd1', agent_type: 'dev-tools:driver', model: 'claude-opus-5-5' }, 1)]

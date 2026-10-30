@@ -111,11 +111,12 @@ export function routingShape(data) {
 }
 
 // LSP share: LSP tool calls against grep searches (Grep tool plus Bash rg/grep), per agent type, joined on agent_id.
-// An empty agent_id is the main session. Ids never leave this function.
+// An empty agent_id is the main session (or an agent-team teammate, which telemetry cannot tie to an agent). Ids never leave this function.
 export function lspShare(data) {
   const type = new Map()
   for (const r of data.agentIds) if (!type.has(r.labels.agent_id)) type.set(r.labels.agent_id, r.labels.agent_type)
-  const typeOf = (id) => (id ? (type.has(id) ? type.get(id).replace(/^.*:/, '') : '(unknown)') : 'main')
+  // Codex registers the worker as `dev-tools-worker`; a row without a type is unknown.
+  const typeOf = (id) => (id ? (type.has(id) ? (type.get(id) ?? '(unknown)').replace(/^.*:/, '').replace(/^dev-tools-worker$/, 'worker') : '(unknown)') : 'main')
   const by = {}
   const add = (id, k, v) => { const t = typeOf(id); by[t] ??= { lsp: 0, grep: 0 }; by[t][k] += v }
   for (const r of data.agentLsp) add(r.labels.agent_id, r.labels.tool_name === 'LSP' ? 'lsp' : 'grep', r.value)
