@@ -94,6 +94,19 @@ test('handoff: memberTask parks a malformed or missing handoff and keeps a valid
   assert.deepEqual([released.outcome, released.reason, released.reason_code], ['released', 'ticket already fixed upstream', null])
 })
 
+test('handoff: the tasks memberTask builds pass the result checker, a malformed member parked and a no-done group with no PR', async () => {
+  const { resultErrors } = await import('../plugins/factory/skills/ticket-run/scripts/check-result.mjs')
+  const base = JSON.parse(readFileSync(join(repo, 'tests/fixtures/factory/result/valid-group-no-done.json'), 'utf8'))
+  const withPr = (tasks, pr) => tasks.map((t) => ({ ...t, pr_link: pr === null ? null : t.outcome === 'done' ? 'closes' : 'refs' }))
+  const lead = { ...brief, ticket: 'acme/app#12' }
+  const shipped = [memberTask('acme/app#12', lead, { ...fixture('result-valid-done'), ticket: 'acme/app#12' }), memberTask('acme/app#13', brief, fixture('result-invalid-done-no-head'))]
+  const pr = 'https://github.com/acme/app/pull/20'
+  assert.deepEqual(resultErrors({ ...base, end_state: 'done', reason: '', reason_code: null, pr, tasks: withPr(shipped, pr) }, {}), [])
+  const none = [memberTask('acme/app#12', lead, undefined), memberTask('acme/app#13', brief, fixture('result-invalid-extra-key'))]
+  assert.deepEqual(none.map((t) => t.reason_code), ['handoff', 'handoff'])
+  assert.deepEqual(resultErrors({ ...base, end_state: 'parked', reason: 'no member finished: both handoffs were malformed', reason_code: 'handoff', pr: null, tasks: withPr(none, null) }, {}), [])
+})
+
 const run = (...args) => spawnSync(process.execPath, [script, ...args], { encoding: 'utf8' })
 const at = (name) => join(fixtures, `${name}.json`)
 

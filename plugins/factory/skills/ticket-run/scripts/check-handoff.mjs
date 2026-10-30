@@ -15,8 +15,6 @@ const SHA = /^[0-9a-f]{40}$/
 const REF = /^(?!-)[\w.\/-]+$/
 const OUTCOMES = ['done', 'parked', 'released']
 const CHECK_RESULTS = ['pass', 'fail', 'not_run']
-// `handoff` is the park code of a malformed handoff; this does not depend on REASON_CODES holding it.
-const PARK_CODES = [...new Set([...REASON_CODES, 'handoff'])]
 
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v)
 const isText = (v) => typeof v === 'string' && v.trim() !== ''
@@ -76,8 +74,8 @@ export const memberResultErrors = (result, brief) => {
     if (Array.isArray(result.checks) && result.checks.some((c) => c?.result === 'fail')) errors.push('a done member has a failing check')
   } else if (OUTCOMES.includes(outcome)) {
     if (!isText(result.reason)) bad('reason', `non-empty when ${outcome}`)
-    if (outcome === 'parked' && !PARK_CODES.includes(result.reason_code)) bad('reason_code', `one of ${PARK_CODES.join(', ')} when parked`)
-    if (outcome === 'released' && result.reason_code !== null && !PARK_CODES.includes(result.reason_code)) bad('reason_code', 'null or one of the codes when released')
+    if (outcome === 'parked' && !REASON_CODES.includes(result.reason_code)) bad('reason_code', `one of ${REASON_CODES.join(', ')} when parked`)
+    if (outcome === 'released' && result.reason_code !== null && !REASON_CODES.includes(result.reason_code)) bad('reason_code', 'null or one of the codes when released')
     if (result.head !== null && (typeof result.head !== 'string' || !SHA.test(result.head))) bad('head', 'a 40-hex commit or null when not done')
   }
   if ('checks' in result) errors.push(...checkErrors(result.checks))
@@ -94,7 +92,7 @@ export const memberTask = (ticket, brief, result) => {
 
 const load = (file) => {
   try {
-    return { value: JSON.parse(readFileSync(file, 'utf8').replace(/^﻿/, '')) }
+    return { value: JSON.parse(readFileSync(file, 'utf8').replace(/^\uFEFF/, '')) }
   } catch (e) {
     const why = e.code === 'ENOENT' ? 'no such file' : e instanceof SyntaxError ? `not valid JSON (${e.message})` : `cannot read (${e.code ?? e.message})`
     return { errors: [`${file}: ${why}`] }
