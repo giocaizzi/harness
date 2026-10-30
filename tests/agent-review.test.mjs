@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { endpoint, parsePairs, collect, knownSkills, skillUse, report, evalStubs, routingShape, lspShare, QUERIES } from '../scripts/agent-review.mjs'
+import { endpoint, parsePairs, collect, knownSkills, skillUse, report, evalStubs, routingShape, versionShape, effortByAgent, lspShare, QUERIES } from '../scripts/agent-review.mjs'
 
 const empty = () => Object.fromEntries(Object.keys(QUERIES).map((k) => [k, []]))
 const row = (labels, value) => ({ labels, value })
@@ -152,4 +152,38 @@ test('lspShare joins on agent id, counts Bash greps and reports aggregates only'
   assert.match(md, /\| main \| 2 \| 18 \| 10% \|/)
   assert.match(md, /LSP operations: 4; failure rate 25%\./)
   assert.ok(!/\b(d1|x9)\b/.test(md), 'no agent ids in the report')
+})
+
+test('versionShape joins sessions to the announced dev-tools version and reports aggregates only', () => {
+  const data = empty()
+  data.sessionVersions = [
+    row({ session_id: 's1', plugin_version_dev_tools: '1.47.2' }, 1),
+    row({ session_id: 's2', plugin_version_dev_tools: '1.9.0' }, 1), // resumed: announced twice, the higher wins
+    row({ session_id: 's2', plugin_version_dev_tools: '1.10.0' }, 1),
+  ]
+  data.sessionCost = [row({ session_id: 's1' }, 10), row({ session_id: 's2' }, 4), row({ session_id: 's3' }, 2)]
+  data.sessionSubagentCost = [
+    row({ session_id: 's1', model: 'claude-opus-5-5', src: 'agent' }, 3),
+    row({ session_id: 's1', model: 'claude-sonnet-5-5', src: 'agent' }, 1),
+    row({ session_id: 's2', model: 'claude-sonnet-5-5', src: 'agent' }, 1),
+    row({ session_id: 's2', model: 'claude-opus-5-5', src: 'summary' }, 1),
+    row({ session_id: 's3', model: 'claude-opus-5-5', src: 'agent' }, 2),
+  ]
+  data.agentIds = [
+    row({ agent_id: 'd1', agent_type: 'dev-tools:driver', model: 'm', session_id: 's1' }, 2),
+    row({ agent_id: 'w1', agent_type: 'dev-tools:worker', model: 'm', session_id: 's1' }, 1),
+    row({ agent_id: 'w2', agent_type: 'dev-tools:worker', model: 'm', session_id: 's1' }, 1),
+    row({ agent_id: 'd2', agent_type: 'dev-tools:driver', model: 'm', session_id: 's2' }, 1),
+  ]
+  data.agentCost = [row({ agent_id: 'd1', effort: 'high' }, 1), row({ agent_id: 'w1', effort: 'medium' }, 1)]
+  const v = versionShape(data)
+  assert.deepEqual(v.map((x) => x.version), ['1.47.2', '1.10.0', '(unknown)'])
+  assert.deepEqual(v[0], { version: '1.47.2', sessions: 1, costPerSession: 10, opusShare: 0.75, sonnetShare: 0.25, summaryShare: 0, workerPerDriver: 2, highShare: 1 / 3 })
+  assert.deepEqual(v[1], { version: '1.10.0', sessions: 1, costPerSession: 4, opusShare: 0.5, sonnetShare: 0.5, summaryShare: 0.5, workerPerDriver: 0, highShare: 0 })
+  assert.deepEqual(v[2], { version: '(unknown)', sessions: 1, costPerSession: 2, opusShare: 1, sonnetShare: 0, summaryShare: 0, workerPerDriver: 0, highShare: 0 })
+  assert.equal(effortByAgent(data).get('d1'), 'high')
+  const md = report(data, [], '7d')
+  assert.match(md, /### By plugin version/)
+  assert.match(md, /\| 1\.47\.2 \| 1 \| \$10\.00 \| 75% \| 25% \| 2\.00 \| 33% \| 0% \|/)
+  assert.ok(!/\b(s[123]|d[12]|w[12])\b/.test(md), 'no ids in the report')
 })
