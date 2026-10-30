@@ -5,7 +5,7 @@ import { spawn, spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { tmpdir, userInfo } from 'node:os'
 import { join, resolve } from 'node:path'
-import { CODEX_RULES, LSP_TOOLS, lspToolFor, codexAsks, codexReviewer, factoryLabels, handle, protectFacts, inWorkTree, pythonManager, sessionStore, tail } from './guard.mjs'
+import { CODEX_RULES, codexAsks, codexReviewer, factoryLabels, handle, protectFacts, inWorkTree, pythonManager, sessionStore, tail } from './guard.mjs'
 import { fallbackDataDir } from './data.mjs'
 import { codexRules } from '../core/engine.mjs'
 import { rules } from '../core/rules.mjs'
@@ -483,32 +483,6 @@ test('skills count for the whole session, reminders per agent; the read and edit
   }
 })
 
-test('the LSP hint comes once per agent, the main agent its own, through the shell or a search tool; none without an LSP tool', async () => {
-  const h = setup({ lspTool: 'LSP' })
-  const hinted = async (input, agent_id) => decision(await h({ ...input, agent_id }))?.additionalContext ?? ''
-  const search = pre('Bash', 'rg -n "def build_index" src')
-  assert.match(await hinted(search, 'a1'), /`LSP` tool/)
-  assert.equal(await hinted(search, 'a1'), '', 'once per agent')
-  assert.match(await hinted(search, 'a2'), /`LSP` tool/, 'another subagent gets its own')
-  const grep = { hook_event_name: 'PreToolUse', tool_name: 'Grep', tool_input: { pattern: 'class SessionStore', path: 'src' } }
-  assert.match(await hinted(grep, undefined), /`LSP` tool/, 'the main agent, through the Grep tool')
-  assert.equal(await hinted(search, undefined), '', 'the main agent once')
-  assert.equal(decision(await setup()(search)), undefined, 'no LSP tool, no hint')
-  const text = { hook_event_name: 'PreToolUse', tool_name: 'grep', tool_input: { pattern: 'error', include: '*.py' } }
-  assert.equal(decision(await setup({ lspTool: 'lsp' })(text)), undefined, 'a text search')
-  const copilot = { hook_event_name: 'PreToolUse', tool_name: 'rg', tool_input: { pattern: 'handlePayment', include: '*.ts' } }
-  assert.match(decision(await setup({ lspTool: 'lsp' })(copilot)).additionalContext, /`lsp` tool/)
-})
-
-test('each harness names its own LSP tool; Codex has none', () => {
-  assert.deepEqual(LSP_TOOLS, { claude: 'LSP', copilot: 'lsp', vscode: '#search/usages' })
-  assert.equal(LSP_TOOLS.codex, undefined)
-  assert.equal(lspToolFor({ CLAUDE_PLUGIN_DATA: '/d', COPILOT_PLUGIN_DATA: '/c' }), 'lsp', 'Copilot sets both variables')
-  assert.equal(lspToolFor({ CLAUDE_PLUGIN_DATA: '/d' }), 'LSP')
-  assert.equal(lspToolFor({ CLAUDE_PLUGIN_ROOT: '/r' }), '#search/usages')
-  assert.equal(lspToolFor({ CLAUDE_PLUGIN_DATA: '/d' }, true), null, 'Codex (no-ask)')
-})
-
 test('Copilot CLI: a subagent hook names its own session and the parent in parent_agent_id; skills are shared, reminders its own (#172)', async () => {
   const h = setup()
   const child = { session_id: 'c1', agent_id: 'c1', parent_agent_id: 's1' }
@@ -778,4 +752,24 @@ test('FACTORY_RUN_ID set: the approval and takeover labels (default or the repo\
   assert.equal(decision(await inRun({ ...pre('Bash', 'gh issue view 70 --json labels'), cwd: flow })), undefined, 'reads still pass')
   assert.equal(decision(await setup({ env: {} })(add('needs-owner', flow))), undefined, 'outside a run: unchanged')
   assert.equal(decision(await setup({ env: {} })(add('agent-ok', cwd))), undefined, 'no run active: allowed')
+})
+
+test('SessionStart: one guard.session per session and process, with the plugin versions', async () => {
+  const cache = join(mkdtempSync(join(tmpdir(), 'guard-test-')), 'cache', 'mkt')
+  for (const [p, v] of [['guard', '1.2.3'], ['dev-tools', '4.5.6']]) {
+    mkdirSync(join(cache, p, v, '.claude-plugin'), { recursive: true })
+    writeFileSync(join(cache, p, v, '.claude-plugin', 'plugin.json'), JSON.stringify({ name: p, version: v }))
+  }
+  const events = []
+  const dataDir = mkdtempSync(join(tmpdir(), 'guard-test-'))
+  const h = (processId, pluginRoot = join(cache, 'guard', '1.2.3')) =>
+    handle({ session_id: 's1', cwd: '/', hook_event_name: 'SessionStart', source: 'startup' }, { dataDir, env: {}, hostFacts: calm, run: async () => null, pythonManager, processId, pluginRoot, emit: async (...a) => events.push(a) })
+  const out = await h(10)
+  assert.deepEqual(out, {})
+  assert.deepEqual(events.map(([e, a]) => [e, a.session_id, a.source, a.plugin_version_guard, a.plugin_version_dev_tools]), [['guard.session', 's1', 'startup', '1.2.3', '4.5.6']])
+  await h(10)
+  assert.equal(events.length, 1, 'a compact or second hook of the same process is silent')
+  await h(11)
+  assert.equal(events.length, 2, 'a resume is a new process')
+  assert.deepEqual(await h(12, join(cache, 'missing', 'nothing')), {}, 'an unreadable plugin root never throws and prints nothing')
 })

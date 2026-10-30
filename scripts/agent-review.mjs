@@ -74,6 +74,17 @@ export function skillUse(data, known) {
 // carry the calling agent's id), reduced to aggregates. Ids never leave this function.
 const isType = (name, t) => new RegExp(`(^|:)${t}$`).test(name ?? '') || (t === 'worker' && name === 'dev-tools-worker')
 const median = (xs) => { const s = [...xs].sort((a, b) => a - b); return s.length ? (s.length % 2 ? s[(s.length - 1) / 2] : (s[s.length / 2 - 1] + s[s.length / 2]) / 2) : 0 }
+// The effort a spawn ran at: the one most of its spend went to. Map agent_id -> effort; ids never leave the callers.
+export function effortByAgent(data) {
+  const effortOf = new Map(), spend = new Map()
+  for (const r of data.agentCost) {
+    const k = `${r.labels.agent_id}\u0000${r.labels.effort}`
+    spend.set(k, (spend.get(k) ?? 0) + r.value)
+    const cur = effortOf.get(r.labels.agent_id)
+    if (!cur || spend.get(k) > spend.get(`${r.labels.agent_id}\u0000${cur}`)) effortOf.set(r.labels.agent_id, r.labels.effort)
+  }
+  return effortOf
+}
 export function routingShape(data) {
   const type = new Map(), model = new Map()
   for (const r of data.agentIds) if (!type.has(r.labels.agent_id)) { type.set(r.labels.agent_id, r.labels.agent_type); model.set(r.labels.agent_id, r.labels.model) }
@@ -82,14 +93,7 @@ export function routingShape(data) {
   const nested = sum(data.agentSpawns.filter((r) => isType(r.labels.agent, 'worker') && isType(type.get(r.labels.agent_id), 'driver')))
   const edits = new Map(data.agentEdits.map((r) => [r.labels.agent_id, r.value]))
   const driverEdits = drivers.reduce((a, id) => a + (edits.get(id) ?? 0), 0)
-  // The effort a spawn ran at: the one most of its spend went to.
-  const effortOf = new Map(), spend = new Map()
-  for (const r of data.agentCost) {
-    const k = `${r.labels.agent_id}\u0000${r.labels.effort}`
-    spend.set(k, (spend.get(k) ?? 0) + r.value)
-    const cur = effortOf.get(r.labels.agent_id)
-    if (!cur || spend.get(k) > spend.get(`${r.labels.agent_id}\u0000${cur}`)) effortOf.set(r.labels.agent_id, r.labels.effort)
-  }
+  const effortOf = effortByAgent(data)
   const high = {}
   for (const [id, e] of effortOf) if (/high|max/.test(e ?? '')) { const t = type.get(id) ?? '(unknown)'; high[t] = (high[t] ?? 0) + 1 }
   const opusDriver = sum(data.agentCost.filter((r) => drivers.includes(r.labels.agent_id) && /opus/.test(r.labels.model)))
@@ -108,6 +112,45 @@ export function routingShape(data) {
     reviewerSonnetShare: reviewers.length ? reviewers.filter((id) => /sonnet/.test(model.get(id))).length / reviewers.length : 0,
     high, summaryShare: subagentSpend ? summary / subagentSpend : 0, untracked,
   }
+}
+
+// By plugin version: Claude Code sessions joined to the guard's guard.session record on session_id. A session's version is
+// the highest announced (a resumed session announces again); none: (unknown). Aggregates only; ids never leave this function.
+const semver = (v) => v.split('.').map((n) => parseInt(n, 10) || 0)
+const cmpSemver = (a, b) => { const x = semver(a), y = semver(b); for (let i = 0; i < 3; i++) if ((x[i] ?? 0) !== (y[i] ?? 0)) return (x[i] ?? 0) - (y[i] ?? 0); return 0 }
+export function versionShape(data) {
+  const announced = new Map()
+  for (const r of data.sessionVersions) {
+    const v = r.labels.plugin_version_dev_tools
+    if (!v) continue
+    const cur = announced.get(r.labels.session_id)
+    if (!cur || cmpSemver(v, cur) > 0) announced.set(r.labels.session_id, v)
+  }
+  const versionOf = (sid) => announced.get(sid) ?? '(unknown)'
+  const effort = effortByAgent(data)
+  const by = new Map()
+  const get = (v) => { if (!by.has(v)) by.set(v, { sessions: new Set(), cost: 0, opus: 0, sonnet: 0, summary: 0, sub: 0, spawns: new Map() }); return by.get(v) }
+  const known = new Set(data.sessionCost.map((r) => r.labels.session_id))
+  for (const r of data.sessionCost) { const g = get(versionOf(r.labels.session_id)); g.sessions.add(r.labels.session_id); g.cost += r.value }
+  for (const r of data.sessionSubagentCost) {
+    if (!known.has(r.labels.session_id)) continue
+    const g = get(versionOf(r.labels.session_id))
+    g.sub += r.value
+    if (/opus|fable/.test(r.labels.model)) g.opus += r.value
+    if (/sonnet/.test(r.labels.model)) g.sonnet += r.value
+    if (r.labels.src === 'summary') g.summary += r.value
+  }
+  for (const r of data.agentIds) if (known.has(r.labels.session_id)) get(versionOf(r.labels.session_id)).spawns.set(r.labels.agent_id, r.labels.agent_type)
+  const div = (a, b) => (b ? a / b : 0)
+  return [...by].map(([version, g]) => {
+    const types = [...g.spawns.values()], ids = [...g.spawns.keys()]
+    const drivers = types.filter((t) => isType(t, 'driver')).length, workers = types.filter((t) => isType(t, 'worker')).length
+    return {
+      version, sessions: g.sessions.size, costPerSession: div(g.cost, g.sessions.size),
+      opusShare: div(g.opus, g.sub), sonnetShare: div(g.sonnet, g.sub), summaryShare: div(g.summary, g.sub),
+      workerPerDriver: div(workers, drivers), highShare: div(ids.filter((id) => /high|max/.test(effort.get(id) ?? '')).length, ids.length),
+    }
+  }).sort((a, b) => (a.version === '(unknown)') - (b.version === '(unknown)') || cmpSemver(b.version, a.version))
 }
 
 // LSP share: LSP tool calls against grep searches (Grep tool plus Bash rg/grep), per agent type, joined on agent_id.
@@ -138,6 +181,7 @@ export function report(data, known, range) {
   const unnamed = data.subagentCost.filter((r) => !r.labels.agent_name)
   const shape = routingShape(data)
   const lspS = lspShare(data)
+  const versions = versionShape(data)
   return [
     `# Agent review (last ${range})`,
     '',
@@ -172,6 +216,11 @@ export function report(data, known, range) {
     ]),
     '',
     `Spawns at effort high or above, by agent (only the sensitive-review agents belong here): ${Object.entries(shape.high).map(([t, n]) => `${t} ${n}`).join(', ') || 'none'}.`,
+    '',
+    '### By plugin version',
+    'Claude Code sessions joined to the guard\'s `guard.session` by session id; `(unknown)`: no record (a guard before it sent one, or a session started before the window). Compare a version with the one before it.',
+    table(['dev-tools', 'sessions', 'cost/session', 'Opus share of subagent cost', 'Sonnet share', 'workers per driver', 'effort high+ spawns', 'agent_summary share'],
+      versions.map((v) => [v.version, v.sessions, usd(v.costPerSession), pct(v.opusShare), pct(v.sonnetShare), v.workerPerDriver.toFixed(2), pct(v.highShare), pct(v.summaryShare)])),
     '',
     '### LSP share',
     'Target: LSP share >= 5% for main, driver, scout, worker and reviewer once at least 30 searches ran; LSP failures <= 10%.',

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import { spawnSync } from 'node:child_process';
 import assert from 'node:assert/strict';
-import { touchesApprovalLabel, protectedWrite, ghHidden, ghUnseen, badTitle, branchFacts, cmdClass, branchTargets, codexRules, evaluateCommand, evaluateEdit, evaluateRouting, evaluateSearch, evaluateSpawn, nativeAsk, opencodeAsks, pureRead, refFacts, regenerableName, regenFacts, removalTargets, shellEdit, symbolSearch, tagFacts, throttleMode, unattendedSet, usageLevel, worktreeFacts } from './engine.mjs';
+import { touchesApprovalLabel, protectedWrite, ghHidden, ghUnseen, badTitle, branchFacts, cmdClass, branchTargets, codexRules, evaluateCommand, evaluateEdit, evaluateRouting, evaluateSpawn, nativeAsk, opencodeAsks, pureRead, refFacts, regenerableName, regenFacts, removalTargets, shellEdit, tagFacts, throttleMode, unattendedSet, usageLevel, worktreeFacts } from './engine.mjs';
 import { rules } from './rules.mjs';
 
 const fresh = () => ({ reminded: new Set() });
@@ -1487,32 +1487,4 @@ test('factory run: the label check never throws and fails fast on a hang', () =>
   const r = spawnSync(process.execPath, ['--input-type=module', '-e', script], { timeout: 10000, encoding: 'utf8' });
   assert.equal(r.signal, null, 'timed out');
   assert.equal(r.status, 0, r.stderr);
-});
-
-test('a shell symbol search hints at the LSP tool once, only where the harness has one', () => {
-  const yes = ['rg -n "def build_index" src', 'grep -rn "class\\s+SessionStore" --include=*.py .', 'rg -w handlePayment -t ts', "grep -rnw parse_config --include='*.py' src", 'git grep -n "func NewServer" -- \'*.go\'', 'cd app && rg "export function useCart" src', "rg -n 'interface UserRepo' -g '*.ts'", 'grep -rn "^class Foo" src', 'rg "func (s \\*Server) Start" .', 'rg -e handleClick --type=ts', 'grep -rn "def[[:space:]]+main" src', 'rg "\\bparse_config\\b" -t py', 'rg buildIndex src/app.ts', 'rg -A3 -e "class Foo" src', 'grep -n foo src/a.py | head; rg "def run" src'];
-  const no = ['ps aux | grep node', 'git log --grep "fix parser"', 'rg -n TODO -t py', 'grep -rn error --include=*.py .', 'grep -n "def " README.md', 'rg handlePayment logs/', 'rg -n "type: module" package.json', 'rg "class=" templates/', 'rg -v "def main" src/app.py', 'rg --files -g "*.py"', 'rg -f pats.txt src', 'rg "def build_index" docs/', 'rg handlePayment src', 'ls | rg "def x"'];
-  for (const c of yes) {
-    assert.equal(symbolSearch(c, rules), true, c);
-    assert.equal(evaluateCommand({ command: c, state: fresh(), host: calm, lspTool: 'LSP', rules }).rule, 'lsp', c);
-    assert.equal(evaluateCommand({ command: c, state: fresh(), host: calm, rules }).rule, undefined, c);
-  }
-  for (const c of no) assert.equal(symbolSearch(c, rules), false, c);
-  const state = fresh();
-  assert.match(evaluateCommand({ command: yes[0], state, host: calm, lspTool: 'LSP', rules }).context, /`LSP` tool/);
-  assert.equal(evaluateCommand({ command: yes[1], state, host: calm, lspTool: 'LSP', rules }).rule, undefined);
-  assert.equal(cmdClass('lsp'), 'hint');
-});
-
-test('a search tool call hints at the LSP tool once', () => {
-  const hit = { pattern: 'def build_index' };
-  const state = fresh();
-  assert.equal(evaluateSearch({ ...hit, state, lspTool: 'LSP', rules }).rule, 'lsp');
-  assert.equal(evaluateSearch({ ...hit, state, lspTool: 'LSP', rules }).rule, undefined);
-  for (const a of [{ pattern: 'handlePayment', type: 'ts' }, { pattern: 'handlePayment', glob: '**/*.py' }, { pattern: 'useCart', path: 'src/a.tsx' }, { pattern: 'class Foo', path: 'src' }])
-    assert.equal(evaluateSearch({ ...a, state: fresh(), lspTool: 'LSP', rules }).rule, 'lsp', JSON.stringify(a));
-  for (const a of [{ pattern: 'class Foo', glob: '*.md' }, { pattern: 'class Foo', type: 'java' }, { pattern: 'class Foo', path: 'build.gradle' }, { pattern: 'handlePayment' }, { pattern: 'handlePayment', path: 'logs' }, { pattern: 'class Foo', path: 'docs/a.md' }, { pattern: 'TODO', type: 'py' }, { pattern: 'error', glob: '*.py' }])
-    assert.equal(evaluateSearch({ ...a, state: fresh(), lspTool: 'LSP', rules }).rule, undefined, JSON.stringify(a));
-  assert.equal(evaluateSearch({ ...hit, state: fresh(), lspTool: null, rules }).rule, undefined);
-  assert.equal(evaluateSearch({ ...hit, state: fresh(), rules }).rule, undefined);
 });
