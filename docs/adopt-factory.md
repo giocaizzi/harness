@@ -27,7 +27,7 @@
    gh api repos/giocaizzi/harness/contents/plugins/factory/template/config.yaml -H "Accept: application/vnd.github.raw" | Set-Content -Encoding utf8 .factory/config.yaml
    Add-Content .gitignore "`n# factory run results (docs/factory.md in giocaizzi/harness)`n.factory/runs/"
    ```
-3. Edit `.factory/config.yaml`: replace every `<placeholder>`, list the repo's components with their checks and deploy commands, and set the risk tiers; delete the optional blocks you do not use (`writers`, `board`, `notify`, `telemetry`, `secrets`). If a runtime will run tickets here under its own login, keep `writers`: the approvers plus that login exactly as the REST API reports it, `<slug>[bot]` for a GitHub App (for example `example-bot[bot]`), never the bare slug; otherwise the runtime's runs stop at the gate with `reason_code: auth`. Keys: [factory.md](factory.md#config-factoryconfigyaml). Check nothing is left:
+3. Edit `.factory/config.yaml`: replace every `<placeholder>`, list the repo's components with their checks and deploy commands, and set the risk tiers; delete the optional blocks you do not use (`writers`, `identity`, `change_requests`, `board`, `notify`, `telemetry`, `secrets`). If a runtime will run tickets here under its own login, keep `writers`: the approvers plus that login exactly as the REST API reports it, `<slug>[bot]` for a GitHub App (for example `example-bot[bot]`), never the bare slug; otherwise the runtime's runs stop at the gate with `reason_code: auth`. Keys: [factory.md](factory.md#config-factoryconfigyaml). Check nothing is left:
    ```bash
    grep -n '<' .factory/config.yaml
    ```
