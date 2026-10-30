@@ -96,6 +96,9 @@ test('opencode: the LSP hint only behind the experimental flag; pi has no LSP to
   assert.equal(opencodeLsp({}), null)
   assert.equal(opencodeLsp({ OPENCODE_EXPERIMENTAL_LSP_TOOL: 'true' }), 'lsp')
   assert.equal(opencodeLsp({ OPENCODE_EXPERIMENTAL: 'true' }), 'lsp')
+  assert.equal(opencodeLsp({ OPENCODE_EXPERIMENTAL: 'true', OPENCODE_EXPERIMENTAL_LSP_TOOL: 'false' }), null, 'the tool flag wins')
+  assert.equal(opencodeLsp({ OPENCODE_EXPERIMENTAL_LSP_TOOL: '1' }), 'lsp')
+  assert.equal(opencodeLsp({ OPENCODE_EXPERIMENTAL: 'on' }), 'lsp')
   for (const lspTool of ['lsp', null]) {
     const hooks = await GuardPlugin({ client: {}, directory: dir() }, { ...deps(), lspTool })
     const output = { args: { pattern: 'class SessionStore', path: 'src' }, output: 'found' }

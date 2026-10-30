@@ -65,6 +65,8 @@ const EDITS = new Set(['edit', 'write', 'multiedit', 'create', 'create_file', 'r
 const SEARCHES = new Set(['grep', 'rg'])
 // Each harness's LSP tool, named in the hint; Codex has none.
 export const LSP_TOOLS = { claude: 'LSP', copilot: 'lsp', vscode: '#search/usages' }
+// Copilot CLI sets CLAUDE_PLUGIN_DATA beside its own COPILOT_PLUGIN_DATA, so its variable decides first.
+export const lspToolFor = (env, noAsk = false) => (noAsk ? null : env.COPILOT_PLUGIN_DATA ? LSP_TOOLS.copilot : (LSP_TOOLS[harnessName(process.argv, env)] ?? null))
 const WEEK_MS = 7 * 24 * 3600 * 1000
 
 // This marketplace's skill names, from the plugins beside this one: `plugins/<p>/skills/<s>` in a checkout,
@@ -591,7 +593,7 @@ async function main() {
   // `--no-ask` comes from the Codex hooks file (.generated/codex/hooks.json), which build_agents.py generates.
   const noAsk = process.argv.includes('--no-ask')
   // Codex (`--no-ask`) is the one harness without a file-read tool.
-  const out = await handle(input, { dataDir, harness: noAsk ? 'codex' : harnessName(), env: process.env, hostFacts, run, pythonManager, noAsk, readTool: !noAsk, lspTool: noAsk ? null : (LSP_TOOLS[harnessName()] ?? null), nativeAsk: noAsk ? (command, rule) => codexAsks(process.env, input.transcript_path)?.(command, rule) ?? false : null, emit: (event, attrs, cwd) => new Promise((r) => setImmediate(r)).then(() => emit(process.env, event, recordAttrs(attrs, cwd, noAsk ? 'codex' : harnessName()))) }).catch(() => ({}))
+  const out = await handle(input, { dataDir, harness: noAsk ? 'codex' : harnessName(), env: process.env, hostFacts, run, pythonManager, noAsk, readTool: !noAsk, lspTool: lspToolFor(process.env, noAsk), nativeAsk: noAsk ? (command, rule) => codexAsks(process.env, input.transcript_path)?.(command, rule) ?? false : null, emit: (event, attrs, cwd) => new Promise((r) => setImmediate(r)).then(() => emit(process.env, event, recordAttrs(attrs, cwd, noAsk ? 'codex' : harnessName()))) }).catch(() => ({}))
   if (out.stdout) process.stdout.write(out.stdout)
   if (out.stderr) process.stderr.write(out.stderr)
 }

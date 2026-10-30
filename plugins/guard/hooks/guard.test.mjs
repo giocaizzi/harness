@@ -5,7 +5,7 @@ import { spawn, spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { tmpdir, userInfo } from 'node:os'
 import { join, resolve } from 'node:path'
-import { CODEX_RULES, LSP_TOOLS, codexAsks, codexReviewer, factoryLabels, handle, protectFacts, inWorkTree, pythonManager, sessionStore, tail } from './guard.mjs'
+import { CODEX_RULES, LSP_TOOLS, lspToolFor, codexAsks, codexReviewer, factoryLabels, handle, protectFacts, inWorkTree, pythonManager, sessionStore, tail } from './guard.mjs'
 import { fallbackDataDir } from './data.mjs'
 import { codexRules } from '../core/engine.mjs'
 import { rules } from '../core/rules.mjs'
@@ -503,6 +503,10 @@ test('the LSP hint comes once per agent, the main agent its own, through the she
 test('each harness names its own LSP tool; Codex has none', () => {
   assert.deepEqual(LSP_TOOLS, { claude: 'LSP', copilot: 'lsp', vscode: '#search/usages' })
   assert.equal(LSP_TOOLS.codex, undefined)
+  assert.equal(lspToolFor({ CLAUDE_PLUGIN_DATA: '/d', COPILOT_PLUGIN_DATA: '/c' }), 'lsp', 'Copilot sets both variables')
+  assert.equal(lspToolFor({ CLAUDE_PLUGIN_DATA: '/d' }), 'LSP')
+  assert.equal(lspToolFor({ CLAUDE_PLUGIN_ROOT: '/r' }), '#search/usages')
+  assert.equal(lspToolFor({ CLAUDE_PLUGIN_DATA: '/d' }, true), null, 'Codex (no-ask)')
 })
 
 test('Copilot CLI: a subagent hook names its own session and the parent in parent_agent_id; skills are shared, reminders its own (#172)', async () => {

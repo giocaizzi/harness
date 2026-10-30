@@ -23,7 +23,12 @@ const launchDetached = (argv) => {
 
 // The LSP tool's name when opencode enables it (`OPENCODE_EXPERIMENTAL_LSP_TOOL` or `OPENCODE_EXPERIMENTAL`), else null.
 // Kept here, not in opencode.mjs: opencode loads every export of a plugin file as a plugin.
-export const opencodeLsp = (env = process.env) => (env.OPENCODE_EXPERIMENTAL_LSP_TOOL === 'true' || env.OPENCODE_EXPERIMENTAL === 'true' ? 'lsp' : null)
+// As opencode reads them: OPENCODE_EXPERIMENTAL_LSP_TOOL wins when set; 1, true, yes or on is true.
+const truthy = (v) => /^(?:1|true|yes|on)$/i.test(String(v).trim())
+export const opencodeLsp = (env = process.env) => {
+  const own = env.OPENCODE_EXPERIMENTAL_LSP_TOOL
+  return (own !== undefined && own !== '' ? truthy(own) : truthy(env.OPENCODE_EXPERIMENTAL ?? '')) ? 'lsp' : null
+}
 
 // `harness` names it in telemetry; `noAsk` turns an ask into a deny where the harness cannot ask, unless
 // `deps.nativeAsk(command, rule, input)` says the harness's own prompt covers it.
