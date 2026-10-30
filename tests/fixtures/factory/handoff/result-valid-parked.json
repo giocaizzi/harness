@@ -1,0 +1,22 @@
+{
+  "handoff": "member_result",
+  "version": 1,
+  "run_id": "r-1",
+  "ticket": "acme/app#13",
+  "outcome": "parked",
+  "reason": "plan needs an owner answer",
+  "reason_code": "question",
+  "branch": "factory/acme-app-13",
+  "head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "checks": [
+    {
+      "command": "make test",
+      "result": "pass"
+    },
+    {
+      "command": "make e2e",
+      "result": "not_run",
+      "note": "no browser on the host"
+    }
+  ]
+}
