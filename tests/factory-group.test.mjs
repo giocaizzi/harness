@@ -33,6 +33,9 @@ const EXPECTED = {
   'link-without-pr': /tasks\[0\].*pr_link must be null when parked without a pr/,
   'no-done-with-pr': /tasks: no done entry, so pr must be null/,
   'no-done-end-done': /tasks: no done entry, so end_state must not be done/,
+  'turns-negative': /tasks\[1\]: turns must be a non-negative integer, got -1/,
+  'turns-fraction': /tasks\[1\]: turns must be a non-negative integer, got 2.5/,
+  'turns-string': /tasks\[1\]: turns must be a non-negative integer/,
   'done-without-pr': /tasks: a done entry needs pr/,
 }
 
