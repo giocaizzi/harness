@@ -90,7 +90,7 @@ Each comment is the marker line, a kind tag line, then the fields as short label
 | `<!-- factory:question Q<n> -->` | per question; `n` counts up across the ticket | the question; whether it blocks shipping; context with `path:line`; options `A) B) …`; recommendation and why; done so far (what is pushed). |
 | `<!-- factory:log -->` | once; edited in place | the decision log table: `#`, item, found at, test, decision, where ([fold-in-test.md](fold-in-test.md#decision-log)). |
 | `<!-- factory:verdict <round> -->` | on the PR, per verifier round | the verifier's verdict file, verbatim: first line `Head: <sha>`, then verdict, findings, what ran. |
-| `<!-- factory:result <end_state> -->` | end of every run | end state; reason; PR; evidence links; follow-ups. |
+| `<!-- factory:result <end_state> -->` | end of every run (in a runtime run, `result.json` only) | end state; reason; PR; evidence links; follow-ups. |
 | `<!-- factory:notify <kind> -->` | never by the skill: a runtime's @-mention of the approvers | skip it when reading; it carries the marker, so it is never an answer. |
 
 **Dev mode.** When `FACTORY_DEV=1` is set, end every comment you post with a last field line `mode: dev`, so dev output never passes as prod.
@@ -107,7 +107,7 @@ gh api -X PATCH "repos/{owner}/{repo}/issues/comments/<id>" -F body=@<file>
 
 ## Questions and parking
 
-A question parks the ticket: post it, `gh issue edit N --add-label needs-owner`, set the board status to blocked (config `board`, [below](#board-status)), release the claim, record the result as `parked`, and stop. In a run a runtime started (`FACTORY_RUN_ID` set), post the question and record the result, and leave the labels alone: the runtime applies `needs-owner` or `needs-grooming` and releases the claim from `result.json` ([done.md](done.md#record), Runtime runs). In a session, tell the person the question is on the ticket; the answer goes there, so the record stays whole.
+A question parks the ticket: post it, `gh issue edit N --add-label needs-owner`, set the board status to blocked (config `board`, [below](#board-status)), release the claim, record the result as `parked`, and stop. In a run a runtime started (`FACTORY_RUN_ID` set), post the question, set the board status to blocked when `board` is configured (the board is not a label, so the run sets it) and record the result, and leave the labels alone: the runtime applies `needs-owner` or `needs-grooming` and releases the claim from `result.json` ([done.md](done.md#record), Runtime runs). In a session, tell the person the question is on the ticket; the answer goes there, so the record stays whole.
 
 The third question on a ticket means it is under-specified: post it, then `gh issue edit N --add-label needs-grooming` instead of `needs-owner`. Leave the approval label alone: adding or removing it is the owner's, and in a runtime run the guard denies any command that names it. `needs-grooming` alone keeps the ticket out of every run (see the gate).
 

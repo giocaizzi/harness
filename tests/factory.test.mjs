@@ -176,7 +176,7 @@ test('runtime claim not from a writer: the gate names only the claim label\'s ac
   assert.match(stops, /`FACTORY_RUN_ID` set\) that stops at the gate still writes `result\.json`, with `end_state` `failed`/)
   assert.match(stops, /`reason_code` `auth` when no trusted claim carries this run's id/)
   assert.match(stops, /Ready check is no stop: .* parks \(`parked`, `question`\)/)
-  assert.match(read('plugins/factory/skills/ticket-run/SKILL.md'), /Every run that passed the gate ends with the result comment and `result\.json`, written by `scripts\/write-result\.mjs`; a stop at the gate/)
+  assert.match(read('plugins/factory/skills/ticket-run/SKILL.md'), /Every run that passed the gate ends with the result comment \(in a runtime run, `result\.json` only\) and `result\.json`, written by `scripts\/write-result\.mjs`; a stop at the gate/)
   const authors = doc.split('**Authors.**')[1].split('\n\n')[0]
   assert.match(authors, /`reason_code: auth`[^\n]*last `labeled` actor/)
   assert.match(authors, /Anyone who can label can still be named/)
@@ -962,7 +962,7 @@ test('runtime runs: the runtime owns the labels and the result comment; the run 
   const record = read('plugins/factory/skills/ticket-run/references/done.md').split('**Runtime runs.**')[1].split('\n\n')[0]
   assert.match(record, /do step 1 only, then stop\. Post no result comment, skip step 3, and edit no label/)
   const comments = read(COMMENTS)
-  assert.match(comments.split('## Questions and parking')[1].split('\n## ')[0], /In a run a runtime started \(`FACTORY_RUN_ID` set\), post the question and record the result, and leave the labels alone/)
+  assert.match(comments.split('## Questions and parking')[1].split('\n## ')[0], /In a run a runtime started \(`FACTORY_RUN_ID` set\), post the question, set the board status to blocked when `board` is configured \(the board is not a label, so the run sets it\) and record the result, and leave the labels alone/)
   assert.match(comments, /Release it \(remove the label\) when the run ends, whatever the end state; in a run a runtime started, the runtime releases it\./)
   assert.match(read('plugins/factory/skills/ticket-run/SKILL.md'), /runtime owns the labels and the result comment: write `result\.json` and stop/)
 })
