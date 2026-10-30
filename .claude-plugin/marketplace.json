@@ -13,7 +13,7 @@
       "name": "python",
       "source": "./plugins/python",
       "description": "Python development and testing best practices",
-      "version": "1.6.0",
+      "version": "1.6.1",
       "keywords": [
         "python",
         "development",
@@ -38,7 +38,7 @@
       "name": "javascript",
       "source": "./plugins/javascript",
       "description": "JavaScript, TypeScript, React and Next.js development",
-      "version": "1.5.0",
+      "version": "1.5.1",
       "keywords": [
         "javascript",
         "typescript",
@@ -51,7 +51,7 @@
       "name": "go",
       "source": "./plugins/go",
       "description": "Go development and testing best practices",
-      "version": "1.1.0",
+      "version": "1.1.1",
       "keywords": [
         "go",
         "golang",
@@ -65,7 +65,7 @@
       "name": "dev-tools",
       "source": "./plugins/dev-tools",
       "description": "General development tooling — git, GitHub, conventional commits, semantic versioning",
-      "version": "1.46.2",
+      "version": "1.47.0",
       "keywords": [
         "git",
         "github",
