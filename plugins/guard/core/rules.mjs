@@ -119,6 +119,11 @@ export const rules = {
     "judgementModel": "opus|fable|\\bsol\\b|\\bastra\\b",
     "skill": "subagent-orchestration"
   },
+  // The stacked-PR hint on `gh pr create|merge`: the engine builds the text from the facts (the open PR below, the default branch).
+  "stack": {
+    "match": "\\bgh\\s+pr\\s+(create|merge)\\b",
+    "why": "this branch builds on your open PR #<n> (`<below>`) but this PR targets `<default>`, so it carries #<n>'s commits. Build dependent work as a stack: `gh stack init`/`add`/`submit` where the repo has stacked PRs enabled (one small buildable PR per layer, the bottom layer on `<default>`, merged bottom-up with `gh stack merge`), otherwise base this PR on `<below>` and follow github-workflow, Stacks without `gh stack`."
+  },
   "deny": [
     {
       "id": "pip",

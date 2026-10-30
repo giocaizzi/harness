@@ -569,6 +569,66 @@ export async function refFacts(command, rules, run, env = {}) {
   return Object.fromEntries(targets.map((r, i) => [refKey(r), facts[i]]));
 }
 
+// The `gh pr create|merge` units of a command, for the stacked-PR hint: { verb, dir, base, pr, repo }. `base` is
+// create's --base/-B, `pr` merge's operand (number, URL or branch), `repo` the -R/--repo value. Not on another host.
+const STACK_VALUE = new Set(['-B', '--base', '-R', '--repo', '-t', '--title', '-b', '--body', '-F', '--body-file', '-H', '--head', '-r', '--reviewer', '-a', '--assignee', '-l', '--label', '-m', '--milestone', '-p', '--project', '--match-head-commit', '--subject', '-A', '--author-email']);
+export function stackTargets(command, rules, env = {}) {
+  const re = new RegExp(rules.stack.match);
+  return segments(command, env)
+    .filter(({ seg, remote }) => !remote && re.test(seg))
+    .flatMap(({ words, dir }) => {
+      const vals = commandWords(words).map((w) => w.val);
+      if (vals[0] !== 'gh' || vals[1] !== 'pr' || !['create', 'merge'].includes(vals[2])) return [];
+      const t = { verb: vals[2], dir, base: null, pr: null, repo: null };
+      for (let k = 3; k < vals.length; k++) {
+        const v = vals[k];
+        const [flag, inline] = /^--[\w-]+=/.test(v) ? [v.slice(0, v.indexOf('=')), v.slice(v.indexOf('=') + 1)] : [v, undefined];
+        const val = () => inline ?? vals[++k];
+        if (flag === '-B' || flag === '--base') t.base = val();
+        else if (flag === '-R' || flag === '--repo') t.repo = val();
+        else if (STACK_VALUE.has(flag)) val();
+        else if (!v.startsWith('-')) t.pr ??= v;
+      }
+      return [t];
+    });
+}
+
+// Facts for the stacked-PR hint, for the first target only: { below: { number, branch }, base } when the PR's head
+// builds on another of the user's open PR branches but targets the default branch, else {}. A hint, so any failure is {}.
+export async function stackFacts(command, rules, run, env = {}) {
+  try {
+    const t = stackTargets(command, rules, env).find((x) => PLAIN_PATH.test(x.dir || '.'));
+    if (!t) return {};
+    const plain = (v) => typeof v === 'string' && /^[\w./@+-]+$/.test(v) && !v.startsWith('-');
+    const repo = t.repo == null ? [] : /^[\w.-]+(?:\/[\w.-]+){1,2}$/.test(t.repo) ? ['-R', t.repo] : null;
+    if (repo === null || (t.base != null && !plain(t.base)) || (t.pr != null && !plain(t.pr) && !/^https:\/\/[\w.\/-]+$/.test(t.pr))) return {};
+    const sh = (argv) => Promise.resolve().then(() => run(argv, t.dir || undefined)).catch(() => null);
+    let def = (await sh(['git', 'symbolic-ref', '--short', 'refs/remotes/origin/HEAD']))?.trim().replace(/^origin\//, '');
+    if (!def) def = (await sh(['gh', 'repo', 'view', ...(t.repo ? [t.repo] : []), '--json', 'defaultBranchRef', '-q', '.defaultBranchRef.name']))?.trim();
+    if (!plain(def)) return {};
+    let head;
+    let base = t.base ?? def;
+    if (t.verb === 'create') head = (await sh(['git', 'rev-parse', '--abbrev-ref', 'HEAD']))?.trim();
+    else {
+      const info = await sh(['gh', 'pr', 'view', ...(t.pr ? [t.pr] : []), ...repo, '--json', 'headRefName,baseRefName']);
+      const j = info ? JSON.parse(info) : null;
+      head = j?.headRefName;
+      base = j?.baseRefName;
+    }
+    if (!plain(head) || head === 'HEAD' || base !== def) return {};
+    const listed = await sh(['gh', 'pr', 'list', '--author', '@me', '--state', 'open', ...repo, '--json', 'number,headRefName', '--limit', '30']);
+    const others = (listed ? JSON.parse(listed) : []).filter((p) => p.headRefName !== head && plain(p.headRefName) && Number.isInteger(p.number)).slice(0, 10);
+    const ref = t.verb === 'create' ? 'HEAD' : `origin/${head}`;
+    const hits = await Promise.all(
+      others.map(async (p) => (await sh(['git', 'merge-base', '--is-ancestor', `origin/${p.headRefName}`, ref])) != null && (await sh(['git', 'merge-base', '--is-ancestor', `origin/${p.headRefName}`, `origin/${def}`])) == null),
+    );
+    const i = hits.indexOf(true);
+    return i < 0 ? {} : { below: { number: others[i].number, branch: others[i].headRefName }, base: def };
+  } catch {
+    return {};
+  }
+}
+
 // Branch facts for every `git branch -D` of a command, in parallel: { [dir|name]: { safe, why } }.
 export async function branchFacts(command, rules, run, env = {}) {
   const targets = [...new Map(branchTargets(command, rules, env).map((b) => [branchKey(b), b])).values()].filter((b) => b.name !== NO_TARGET && PLAIN_PATH.test(b.dir || '.'));
@@ -1317,7 +1377,7 @@ function changesLabels(command) {
 
 // `readTool`: the harness has a file-read tool (all but Codex), so a shell read gets a once-per-session hint.
 // `worktrees`, `branches`, `regenerable`: facts the adapters gather (worktreeFacts, branchFacts, regenFacts).
-export function evaluateCommand({ command, loadedSkills = new Set(), state, host = {}, env = {}, worktrees = {}, branches = {}, regenerable = {}, refs = {}, tags = {}, python = null, readTool = false, factory = null, rules }) {
+export function evaluateCommand({ command, loadedSkills = new Set(), state, host = {}, env = {}, worktrees = {}, branches = {}, regenerable = {}, refs = {}, tags = {}, stack = null, python = null, readTool = false, factory = null, rules }) {
   // While a factory run is active the agent never touches the approval label: with an owner token it would count as the owner's.
   if (factory && touchesApprovalLabel(command, factory.approval)) return { action: 'deny', rule: 'factory-approval', reason: `${rules.factory.why} The \`${factory.approval}\` label is the owner's to apply or remove; ask on the ticket instead.` }
   if (factory && ghHidden(command)) return { action: 'deny', rule: 'factory-approval', reason: `${rules.factory.why} This command may run \`gh\` under a spelling the guard cannot read (another letter case, an escape, a glob or brace list); spell \`gh\` literally.` }
@@ -1402,6 +1462,12 @@ export function evaluateCommand({ command, loadedSkills = new Set(), state, host
         `AGENTS.md requires a skill here (${rule.why}). Load ${rule.skills.map((s) => `\`${s}\``).join(' or ')} ` +
         'first, then retry the same command.',
     };
+  }
+  if (!note && stack?.below && !state.reminded.has('stack')) {
+    state.reminded.add('stack');
+    const { number, branch } = stack.below;
+    const context = `Stack hint: ${rules.stack.why}`.replaceAll('<n>', String(number)).replaceAll('<below>', branch).replaceAll('<default>', stack.base);
+    return { action: 'allow', rule: 'stack', remind: true, context };
   }
   if (!note && readTool && !state.reminded.has('read') && SHELL_READ.test(command)) {
     state.reminded.add('read');
@@ -1564,7 +1630,7 @@ const RULE_FAMILY = {
   docker: 'infra', k8s: 'infra', 'cloud-delete': 'infra', terraform: 'infra', disk: 'infra', 'gh-delete': 'infra', merge: 'infra',
   secrets: 'secrets', 'secrets-env': 'secrets', opaque: 'opaque', title: 'title', host: 'host', pip: 'python', poetry: 'python',
   commit: 'skill', pr: 'skill', ruleset: 'skill', worktree: 'skill', release: 'skill',
-  'pr-fix': 'hint', pytest: 'hint', 'go-test': 'hint', 'go-lint': 'hint', read: 'hint', edit: 'hint', docs: 'hint', 'guard-error': 'guard-error',
+  'pr-fix': 'hint', stack: 'hint', pytest: 'hint', 'go-test': 'hint', 'go-lint': 'hint', read: 'hint', edit: 'hint', docs: 'hint', 'guard-error': 'guard-error',
   'routing-plan': 'routing', 'routing-model': 'routing', 'routing-override': 'routing',
 };
 const PROGRAM_FAMILY = {
