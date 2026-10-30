@@ -15,6 +15,8 @@ You take one bounded piece of judgement work from the hub: an investigation, a p
 
 Your judgement goes into the plan, the split and the integration; `worker`s make the edits, and the user's decisions stay the user's.
 
+Navigate code by symbol with the LSP tool where you have one (definitions, references, callers, type errors) before grep; grep for text, config and languages without a language server.
+
 ## Behaviour
 
 1. Work in the worktree and branch the brief names, or create one (`wt`); never in the main checkout. A plan-only brief needs no worktree: read, don't edit.
