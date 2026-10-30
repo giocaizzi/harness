@@ -5,7 +5,9 @@ import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { GuardPlugin, opencodeLsp } from './opencode.mjs'
+import { GuardPlugin } from './opencode.mjs'
+import * as opencodePlugin from './opencode.mjs'
+import { opencodeLsp } from './bridge.mjs'
 import guardExtension from './pi.mjs'
 
 // These tests expect the stop check to run and risky commands to ask; a developer's own GUARD_STOP_CHECK=off or an
@@ -89,6 +91,8 @@ test('opencode and pi: a shell file edit gets the edit-tool reminder in the tool
 })
 
 test('opencode: the LSP hint only behind the experimental flag; pi has no LSP tool', async () => {
+  // opencode loads every export of the plugin file as a plugin: only plugins may be exported.
+  assert.equal('opencodeLsp' in opencodePlugin, false, 'opencode would load it as a plugin')
   assert.equal(opencodeLsp({}), null)
   assert.equal(opencodeLsp({ OPENCODE_EXPERIMENTAL_LSP_TOOL: 'true' }), 'lsp')
   assert.equal(opencodeLsp({ OPENCODE_EXPERIMENTAL: 'true' }), 'lsp')

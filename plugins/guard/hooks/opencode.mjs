@@ -2,7 +2,7 @@
 // scripts/install.mjs writes a one-line stub into ~/.config/opencode/plugins/ that re-exports this file.
 // A plugin cannot ask (opencode 1.19 declares `permission.ask` but never calls it), so the `config` hook adds
 // `permission.bash` ask entries for the risky prefixes and opencode asks itself; any other risky form is denied.
-import { createGuard } from './bridge.mjs'
+import { createGuard, opencodeLsp } from './bridge.mjs'
 import { nativeAsk, opencodeAsks } from '../core/engine.mjs'
 import { rules } from '../core/rules.mjs'
 
@@ -21,9 +21,6 @@ export function withAsks(perm) {
   for (const k of Object.keys(ASKS)) delete bash[k]
   return { ...p, bash: { ...bash, ...ASKS } }
 }
-
-// The LSP tool's name when opencode enables it (`OPENCODE_EXPERIMENTAL_LSP_TOOL` or `OPENCODE_EXPERIMENTAL`), else null.
-export const opencodeLsp = (env = process.env) => (env.OPENCODE_EXPERIMENTAL_LSP_TOOL === 'true' || env.OPENCODE_EXPERIMENTAL === 'true' ? 'lsp' : null)
 
 export const GuardPlugin = async ({ client, directory }, deps) => {
   let asks = false // the config hook added the asks
