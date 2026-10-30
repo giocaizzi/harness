@@ -1,0 +1,55 @@
+{
+  "schema": 3,
+  "ticket": "acme/app#12",
+  "run_id": "r-1",
+  "end_state": "parked",
+  "reason": "both members wait",
+  "reason_code": "question",
+  "pr": null,
+  "tasks": [
+    {
+      "ticket": "acme/app#12",
+      "outcome": "parked",
+      "reason": "waits on the owner",
+      "reason_code": "question",
+      "pr_link": null
+    },
+    {
+      "ticket": "acme/app#13",
+      "outcome": "released",
+      "reason": "not part of this change",
+      "reason_code": null,
+      "pr_link": null
+    }
+  ],
+  "decisions": [],
+  "evidence": [],
+  "checks": [
+    {
+      "command": "make check",
+      "result": "pass"
+    }
+  ],
+  "follow_ups": [],
+  "posts": [],
+  "phases": [
+    {
+      "name": "gate",
+      "started_at": "2026-10-25T09:00:00Z",
+      "ended_at": "2026-10-25T09:02:00Z"
+    },
+    {
+      "name": "record",
+      "started_at": "2026-10-25T09:02:00Z",
+      "ended_at": "2026-10-25T09:03:00Z"
+    }
+  ],
+  "verifier": {
+    "verdict": "pass",
+    "rounds": 1
+  },
+  "harness": "claude-code",
+  "model": "m",
+  "effort": null,
+  "finished_at": "2026-10-25T10:00:00Z"
+}

@@ -12,9 +12,9 @@ import { fileURLToPath } from 'node:url'
 import { TICKET, report, resultErrors, show } from './check-result.mjs'
 
 // The keys the run decides, in the contract's order; `host` may carry only `runner`.
-export const JUDGMENT = ['end_state', 'reason', 'reason_code', 'pr', 'decisions', 'evidence', 'checks', 'follow_ups', 'posts', 'phases', 'verifier', 'routing', 'cost_usd', 'tokens', 'turns', 'harness', 'model', 'effort', 'sessions', 'plugin_versions', 'host']
+export const JUDGMENT = ['end_state', 'reason', 'reason_code', 'pr', 'tasks', 'decisions', 'evidence', 'checks', 'follow_ups', 'posts', 'phases', 'verifier', 'routing', 'cost_usd', 'tokens', 'turns', 'harness', 'model', 'effort', 'sessions', 'plugin_versions', 'host']
 export const OWNED = ['schema', 'ticket', 'run_id', 'mode', 'finished_at']
-const ORDER = ['schema', 'ticket', 'run_id', ...JUDGMENT.slice(0, 12), 'mode', ...JUDGMENT.slice(12), 'finished_at']
+const ORDER = ['schema', 'ticket', 'run_id', ...JUDGMENT.slice(0, 13), 'mode', ...JUDGMENT.slice(13), 'finished_at']
 const RUNNERS = ['attended', 'headless', 'runtime']
 // A session or claim id: no control or format characters (newlines included), no surrounding spaces, at most 128.
 const RUN_ID = /^(?=.{1,128}$)[^\p{C}\s](?:[^\p{C}]*[^\p{C}\s])?$/u
@@ -82,7 +82,7 @@ export const buildResult = (input, { env, ticket, runIdArg, now = new Date(), ho
   const finished_at = utcNow(now)
   const filled = {
     ...input,
-    schema: 2,
+    schema: input.tasks === undefined ? 2 : 3,
     ticket,
     run_id: resolveRunId({ env, ticket, runIdArg, host, now, warn }),
     ...(env.FACTORY_DEV === '1' ? { mode: 'dev' } : {}),
