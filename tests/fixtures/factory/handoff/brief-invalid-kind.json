@@ -1,0 +1,10 @@
+{
+  "handoff": "member_result",
+  "version": 1,
+  "run_id": "r-1",
+  "ticket": "acme/app#13",
+  "worktree": "/work/acme-app-13",
+  "branch": "factory/acme-app-13",
+  "base": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "brief": "Add the export button. Acceptance: make test passes. Run each command on its own."
+}

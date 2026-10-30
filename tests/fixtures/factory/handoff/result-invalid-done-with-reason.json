@@ -1,0 +1,22 @@
+{
+  "handoff": "member_result",
+  "version": 1,
+  "run_id": "r-1",
+  "ticket": "acme/app#13",
+  "outcome": "done",
+  "reason": "all good",
+  "reason_code": null,
+  "branch": "factory/acme-app-13",
+  "head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "checks": [
+    {
+      "command": "make test",
+      "result": "pass"
+    },
+    {
+      "command": "make e2e",
+      "result": "not_run",
+      "note": "no browser on the host"
+    }
+  ]
+}

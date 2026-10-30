@@ -1,0 +1,12 @@
+{
+  "handoff": "member_result",
+  "version": 1,
+  "run_id": "r-1",
+  "ticket": "acme/app#13",
+  "outcome": "released",
+  "reason": "ticket already fixed upstream",
+  "reason_code": null,
+  "branch": "factory/acme-app-13",
+  "head": null,
+  "checks": []
+}
