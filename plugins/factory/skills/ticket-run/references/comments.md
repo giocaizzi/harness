@@ -89,7 +89,7 @@ Each comment is the marker line, a kind tag line, then the fields as short label
 | `<!-- factory:plan -->` | first; edited in place | goal (one user-observable sentence); acceptance checks `AC<n>`, each with its proof command and how it fails before the change; side effects in scope; planned fold-ins; size `XS\|S\|M\|L\|XL`; risk tier. M and larger: a closing line asking for the owner's OK. |
 | `<!-- factory:question Q<n> -->` | per question; `n` counts up across the ticket | the question; whether it blocks shipping; context with `path:line`; options `A) B) …`; recommendation and why; done so far (what is pushed). |
 | `<!-- factory:log -->` | once; edited in place | the decision log table: `#`, item, found at, test, decision, where ([fold-in-test.md](fold-in-test.md#decision-log)). |
-| `<!-- factory:verdict <round> -->` | on the PR, per verifier round | the verifier's verdict file, verbatim: first line `Head: <sha>`, then verdict, findings, what ran. |
+| `<!-- factory:verdict <round> -->` | on the PR, per verifier round | the verifier's verdict, verbatim as it returned it: first line `Head: <sha>`, then verdict, findings, what ran. |
 | `<!-- factory:result <end_state> -->` | end of every run | end state; reason; PR; evidence links; follow-ups. |
 | `<!-- factory:notify <kind> -->` | never by the skill: a runtime's @-mention of the approvers | skip it when reading; it carries the marker, so it is never an answer. |
 
