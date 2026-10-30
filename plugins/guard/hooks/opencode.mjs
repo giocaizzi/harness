@@ -22,12 +22,17 @@ export function withAsks(perm) {
   return { ...p, bash: { ...bash, ...ASKS } }
 }
 
+// The LSP tool's name when opencode enables it (`OPENCODE_EXPERIMENTAL_LSP_TOOL` or `OPENCODE_EXPERIMENTAL`), else null.
+export const opencodeLsp = (env = process.env) => (env.OPENCODE_EXPERIMENTAL_LSP_TOOL === 'true' || env.OPENCODE_EXPERIMENTAL === 'true' ? 'lsp' : null)
+
 export const GuardPlugin = async ({ client, directory }, deps) => {
   let asks = false // the config hook added the asks
   const guard = createGuard({
     harness: 'opencode',
     noAsk: true,
     deps: {
+      // opencode's LSP tool exists only behind its experimental flag (https://opencode.ai/docs/tools/).
+      lspTool: opencodeLsp(),
       // opencode asks only when the asks are in, the command is a covered form and no session rule (an API
       // caller's `tools: { bash: true }`) overrides them; anything unsure is denied. `opencode run --auto`
       // approves every ask itself, so it gets the deny. ponytail: `run --attach <url> --auto` approves from the

@@ -1421,7 +1421,7 @@ export function evaluateSearch({ pattern, glob, type, path, state, lspTool, rule
 }
 
 // `readTool`: the harness has a file-read tool (all but Codex), so a shell read gets a once-per-session hint.
-// `lspTool`: the harness's LSP tool (null where it has none), so a shell symbol search gets a once-per-session hint.
+// `lspTool`: the harness's LSP tool (null where it has none), so a shell symbol search gets a once-per-agent hint.
 // `worktrees`, `branches`, `regenerable`: facts the adapters gather (worktreeFacts, branchFacts, regenFacts).
 export function evaluateCommand({ command, loadedSkills = new Set(), state, host = {}, env = {}, worktrees = {}, branches = {}, regenerable = {}, refs = {}, tags = {}, python = null, readTool = false, lspTool = null, factory = null, rules }) {
   // While a factory run is active the agent never touches the approval label: with an owner token it would count as the owner's.
