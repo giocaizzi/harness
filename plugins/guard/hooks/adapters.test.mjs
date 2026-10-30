@@ -348,3 +348,28 @@ test('opencode: a child session runs as its own agent of the root session; pi: a
     delete process.env.GUARD_AGENT_ID
   }
 })
+
+test('opencode: session.created of a root session sends guard.session, a subagent child session does not', async () => {
+  const events = []
+  const hooks = await GuardPlugin({ client: {}, directory: dir() }, { ...deps(), emit: async (e, a) => events.push([e, a.session_id, a.source]) })
+  await hooks.event({ event: { type: 'session.created', properties: { info: { id: 'child', parentID: 'root' } } } })
+  assert.deepEqual(events, [])
+  await hooks.event({ event: { type: 'session.created', properties: { info: { id: 'root' } } } })
+  assert.deepEqual(events, [['guard.session', 'root', 'startup']])
+})
+
+test('pi: session_start sends guard.session, a dev-tools subagent child does not', async () => {
+  const events = []
+  const { handlers, api } = fakePi()
+  guardExtension(api, { ...deps(), emit: async (e, a) => events.push([e, a.session_id]) })
+  const ctx = { cwd: dir(), sessionManager: { getSessionId: () => 'p1' } }
+  await handlers.session_start({}, ctx)
+  assert.deepEqual(events, [['guard.session', 'p1']])
+  process.env.GUARD_PARENT_SESSION = 'parent'
+  try {
+    await handlers.session_start({}, ctx)
+  } finally {
+    delete process.env.GUARD_PARENT_SESSION
+  }
+  assert.equal(events.length, 1)
+})

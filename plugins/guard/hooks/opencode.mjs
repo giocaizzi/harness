@@ -109,7 +109,11 @@ export const GuardPlugin = async ({ client, directory }, deps) => {
         const t = info.tokens
         await guard.usage({ sessionId: info.sessionID, model: info.modelID ?? info.model?.id, provider: info.providerID ?? info.model?.providerID, tokens: { input: t.input, output: t.output, cacheRead: t.cache?.read, cacheWrite: t.cache?.write, reasoning: t.reasoning }, costUsd: info.cost })
       }
-      if (event.type === 'session.created') guard.awake()
+      if (event.type === 'session.created') {
+        guard.awake()
+        // A subagent's child session (`parentID`) is part of its root session: only a root announces.
+        if (!info?.parentID) await guard.sessionStart({ sessionId: info?.id ?? sessionId, cwd: directory, source: 'startup' })
+      }
       else if (event.type === 'session.deleted') await guard.sessionEnd({ sessionId })
       else if (event.type === 'session.idle' && sessionId) {
         // The Stop hook: when make check fails, send the failure back once; the next idle always passes (the factory

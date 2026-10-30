@@ -56,6 +56,8 @@ export function createGuard({ harness, noAsk = false, dataDir = DATA_DIR, deps =
       return { decision: o.permissionDecision, reason: o.permissionDecisionReason, context: o.additionalContext, notice: o.systemMessage }
     },
     prompt: ({ sessionId, agentId, cwd, prompt }) => call({ hook_event_name: 'UserPromptSubmit', session_id: sessionId, agent_id: agentId, cwd, prompt }),
+    // The session's start: one `guard.session` record with the installed plugin versions.
+    sessionStart: ({ sessionId, cwd, source }) => call({ hook_event_name: 'SessionStart', session_id: sessionId, cwd, source }),
     sessionEnd: ({ sessionId }) => call({ hook_event_name: 'SessionEnd', session_id: sessionId }),
     // The answer to an ask the harness showed itself (pi's confirm): allow, deny, or unavailable with no UI.
     askResult: ({ sessionId, cwd, tool, command, result, waitMs, via }) => Promise.resolve(d.emit('guard.ask_result', { result, wait_ms: waitMs, via, tool, cmd_class: command ? cmdClass(null, command) : 'tool', session_id: sessionId }, cwd)).catch(() => {}),

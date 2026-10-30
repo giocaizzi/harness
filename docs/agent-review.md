@@ -19,6 +19,8 @@ The routing-shape section (`agentIds`, `agentEdits`, `agentSpawns`, `agentCost`)
 
 The LSP-share section (`agentLsp`, `agentGrep`, `lspOps`) joins the same way: per agent type, LSP tool calls against Grep-tool and Bash `rg`/`grep` searches, plus the LSP failure rate; an empty agent id is the main session (agent-team teammates land there too).
 
+The by-plugin-version section (`sessionVersions`, `sessionCost`, `sessionSubagentCost`, plus the session id on `agentIds`) joins Claude Code sessions to the guard's `guard.session` record on `session_id` and prints cost per session and routing shares per dev-tools version, aggregates only. It needs a guard that sends `guard.session` ([guard.md](guard.md#grafana)); sessions without one land under `(unknown)`.
+
 A telemetry finding becomes an issue only with a reproduction (command text or a corpus row) and the guard version it was seen on.
 
 ## PR graph
