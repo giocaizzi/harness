@@ -31,11 +31,13 @@ A failed live check means the change does not work where it lands: open a revert
 
 ## Record
 
-Every run that passed the gate ends with a result file and a result comment, in this order, and then releases its claim (a stop at the gate: **Gate stops** below):
+Every run that passed the gate ends with a result file and a result comment, in this order, and then releases its claim (a stop at the gate: **Gate stops** below; a runtime's run: **Runtime runs** below):
 
 1. Write `.factory/runs/N/result.json` with this skill's `scripts/write-result.mjs`, never by hand: put the judgment fields (below) in a JSON file, such as `.factory/runs/N/judgment.json` in the main checkout, and run `node <skill dir>/scripts/write-result.mjs [--ticket <owner>/<repo>#N] [--run-id <claim's run id>] <file>` (`-` reads stdin) from the repo or its worktree. It fills `schema`, `ticket`, `run_id`, `mode`, `host.name`, `host.os` and `finished_at` (the time of this write), checks the whole file, and writes nothing while anything is wrong: exit 1 lists every error, so fix the input (never the written file) and run it again until it exits 0; exit 2 is a usage or environment problem (no ticket, not in a git checkout). The result comment is not yet in `posts`.
 2. Post the result comment (kind `factory:result`, [comments.md](comments.md#comments)).
 3. Add the comment with `node <skill dir>/scripts/write-result.mjs [--ticket <owner>/<repo>#N] --post result=<comment URL>`: it appends `{kind, url, state: posted}` to `posts` (an entry already listed with that URL becomes `posted`), leaves `finished_at` as step 1 set it, and checks the file again. This edit finalizes the file.
+
+**Runtime runs.** When a runtime started the run (`FACTORY_RUN_ID` set), the runtime posts the result comment and applies the labels from `result.json` (the claim's release, `needs-owner`, `needs-grooming`): do step 1 only, then stop. Post no result comment, skip step 3, and edit no label, even where a step above or in [comments.md](comments.md) says to; a question still goes on the ticket as a comment.
 
 With the `guard` plugin installed, a stop that leaves a runtime's run without a valid file of its own (or an attended run with an invalid file carrying its `run_id`) is held, at most twice, with the checker's errors: fix it with the script, never by hand.
 

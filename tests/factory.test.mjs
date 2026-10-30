@@ -953,3 +953,16 @@ test('gate script: the CLI prints one JSON verdict from gh, exit 0 go, 1 stop, 2
     repo.done()
   }
 })
+
+test('runtime runs: the runtime owns the labels and the result comment; the run writes result.json and stops', () => {
+  const section = doc.split('## Runtime runs')[1].split('\n## ')[0]
+  assert.match(section, /`FACTORY_RUN_ID` set\), the runtime owns the ticket's labels and its result comment/)
+  assert.match(section, /posts no result comment and adds or removes no label/)
+  for (const key of ['claimed', 'needs_owner', 'needs_grooming']) assert.match(doc, new RegExp(`\\| \`labels\\.${key}\` \\| [^|]+ \\| the agent; in a runtime run, the runtime \\|`), key)
+  const record = read('plugins/factory/skills/ticket-run/references/done.md').split('**Runtime runs.**')[1].split('\n\n')[0]
+  assert.match(record, /do step 1 only, then stop\. Post no result comment, skip step 3, and edit no label/)
+  const comments = read(COMMENTS)
+  assert.match(comments.split('## Questions and parking')[1].split('\n## ')[0], /In a run a runtime started \(`FACTORY_RUN_ID` set\), post the question and record the result, and leave the labels alone/)
+  assert.match(comments, /Release it \(remove the label\) when the run ends, whatever the end state; in a run a runtime started, the runtime releases it\./)
+  assert.match(read('plugins/factory/skills/ticket-run/SKILL.md'), /runtime owns the labels and the result comment: write `result\.json` and stop/)
+})
