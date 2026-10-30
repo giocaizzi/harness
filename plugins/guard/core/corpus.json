@@ -526,5 +526,14 @@
   ["rg handlePayment logs/", "allow", "G34", "control", {"hints": true}],
   ["rg -n \"type: module\" package.json", "allow", "G34", "control", {"hints": true}],
   ["rg \"class=\" templates/", "allow", "G34", "control", {"hints": true}],
-  ["rg -v \"def main\" src/app.py", "allow", "G34", "control", {"hints": true}]
+  ["rg -v \"def main\" src/app.py", "allow", "G34", "control", {"hints": true}],
+  ["rg -n \"class Foo\" --include=*.md src", "allow", "G34", "control", {"hints": true}],
+  ["rg \"def build_index\" -g \"*.md\"", "allow", "G34", "control", {"hints": true}],
+  ["rg -w handlePayment -t md", "allow", "G34", "control", {"hints": true}],
+  ["rg \"def build_index\" build.gradle", "allow", "G34", "control", {"hints": true}],
+  ["rg \"class Foo\" .github/workflows", "allow", "G34", "control", {"hints": true}],
+  ["rg \"invalid enum value\" src", "allow", "G34", "control", {"hints": true}],
+  ["grep -rn \"No class found for\" .", "allow", "G34", "control", {"hints": true}],
+  ["rg -w self -t py", "allow", "G34", "control", {"hints": true}],
+  ["grep -rn \"class Foo\" --include=*.java .", "allow", "G34", "control", {"hints": true}]
 ]

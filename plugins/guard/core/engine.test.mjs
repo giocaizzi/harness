@@ -1511,7 +1511,7 @@ test('a search tool call hints at the LSP tool once', () => {
   assert.equal(evaluateSearch({ ...hit, state, lspTool: 'LSP', rules }).rule, undefined);
   for (const a of [{ pattern: 'handlePayment', type: 'ts' }, { pattern: 'handlePayment', glob: '**/*.py' }, { pattern: 'useCart', path: 'src/a.tsx' }, { pattern: 'class Foo', path: 'src' }])
     assert.equal(evaluateSearch({ ...a, state: fresh(), lspTool: 'LSP', rules }).rule, 'lsp', JSON.stringify(a));
-  for (const a of [{ pattern: 'handlePayment' }, { pattern: 'handlePayment', path: 'logs' }, { pattern: 'class Foo', path: 'docs/a.md' }, { pattern: 'TODO', type: 'py' }, { pattern: 'error', glob: '*.py' }])
+  for (const a of [{ pattern: 'class Foo', glob: '*.md' }, { pattern: 'class Foo', type: 'java' }, { pattern: 'class Foo', path: 'build.gradle' }, { pattern: 'handlePayment' }, { pattern: 'handlePayment', path: 'logs' }, { pattern: 'class Foo', path: 'docs/a.md' }, { pattern: 'TODO', type: 'py' }, { pattern: 'error', glob: '*.py' }])
     assert.equal(evaluateSearch({ ...a, state: fresh(), lspTool: 'LSP', rules }).rule, undefined, JSON.stringify(a));
   assert.equal(evaluateSearch({ ...hit, state: fresh(), lspTool: null, rules }).rule, undefined);
   assert.equal(evaluateSearch({ ...hit, state: fresh(), rules }).rule, undefined);

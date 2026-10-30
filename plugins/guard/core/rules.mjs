@@ -104,15 +104,15 @@ export const rules = {
   // shell searchers (`git grep` is `git` + `grep`); a search matches on a `declaration` pattern (`def name`, `class\s+Name`),
   // or on an `identifier` (camelCase, snake_case, PascalCase) or a whole-word name together with a language filter
   // (`ext` as a glob or path suffix, `types` as rg's `-t`). `stop` are markers that look like identifiers but are text;
-  // `skipPaths` are non-code paths and directories, where a search is plain text. `{tool}` is the harness's LSP tool.
+  // `skipPaths` are non-code paths and directories, where a search is plain text; a filter or path with an extension outside `ext` (or a type outside `types`) cancels too. `{tool}` is the harness's LSP tool.
   "lsp": {
     "programs": ["grep", "egrep", "rg", "ugrep", "git grep"],
-    "declaration": "(?:^|[\\s^(])(?:export\\s+(?:default\\s+)?)?(?:async\\s+)?(?:def|class|function|func|interface|struct|trait|enum)(?:\\s+|\\\\s[+*]?|\\[\\[:space:\\]\\][+*]?)(?:\\([^)]*\\)\\s*)?[A-Za-z_]\\w*",
+    "declaration": "^\\^?\\s*(?:export\\s+(?:default\\s+)?)?(?:async\\s+)?(?:def|class|function|func|interface|struct|trait|enum)(?:\\s+|\\\\s[+*]?|\\[\\[:space:\\]\\][+*]?)(?:\\([^)]*\\)\\s*)?[A-Za-z_]\\w*",
     "identifier": "^(?:[a-z][a-z0-9]*(?:[A-Z][a-z0-9]*)+|[A-Za-z][A-Za-z0-9]*(?:_[A-Za-z0-9]+)+|[A-Z][a-z0-9]+(?:[A-Z][a-z0-9]*)+)$",
     "ext": ["py", "pyi", "ts", "tsx", "mts", "cts", "js", "jsx", "mjs", "cjs", "go"],
     "types": ["py", "python", "ts", "typescript", "js", "go"],
-    "stop": ["TODO", "FIXME", "XXX", "HACK", "NOTE"],
-    "skipPaths": "\\.(?:md|mdx|txt|json|ya?ml|toml|lock|log|csv|ini|cfg)$|(?:^|/)(?:node_modules|dist|build|\\.git|logs?|docs)(?:/|$)",
+    "stop": ["TODO", "FIXME", "XXX", "HACK", "NOTE", "self", "cls", "None", "True", "False", "import", "from", "return", "this", "null", "undefined", "nil", "err", "ctx", "main", "init"],
+    "skipPaths": "\\.(?:md|mdx|txt|json|ya?ml|toml|lock|log|csv|ini|cfg)$|(?:^|/)(?:node_modules|dist|build|\\.git|\\.github|logs?|docs)(?:/|$)",
     "say": "This looks like a symbol search: use the `{tool}` tool (definitions, references, callers, workspace symbols) where a language server covers the file; keep grep for text, config and languages without one."
   },
   // Subagent spawns that bypass the typed agents: a once-per-session hint per case, never a deny. `tools` are the

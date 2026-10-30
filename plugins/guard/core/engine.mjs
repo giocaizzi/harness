@@ -1319,11 +1319,13 @@ function changesLabels(command) {
 const LSP_VALUE_SHORT = { grep: 'efABCmdD', rg: 'efABCmgtTdjMrE' };
 const LSP_VALUE_LONG = new Set(['regexp', 'file', 'max-count', 'after-context', 'before-context', 'context', 'include', 'exclude', 'exclude-dir', 'exclude-from', 'directories', 'devices', 'label', 'binary-files', 'type', 'type-not', 'glob', 'iglob', 'max-depth', 'replace', 'threads', 'encoding', 'pre', 'ignore-file', 'sort', 'max-filesize', 'colors']);
 
+// A glob or path against the LSP extensions: true (a listed one), false (another extension), null (no extension to read).
 const lspExt = (glob, rules) => {
-  const m = /(?:^|\/)\*\.(?:\{([\w,]+)\}|(\w+))$/.exec(glob);
-  return !!m && (m[1] ?? m[2]).split(',').some((e) => rules.lsp.ext.includes(e));
+  const m = /(?:^|\/)\*\.(?:\{([\w,]+)\}|(\w+))$/.exec(glob) ?? /(?:^|\/)[^/]*[^/.]\.(\w+)$/.exec(glob);
+  if (!m) return null;
+  return (m[1] ?? m[2]).split(',').some((e) => rules.lsp.ext.includes(e));
 };
-const lspPathExt = (path, rules) => rules.lsp.ext.some((e) => path.endsWith(`.${e}`));
+const lspType = (type, rules) => (rules.lsp.types.includes(type) ? true : type ? false : null);
 
 // patterns: the search patterns; word: whole-word match; filtered: a language filter; skip: a non-code path.
 function lspMatch({ patterns, word, filtered, skip, rules }) {
@@ -1350,6 +1352,11 @@ function lspSimple(words, rules) {
   const operands = [];
   let word = false;
   let filtered = false;
+  let other = false;
+  const note = (v) => {
+    if (v === true) filtered = true;
+    else if (v === false) other = true;
+  };
   let fromFile = false;
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
@@ -1367,8 +1374,8 @@ function lspSimple(words, rules) {
       if (value === undefined) continue;
       if (name === 'regexp') patterns.push(value);
       else if (name === 'file') fromFile = true;
-      else if (name === 'include' || name === 'glob' || name === 'iglob') filtered ||= lspExt(value, rules);
-      else if (name === 'type') filtered ||= rules.lsp.types.includes(value);
+      else if (name === 'include' || name === 'glob' || name === 'iglob') note(lspExt(value.replace(/^!/, ''), rules));
+      else if (name === 'type') note(lspType(value, rules));
       continue;
     }
     if (a.length > 1 && a[0] === '-') {
@@ -1380,8 +1387,8 @@ function lspSimple(words, rules) {
         const value = k + 1 < a.length ? a.slice(k + 1) : (args[++i] ?? '');
         if (c === 'e') patterns.push(value);
         else if (c === 'f') fromFile = true;
-        else if (c === 'g' && prog === 'rg') filtered ||= lspExt(value, rules);
-        else if (c === 't' && prog === 'rg') filtered ||= rules.lsp.types.includes(value);
+        else if (c === 'g' && prog === 'rg') note(lspExt(value.replace(/^!/, ''), rules));
+        else if (c === 't' && prog === 'rg') note(lspType(value, rules));
         break;
       }
       continue;
@@ -1391,7 +1398,8 @@ function lspSimple(words, rules) {
   if (!patterns.length && !fromFile && operands.length) patterns.push(operands.shift());
   const skip = new RegExp(rules.lsp.skipPaths);
   if (operands.some((o) => skip.test(o))) return false;
-  filtered ||= operands.some((o) => lspPathExt(o, rules) || lspExt(o, rules));
+  for (const o of operands) note(lspExt(o, rules));
+  if (other) return false;
   return lspMatch({ patterns, word, filtered, skip: false, rules });
 }
 
@@ -1411,7 +1419,9 @@ export function evaluateSearch({ pattern, glob, type, path, state, lspTool, rule
     if (!lspTool || state.reminded.has('lsp') || typeof pattern !== 'string') return { action: 'allow' };
     const p = String(path ?? '');
     const skip = !!p && new RegExp(rules.lsp.skipPaths).test(p);
-    const filtered = (typeof glob === 'string' && lspExt(glob, rules)) || rules.lsp.types.includes(type) || (!!p && lspPathExt(p, rules));
+    const kinds = [typeof glob === 'string' ? lspExt(glob.replace(/^!/, ''), rules) : null, typeof type === 'string' ? lspType(type, rules) : null, p ? lspExt(p, rules) : null];
+    if (kinds.includes(false)) return { action: 'allow' };
+    const filtered = kinds.includes(true);
     if (!lspMatch({ patterns: [pattern], word: false, filtered, skip, rules })) return { action: 'allow' };
     state.reminded.add('lsp');
     return { action: 'allow', rule: 'lsp', remind: true, context: rules.lsp.say.replace('{tool}', lspTool) };
