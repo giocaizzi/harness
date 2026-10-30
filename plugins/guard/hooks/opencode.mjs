@@ -2,7 +2,7 @@
 // scripts/install.mjs writes a one-line stub into ~/.config/opencode/plugins/ that re-exports this file.
 // A plugin cannot ask (opencode 1.19 declares `permission.ask` but never calls it), so the `config` hook adds
 // `permission.bash` ask entries for the risky prefixes and opencode asks itself; any other risky form is denied.
-import { createGuard } from './bridge.mjs'
+import { createGuard, opencodeLsp } from './bridge.mjs'
 import { nativeAsk, opencodeAsks } from '../core/engine.mjs'
 import { rules } from '../core/rules.mjs'
 
@@ -28,6 +28,8 @@ export const GuardPlugin = async ({ client, directory }, deps) => {
     harness: 'opencode',
     noAsk: true,
     deps: {
+      // opencode's LSP tool exists only behind its experimental flag (https://opencode.ai/docs/tools/).
+      lspTool: opencodeLsp(),
       // opencode asks only when the asks are in, the command is a covered form and no session rule (an API
       // caller's `tools: { bash: true }`) overrides them; anything unsure is denied. `opencode run --auto`
       // approves every ask itself, so it gets the deny. ponytail: `run --attach <url> --auto` approves from the
