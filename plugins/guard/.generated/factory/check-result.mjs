@@ -107,13 +107,14 @@ export const taskErrors = (result) => {
     const at = `tasks[${i}]`
     if (t === null || typeof t !== 'object' || Array.isArray(t)) return [`${at}: must be an object with ${TASK_KEYS.join(', ')}`]
     const keys = Object.keys(t)
-    const off = [...TASK_KEYS.filter((k) => !keys.includes(k)).map((k) => `${k} missing`), ...keys.filter((k) => !TASK_KEYS.includes(k)).map((k) => `${show(k)} not allowed`)]
+    const off = [...TASK_KEYS.filter((k) => !keys.includes(k)).map((k) => `${k} missing`), ...keys.filter((k) => k !== 'turns' && !TASK_KEYS.includes(k)).map((k) => `${show(k)} not allowed`)]
     if (off.length) return [`${at}: ${off.join(', ')}`]
     const e = []
     if (typeof t.ticket !== 'string' || !TICKET.test(t.ticket)) e.push(`${at}: ticket must be "<owner>/<repo>#<number>", got ${show(t.ticket)}`)
     else if (seen.has(t.ticket)) e.push(`${at}: ticket ${show(t.ticket)} listed twice`)
     seen.add(t.ticket)
     if (i === 0 && t.ticket !== result.ticket) e.push(`${at}: the lead ${show(result.ticket)} must come first, got ${show(t.ticket)}`)
+    if ('turns' in t && !(Number.isInteger(t.turns) && t.turns >= 0)) e.push(`${at}: turns must be a non-negative integer, got ${show(t.turns)}`)
     if (!OUTCOMES.includes(t.outcome)) return [...e, `${at}: outcome must be one of ${OUTCOMES.join(', ')}, got ${show(t.outcome)}`]
     const coded = REASON_CODES.includes(t.reason_code)
     if (t.outcome === 'done') {
