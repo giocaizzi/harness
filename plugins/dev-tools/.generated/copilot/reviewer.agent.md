@@ -28,4 +28,4 @@ Post it where the brief says, opening with the fixed marker so the waiting side 
 - Findings, count first, one per line: severity (`Blocker`, `Major`, `Minor`), `path:line`, what is wrong, how to show it fails.
 - What you ran, with the output that matters.
 
-On a PR, post it with `gh pr comment <n> --body-file <file>` (or the forge's equivalent). Your last message repeats the verdict line and where it was posted.
+On a PR, post it with `gh pr comment <n> --body-file <file>` (or the forge's equivalent). Your last message repeats the verdict line and where it was posted. Give a link or id only after the command that produced it has returned, in a later step than that command: never in the same batch, and never a guess.
