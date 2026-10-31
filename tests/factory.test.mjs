@@ -907,7 +907,7 @@ test('result scripts: a BOM is stripped by an escape sequence, never a literal U
 
 const GATE = join(SCRIPTS, 'gate.mjs')
 const gate = () => import(pathToFileURL(GATE).href)
-const gateConfig = { approvers: ['example-owner'], writers: ['example-owner', 'example-bot[bot]'], approversAllowBots: false, labels: { approval: 'agent-ok', claimed: 'factory-claimed', needs_grooming: 'needs-grooming', takeover: 'factory-takeover' }, marker: '<!-- factory -->' }
+const gateConfig = { approvers: ['example-owner'], writers: ['example-owner', 'example-bot[bot]'], approversAllowBots: false, labels: { approval: 'agent-ok', claimed: 'factory-claimed', needs_grooming: 'needs-grooming', takeover: 'factory-takeover' }, marker: '<!-- factory -->', identityLogins: [] }
 const ev = (event, label, login, at = '2026-10-20T09:00:00Z') => ({ event, label: { name: label }, actor: { login }, created_at: at })
 const claimComment = (id, login, host, runId, runner) => ({ id, login, created_at: `2026-10-2${id}T00:00:00Z`, html_url: `https://example.test/c/${id}`, body: `<!-- factory -->\n<!-- factory:claim -->\nhost: ${host}\nrun id: ${runId}\nrunner: ${runner}` })
 const reads = (patch = {}) => ({
@@ -931,6 +931,7 @@ test('gate script: reads the config keys it needs from the template shape, and f
   assert.deepEqual(template.approvers, ['<github-login>'])
   assert.equal(template.marker, '<!-- factory -->')
   assert.equal(template.approversAllowBots, false)
+  assert.deepEqual(template.identityLogins, ['<bot-login>'])
   const flow = parseConfig('approvers: [a, "b"]\r\nwriters:\n- a\n- \'c[bot]\'  # the runtime\nmarker: ""\nlabels:\n  approval: ok-go\n  # a comment\n  takeover: "hand-over"\n')
   assert.deepEqual(flow, { ...gateConfig, approvers: ['a', 'b'], writers: ['a', 'c[bot]'], labels: { ...gateConfig.labels, approval: 'ok-go', takeover: 'hand-over' } })
   assert.deepEqual(parseConfig('---\napprovers: [a]\n').approvers, ['a'], 'a leading document marker')
@@ -1025,6 +1026,10 @@ test('gate script: the CLI prints one JSON verdict from gh, exit 0 go, 1 stop, 2
     assert.equal(go.status, 0, go.stderr)
     assert.equal(JSON.parse(go.stdout).verdict, 'go')
     assert.match(readFileSync(join(bin, 'log'), 'utf8'), /issues\/12\/timeline\?per_page=100/)
+    // From a subdirectory the gate reads the same committed config, never "missing".
+    spawnSync('mkdir', ['-p', join(repo.main, 'app', 'src')])
+    const sub = spawnSync(process.execPath, [GATE, '12'], { cwd: join(repo.main, 'app', 'src'), encoding: 'utf8', env: gitEnv({ PATH: `${bin}:${process.env.PATH}` }) })
+    assert.equal(sub.status, 0, sub.stderr)
     writeFileSync(join(bin, 'issue-view'), JSON.stringify(withLabels('needs-grooming')))
     const stop = run(['#12'])
     assert.equal(stop.status, 1)
