@@ -307,6 +307,7 @@ function repo(onFeature) {
   git('checkout', '-q', '-b', 'integration')
   put('a.txt', 'a1\n', 'i1')
   put('b.txt', 'b1\n', 'i2')
+  put('m.txt', 'm1\nm2\nm3\nm4\nm5\n', 'i3')
   const last = git('rev-parse', 'HEAD')
   git('checkout', '-q', '-b', 'feature')
   put('c.txt', 'c1\n', 'f1')
@@ -339,21 +340,49 @@ export function resyncTests(kind) {
     assert.match(again.out, /already up to date/)
   })
 
-  test(`${kind} resync-after-squash: diff config and a subdirectory do not drop the base's changes`, async () => {
-    // From sub/ with diff.relative and diff.context=0 set, an unpinned diff would carry none of d.txt.
+  test(`${kind} resync-after-squash: diff.relative and a subdirectory do not drop the base's changes`, async () => {
+    // From sub/ with diff.relative set, a diff run there would carry none of d.txt.
     const r = repo(({ git, work }) => {
       mkdirSync(join(work, 'sub'))
       writeFileSync(join(work, 'sub', 'x.txt'), 'x\n')
       git('add', 'sub/x.txt')
       git('commit', '-q', '-m', 'sub')
       git('config', 'diff.relative', 'true')
-      git('config', 'diff.context', '0')
     })
     const res = await resync(r, [r.last], join(r.work, 'sub'))
     assert.equal(res.code, 0, res.err + res.out)
     assert.equal(r.git('show', 'HEAD:d.txt'), 'd1')
     assert.match(res.out, /files changed by the merge.*\n {2}d\.txt\nfiles the base changed/)
   })
+
+  // onMain(git, put) adds one more commit to origin/main after the squash, from the feature branch's checkout.
+  const baseMoves = (onMain, config) => ({ git, put }) => {
+    git('checkout', '-q', 'main')
+    onMain(git, put)
+    git('push', '-q', 'origin', 'main')
+    git('checkout', '-q', 'feature')
+    for (const [k, v] of Object.entries(config)) git('config', k, v)
+  }
+
+  test(`${kind} resync-after-squash: diff.context=0 does not break the patch`, async () => {
+    // m.txt is in the integration sha already, so the patch edits it mid-file: with no context git apply refuses it.
+    const r = repo(baseMoves((git, put) => put('m.txt', 'm1\nm2\nM3\nm4\nm5\n', 'edit m'), { 'diff.context': '0' }))
+    const res = await resync(r, [r.last])
+    assert.equal(res.code, 0, res.err + res.out)
+    assert.equal(r.git('show', 'HEAD:m.txt'), 'm1\nm2\nM3\nm4\nm5')
+  })
+
+  for (const [name, config] of [['diff.ignoreSubmodules=all', { 'diff.ignoreSubmodules': 'all' }], ['diff.submodule=log', { 'diff.submodule': 'log' }]]) {
+    test(`${kind} resync-after-squash: ${name} does not drop a submodule pointer the base added`, async () => {
+      const r = repo(baseMoves((git) => {
+        git('update-index', '--add', '--cacheinfo', `160000,${'a'.repeat(40)},mod`)
+        git('commit', '-q', '-m', 'add mod')
+      }, config))
+      const res = await resync(r, [r.last])
+      assert.equal(res.code, 0, res.err + res.out)
+      assert.equal(r.git('rev-parse', 'HEAD:mod'), 'a'.repeat(40))
+    })
+  }
 
   test(`${kind} resync-after-squash: refuses a sha the branch lacks, a dirty tree and bad arguments`, async () => {
     const r = repo()
@@ -400,7 +429,8 @@ export function resyncTests(kind) {
 
 // A repo with a bare origin. main commits `base` (plus a gitlink `mod` at `gitlink` when given) and is pushed with
 // origin/HEAD set; `feature` then commits `pr` and is the approved head; main then commits `main` and is pushed.
-// onFeature runs on feature after that, with origin/main fetched. Values are strings or Buffers.
+// onFeature runs on feature after that, with origin/main fetched. Values are strings or Buffers; `pr` may instead be a
+// function that makes the PR commit itself.
 const gitmodules = (extra = '') => `[submodule "mod"]\n\tpath = mod\n\turl = ./mod\n${extra}`
 const LINK_A = 'a'.repeat(40)
 const LINK_B = 'b'.repeat(40)
@@ -427,7 +457,8 @@ function mergeRepo(onFeature, { base = {}, gitlink, pr = { 'pr.txt': 'one\ntwo\n
   git('push', '-q', '-u', 'origin', 'main')
   git('remote', 'set-head', 'origin', 'main')
   git('checkout', '-q', '-b', 'feature')
-  put(pr, 'the PR')
+  if (typeof pr === 'function') pr({ git, put, work })
+  else put(pr, 'the PR')
   const approved = git('rev-parse', 'HEAD')
   git('checkout', '-q', 'main')
   put(main, 'main moves on')
@@ -451,9 +482,9 @@ const block = 'a\nb\nc\nd\ne\nf'
 const allowed = 'a\nb\nc\n  allow\nd\ne\nf'
 
 export function verifyMergeTests(kind) {
-  const verify = (r, args, cwd = r.work) => { const [exe, argv] = runner(kind, 'verify-merge-only', args); return exec(exe, argv, { cwd, env: r.env }) }
-  const refused = async (r, pattern, cwd) => {
-    const res = await verify(r, [r.approved, r.head], cwd)
+  const verify = (r, args, cwd = r.work, env = r.env) => { const [exe, argv] = runner(kind, 'verify-merge-only', args); return exec(exe, argv, { cwd, env }) }
+  const refused = async (r, pattern, cwd, env) => {
+    const res = await verify(r, [r.approved, r.head], cwd, env)
     assert.equal(res.code, 1, res.out + res.err)
     assert.match(res.err, pattern)
     assert.doesNotMatch(res.out, /Landing note/)
@@ -582,5 +613,166 @@ export function verifyMergeTests(kind) {
   test(`${kind} verify-merge-only: refuses without origin/HEAD`, async () => {
     const r = mergeRepo(({ git }) => { git('merge', '-q', '--no-edit', 'origin/main'); git('remote', 'set-head', 'origin', '-d') })
     await refused(r, /origin\/HEAD is not set/)
+  })
+
+  test(`${kind} verify-merge-only: refuses an origin/HEAD that names an invalid branch`, async () => {
+    const r = mergeRepo(({ git }) => { git('merge', '-q', '--no-edit', 'origin/main'); git('symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/-x') })
+    await refused(r, /origin\/HEAD names an invalid branch/)
+  })
+
+  test(`${kind} verify-merge-only: refuses a new SHA that is not a commit`, async () => {
+    const r = mergeRepo(({ git }) => git('merge', '-q', '--no-edit', 'origin/main'))
+    const blob = r.git('rev-parse', 'HEAD:pr.txt')
+    const res = await verify(r, [r.approved, blob])
+    assert.equal(res.code, 1, res.out)
+    assert.match(res.err, new RegExp(`${blob} is not a commit here`))
+  })
+
+  test(`${kind} verify-merge-only: fetches the base before checking the merged commit, with hooks off`, async () => {
+    // origin/main moves on after the local fetch; the merge takes it, then the local origin/main is set back.
+    const r = mergeRepo(({ git, put }) => {
+      const before = git('rev-parse', 'origin/main')
+      git('checkout', '-q', '-b', 'tmp', 'origin/main')
+      put({ 'f.txt': 'f1\n' }, 'main moves again')
+      git('push', '-q', 'origin', 'tmp:main')
+      git('checkout', '-q', 'feature')
+      git('merge', '-q', '--no-edit', 'tmp')
+      git('update-ref', 'refs/remotes/origin/main', before)
+    })
+    const marker = join(r.work, 'hook-ran')
+    writeFileSync(join(r.work, '.git', 'hooks', 'reference-transaction'), `#!/bin/sh\necho ran > "${marker.replace(/\\/g, '/')}"\n`)
+    chmodSync(join(r.work, '.git', 'hooks', 'reference-transaction'), 0o755)
+    const res = await verify(r, [r.approved, r.head])
+    assert.equal(res.code, 0, res.err + res.out)
+    assert.equal(existsSync(marker), false, 'a hook ran during the verify')
+  })
+
+  // Conflicting merge: the PR and main both change a.txt. Each case makes the merge resolve on the verifier's side.
+  const conflict = { pr: { 'a.txt': 'pr\n' }, main: { 'a.txt': 'main\n' } }
+  const mergeWith = (git, ...cfg) => git(...cfg, 'merge', '-q', '--no-edit', 'origin/main')
+
+  test(`${kind} verify-merge-only: attributes from the checkout do not resolve a conflict`, async () => {
+    await refused(mergeRepo(({ git, work }) => {
+      writeFileSync(join(work, '.gitattributes'), 'a.txt merge=union\n')
+      mergeWith(git)
+    }, conflict), /cannot redo the merge/)
+  })
+
+  test(`${kind} verify-merge-only: refuses attributes in .git/info/attributes`, async () => {
+    await refused(mergeRepo(({ git, work }) => {
+      writeFileSync(join(work, '.git', 'info', 'attributes'), '# local\na.txt merge=union\n')
+      mergeWith(git)
+    }, conflict), /info\/attributes sets attributes the merge would use/)
+  })
+
+  test(`${kind} verify-merge-only: refuses a merge driver in the repo config, without running it`, async () => {
+    const opts = { ...conflict, base: { '.gitattributes': 'a.txt merge=mine\n' } }
+    let marker
+    const r = mergeRepo(({ git, work }) => {
+      marker = join(work, 'driver-ran').replace(/\\/g, '/')
+      git('config', 'merge.mine.driver', 'true')
+      mergeWith(git)
+      git('config', 'merge.mine.driver', `echo ran > "${marker}"; true`)
+    }, opts)
+    await refused(r, /a merge driver is configured/)
+    assert.equal(existsSync(marker), false, 'the driver ran during the verify')
+  })
+
+  test(`${kind} verify-merge-only: core.attributesFile in the repo config does not resolve a conflict`, async () => {
+    await refused(mergeRepo(({ git, work }) => {
+      const file = join(work, '..', 'attributes')
+      writeFileSync(file, 'a.txt merge=union\n')
+      git('config', 'core.attributesFile', file)
+      mergeWith(git)
+    }, conflict), /cannot redo the merge/)
+  })
+
+  test(`${kind} verify-merge-only: refuses a shallow clone`, async () => {
+    const r = mergeRepo(({ git, work }) => {
+      git('merge', '-q', '--no-edit', 'origin/main')
+      writeFileSync(join(work, '.git', 'shallow'), git('rev-parse', 'HEAD~1') + '\n')
+    })
+    await refused(r, /shallow clone: deepen it/)
+  })
+
+  // A git on PATH that refuses --attr-source, or merge-tree, the way git before 2.40, or 2.38, does.
+  const oldGit = (mode) => {
+    const dir = mkdtempSync(join(tmpdir(), 'old-git-'))
+    const real = join(execFileSync('git', ['--exec-path'], { encoding: 'utf8' }).trim(), win ? 'git.exe' : 'git')
+    writeFileSync(join(dir, 'shim.mjs'), `import { spawnSync } from 'node:child_process'
+const argv = process.argv.slice(2)
+if (${JSON.stringify(mode)} === 'attr' ? argv.some((a) => a.startsWith('--attr-source')) : argv.includes('merge-tree')) {
+  process.stderr.write('unknown option\\n'); process.exit(129)
+}
+process.exit(spawnSync(${JSON.stringify(real)}, argv, { stdio: 'inherit' }).status ?? 1)
+`)
+    writeFileSync(join(dir, 'git'), '#!/bin/sh\nexec node "$(dirname "$0")/shim.mjs" "$@"\n')
+    chmodSync(join(dir, 'git'), 0o755)
+    // pwsh finds git.ps1 before the real git later on PATH; a .cmd shim would let cmd.exe eat the ^ in rev^{tree}.
+    const refuse = mode === 'attr' ? "$args | Where-Object { $_ -like '--attr-source*' }" : "$args -contains 'merge-tree'"
+    writeFileSync(join(dir, 'git.ps1'), `if (${refuse}) { [Console]::Error.WriteLine('unknown option'); exit 129 }\r\n& '${real}' @args\r\nexit $LASTEXITCODE\r\n`)
+    return dir
+  }
+  for (const mode of ['attr', 'merge-tree']) {
+    test(`${kind} verify-merge-only: an old git (${mode}) is named as the reason`, async () => {
+      const r = mergeRepo(({ git }) => git('merge', '-q', '--no-edit', 'origin/main'))
+      await refused(r, /needs git 2\.40 or newer/, r.work, { ...r.env, PATH: oldGit(mode) + delimiter + r.env.PATH })
+    })
+  }
+
+  // A rename-heavy pure merge: the PR moves x.txt and y.txt with an edit each, main edits x.txt.
+  const renames = {
+    base: { 'x.txt': Array.from({ length: 20 }, (_, i) => `x ${i}`).join('\n') + '\n', 'y.txt': Array.from({ length: 20 }, (_, i) => `y ${i}`).join('\n') + '\n' },
+    main: { 'x.txt': Array.from({ length: 20 }, (_, i) => (i === 10 ? 'x TEN' : `x ${i}`)).join('\n') + '\n' },
+  }
+  const renamed = ({ git, work }) => {
+    for (const f of ['x', 'y']) {
+      git('mv', `${f}.txt`, `${f}.moved`)
+      writeFileSync(join(work, `${f}.moved`), 'top\n' + readFileSync(join(work, `${f}.moved`), 'utf8'))
+      git('add', `${f}.moved`)
+    }
+    git('commit', '-q', '-m', 'move x and y')
+  }
+  const renameRepo = () => mergeRepo(({ git }) => mergeWith(git), { ...renames, pr: renamed })
+  const limit = (dir) => { const f = join(dir, 'limit.gitconfig'); writeFileSync(f, '[merge]\n\trenameLimit = 1\n'); return f }
+
+  test(`${kind} verify-merge-only: a global merge.renameLimit does not refuse a pure merge across renames`, async () => {
+    const r = renameRepo()
+    const res = await verify(r, [r.approved, r.head], r.work, { ...r.env, GIT_CONFIG_GLOBAL: limit(join(r.work, '..')) })
+    assert.equal(res.code, 0, res.err + res.out)
+  })
+
+  test(`${kind} verify-merge-only: a system merge.renameLimit does not refuse a pure merge across renames`, async () => {
+    const r = renameRepo()
+    const env = { ...r.env, GIT_CONFIG_SYSTEM: limit(join(r.work, '..')) }
+    delete env.GIT_CONFIG_NOSYSTEM
+    const res = await verify(r, [r.approved, r.head], r.work, env)
+    assert.equal(res.code, 0, res.err + res.out)
+  })
+
+  test(`${kind} verify-merge-only: merge.renames=false in the repo config does not refuse a pure merge across renames`, async () => {
+    const r = renameRepo()
+    r.git('config', 'merge.renames', 'false')
+    const res = await verify(r, [r.approved, r.head])
+    assert.equal(res.code, 0, res.err + res.out)
+  })
+
+  test(`${kind} verify-merge-only: merge.directoryRenames=true in the repo config does not move a base file unreviewed`, async () => {
+    // The PR renames d/ to e/; main adds d/new.txt; a merge made with directory renames moves it to e/new.txt.
+    const opts = { base: { 'd/x.txt': '1\n', 'd/y.txt': '2\n' }, main: { 'd/new.txt': '3\n' } }
+    const pr = ({ git }) => { git('mv', 'd', 'e'); git('commit', '-q', '-m', 'move d') }
+    await refused(mergeRepo(({ git }) => {
+      git('config', 'merge.directoryRenames', 'true')
+      mergeWith(git)
+    }, { ...opts, pr }), /cannot redo the merge/)
+  })
+
+  test(`${kind} verify-merge-only: merge.renormalize=true in the repo config does not resolve a conflict`, async () => {
+    // The PR adds `f.txt text` and renormalizes CRLF to LF; main edits a line keeping CRLF.
+    const opts = { base: { 'f.txt': 'a\r\nb\r\nc\r\n' }, pr: { '.gitattributes': 'f.txt text\n', 'f.txt': 'a\nb\nc\n' }, main: { 'f.txt': 'a\r\nb\r\nC\r\n' } }
+    await refused(mergeRepo(({ git }) => {
+      git('config', 'merge.renormalize', 'true')
+      mergeWith(git)
+    }, opts), /cannot redo the merge/)
   })
 }

@@ -10,7 +10,10 @@
 # A conflicted merge, or any other tree, is refused: its resolution is new code and goes to a new review round.
 # Why not `git patch-id`: it ignores the @@ lines, so a merge that moves the PR's hunk to an identical block elsewhere
 # in the file kept the same id, and diff config (diff.context, diff.relative, submodule settings) could hide changes.
-# Every git call but the fetch runs with the global and system config ignored and the merge settings pinned.
+# Every git call but the fetch runs with the global and system config ignored, hooks off and the merge settings pinned;
+# attributes come from the approved tree (`--attr-source`), not the checkout. Settings the script cannot override make it
+# refuse: a non-empty .git/info/attributes, a merge driver in the repo config (`merge.<name>.driver`), a shallow clone.
+# Run it from a plain clone. Needs git 2.40 or newer (merge-tree --write-tree is 2.38, --attr-source 2.40).
 # Exits 0 when proven or when nothing was pushed since the approval, 1 when refused or not proven, 2 on usage.
 # Never modifies the repo besides the fetch. The last lines printed are the landing note to paste into the PR comment.
 set -u -o pipefail
@@ -27,14 +30,22 @@ default=${default#origin/}
 git check-ref-format --branch "$default" >/dev/null 2>&1 || die "origin/HEAD names an invalid branch: $default"
 base=${3:-$default}
 [ "$base" = "$default" ] || die "<base> must be origin's default branch ($default), not $base"
-git fetch --quiet origin -- "$base" || die "git fetch origin $base failed"
 null=/dev/null
+git -c core.hooksPath=$null fetch --quiet origin -- "$base" || die "git fetch origin $base failed"
 g() {
-  GIT_CONFIG_GLOBAL=$null GIT_CONFIG_NOSYSTEM=1 git -c core.attributesFile=$null -c merge.renames=true \
-    -c merge.directoryRenames=conflict -c merge.renormalize=false "$@"
+  GIT_CONFIG_GLOBAL=$null GIT_CONFIG_NOSYSTEM=1 git -c core.hooksPath=$null -c core.attributesFile=$null \
+    -c merge.renames=true -c merge.directoryRenames=conflict -c merge.renormalize=false "$@"
 }
 [ "$(g cat-file -t "$approved" 2>/dev/null)" = commit ] || die "$approved is not a commit here: fetch the PR head first"
 [ "$(g cat-file -t "$new" 2>/dev/null)" = commit ] || die "$new is not a commit here: fetch the PR head first"
+[ "$(g rev-parse --is-shallow-repository)" = false ] || die "shallow clone: deepen it (git fetch --unshallow origin)"
+info=$(g rev-parse --git-path info/attributes) || die "git rev-parse failed"
+if [ -f "$info" ] && grep -Eqv '^[[:space:]]*(#.*)?$' "$info"; then
+  die "$info sets attributes the merge would use: verify from a clone without it"
+fi
+if g config --get-regexp '^merge\..*\.driver$' >/dev/null; then
+  die "a merge driver is configured in this repo (git config --get-regexp 'merge[.].*[.]driver'): verify from a clone without it"
+fi
 upstream=$(g rev-parse --verify --quiet "refs/remotes/origin/$base^{commit}") || die "origin/$base not found"
 if [ "$new" = "$approved" ]; then
   echo "no commits since approval: $new"
@@ -49,8 +60,9 @@ fi
 merged=${parents[2]}
 g merge-base --is-ancestor "$merged" "$upstream" || die "the merged commit $merged is not on origin/$base"
 tree=$(g rev-parse --verify --quiet "$new^{tree}") || die "no tree for $new"
-redo=$(g merge-tree --write-tree --no-messages "$approved" "$merged" 2>/dev/null)
+redo=$(g --attr-source="$approved" merge-tree --write-tree --no-messages "$approved" "$merged" 2>/dev/null)
 status=$?
+[ "$status" -ne 129 ] || die "needs git 2.40 or newer (git --attr-source, git merge-tree --write-tree)"
 [ "$status" -eq 0 ] || die "git cannot redo the merge of $merged into $approved without a conflict (merge-tree exit $status): the resolution is new code, review the delta"
 redo=${redo%%$'\n'*}
 if [ "$redo" != "$tree" ]; then

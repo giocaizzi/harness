@@ -9,7 +9,10 @@
 # A conflicted merge, or any other tree, is refused: its resolution is new code and goes to a new review round.
 # Why not `git patch-id`: it ignores the @@ lines, so a merge that moves the PR's hunk to an identical block elsewhere
 # in the file kept the same id, and diff config (diff.context, diff.relative, submodule settings) could hide changes.
-# Every git call but the fetch runs with the global and system config ignored and the merge settings pinned.
+# Every git call but the fetch runs with the global and system config ignored, hooks off and the merge settings pinned;
+# attributes come from the approved tree (`--attr-source`), not the checkout. Settings the script cannot override make it
+# refuse: a non-empty .git/info/attributes, a merge driver in the repo config (`merge.<name>.driver`), a shallow clone.
+# Run it from a plain clone. Needs git 2.40 or newer (merge-tree --write-tree is 2.38, --attr-source 2.40).
 # Exits 0 when proven or when nothing was pushed since the approval, 1 when refused or not proven, 2 on usage.
 # Never modifies the repo besides the fetch. The last lines printed are the landing note to paste into the PR comment.
 $ErrorActionPreference = 'Stop'
@@ -29,17 +32,36 @@ $null = git check-ref-format --branch $default 2>$null
 if ($LASTEXITCODE -ne 0) { Exit-Verify "origin/HEAD names an invalid branch: $default" }
 $base = if ($argv.Count -eq 3) { "$($argv[2])" } else { $default }
 if ($base -cne $default) { Exit-Verify "<base> must be origin's default branch ($default), not $base" }
-$null = git fetch --quiet origin -- $base
+$null = git -c core.hooksPath=NUL fetch --quiet origin -- $base
 if ($LASTEXITCODE -ne 0) { Exit-Verify "git fetch origin $base failed" }
-# From here on git ignores the global and system config, and the merge settings are pinned.
-$env:GIT_CONFIG_GLOBAL = 'NUL'
-$env:GIT_CONFIG_NOSYSTEM = '1'
-$pin = @('-c', 'core.attributesFile=NUL', '-c', 'merge.renames=true', '-c', 'merge.directoryRenames=conflict', '-c', 'merge.renormalize=false')
+# Every later git call ignores the global and system config, runs no hooks and pins the merge settings. The two
+# variables are set for that call only and restored after it, so a caller's session keeps its own config.
+$pin = @('-c', 'core.hooksPath=NUL', '-c', 'core.attributesFile=NUL', '-c', 'merge.renames=true', '-c', 'merge.directoryRenames=conflict', '-c', 'merge.renormalize=false')
+function Invoke-IsolatedGit([string[]]$GitArgs) {
+    $saved = @{}
+    foreach ($name in 'GIT_CONFIG_GLOBAL', 'GIT_CONFIG_NOSYSTEM') { $saved[$name] = [Environment]::GetEnvironmentVariable($name) }
+    try {
+        [Environment]::SetEnvironmentVariable('GIT_CONFIG_GLOBAL', 'NUL')
+        [Environment]::SetEnvironmentVariable('GIT_CONFIG_NOSYSTEM', '1')
+        & git @pin @GitArgs
+    } finally {
+        foreach ($name in $saved.Keys) { [Environment]::SetEnvironmentVariable($name, $saved[$name]) }
+    }
+}
 foreach ($sha in @($approved, $new)) {
-    $type = git @pin cat-file -t $sha 2>$null
+    $type = Invoke-IsolatedGit @('cat-file', '-t', $sha) 2>$null
     if ($LASTEXITCODE -ne 0 -or "$type" -ne 'commit') { Exit-Verify "$sha is not a commit here: fetch the PR head first" }
 }
-$upstream = git @pin rev-parse --verify --quiet "refs/remotes/origin/$base^{commit}"
+$shallow = Invoke-IsolatedGit @('rev-parse', '--is-shallow-repository')
+if ($LASTEXITCODE -ne 0 -or "$shallow" -ne 'false') { Exit-Verify 'shallow clone: deepen it (git fetch --unshallow origin)' }
+$info = Invoke-IsolatedGit @('rev-parse', '--git-path', 'info/attributes')
+if ($LASTEXITCODE -ne 0 -or -not $info) { Exit-Verify 'git rev-parse failed' }
+if ((Test-Path -LiteralPath "$info" -PathType Leaf) -and @(Get-Content -LiteralPath "$info" | Where-Object { $_ -notmatch '^\s*(#.*)?$' }).Count) {
+    Exit-Verify "$info sets attributes the merge would use: verify from a clone without it"
+}
+$null = Invoke-IsolatedGit @('config', '--get-regexp', '^merge\..*\.driver$')
+if ($LASTEXITCODE -eq 0) { Exit-Verify "a merge driver is configured in this repo (git config --get-regexp 'merge[.].*[.]driver'): verify from a clone without it" }
+$upstream = Invoke-IsolatedGit @('rev-parse', '--verify', '--quiet', "refs/remotes/origin/$base^{commit}")
 if ($LASTEXITCODE -ne 0 -or -not $upstream) { Exit-Verify "origin/$base not found" }
 if ($new -eq $approved) {
     "no commits since approval: $new"
@@ -47,19 +69,20 @@ if ($new -eq $approved) {
     'No commits were pushed after the approval. Checked by verify-merge-only.'
     exit 0
 }
-$line = git @pin rev-list --parents -n1 $new
+$line = Invoke-IsolatedGit @('rev-list', '--parents', '-n1', $new)
 if ($LASTEXITCODE -ne 0) { Exit-Verify 'git rev-list failed' }
 $parents = @("$line".Trim() -split ' ')
 if ($parents.Count -ne 3 -or $parents[1] -ne $approved) {
     Exit-Verify "$new is not a two-parent merge whose first parent is the approved head: review the delta"
 }
 $merged = $parents[2]
-$null = git @pin merge-base --is-ancestor $merged $upstream
+$null = Invoke-IsolatedGit @('merge-base', '--is-ancestor', $merged, $upstream)
 if ($LASTEXITCODE -ne 0) { Exit-Verify "the merged commit $merged is not on origin/$base" }
-$tree = git @pin rev-parse --verify --quiet "$new^{tree}"
+$tree = Invoke-IsolatedGit @('rev-parse', '--verify', '--quiet', "$new^{tree}")
 if ($LASTEXITCODE -ne 0 -or -not $tree) { Exit-Verify "no tree for $new" }
-$redo = @(git @pin merge-tree --write-tree --no-messages $approved $merged 2>$null)
+$redo = @(Invoke-IsolatedGit @("--attr-source=$approved", 'merge-tree', '--write-tree', '--no-messages', $approved, $merged) 2>$null)
 $status = $LASTEXITCODE
+if ($status -eq 129) { Exit-Verify 'needs git 2.40 or newer (git --attr-source, git merge-tree --write-tree)' }
 if ($status -ne 0) {
     Exit-Verify "git cannot redo the merge of $merged into $approved without a conflict (merge-tree exit $status): the resolution is new code, review the delta"
 }

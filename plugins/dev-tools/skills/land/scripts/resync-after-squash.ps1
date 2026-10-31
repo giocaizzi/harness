@@ -21,9 +21,10 @@ if (-not $base) {
 }
 $null = git check-ref-format --branch $base 2>$null
 if ($base.StartsWith('-') -or $LASTEXITCODE -ne 0) { [Console]::Error.WriteLine('usage: resync-after-squash.ps1 <last-integration-sha> [<base>]'); exit 2 }
-# Fixed diff options, so repo or user config (diff.context, diff.relative, submodule settings) cannot change the patch
-# or the file lists; and from the top level, since git apply ignores paths outside the current directory.
-$diff = @('diff', '--no-ext-diff', '--no-color', '--no-textconv', '-U3', '--no-relative', '--ignore-submodules=none', '--submodule=short', '--src-prefix=a/', '--dst-prefix=b/')
+# Fixed diff options, so repo or user config (diff.context, submodule settings) cannot change the patch or the file
+# lists. The script runs from the top level, so diff.relative has no effect, and git apply, which ignores paths outside
+# the current directory, sees them all.
+$diff = @('diff', '--no-ext-diff', '--no-color', '--no-textconv', '-U3', '--ignore-submodules=none', '--submodule=short', '--src-prefix=a/', '--dst-prefix=b/')
 $top = git rev-parse --show-toplevel
 if ($LASTEXITCODE -ne 0 -or -not $top) { Exit-Resync 'cannot reach the top of the worktree' }
 Set-Location -LiteralPath $top

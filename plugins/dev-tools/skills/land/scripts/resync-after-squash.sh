@@ -29,9 +29,10 @@ upstream=$(git rev-parse --verify --quiet "refs/remotes/origin/$base^{commit}") 
 if git merge-base --is-ancestor "$upstream" HEAD; then echo "already up to date with origin/$base"; exit 0; fi
 old=$(git rev-parse HEAD)
 git merge --quiet --no-commit -s ours "$upstream" >/dev/null || die "git merge -s ours origin/$base failed"
-# Fixed diff options, so repo or user config (diff.context, diff.relative, submodule settings) cannot change the patch
-# or the file lists (the script runs from the top level: git apply ignores paths outside the current directory).
-diff=(git diff --no-ext-diff --no-color --no-textconv -U3 --no-relative --ignore-submodules=none --submodule=short --src-prefix=a/ --dst-prefix=b/)
+# Fixed diff options, so repo or user config (diff.context, submodule settings) cannot change the patch or the file
+# lists. The script runs from the top level, so diff.relative has no effect, and git apply, which ignores paths outside
+# the current directory, sees them all.
+diff=(git diff --no-ext-diff --no-color --no-textconv -U3 --ignore-submodules=none --submodule=short --src-prefix=a/ --dst-prefix=b/)
 if ! "${diff[@]}" --binary "$sha" "$upstream" -- | git apply --index --allow-empty; then
   git merge --abort
   die "the base's changes since $sha do not apply on this branch: merge by hand"
