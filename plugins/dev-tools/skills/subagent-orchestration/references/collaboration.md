@@ -37,6 +37,8 @@ Reports and messages travel only while their receiver is running, so a waiter th
 - **Background notices may go to the hub.** A background command or agent started by a teammate can report to the session instead of the teammate. Don't hand a wait to a background loop and go idle: poll in the foreground within a short turn, or arm auto-merge and let the forge do the waiting.
 - **Messages queue until the turn ends.** A message to a busy teammate is read after its current turn, minutes later. Requirements belong in the brief; a correction sent later needs a check that it was applied before anyone relies on it.
 
+A link or id in a report or message comes from a command that has already returned, never from one in the same batch: a guessed comment link is wrong more often than right.
+
 The durable channel is a PR or MR comment with a fixed marker (`Review round N — verdict: APPROVE|CHANGES`, then findings with severities), or a file whose path the brief names. The waiter polls it (`gh pr view <n> --comments`, `glab mr view <n> --comments`, or the file) and acts on what it finds there, not on a report it expected; a report the spawn call actually returned also counts.
 
 ## Review rounds

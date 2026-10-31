@@ -8,13 +8,18 @@
             "type": "command",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/awake.mjs\" --harness=codex",
             "timeout": 15
+          },
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/guard.mjs\" SessionStart --no-ask --harness=codex",
+            "timeout": 10
           }
         ]
       }
     ],
     "PreToolUse": [
       {
-        "matcher": "Bash|PowerShell|Skill|Edit|Write|MultiEdit|Agent|Task|bash|powershell|skill|edit|create|task|spawn_agent|Grep|grep|rg",
+        "matcher": "Bash|PowerShell|Skill|Edit|Write|MultiEdit|Agent|Task|bash|powershell|skill|edit|create|task|spawn_agent",
         "hooks": [
           {
             "type": "command",

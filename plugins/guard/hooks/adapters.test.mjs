@@ -6,8 +6,6 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { GuardPlugin } from './opencode.mjs'
-import * as opencodePlugin from './opencode.mjs'
-import { opencodeLsp } from './bridge.mjs'
 import guardExtension from './pi.mjs'
 
 // These tests expect the stop check to run and risky commands to ask; a developer's own GUARD_STOP_CHECK=off or an
@@ -88,30 +86,6 @@ test('opencode and pi: a shell file edit gets the edit-tool reminder in the tool
   assert.match((await result('t1')).content[0].text, /edit tool/)
   await call('t2')
   assert.equal(await result('t2'), undefined)
-})
-
-test('opencode: the LSP hint only behind the experimental flag; pi has no LSP tool', async () => {
-  // opencode loads every export of the plugin file as a plugin: only plugins may be exported.
-  assert.equal('opencodeLsp' in opencodePlugin, false, 'opencode would load it as a plugin')
-  assert.equal(opencodeLsp({}), null)
-  assert.equal(opencodeLsp({ OPENCODE_EXPERIMENTAL_LSP_TOOL: 'true' }), 'lsp')
-  assert.equal(opencodeLsp({ OPENCODE_EXPERIMENTAL: 'true' }), 'lsp')
-  assert.equal(opencodeLsp({ OPENCODE_EXPERIMENTAL: 'true', OPENCODE_EXPERIMENTAL_LSP_TOOL: 'false' }), null, 'the tool flag wins')
-  assert.equal(opencodeLsp({ OPENCODE_EXPERIMENTAL_LSP_TOOL: '1' }), 'lsp')
-  assert.equal(opencodeLsp({ OPENCODE_EXPERIMENTAL: 'on' }), 'lsp')
-  for (const lspTool of ['lsp', null]) {
-    const hooks = await GuardPlugin({ client: {}, directory: dir() }, { ...deps(), lspTool })
-    const output = { args: { pattern: 'class SessionStore', path: 'src' }, output: 'found' }
-    await hooks['tool.execute.before']({ tool: 'grep', sessionID: `l-${lspTool}`, callID: 'c1' }, output)
-    await hooks['tool.execute.after']({ tool: 'grep', callID: 'c1', args: output.args }, output)
-    if (lspTool) assert.match(output.output, /`lsp` tool/)
-    else assert.equal(output.output, 'found')
-  }
-  const { handlers, api } = fakePi()
-  guardExtension(api, deps())
-  const ctx = { cwd: dir(), sessionManager: { getSessionId: () => 'l' } }
-  await handlers.tool_call({ toolName: 'bash', toolCallId: 't1', input: { command: 'rg -n "def build_index" src' } }, ctx)
-  assert.equal(await handlers.tool_result({ toolName: 'bash', toolCallId: 't1', input: {}, content: [] }, ctx), undefined)
 })
 
 test('opencode: a failing make check on idle is sent back once', async () => {
@@ -373,4 +347,29 @@ test('opencode: a child session runs as its own agent of the root session; pi: a
     delete process.env.GUARD_PARENT_SESSION
     delete process.env.GUARD_AGENT_ID
   }
+})
+
+test('opencode: session.created of a root session sends guard.session, a subagent child session does not', async () => {
+  const events = []
+  const hooks = await GuardPlugin({ client: {}, directory: dir() }, { ...deps(), emit: async (e, a) => events.push([e, a.session_id, a.source]) })
+  await hooks.event({ event: { type: 'session.created', properties: { info: { id: 'child', parentID: 'root' } } } })
+  assert.deepEqual(events, [])
+  await hooks.event({ event: { type: 'session.created', properties: { info: { id: 'root' } } } })
+  assert.deepEqual(events, [['guard.session', 'root', 'startup']])
+})
+
+test('pi: session_start sends guard.session, a dev-tools subagent child does not', async () => {
+  const events = []
+  const { handlers, api } = fakePi()
+  guardExtension(api, { ...deps(), emit: async (e, a) => events.push([e, a.session_id]) })
+  const ctx = { cwd: dir(), sessionManager: { getSessionId: () => 'p1' } }
+  await handlers.session_start({}, ctx)
+  assert.deepEqual(events, [['guard.session', 'p1']])
+  process.env.GUARD_PARENT_SESSION = 'parent'
+  try {
+    await handlers.session_start({}, ctx)
+  } finally {
+    delete process.env.GUARD_PARENT_SESSION
+  }
+  assert.equal(events.length, 1)
 })
