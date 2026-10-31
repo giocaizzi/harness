@@ -819,7 +819,7 @@ test('check-result: echoed values and the report are capped, and a long report i
 })
 
 test('result scripts: a BOM is stripped by an escape sequence, never a literal U+FEFF', () => {
-  for (const f of ['check-result.mjs', 'write-result.mjs']) {
+  for (const f of ['check-result.mjs', 'write-result.mjs', 'gate.mjs']) {
     const text = readFileSync(join(SCRIPTS, f), 'utf8')
     assert.ok(!text.includes('\uFEFF'), `${f} holds a literal U+FEFF`)
     assert.ok(text.includes('.replace(/^\\uFEFF/, \'\')'), `${f} strips the BOM by its escape`)
@@ -854,6 +854,7 @@ test('gate script: reads the config keys it needs from the template shape, and f
   assert.equal(template.approversAllowBots, false)
   const flow = parseConfig('approvers: [a, "b"]\r\nwriters:\n- a\n- \'c[bot]\'  # the runtime\nmarker: ""\nlabels:\n  approval: ok-go\n  # a comment\n  takeover: "hand-over"\n')
   assert.deepEqual(flow, { ...gateConfig, approvers: ['a', 'b'], writers: ['a', 'c[bot]'], labels: { ...gateConfig.labels, approval: 'ok-go', takeover: 'hand-over' } })
+  assert.deepEqual(parseConfig('---\napprovers: [a]\n').approvers, ['a'], 'a leading document marker')
   const decision = evaluateCommand({ command: 'node /home/runner/.claude/plugins/cache/m/factory/1/skills/ticket-run/scripts/gate.mjs 12', state: { reminded: new Set(), loaded: new Set(), hinted: new Set() }, host: {}, factory: { approval: 'agent-ok' }, rules })
   assert.notEqual(decision.action, 'deny', 'the gate call passes the factory-run guard')
   for (const bad of ['writers: [a]', 'approvers: []', 'approvers: a', 'approvers: [a]\napprovers_allow_bots: yes', 'approvers: [a]\nlabels: {approval: x}', 'approvers: [a]\nlabels:\n  approval:\n', 'approvers: [a]\nmarker: "unterminated', '- a']) assert.throws(() => parseConfig(bad), UsageError, bad)
@@ -882,6 +883,8 @@ test('gate script: the approval and edit check agree with the documented filter 
   }
   assert.equal(seen.size, 5, `every outcome drawn: ${[...seen]}`)
   const long = Array(100).fill(ev('labeled', 'agent-ok', 'owner'))
+  const undated = [{ event: 'labeled', label: { name: 'agent-ok' }, actor: { login: 'example-owner' } }]
+  assert.match(judge(reads({ timeline: undated, edit: { lastEditedAt: '2026-01-01T00:00:00Z', editor: { login: 'stranger' } } })).checks.approved, /^refuse: body edited after approval/, 'an approval without a time fails closed')
   assert.equal(judge(reads({ timeline: long })).checks.approved, editCheck(long, { lastEditedAt: null, editor: null }, ['example-owner']))
 })
 
@@ -894,6 +897,10 @@ test('gate script: claims, the runtime claim not from a writer, takeover and gro
   assert.deepEqual(own.claim, { action: 'edit', comment_id: 1 })
   assert.equal(own.body, 'b', 'the run judges readiness from the body')
   assert.deepEqual(judge(reads()).claim, { action: 'post' }, 'no claim label: claim it')
+  // A runtime run with the claim label off but its claim comment there edits it; with none, it posts.
+  const early = judge(reads({ env: runtime, comments: [claimComment(1, 'example-bot[bot]', 'runner-1', 'rt-77', 'runtime')] }))
+  assert.deepEqual(early.claim, { action: 'edit', comment_id: 1 })
+  assert.deepEqual(judge(reads({ env: runtime })).claim, { action: 'post' })
   // The runtime claimed under a login missing from writers: name it only when the label's actor posted exactly one copy.
   const untrusted = (comments, timeline = [ev('labeled', 'agent-ok', 'example-owner'), ev('labeled', 'factory-claimed', 'other-bot[bot]')]) => judge(reads({ env: runtime, issue: claimed, login: null, timeline, comments })).stop
   assert.deepEqual(untrusted([claimComment(1, 'other-bot[bot]', 'runner-1', 'rt-77', 'runtime')]), { check: 'claim', reason: "the runtime's claim is by `other-bot[bot]`, which is not in `writers`: check it is the runtime's login, then add `other-bot[bot]` to `writers` in `.factory/config.yaml`", reason_code: 'auth' })
@@ -942,7 +949,9 @@ test('gate script: the CLI prints one JSON verdict from gh, exit 0 go, 1 stop, 2
     assert.equal(stop.status, 1)
     assert.equal(JSON.parse(stop.stdout).stop.check, 'grooming')
     writeFileSync(join(bin, 'graphql'), 'not json')
-    assert.equal(JSON.parse(run(['12']).stdout).stop.check, 'read', 'a failed read stops')
+    const failed = JSON.parse(run(['12']).stdout)
+    assert.equal(failed.stop.check, 'read', 'a failed read stops')
+    assert.deepEqual([failed.checks, failed.body, failed.ready], [null, null, null], 'the same keys as every verdict')
     assert.equal(run(['12'], { FACTORY_TICKET: 'acme/app#13' }).status, 2)
     assert.equal(run([]).status, 2)
     rmSync(join(repo.main, '.factory'), { recursive: true })
