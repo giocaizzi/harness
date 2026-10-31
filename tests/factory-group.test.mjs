@@ -11,6 +11,8 @@ const repo = join(dirname(fileURLToPath(import.meta.url)), '..')
 const SCRIPTS = join(repo, 'plugins/factory/skills/ticket-run/scripts')
 const WRITE = join(SCRIPTS, 'write-result.mjs')
 const FIXTURES = join(repo, 'tests/fixtures/factory/result')
+// A runtime's FACTORY_* variables must not reach the checker calls that read process.env.
+for (const k of Object.keys(process.env)) if (k.startsWith('FACTORY_')) delete process.env[k]
 const checker = () => import(pathToFileURL(join(SCRIPTS, 'check-result.mjs')).href)
 const fixture = (name) => JSON.parse(readFileSync(join(FIXTURES, name), 'utf8'))
 const files = readdirSync(FIXTURES).filter((f) => f.endsWith('.json')).sort()
@@ -38,11 +40,15 @@ const EXPECTED = {
   'turns-fraction': /tasks\[1\]: turns must be a non-negative integer, got 2.5/,
   'turns-string': /tasks\[1\]: turns must be a non-negative integer/,
   'done-without-pr': /tasks: a done entry needs pr/,
+  'parked-member-end-done': /tasks: the members' outcomes \["done","parked","released"\] make end_state parked, got "done"/,
+  'all-done-end-failed': /tasks: the members' outcomes \["done","done"\] make end_state done, got "failed"/,
+  'all-released-end-parked': /tasks: the members' outcomes \["released","released"\] make end_state failed, got "parked"/,
+  'finished-end-halted': /tasks: the members' outcomes \["done","released"\] make end_state done, got "halted"/,
 }
 
 test('group result: the valid fixtures pass the checker', async () => {
   const { resultErrors } = await checker()
-  assert.equal(validFiles.length, 4)
+  assert.equal(validFiles.length, 5)
   for (const f of validFiles) assert.deepEqual(resultErrors(fixture(f), {}), [], f)
 })
 
@@ -82,10 +88,50 @@ test('group result: with FACTORY_RUN_FILE the tasks are the run file members, ex
   assert.match(resultErrors(swap([a, b]), env).join('\n'), differ)
   assert.match(resultErrors(swap([a, b, c, { ...c, ticket: 'acme/app#99' }]), env).join('\n'), differ)
   assert.match(resultErrors(swap([a, b, { ...c, ticket: 'ACME/app#14' }]), env).join('\n'), differ)
-  // unset or blank: no check; schema 2 without tasks: nothing to check.
+  // unset or blank: no check.
   assert.deepEqual(resultErrors(swap([a, c, b]), {}).filter((e) => differ.test(e)), [])
   assert.deepEqual(resultErrors(swap([a, c, b]), { FACTORY_RUN_FILE: '  ' }).filter((e) => differ.test(e)), [])
-  assert.deepEqual(resultErrors(fixture('valid-single.json'), { FACTORY_RUN_FILE: '/nonexistent/run.json' }), [])
+})
+
+test('group result: with FACTORY_RUN_FILE set, a result without tasks fails unless the run stopped at the gate', async () => {
+  const { resultErrors } = await checker()
+  const single = fixture('valid-single.json')
+  const needs = /^tasks: FACTORY_RUN_FILE is set, so this group run's result needs tasks \(schema 3\); only a stop at the gate leaves them out$/
+  const gate = [{ name: 'gate', started_at: '2026-10-25T09:00:00Z', ended_at: '2026-10-25T09:01:00Z' }]
+  for (const env of [{ FACTORY_RUN_FILE: RUN_FILE }, { FACTORY_RUN_FILE: '/nonexistent/run.json' }]) {
+    assert.deepEqual(resultErrors(single, env), ["tasks: FACTORY_RUN_FILE is set, so this group run's result needs tasks (schema 3); only a stop at the gate leaves them out"])
+    // Not a gate stop: a run past the gate, or a done one that ran the gate alone.
+    assert.match(resultErrors({ ...single, end_state: 'parked', reason: 'x', reason_code: 'question', pr: null }, env).join('\n'), needs)
+    assert.match(resultErrors({ ...single, phases: gate }, env).join('\n'), needs)
+    // A stop at the gate worked no member: no tasks, and the run file is not read.
+    assert.deepEqual(resultErrors({ ...single, end_state: 'failed', reason: 'refuse: not approved', reason_code: 'auth', pr: null, phases: gate }, env), [])
+  }
+  assert.deepEqual(resultErrors(single, {}), [])
+  assert.deepEqual(resultErrors(single, { FACTORY_RUN_FILE: ' ' }), [])
+})
+
+test("group result: end_state is derived from the members' outcomes", async () => {
+  const { groupEndState, resultErrors } = await checker()
+  const cases = [
+    [['done'], 'done'], [['done', 'released'], 'done'], [['done', 'done'], 'done'],
+    [['done', 'parked'], 'parked'], [['parked', 'released'], 'parked'], [['done', 'parked', 'released'], 'parked'],
+    [['released'], 'failed'], [['released', 'released'], 'failed'],
+  ]
+  for (const [outcomes, want] of cases) assert.equal(groupEndState(outcomes), want, outcomes.join())
+  const base = fixture('valid-group-all-outcomes.json')
+  const derive = /make end_state/
+  // Any end_state but the derived one fails, for every mix the fixtures hold.
+  for (const name of ['valid-group-all-outcomes.json', 'valid-group-handoff.json', 'valid-group-no-done.json', 'valid-group-all-released.json']) {
+    const r = fixture(name)
+    const want = groupEndState(r.tasks.map((t) => t.outcome))
+    assert.equal(r.end_state, want, name)
+    for (const other of ['done', 'parked', 'failed'].filter((e) => e !== want)) assert.ok(resultErrors({ ...r, end_state: other, reason: other === 'done' ? '' : 'x' }, {}).length > 0, `${name} as ${other}`)
+  }
+  // A budget or halt stop stands in for the derived value only when not every member finished.
+  for (const stop of ['budget_reached', 'halted']) {
+    assert.deepEqual(resultErrors({ ...base, end_state: stop }, {}).filter((e) => derive.test(e)), [], stop)
+    assert.match(resultErrors({ ...base, tasks: [base.tasks[0], base.tasks[2]], end_state: stop }, {}).join('\n'), derive, stop)
+  }
 })
 
 test('group result: a run file that cannot be used fails closed', async () => {

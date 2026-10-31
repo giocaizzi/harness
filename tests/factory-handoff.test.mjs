@@ -151,7 +151,8 @@ test('handoff: the tasks memberTask builds pass the result checker, a malformed 
   const lead = { ...brief, ticket: 'acme/app#12' }
   const shipped = [memberTask('acme/app#12', lead, { ...fixture('result-valid-done'), ticket: 'acme/app#12' }, 'r-1'), memberTask('acme/app#13', brief, fixture('result-invalid-done-no-head'), 'r-1')]
   const pr = 'https://github.com/acme/app/pull/20'
-  assert.deepEqual(resultErrors({ ...base, end_state: 'done', reason: '', reason_code: null, pr, tasks: withPr(shipped, pr) }, {}), [])
+  // One member shipped, one parked on its handoff: the run is parked, the PR still carries the done member.
+  assert.deepEqual(resultErrors({ ...base, end_state: 'parked', reason: 'acme/app#13 parked: its handoff was malformed', reason_code: null, pr, tasks: withPr(shipped, pr) }, {}), [])
   const none = [memberTask('acme/app#12', lead, undefined, 'r-1'), memberTask('acme/app#13', brief, fixture('result-invalid-extra-key'), 'r-1')]
   assert.deepEqual(none.map((t) => t.reason_code), ['handoff', 'handoff'])
   assert.deepEqual(resultErrors({ ...base, end_state: 'parked', reason: 'no member finished: both handoffs were malformed', reason_code: null, pr: null, tasks: withPr(none, null) }, {}), [])

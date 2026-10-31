@@ -19,7 +19,7 @@ after(() => rmSync(LINT_ROOT, { recursive: true, force: true }))
 delete process.env.GUARD_STOP_CHECK
 delete process.env.GUARD_STOP_TIMEOUT_MS
 // Nor a factory run's own variables: the result gate would hold every stop test to its result file.
-for (const k of ['FACTORY_RUN_ID', 'FACTORY_TICKET', 'FACTORY_ATTENDED_RUN_ID', 'FACTORY_ATTENDED_TICKET', 'GUARD_RESULT_GATE']) delete process.env[k]
+for (const k of ['FACTORY_RUN_ID', 'FACTORY_TICKET', 'FACTORY_ATTENDED_RUN_ID', 'FACTORY_ATTENDED_TICKET', 'FACTORY_RUN_FILE', 'GUARD_RESULT_GATE']) delete process.env[k]
 
 const stopRun = (calls, make, git = { status: 0, stdout: 'x' }, targets = ['check']) => (cmd, args) => {
   calls.push(`${cmd} ${args.join(' ')}`)
@@ -215,6 +215,14 @@ test("result gate: a group run's tasks follow FACTORY_RUN_FILE, a relative path 
     assert.equal(await resultGate({ cwd: withRun([12, 13]) }, undefined, env), null)
     assert.match(await resultGate({ cwd: withRun([12, 14]) }, undefined, env), /block 1 of 2[\s\S]*differ from the run file's members/)
     assert.match(await resultGate({ cwd: gateRepo(group) }, undefined, env), /block 1 of 2[\s\S]*cannot check against the run file/)
+    // A result without tasks under a run file is a group run recorded as one ticket: held, unless it stopped at the gate.
+    const single = (over) => { const cwd = gateRepo(validResult(over)); writeFileSync(join(cwd, 'run.json'), JSON.stringify({ schema: 1, run_id: 'run-1', lead: 'acme/app#12', members: [{ ticket: 'acme/app#12' }] })); return cwd }
+    assert.match(await resultGate({ cwd: single() }, undefined, env), /block 1 of 2[\s\S]*FACTORY_RUN_FILE is set, so this group run's result needs tasks/)
+    assert.equal(await resultGate({ cwd: single({ end_state: 'failed', reason: 'refuse: not approved', reason_code: 'auth' }) }, undefined, env), null)
+    // A member left parked makes the group parked, never done.
+    const mixed = validResult({ schema: 3, pr: 'https://github.com/acme/app/pull/20', tasks: [task(12), { ...task(13), outcome: 'parked', reason: 'waits', reason_code: 'question', pr_link: 'refs' }] })
+    const mixedRepo = () => { const cwd = gateRepo(mixed); writeFileSync(join(cwd, 'run.json'), JSON.stringify({ schema: 1, run_id: 'run-1', lead: 'acme/app#12', members: [{ ticket: 'acme/app#12' }, { ticket: 'acme/app#13' }] })); return cwd }
+    assert.match(await resultGate({ cwd: mixedRepo() }, undefined, env), /block 1 of 2[\s\S]*make end_state parked, got "done"/)
   } finally {
     delete process.env.CLAUDE_PLUGIN_DATA
   }

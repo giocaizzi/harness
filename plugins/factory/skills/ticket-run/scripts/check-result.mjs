@@ -1,6 +1,7 @@
 // Checks a run's result.json: the core fields (`schema`, `ticket`, `run_id`, `end_state`, `reason`, `reason_code`),
 // `finished_at` and `phases` times, the optional `routing` entries and `mode` (only `dev`),
-// `tasks` (a group run's members, schema 3; with FACTORY_RUN_FILE set, its tickets are the run file's members) and a change run's `change`.
+// `tasks` (a group run's members, schema 3, and the `end_state` they derive; with FACTORY_RUN_FILE set, a result needs them,
+// a stop at the gate aside, and their tickets are the run file's members) and a change run's `change`.
 // Usage `node check-result.mjs <result.json>`: exit 0 valid, 1 invalid or unreadable (one line per error), 2 usage.
 // A deviation (model or effort differing from the policy's) needs a non-empty deviation_reason; a time the run could not
 // find is null, never a dropped key. Imports Node built-ins only, so a hook can copy it.
@@ -56,6 +57,9 @@ export const ticketErrors = (result, expected = process.env.FACTORY_TICKET) => {
   return want && result.ticket !== want ? [`ticket ${show(result.ticket)} differs from FACTORY_TICKET ${show(want)}`] : []
 }
 
+// A stop at the gate: `phases` holding `gate` alone, never done. It wrote no unit and worked no member.
+export const isGateStop = (result) => result.end_state !== 'done' && Array.isArray(result.phases) && result.phases.length === 1 && result.phases[0]?.name === 'gate'
+
 export const modeErrors = (result) => (result.mode === undefined || result.mode === 'dev' ? [] : ['mode must be "dev" or absent'])
 
 export const CHANGE_TRIGGERS = ['changes_requested', 'mention', 'check_failed']
@@ -71,9 +75,8 @@ export const changeErrors = (result) => {
     const t = typeof result.ticket === 'string' ? /^([\w.-]+)\/([\w.-]+)#(\d+)$/.exec(result.ticket) : null
     const q = typeof result.pr === 'string' ? PULL.exec(result.pr) : null
     // Issues and PRs share one number space: an issue run's PR never has the ticket's number.
-    // A stop at the gate (`phases` holding `gate` alone, never done) wrote no unit, so it carries no change.
-    const gateStop = result.end_state !== 'done' && Array.isArray(result.phases) && result.phases.length === 1 && result.phases[0]?.name === 'gate'
-    if (!gateStop && t && q && q[1].toLowerCase() === t[1].toLowerCase() && q[2].toLowerCase() === t[2].toLowerCase() && q[3] === t[3]) errors.push('change: pr is the ticket itself, so this is a change run and needs change')
+    // A stop at the gate wrote no unit, so it carries no change.
+    if (!isGateStop(result) && t && q && q[1].toLowerCase() === t[1].toLowerCase() && q[2].toLowerCase() === t[2].toLowerCase() && q[3] === t[3]) errors.push('change: pr is the ticket itself, so this is a change run and needs change')
     return errors
   }
   if (typeof change !== 'object' || Array.isArray(change)) return [`change: must be an object or null, got ${show(change)}`]
@@ -142,12 +145,26 @@ export const coreErrors = (result, env = process.env) => {
 }
 
 const TASK_KEYS = ['ticket', 'outcome', 'reason', 'reason_code', 'pr_link']
+// Stops a runtime or a budget cap makes on the run as a whole, not derived from how the members ended.
+const RUN_STOPS = ['budget_reached', 'halted']
+
+// A group run's `end_state` from its members' outcomes: `done` when every member is done or released and one is done,
+// else `parked` when one is parked, else `failed`.
+export const groupEndState = (outcomes) => {
+  if (outcomes.includes('done') && outcomes.every((o) => o === 'done' || o === 'released')) return 'done'
+  return outcomes.includes('parked') ? 'parked' : 'failed'
+}
 const isText = (v) => typeof v === 'string' && v.trim() !== ''
 
 // A group run's `tasks`: each member's outcome, reason, code and PR link, and what they imply for the run's own fields.
 export const taskErrors = (result, env = process.env) => {
   const { tasks } = result
-  if (tasks === undefined) return result.schema === 3 ? ['schema 3 needs tasks'] : []
+  if (tasks === undefined) {
+    if (result.schema === 3) return ['schema 3 needs tasks']
+    // A runtime names a group run's members in the run file: its result lists them, unless the run stopped at the gate.
+    const runFile = (env.FACTORY_RUN_FILE ?? '').trim()
+    return runFile && !isGateStop(result) ? [`tasks: FACTORY_RUN_FILE is set, so this group run's result needs tasks (schema 3); only a stop at the gate leaves them out`] : []
+  }
   if (result.schema !== 3) return ['tasks needs schema 3']
   if (!Array.isArray(tasks) || tasks.length === 0) return [`tasks must be a non-empty array, got ${show(tasks)}`]
   const hasPr = isText(result.pr)
@@ -183,6 +200,12 @@ export const taskErrors = (result, env = process.env) => {
     if (result.end_state === 'done') errors.push('tasks: no done entry, so end_state must not be done')
     if (!isText(result.reason)) errors.push('tasks: no done entry, so reason must say why')
   } else if (!hasPr) errors.push('tasks: a done entry needs pr to be a non-empty string')
+  // The run's end_state follows its members; a budget or halt stop stands in for it only when not every member finished.
+  const outcomes = tasks.map((t) => t?.outcome)
+  if (outcomes.every((o) => OUTCOMES.includes(o)) && END_STATES.includes(result.end_state) && !(result.end_state === 'done' && !done)) {
+    const derived = groupEndState(outcomes)
+    if (RUN_STOPS.includes(result.end_state) ? derived === 'done' : result.end_state !== derived) errors.push(`tasks: the members' outcomes ${show(outcomes)} make end_state ${derived}, got ${show(result.end_state)}`)
+  }
   return [...errors, ...runFileErrors(tasks, env)]
 }
 
