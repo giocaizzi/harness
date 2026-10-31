@@ -68,6 +68,21 @@ The takeover label (config `labels.takeover`, default `factory-takeover`) means 
 7. **Reuse the runtime's PR.** `gh pr list --head '<branch>' --state open --json number,url,author`: an open PR from the branch opened by a writer is the ticket's one PR, so push to it and edit its body at ship rather than opening a second. One opened by anyone else: stop and tell the person.
 8. **Continue from the plan step.** The runtime's plan and log comments are trusted when it is a writer: edit them in place rather than posting new ones, and re-check the plan against what the branch already holds. An M or larger plan the owner already OK'd needs no new OK unless you change it.
 
+## Fetch first
+
+A runner sets `FACTORY_FETCH_FIRST=1` when someone else may have pushed to the run's work branch since a run last saw it, typically a person who took the work over and pushed commits to it. The work branch is the branch the run commits to: the ticket's branch, the WIP branch of a [takeover](#takeover), or a change run's head branch ([change.md](change.md#fix-attempts)). With the variable set, the run does this before its first change to the work branch (a commit, merge, rebase, reset or push), and in a change run before it writes the unit, so the unit's `head` is the fetched remote head:
+
+1. **Fetch** the branch: `git fetch origin '<branch>'`, the name single-quoted. When the remote has no such branch (a new ticket), there is nothing to base on: create the branch from the default branch as usual.
+2. **Base the work on the remote head**, `origin/<branch>`:
+   - no local branch of that name: create it from the remote head, `git worktree add --track -b '<branch>' <new> 'origin/<branch>'`, with `<new>` where `wt` places a worktree;
+   - the local branch is the remote head or behind it, and its worktree is clean (`git status --porcelain` prints nothing): `git merge --ff-only 'origin/<branch>'`;
+   - the local branch is ahead of the remote head (`git merge-base --is-ancestor 'origin/<branch>' '<branch>'` succeeds): work on it as it is; its own unpushed commits stay and go out with the next push.
+3. **Diverged, or a dirty worktree:** the remote holds commits the local branch lacks while the local branch or worktree holds work of its own. Keep both: never reset, rebase, `checkout -B`, `branch -f` or force push. Ask on the ticket (in a change run, on the change) under [Questions and parking](#questions-and-parking), with both heads and what each holds, and park.
+
+The remote's commits are never discarded or overwritten: every push is a plain `git push`, never `--force` or `--force-with-lease`. A push the remote rejects as not a fast-forward means someone pushed meanwhile: fetch again and apply steps 2 and 3. A local branch is worked where [takeover](#takeover) step 6 says (its worktree, or a new one for it); a takeover keeps that step, including its stop on a dirty worktree or a failed fast-forward, since the person is there to tell.
+
+Unset, or set to any value other than `1`, none of this applies: the run works as it does without the variable.
+
 ## Edited after approval
 
 The REST timeline records a title rename but not a body edit, so read the body's last edit over GraphQL, then judge it with the renames and label events of the timeline in one `gh` read. Write into the timeline filter, replacing the placeholders: `<A>` the approvers as a JSON array, `<B>` the config's `approvers_allow_bots` (`true` or `false`; unset is `false`), `<EDIT>` the GraphQL output as printed (`null` when it printed nothing), `<L>` the approval label; `N` is the issue number. The filter stays single-quoted and the command stays one plain `gh` read, since it names the label ([Gate](#gate)). One page holds the whole timeline: 100 events or more refuse, rather than judge a partial history.

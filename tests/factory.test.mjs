@@ -383,6 +383,18 @@ test('dev mode: docs and ticket-run carry FACTORY_DEV, the mode key and the mode
   for (const p of ['docs/factory.md', 'plugins/factory/skills/ticket-run/references/comments.md']) assert.match(read(p), /FACTORY_DEV=1[\s\S]*`mode: dev`/, p)
 })
 
+test('fetch first: FACTORY_FETCH_FIRST=1 bases the work on the remote head, never overwrites it, and changes nothing unset', () => {
+  const section = read(COMMENTS).split('\n## Fetch first\n')[1]?.split('\n## ')[0] ?? ''
+  assert.ok(section, 'comments.md has a Fetch first section')
+  for (const s of ['`FACTORY_FETCH_FIRST=1`', 'before its first change to the work branch', "git fetch origin '<branch>'", "git merge --ff-only 'origin/<branch>'", 'never reset, rebase', '`--force-with-lease`', '[Questions and parking](#questions-and-parking)', 'Unset, or set to any value other than `1`']) assert.ok(section.includes(s), s)
+  assert.match(read('plugins/factory/skills/ticket-run/SKILL.md'), /`FACTORY_FETCH_FIRST=1`[^\n]*\(references\/comments\.md#fetch-first\)/)
+  assert.match(read('plugins/factory/skills/ticket-run/references/change.md'), /`FACTORY_FETCH_FIRST=1`[^\n]*\(comments\.md#fetch-first\)/)
+  const para = doc.split('\n').find((l) => l.startsWith('**Fetch first.**'))
+  assert.ok(para, 'docs/factory.md has the Fetch first paragraph')
+  for (const s of ['`FACTORY_FETCH_FIRST=1`', 'never discards or overwrites', 'any other value', 'fetch-first']) assert.ok(para.includes(s), s)
+  assert.match(doc.split('\n## Layers')[1], /`FACTORY_FETCH_FIRST`/)
+})
+
 test('verifier: preset effort is medium, in the agent file and the Codex override', () => {
   assert.match(read('plugins/factory/agents/verifier.md').split('\n---')[0], /^effort: medium$/m)
   assert.match(read('plugins/factory/agents/verifier.yaml'), /model_reasoning_effort: medium/)

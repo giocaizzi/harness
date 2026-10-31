@@ -74,7 +74,7 @@ A `check_failed` unit has at least one `check` item; any other has at least one 
 
 ## Fix attempts
 
-One run is one attempt. It works on the change's branch from `head` (no second PR, no force push), verifies the delta with a scoped verifier round, pushes, and re-requests review from the approvers whose items it handled. It never dismisses a review, approves, merges, closes or reopens the change or an issue.
+One run is one attempt. It works on the change's branch from `head` (no second PR, no force push; under `FACTORY_FETCH_FIRST=1` it fetches the branch before writing the unit, so `head` is the remote head, [comments.md](comments.md#fetch-first)), verifies the delta with a scoped verifier round, pushes, and re-requests review from the approvers whose items it handled. It never dismisses a review, approves, merges, closes or reopens the change or an issue.
 
 **Refers, never closes.** A fix attempt refers to the change and to its issues; only the change's merge closes them, through the closing line its PR body already carries. The run's commits and comments name the issues with `Refs #N` only, never a closing keyword (`Closes`, `Fixes`, `Resolves`), and the run never edits the PR body's closing line.
 
