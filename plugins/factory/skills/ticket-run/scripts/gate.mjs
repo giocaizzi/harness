@@ -4,11 +4,11 @@
 // the verdict carries the body and leaves it open.
 // Usage: node gate.mjs <n>   (from the repo or a worktree; gh fills {owner}/{repo} from the checkout)
 // Exit 0 go or wait, 1 stop (the verdict says which check), 2 usage or environment (no checkout, no or unreadable
-// .factory/config.yaml, no gh). Every read that fails or cannot be judged fails closed: it stops, never lets the run on.
+// .factory/config.yaml on the default branch, no gh). Every read that fails or cannot be judged fails closed: it stops,
+// never lets the run on. The config is the one committed on the forge's default branch (committedConfig), never the
+// checkout's copy.
 import { execFileSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
 import { hostname } from 'node:os'
-import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 export class UsageError extends Error {}
@@ -52,7 +52,7 @@ const scalar = (raw, key) => {
   return v
 }
 
-/** The gate's keys from the config text: approvers, writers, approvers_allow_bots, labels, marker. Throws UsageError when one cannot be read. */
+/** The gate's keys from the config text: approvers, writers, approvers_allow_bots, labels, marker, and identity.logins (for change runs). Throws UsageError when one cannot be read. */
 export const parseConfig = (text) => {
   const top = {}
   let current = null
@@ -105,7 +105,35 @@ export const parseConfig = (text) => {
     }
   }
   const marker = top.marker ? scalar(top.marker.inline, 'marker') : ''
-  return { approvers, writers: writers ?? null, approversAllowBots: bots === 'true', labels, marker: marker || DEFAULT_MARKER }
+  // identity.logins: a list under the block mapping identity (its other keys, such as mention, are not read here).
+  const identityLogins = []
+  if (top.identity) {
+    if (top.identity.inline) throw new UsageError('.factory/config.yaml: identity must be a block mapping')
+    const block = top.identity.block
+    const indent = /^\s*/.exec(block[0] ?? '')?.[0].length ?? 0
+    for (let i = 0; i < block.length; i++) {
+      const kv = /^(\s+)([A-Za-z_]\w*):\s*(.*)$/.exec(block[i])
+      const depth = /^\s*/.exec(block[i])[0].length
+      if (depth > indent) continue
+      if (!kv || depth !== indent) throw new UsageError('.factory/config.yaml: identity is a mapping the gate cannot read')
+      if (kv[2] !== 'logins') continue
+      const inline = kv[3].trim()
+      if (inline.startsWith('[')) {
+        if (!inline.endsWith(']')) throw new UsageError('.factory/config.yaml: identity.logins is a list the gate cannot read')
+        const body = inline.slice(1, -1).trim()
+        if (body) identityLogins.push(...body.split(',').map((x) => scalar(x, 'identity.logins')))
+      } else if (inline) throw new UsageError('.factory/config.yaml: identity.logins must be a list')
+      else {
+        for (let j = i + 1; j < block.length && /^\s*/.exec(block[j])[0].length > indent; j++) {
+          const item = /^\s+-\s+(.+)$/.exec(block[j])
+          if (!item) throw new UsageError('.factory/config.yaml: identity.logins is a list the gate cannot read')
+          identityLogins.push(scalar(item[1], 'identity.logins'))
+        }
+      }
+    }
+    if (identityLogins.some((l) => !l)) throw new UsageError('.factory/config.yaml: identity.logins has an empty login')
+  }
+  return { approvers, writers: writers ?? null, approversAllowBots: bots === 'true', labels, marker: marker || DEFAULT_MARKER, identityLogins }
 }
 
 // --- the judgement, pure: every input is what one read returned ---
@@ -202,6 +230,34 @@ export const judge = ({ config, env, host, login, issue, timeline, edit, comment
 
 // --- the reads ---
 
+// Git never waits on a credential prompt: a remote that asks fails at once (and the read fails closed).
+export const gitEnv = (env = process.env) => ({ ...env, GIT_TERMINAL_PROMPT: '0' })
+const git = (args) => execFileSync('git', args, { encoding: 'utf8', env: gitEnv(), stdio: ['ignore', 'pipe', 'pipe'], timeout: 60_000, windowsHide: true })
+const SHA = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/
+
+/**
+ * .factory/config.yaml as committed on the default branch, never the checkout's copy: a run may stand on a branch (a
+ * change's) where a writer or the session changed it. The default branch and its head commit come from the remote
+ * (`git ls-remote --symref origin HEAD`), not from local refs (`origin/HEAD`, `update-ref`), and the file is read from
+ * that commit, from the repo root whatever the cwd, with replace objects off, so `git replace` cannot swap it. The
+ * commit must be fetched. A session that rewrites its own git config (the origin URL, `insteadOf`) can still point
+ * this at another repo: that limit stays until the read goes through the forge's API. Returns the text, or null when
+ * that commit has no such file; throws when any of it cannot be read.
+ */
+export const committedConfig = (run = git) => {
+  const out = run(['ls-remote', '--symref', 'origin', 'HEAD'])
+  const branch = /^ref: refs\/heads\/(\S+)\tHEAD$/m.exec(out)?.[1]
+  const sha = /^(\S+)\tHEAD$/m.exec(out)?.[1]
+  if (!branch || !sha || !SHA.test(sha)) throw new Error('git ls-remote --symref origin HEAD named no default branch and head')
+  try {
+    run(['--no-replace-objects', 'cat-file', '-e', `${sha}^{commit}`])
+  } catch {
+    throw new Error(`the head of the default branch ${branch} (${sha.slice(0, 12)}) is not fetched: run git fetch origin ${branch}`)
+  }
+  if (run(['--no-replace-objects', 'ls-tree', '--full-tree', '--name-only', sha, '--', '.factory/config.yaml']).trim() === '') return null
+  return run(['--no-replace-objects', 'show', `${sha}:.factory/config.yaml`])
+}
+
 const gh = (args) => {
   try {
     return execFileSync('gh', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024, windowsHide: true })
@@ -245,18 +301,18 @@ const parseNumber = (argv, env) => {
 
 const main = (argv, env) => {
   const n = parseNumber(argv, env)
-  let top
   try {
-    top = execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }).trim()
+    git(['rev-parse', '--show-toplevel'])
   } catch {
     throw new UsageError('not inside a git checkout: run it from the repo or one of its worktrees')
   }
   let text
   try {
-    text = readFileSync(path.join(top, '.factory', 'config.yaml'), 'utf8')
+    text = committedConfig()
   } catch (e) {
-    throw new UsageError(`.factory/config.yaml: ${e.code === 'ENOENT' ? 'missing: adopt the repo first (https://github.com/giocaizzi/harness/blob/main/docs/adopt-factory.md)' : `cannot read (${e.code ?? e.message})`}`)
+    throw new UsageError(`.factory/config.yaml: cannot read it from the default branch (${cut(String(e.stderr ?? '').trim().split('\n')[0] || e.message, 200)})`)
   }
+  if (text === null) throw new UsageError('.factory/config.yaml: missing on the default branch: adopt the repo first and merge the config (https://github.com/giocaizzi/harness/blob/main/docs/adopt-factory.md)')
   const config = parseConfig(text)
   let verdict
   try {

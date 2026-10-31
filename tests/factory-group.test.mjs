@@ -11,6 +11,8 @@ const repo = join(dirname(fileURLToPath(import.meta.url)), '..')
 const SCRIPTS = join(repo, 'plugins/factory/skills/ticket-run/scripts')
 const WRITE = join(SCRIPTS, 'write-result.mjs')
 const FIXTURES = join(repo, 'tests/fixtures/factory/result')
+// A runtime's FACTORY_* variables must not reach the checker calls that read process.env.
+for (const k of Object.keys(process.env)) if (k.startsWith('FACTORY_')) delete process.env[k]
 const checker = () => import(pathToFileURL(join(SCRIPTS, 'check-result.mjs')).href)
 const fixture = (name) => JSON.parse(readFileSync(join(FIXTURES, name), 'utf8'))
 const files = readdirSync(FIXTURES).filter((f) => f.endsWith('.json')).sort()
@@ -38,11 +40,14 @@ const EXPECTED = {
   'turns-fraction': /tasks\[1\]: turns must be a non-negative integer, got 2.5/,
   'turns-string': /tasks\[1\]: turns must be a non-negative integer/,
   'done-without-pr': /tasks: a done entry needs pr/,
+  'parked-member-end-done': /tasks: the members' outcomes \["done","parked","released"\] allow end_state parked at most, got "done"/,
+  'all-released-end-parked': /tasks: the members' outcomes \["released","released"\] allow end_state failed at most, got "parked"/,
+  'all-done-parked-no-code': /tasks: every member finished, so a parked run needs the reason_code it waits on \(such as merge_gate\), got null/,
 }
 
 test('group result: the valid fixtures pass the checker', async () => {
   const { resultErrors } = await checker()
-  assert.equal(validFiles.length, 4)
+  assert.equal(validFiles.length, 8)
   for (const f of validFiles) assert.deepEqual(resultErrors(fixture(f), {}), [], f)
 })
 
@@ -82,10 +87,73 @@ test('group result: with FACTORY_RUN_FILE the tasks are the run file members, ex
   assert.match(resultErrors(swap([a, b]), env).join('\n'), differ)
   assert.match(resultErrors(swap([a, b, c, { ...c, ticket: 'acme/app#99' }]), env).join('\n'), differ)
   assert.match(resultErrors(swap([a, b, { ...c, ticket: 'ACME/app#14' }]), env).join('\n'), differ)
-  // unset or blank: no check; schema 2 without tasks: nothing to check.
+  // unset or blank: no check.
   assert.deepEqual(resultErrors(swap([a, c, b]), {}).filter((e) => differ.test(e)), [])
   assert.deepEqual(resultErrors(swap([a, c, b]), { FACTORY_RUN_FILE: '  ' }).filter((e) => differ.test(e)), [])
-  assert.deepEqual(resultErrors(fixture('valid-single.json'), { FACTORY_RUN_FILE: '/nonexistent/run.json' }), [])
+})
+
+test('group result: with FACTORY_RUN_FILE set, a result without tasks fails unless the run stopped at the gate', async () => {
+  const { resultErrors } = await checker()
+  const single = fixture('valid-single.json')
+  const message = "tasks: FACTORY_RUN_FILE is set, so this group run's result needs tasks (schema 3); only a stop at the gate, with pr null, leaves them out"
+  const needs = new RegExp(`^${message.replace(/[()]/g, '\\$&')}$`)
+  const gate = [{ name: 'gate', started_at: '2026-10-25T09:00:00Z', ended_at: '2026-10-25T09:01:00Z' }]
+  for (const env of [{ FACTORY_RUN_FILE: RUN_FILE }, { FACTORY_RUN_FILE: '/nonexistent/run.json' }]) {
+    assert.deepEqual(resultErrors(single, env), [message])
+    // Not a gate stop: a run past the gate, or a done one that ran the gate alone.
+    assert.match(resultErrors({ ...single, end_state: 'parked', reason: 'x', reason_code: 'question', pr: null }, env).join('\n'), needs)
+    assert.match(resultErrors({ ...single, phases: gate }, env).join('\n'), needs)
+    // A gate stop opens nothing: one that carries a PR is not exempt.
+    assert.match(resultErrors({ ...single, end_state: 'failed', reason: 'refuse: not approved', reason_code: 'auth', phases: gate }, env).join('\n'), needs)
+    // A stop at the gate worked no member: no tasks, and the run file is not read.
+    assert.deepEqual(resultErrors({ ...single, end_state: 'failed', reason: 'refuse: not approved', reason_code: 'auth', pr: null, phases: gate }, env), [])
+    const { pr, ...noPr } = single
+    void pr
+    assert.deepEqual(resultErrors({ ...noPr, end_state: 'failed', reason: 'refuse: not approved', reason_code: 'auth', phases: gate }, env), [])
+  }
+  assert.deepEqual(resultErrors(single, {}), [])
+  assert.deepEqual(resultErrors(single, { FACTORY_RUN_FILE: ' ' }), [])
+})
+
+test("group result: the members bound end_state from above; a stop of the whole run may end it lower", async () => {
+  const { groupEndState, resultErrors } = await checker()
+  const cases = [
+    [['done'], 'done'], [['done', 'released'], 'done'], [['done', 'done'], 'done'],
+    [['done', 'parked'], 'parked'], [['parked', 'released'], 'parked'], [['done', 'parked', 'released'], 'parked'],
+    [['released'], 'failed'], [['released', 'released'], 'failed'],
+  ]
+  for (const [outcomes, want] of cases) assert.equal(groupEndState(outcomes), want, outcomes.join())
+  const base = fixture('valid-group-all-outcomes.json')
+  const pr = 'https://github.com/acme/app/pull/20'
+  const entry = (outcome, n, hasPr) => ({ ticket: `acme/app#${n}`, outcome, reason: outcome === 'done' ? '' : 'x', reason_code: outcome === 'parked' ? 'question' : null, pr_link: !hasPr || outcome === 'released' ? null : outcome === 'done' ? 'closes' : 'refs' })
+  const group = (outcomes, end_state, reason_code) => {
+    const hasPr = outcomes.includes('done')
+    return { ...base, end_state, reason: end_state === 'done' ? '' : 'x', reason_code: end_state === 'done' ? null : reason_code, pr: hasPr ? pr : null, tasks: outcomes.map((o, i) => entry(o, 12 + i, hasPr)) }
+  }
+  // Allowed: done only at the bound done; parked at the bound done (with the run's code) or parked; failed and the
+  // runtime's or budget's stops at every bound.
+  const allowed = { done: ['done', 'parked', 'failed', 'budget_reached', 'halted'], parked: ['parked', 'failed', 'budget_reached', 'halted'], failed: ['failed', 'budget_reached', 'halted'] }
+  for (const [outcomes, bound] of cases) {
+    for (const end of ['done', 'parked', 'failed', 'budget_reached', 'halted']) {
+      const errors = resultErrors(group(outcomes, end, end === 'parked' ? 'merge_gate' : end === 'budget_reached' ? 'budget' : null), {})
+      if (allowed[bound].includes(end)) assert.deepEqual(errors, [], `${outcomes} as ${end}`)
+      else assert.ok(errors.length > 0, `${outcomes} as ${end}`)
+    }
+  }
+  // Every member finished and the run parks as a whole: it names what it waits on.
+  assert.match(resultErrors(group(['done', 'done'], 'parked', null), {}).join('\n'), /a parked run needs the reason_code it waits on/)
+  assert.deepEqual(resultErrors(group(['done', 'parked'], 'parked', null), {}), [])
+  // The loopholes stay closed.
+  const probes = [
+    ['all released, done', { ...group(['released', 'released'], 'done'), pr }],
+    ['a done member, pr null', { ...group(['done', 'done'], 'done'), pr: null }],
+    ['a parked member, done', group(['done', 'parked'], 'done')],
+    ['empty tasks', { ...group(['done'], 'done'), tasks: [] }],
+    ['a ticket twice', (() => { const g = group(['done', 'done'], 'done'); g.tasks[1].ticket = g.tasks[0].ticket; return g })()],
+    ['schema 2 with tasks', { ...group(['done'], 'done'), schema: 2 }],
+    ['a released member with a pr_link', (() => { const g = group(['done', 'released'], 'done'); g.tasks[1].pr_link = 'refs'; return g })()],
+  ]
+  for (const [name, r] of probes) assert.ok(resultErrors(r, {}).length > 0, name)
 })
 
 test('group result: a run file that cannot be used fails closed', async () => {
@@ -132,6 +200,17 @@ const input = (name) => {
   return rest
 }
 const resultFile = (main) => join(main, '.factory', 'runs', '12', 'result.json')
+
+test('group result: the writer writes an honest stop of the whole run after every member finished', () => {
+  const r = scratchRepo()
+  for (const name of ['valid-group-all-done-merge-gate.json', 'valid-group-all-done-failed.json', 'valid-group-finished-budget.json']) {
+    writeFileSync(join(r.main, 'in.json'), JSON.stringify(input(name)))
+    const out = write(r.main, ['in.json'])
+    assert.equal(out.status, 0, `${name}: ${out.stderr}`)
+    assert.equal(JSON.parse(readFileSync(resultFile(r.main), 'utf8')).end_state, fixture(name).end_state)
+  }
+  r.done()
+})
 
 test('group result: the writer writes schema 3 with tasks, schema 2 without', () => {
   const r = scratchRepo()

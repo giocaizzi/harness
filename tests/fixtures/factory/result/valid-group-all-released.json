@@ -1,0 +1,57 @@
+{
+  "schema": 3,
+  "ticket": "acme/app#12",
+  "run_id": "r-1",
+  "end_state": "failed",
+  "reason": "no member was worked",
+  "reason_code": null,
+  "pr": null,
+  "tasks": [
+    {
+      "ticket": "acme/app#12",
+      "outcome": "released",
+      "reason": "not started",
+      "reason_code": null,
+      "pr_link": null,
+      "turns": 12
+    },
+    {
+      "ticket": "acme/app#14",
+      "outcome": "released",
+      "reason": "not part of this change",
+      "reason_code": null,
+      "pr_link": null,
+      "turns": 0
+    }
+  ],
+  "decisions": [],
+  "evidence": [],
+  "checks": [
+    {
+      "command": "make check",
+      "result": "pass"
+    }
+  ],
+  "follow_ups": [],
+  "posts": [],
+  "phases": [
+    {
+      "name": "gate",
+      "started_at": "2026-10-25T09:00:00Z",
+      "ended_at": "2026-10-25T09:02:00Z"
+    },
+    {
+      "name": "record",
+      "started_at": "2026-10-25T09:02:00Z",
+      "ended_at": "2026-10-25T09:03:00Z"
+    }
+  ],
+  "verifier": {
+    "verdict": "pass",
+    "rounds": 1
+  },
+  "harness": "claude-code",
+  "model": "m",
+  "effort": null,
+  "finished_at": "2026-10-25T10:00:00Z"
+}

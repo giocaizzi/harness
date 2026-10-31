@@ -12,7 +12,7 @@ import guardExtension from './pi.mjs'
 // unattended session's GUARD_UNATTENDED=1 must not leak in. The unattended case passes its env explicitly.
 delete process.env.GUARD_STOP_CHECK
 delete process.env.GUARD_UNATTENDED
-for (const k of ['FACTORY_RUN_ID', 'FACTORY_TICKET', 'FACTORY_ATTENDED_RUN_ID', 'FACTORY_ATTENDED_TICKET', 'GUARD_RESULT_GATE']) delete process.env[k]
+for (const k of ['FACTORY_RUN_ID', 'FACTORY_TICKET', 'FACTORY_ATTENDED_RUN_ID', 'FACTORY_ATTENDED_TICKET', 'FACTORY_RUN_FILE', 'GUARD_RESULT_GATE']) delete process.env[k]
 
 const dir = (files = {}) => {
   const d = mkdtempSync(join(tmpdir(), 'adapter-test-'))
