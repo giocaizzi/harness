@@ -1,0 +1,117 @@
+{
+  "schema": 2,
+  "ticket": "acme/app#14",
+  "run_id": "rt-14-1",
+  "end_state": "done",
+  "reason": "",
+  "reason_code": null,
+  "pr": "https://github.com/acme/app/pull/14",
+  "change": {
+    "issues": [
+      "acme/app#12"
+    ],
+    "trigger": "changes_requested",
+    "attempt": 4,
+    "max_attempts": 3,
+    "sources": [
+      "https://github.com/acme/app/pull/14#pullrequestreview-1001",
+      "https://github.com/acme/app/pull/14#discussion_r2001"
+    ],
+    "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "pushed": "b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1"
+  },
+  "decisions": [
+    {
+      "item": "keep empty rows in the export",
+      "test": "R1",
+      "decision": "folded",
+      "where": "b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1"
+    }
+  ],
+  "evidence": [
+    "https://github.com/acme/app/pull/14#issuecomment-3003"
+  ],
+  "checks": [
+    {
+      "command": "make check",
+      "result": "pass"
+    }
+  ],
+  "follow_ups": [],
+  "posts": [
+    {
+      "kind": "result",
+      "url": "https://github.com/acme/app/pull/14#issuecomment-3004",
+      "state": "posted"
+    }
+  ],
+  "phases": [
+    {
+      "name": "gate",
+      "started_at": "2026-10-29T09:00:00Z",
+      "ended_at": "2026-10-29T09:01:00Z"
+    },
+    {
+      "name": "plan",
+      "started_at": "2026-10-29T09:01:00Z",
+      "ended_at": "2026-10-29T09:03:00Z"
+    },
+    {
+      "name": "work",
+      "started_at": "2026-10-29T09:03:00Z",
+      "ended_at": "2026-10-29T09:20:00Z"
+    },
+    {
+      "name": "verify",
+      "started_at": "2026-10-29T09:20:00Z",
+      "ended_at": "2026-10-29T09:30:00Z"
+    },
+    {
+      "name": "ship",
+      "started_at": "2026-10-29T09:30:00Z",
+      "ended_at": "2026-10-29T09:35:00Z"
+    },
+    {
+      "name": "record",
+      "started_at": "2026-10-29T09:35:00Z",
+      "ended_at": "2026-10-29T09:36:00Z"
+    }
+  ],
+  "verifier": {
+    "verdict": "pass",
+    "rounds": 1
+  },
+  "routing": [
+    {
+      "phase": "verify",
+      "policy_model": "opus",
+      "policy_effort": "medium",
+      "model": "opus",
+      "effort": "medium",
+      "deviation_reason": null
+    }
+  ],
+  "cost_usd": null,
+  "tokens": null,
+  "turns": null,
+  "harness": "claude-code",
+  "model": "claude-opus-5-5",
+  "effort": null,
+  "sessions": [
+    {
+      "role": "main",
+      "id": "sess-1",
+      "model": "claude-opus-5-5",
+      "effort": "medium"
+    }
+  ],
+  "plugin_versions": {
+    "factory": "0.22.0"
+  },
+  "host": {
+    "name": "host-1",
+    "os": "linux",
+    "runner": "runtime"
+  },
+  "finished_at": "2026-10-29T09:36:00Z"
+}

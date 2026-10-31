@@ -23,6 +23,19 @@ writers:
   - <github-login>
   - <bot-login>
 
+# Optional: who the factory is on the forge, for change runs on an existing pull request (docs/factory.md, Change runs).
+# logins: what it posts, pushes and reviews as; their events never start a fix, and each must also be in writers.
+# mention: the handle an approver writes on a pull request to ask the factory to act. Delete the block otherwise.
+identity:
+  logins:
+    - <bot-login>
+  mention: "@<bot-handle>"
+
+# Optional: fix attempts per pull request in a change run. Used up, the pull request parks with needs-owner
+# until an approver removes it. Default 3.
+change_requests:
+  max_attempts: 3
+
 labels:
   approval: agent-ok
   claimed: factory-claimed

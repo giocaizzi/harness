@@ -1,0 +1,26 @@
+{
+  "unit": "change_fix",
+  "version": 1,
+  "run_id": "rt-14-1",
+  "change": "acme/app#14",
+  "pr": "https://github.com/acme/app/pull/14",
+  "issues": [
+    "acme/app#12"
+  ],
+  "branch": "factory/12-add-export",
+  "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "trigger": "changes_requested",
+  "attempt": 1,
+  "max_attempts": 3,
+  "items": [
+    {
+      "source": "https://github.com/acme/app/pull/14#issuecomment-3001",
+      "kind": "comment",
+      "author": "drive-by-reviewer",
+      "role": "reviewer",
+      "path": null,
+      "line": null,
+      "text": "Same thing happens in the CSV writer."
+    }
+  ]
+}

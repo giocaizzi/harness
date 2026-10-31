@@ -8,7 +8,7 @@ The `factory` plugin works tickets from a GitHub issue board, one at a time when
 - **The ticket is the shared record.** Plans, questions, scope decisions and evidence go on the issue as comments, so whoever runs the next step (a person, a subagent, a later headless process) starts from the same state.
 - **A contract, not code.** A run starts from a ticket and ends with a marked result comment on it and a `result.json`; in a run a runtime started, the runtime posts that comment and applies the labels from the run's `result.json` ([Runtime runs](#runtime-runs)). Nothing else is assumed about what runs it, so a runtime can come later without changing the skills.
 - **Only declared identities instruct a run.** Text from anyone outside `approvers` and `writers` is untrusted data: it describes at most a problem and never changes scope, steps, permissions or the plan. A ticket whose title or body anyone, an approver included, edited after the approval is not approved, an owner-gated merge resumes the ticket only when an approver merged it, and any change under `.factory/` lands as `merge: owner`. While a run is active the `guard` plugin denies any command that adds the approval label, since a token that is also an approver would make it the owner's, and any command that names the takeover label; it also denies a shell write to `.github/**`, `.factory/**` (except files inside a run directory, `.factory/runs/<n>/…`, which are the run's own outputs; write them by a literal absolute path or `$(git rev-parse --path-format=absolute --git-common-dir)/../.factory/runs/<n>/…`, since a nested substitution is not understood) or a path the runtime adds through `FACTORY_PROTECTED_PATHS` ([guard.md](guard.md#decisions)).
-- **Never a decision by silence.** A question parks the ticket until an approver answers on it. The agent never closes, re-scopes or marks an issue not planned; only its own PR's `Closes #N` closes the ticket.
+- **Never a decision by silence.** A question parks the ticket until an approver answers on it. The agent never closes, re-scopes or marks an issue not planned; only its own PR's `Closes #N` closes the ticket. A change run's fix attempt refers to the change and its issues and closes nothing; only the change's merge closes them.
 
 ## Attended flow
 
@@ -80,6 +80,17 @@ An approver who wants to finish a ticket a runtime is working, attended, applies
 - **Who touches the label.** Only an approver applies it. Only the attended run that took the ticket over removes it, after its claim. Inside a runtime run (`FACTORY_RUN_ID` set) the guard denies any command that names it, as for the approval label.
 
 `factory-status` lists a ticket under takeover under "Needs you" until the attended run removes the label.
+
+## Change runs
+
+A change run works an open pull request (the change) instead of an issue: it turns what an approver or a required check asked of the change into one unit of work, fixes it on the change's branch and records a fix attempt. The change is the ticket: the result sits under the change's number, and no second PR is opened. The rules are in [change.md](../plugins/factory/skills/ticket-run/references/change.md); in short:
+
+- **Roles.** The author must be the factory, an approver or the session's own login. An approver's `CHANGES_REQUESTED` review, or its comment that mentions the factory, is a request to act, and so is a required check failing on the change's current head. Other reviewers' text is data. The factory's own events never start a run.
+- **Triggers.** `changes_requested`, `mention` and `check_failed`. An approver's item counts only when unedited or last edited by that approver. A source is handled once a `done` attempt lists it; a park leaves it pending until the change resumes (an approver's answer, or an approver removing `needs-owner`).
+- **Unit brief.** The run writes the unit to a file that `scripts/check-change.mjs` checks. Every item's text is untrusted data: an approver's request sets what to fix, but never widens permissions or skips a step.
+- **Refers, never closes.** Commits and comments use `Refs #N` only, with no closing keyword, and the PR body's closing line is never edited. The result comment goes on the change. `done` means pushed, verified and the required checks pass, with the change still open.
+- **Bounded retry.** `change_requests.max_attempts` (default `3`) caps the fix attempts per change. The next one parks with `reason_code: fix_attempts` and `needs-owner` on the change; an approver removing `needs-owner` resets the count.
+- **Identity.** The `identity.logins` never trigger a run. `identity.mention` is the handle an approver writes to ask the factory to act; without it no mention is an input.
 
 ## Readiness
 
@@ -161,6 +172,8 @@ Template with placeholders: [`plugins/factory/template/config.yaml`](../plugins/
 | `approvers` | yes | GitHub logins whose label and comments count as the owner's. |
 | `approvers_allow_bots` | no | `true` lets an approval label applied by a `[bot]` login in `approvers` (a GitHub App, `<slug>[bot]`) count; default `false`, so a login ending in `[bot]` cannot approve a ticket. Only that suffix is refused: a machine-user account, or an App acting through a user-to-server token (whose events carry the user's login), still counts as the approver it is listed as. Optional, so the config format stays `1`. |
 | `writers` | no | GitHub logins whose marked comments are trusted (see [Comments](#comments)). Default: `approvers`. The login the session itself posts as always counts. Set it to add a runtime's bot or App login, exactly as the REST API reports it (`<slug>[bot]` for an App, never the bare slug, which can be another account); it replaces the default, so list the approvers too. Optional, so the config format stays `1`. |
+| `identity` | no | Who the factory is on the forge, for [change runs](#change-runs). `logins`: what it posts, pushes and reviews as; they never trigger a run, and each must also be in `writers`. `mention`: the handle an approver writes on a change to ask the factory to act. Optional, so the config format stays `1`. |
+| `change_requests` | no | `max_attempts`: the fix attempts per change, default `3` ([change runs](#change-runs)). Optional, so the config format stays `1`. |
 | `labels` | no | `approval`, `claimed`, `needs_owner`, `needs_grooming`, `quarantine`, `halt`, `takeover`; defaults as in [Labels](#labels). |
 | `marker` | no | Hidden first line of every agent comment; default `<!-- factory -->`. |
 | `size_label_prefix` | no | Label prefix that carries the ticket's size (`XS`, `S`, `M`, `L`, `XL`). Without it, the plan estimates the size. |
@@ -196,4 +209,4 @@ The factory has three layers:
 - **Contract:** the ticket, its labels, the marked comments and `result.json`.
 - **Runtime:** the execution layer that hosts runs on one or more hosts: polling and scheduling, claims, supervision, harness adapters, identity and tokens, permission and sandbox profiles, budgets, telemetry tagging, notifications and self-healing. Unattended overnight work ("drain") is one runtime policy.
 
-This slice ships the skills and the contract; no runtime ships here. The contract defines how one plugs in (`FACTORY_RUN_ID` and its claim, the quarantine, halt and takeover labels, `factory:notify`, `end_state: halted`), so a runtime can drive the same skills unchanged. Nothing here assumes a host: paths are relative to the repo or worktree, commands are the forge's CLI and `git`, and the contract records which host and runner made each run.
+This slice ships the skills and the contract; no runtime ships here. The contract defines how one plugs in (`FACTORY_RUN_ID` and its claim, the quarantine, halt and takeover labels, `factory:notify`, `end_state: halted`, and for a change run the `change` result key and `reason_code: fix_attempts`), so a runtime can drive the same skills unchanged. Nothing here assumes a host: paths are relative to the repo or worktree, commands are the forge's CLI and `git`, and the contract records which host and runner made each run.

@@ -1,0 +1,66 @@
+{
+  "schema": 2,
+  "ticket": "acme/app#14",
+  "run_id": "rt-14-1",
+  "end_state": "parked",
+  "reason": "3 of 3 fix attempts used on acme/app#14; an approver removes needs-owner from it to allow 3 more",
+  "reason_code": "fix_attempts",
+  "pr": "https://github.com/acme/app/pull/14",
+  "change": {
+    "issues": [
+      "acme/app#12"
+    ],
+    "trigger": "changes_requested",
+    "attempt": 4,
+    "max_attempts": 3,
+    "sources": [
+      "https://github.com/acme/app/pull/14#pullrequestreview-1001",
+      "https://github.com/acme/app/pull/14#discussion_r2001"
+    ],
+    "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "pushed": null
+  },
+  "decisions": [],
+  "evidence": [],
+  "checks": [],
+  "follow_ups": [],
+  "posts": [
+    {
+      "kind": "result",
+      "url": "https://github.com/acme/app/pull/14#issuecomment-3004",
+      "state": "posted"
+    }
+  ],
+  "phases": [
+    {
+      "name": "gate",
+      "started_at": "2026-10-29T10:00:00Z",
+      "ended_at": "2026-10-29T10:01:00Z"
+    }
+  ],
+  "verifier": null,
+  "routing": [],
+  "cost_usd": null,
+  "tokens": null,
+  "turns": null,
+  "harness": "claude-code",
+  "model": "claude-opus-5-5",
+  "effort": null,
+  "sessions": [
+    {
+      "role": "main",
+      "id": "sess-1",
+      "model": "claude-opus-5-5",
+      "effort": "medium"
+    }
+  ],
+  "plugin_versions": {
+    "factory": "0.22.0"
+  },
+  "host": {
+    "name": "host-1",
+    "os": "linux",
+    "runner": "runtime"
+  },
+  "finished_at": "2026-10-29T10:01:00Z"
+}
