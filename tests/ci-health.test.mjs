@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { windows, windowOf, dateChunks, percentile, duration, windowStats, mergeStats, flags, auditWorkflows, analyze, report, repoTable, collect, countFlakes, sampleWaits, MIN_RUNS, GROWTH, main, limited, GhError, parseIncluded, includeRunner, retrying, MAX_WAIT, fetchChunk, fetchWorkflows, hasMergeQueue, errorLine, isPartial } from '../scripts/ci-health.mjs'
+import { windows, windowOf, dateChunks, percentile, duration, windowStats, mergeStats, flags, auditWorkflows, analyze, report, repoTable, collect, countFlakes, sampleWaits, MIN_RUNS, GROWTH, main, limited, GhError, parseIncluded, includeRunner, retrying, MAX_WAIT, fetchChunk, splitRange, fetchWorkflows, hasMergeQueue, errorLine, isPartial } from '../scripts/ci-health.mjs'
 
 const NOW = Date.parse('2026-10-30T12:00:00Z')
 const iso = (d, t = '00:00:00') => `2026-10-${d}T${t}Z`
@@ -399,23 +399,34 @@ test('merge queue: a 404 is no rules, another failure is counted', async () => {
   assert.equal(t.queue, 2)
 })
 
-test('a run chunk over the 1000 cap is refetched per day, and a day still over it is truncated', async () => {
+test('a run range over the 1000 cap is refetched by day, 6 hours and hour, and an hour still over it is truncated', async () => {
   const seen = []
   const runner = async (a) => {
     const created = a.find((x) => x.startsWith('created=')).slice(8)
     const page = Number(a.find((x) => x.startsWith('page=')).slice(5))
     seen.push(`${created}#${page}`)
-    if (seen.length > 100) throw new Error('paged past the 1000-run cap')
+    if (seen.length > 400) throw new Error('paged past the 1000-run cap')
     const [from, to] = created.split('..')
-    if (from !== to) return JSON.stringify({ total_count: 1500, workflow_runs: Array.from({ length: 100 }, () => run()) })
-    if (from === '2026-10-02') return JSON.stringify({ total_count: 1200, workflow_runs: Array.from({ length: 100 }, () => run()) })
+    const over = from !== to && from.length === 10 ? true : from === '2026-10-02' || created === '2026-10-02T00:00:00Z..2026-10-02T05:59:59Z' || from === '2026-10-02T03:00:00Z'
+    if (over) return JSON.stringify({ total_count: 1500, workflow_runs: Array.from({ length: 100 }, () => run()) })
     return JSON.stringify({ total_count: 1, workflow_runs: page === 1 ? [run()] : [] })
   }
   const tally = {}
   const runs = await fetchChunk(runner, 'h', 'acme/app', '2026-10-01', '2026-10-03', tally)
   assert.equal(tally.truncated, 1)
-  assert.equal(runs.length, 1 + 1000 + 1)
+  // days 1 and 3 (1 each), day 2: three 6-hour parts (1 each), and the first 6 hours by hour: 5 hours (1 each) + one truncated hour (1000)
+  assert.equal(runs.length, 2 + 3 + 5 + 1000)
   assert.equal(seen.filter((x) => x.startsWith('2026-10-01..2026-10-03')).length, 10)
+  assert.ok(seen.includes('2026-10-02T06:00:00Z..2026-10-02T11:59:59Z#1'))
+  assert.ok(seen.includes('2026-10-02T03:00:00Z..2026-10-02T03:59:59Z#1'))
+})
+
+test('splitRange ladders a week to days, a day to 6 hours, 6 hours to hours, and stops at an hour', () => {
+  assert.deepEqual(splitRange('2026-10-01', '2026-10-02'), [['2026-10-01', '2026-10-01'], ['2026-10-02', '2026-10-02']])
+  assert.deepEqual(splitRange('2026-10-02', '2026-10-02')[1], ['2026-10-02T06:00:00Z', '2026-10-02T11:59:59Z'])
+  assert.equal(splitRange('2026-10-02', '2026-10-02').length, 4)
+  assert.equal(splitRange('2026-10-02T00:00:00Z', '2026-10-02T05:59:59Z').length, 6)
+  assert.equal(splitRange('2026-10-02T03:00:00Z', '2026-10-02T03:59:59Z'), null)
 })
 
 test('greenTimes drops negative durations from clock skew', () => {

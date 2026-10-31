@@ -166,17 +166,33 @@ export async function fetchRuns(runner, host, repo, from, to) {
   }
 }
 
-// A 7-day chunk over the cap is fetched again one day at a time; a day still over it counts as truncated.
+// A range over the cap is fetched again in smaller parts: a week by day, a day by 6 hours, 6 hours by hour; an hour
+// still over the cap counts as truncated. `created` takes dates or ISO timestamps.
+const HOUR = 3600000
+const stamp = (ms) => `${new Date(ms).toISOString().slice(0, 19)}Z`
+export function splitRange(from, to) {
+  if (from.length === 10 && from !== to) {
+    const days = []
+    for (let s = Date.parse(from); s <= Date.parse(to); s += DAY) days.push([day(s), day(s)])
+    return days
+  }
+  const start = Date.parse(from.length === 10 ? `${from}T00:00:00Z` : from)
+  const end = from.length === 10 ? start + DAY : Date.parse(to) + 1000
+  const step = end - start > 6 * HOUR ? 6 * HOUR : HOUR
+  if (end - start <= HOUR) return null
+  const out = []
+  for (let s = start; s < end; s += step) out.push([stamp(s), stamp(Math.min(s + step, end) - 1000)])
+  return out
+}
+
 export async function fetchChunk(runner, host, repo, from, to, tally) {
   const first = await attempt(() => fetchRuns(runner, host, repo, from, to), tally, 'runs')
-  if (!first?.truncated || from === to) {
+  const parts = first?.truncated ? splitRange(from, to) : null
+  if (!parts) {
     if (first?.truncated) tally.truncated = (tally.truncated || 0) + 1
     return first?.runs || []
   }
-  const days = []
-  for (let s = Date.parse(from); s <= Date.parse(to); s += DAY) days.push(day(s))
-  const parts = await Promise.all(days.map((d) => fetchChunk(runner, host, repo, d, d, tally)))
-  return parts.flat()
+  return (await Promise.all(parts.map(([f, t]) => fetchChunk(runner, host, repo, f, t, tally)))).flat()
 }
 
 // Merged PRs by every author, through GraphQL search: the REST search API allows only 30 requests a minute.
@@ -524,7 +540,7 @@ export function report(agg, range) {
     `| Repos measured | ${agg.repos} | ${agg.repos} |`,
     `| Repos left out as partial (a query failed or hit the 1000-run cap) | - | ${agg.partial} |`,
     `| Queries failed after retries | - | ${agg.failedQueries}${agg.failedByKind.length ? ` (${agg.failedByKind.map(([k, n]) => `${k} ${n}`).join(', ')})` : ''} |`,
-    `| Run queries truncated at 1000 runs (one day over the cap) | - | ${agg.truncated} |`,
+    `| Run queries truncated at 1000 runs (one hour over the cap) | - | ${agg.truncated} |`,
     row('Merged PRs (all authors, in the measured repos)', (s) => s.mergedPrs),
     row('PR runs per merged PR', (s) => one(s.prRunsPerPr)),
     row('Merge-group runs per merged PR', (s) => one(s.mgRunsPerPr)),
