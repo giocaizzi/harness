@@ -82,6 +82,7 @@ const RESULT_MUTATIONS = [
   ['pr is the ticket but change missing', 'result-valid-fix-done.json', (r) => { delete r.change }, /pr is the ticket itself/],
   ['pr is the ticket but change null', 'result-valid-fix-done.json', (r) => { r.change = null }, /pr is the ticket itself/],
   ['gate and plan but change missing', 'result-valid-gate-stop.json', (r) => { r.phases.push({ name: 'plan', started_at: null, ended_at: null }) }, /pr is the ticket itself/],
+  ['gate alone but done, change missing', 'result-valid-gate-stop.json', (r) => { Object.assign(r, { end_state: 'done', reason: '', reason_code: null }) }, /pr is the ticket itself/],
   ['issues include the ticket ignoring case', 'result-valid-fix-done.json', (r) => { r.change.issues = ['ACME/APP#14'] }, /must not include the change/],
   ['issues duplicated ignoring case', 'result-valid-fix-done.json', (r) => { r.change.issues = ['acme/app#12', 'ACME/APP#12'] }, /change\.issues: must be a non-empty array of unique/],
 ]

@@ -71,8 +71,8 @@ export const changeErrors = (result) => {
     const t = typeof result.ticket === 'string' ? /^([\w.-]+)\/([\w.-]+)#(\d+)$/.exec(result.ticket) : null
     const q = typeof result.pr === 'string' ? PULL.exec(result.pr) : null
     // Issues and PRs share one number space: an issue run's PR never has the ticket's number.
-    // A stop at the gate (`phases` holding `gate` alone) wrote no unit, so it carries no change.
-    const gateStop = Array.isArray(result.phases) && result.phases.length === 1 && result.phases[0]?.name === 'gate'
+    // A stop at the gate (`phases` holding `gate` alone, never done) wrote no unit, so it carries no change.
+    const gateStop = result.end_state !== 'done' && Array.isArray(result.phases) && result.phases.length === 1 && result.phases[0]?.name === 'gate'
     if (!gateStop && t && q && q[1].toLowerCase() === t[1].toLowerCase() && q[2].toLowerCase() === t[2].toLowerCase() && q[3] === t[3]) errors.push('change: pr is the ticket itself, so this is a change run and needs change')
     return errors
   }
@@ -193,7 +193,7 @@ const runFileErrors = (tasks, env) => {
   const cannot = (why) => [`tasks: cannot check against the run file ${show(path)} (${why})`]
   let members
   try {
-    members = JSON.parse(readFileSync(path, 'utf8').replace(/^\uFEFF/, '')).members
+    members = JSON.parse(readFileSync(path, 'utf8').replace(/^\uFEFF/, ''))?.members
   } catch (e) {
     return cannot(e.code === 'ENOENT' ? 'no such file' : e instanceof SyntaxError ? 'not valid JSON' : `cannot read (${e.code ?? e.message})`)
   }

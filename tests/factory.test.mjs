@@ -9,6 +9,9 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { evaluateCommand, touchesApprovalLabel } from '../plugins/guard/core/engine.mjs'
 import { rules } from '../plugins/guard/core/rules.mjs'
 
+// The runtime's variables never reach these tests: each case sets the ones it needs.
+for (const k of ['FACTORY_RUN_ID', 'FACTORY_TICKET', 'FACTORY_RUN_FILE']) delete process.env[k]
+
 const repo = join(dirname(fileURLToPath(import.meta.url)), '..')
 const read = (rel) => readFileSync(join(repo, rel), 'utf8')
 const doc = read('docs/factory.md')

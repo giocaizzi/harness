@@ -22,7 +22,7 @@ The multi-task brief a runtime hands the run, one JSON object in the file named 
 | `lead` | string | The lead, `<owner>/<repo>#<number>`; equal to `FACTORY_TICKET` when that is set. |
 | `members` | array | Non-empty: one `{ticket}` object per member (that key only), each `<owner>/<repo>#<number>`, all in one repo, the lead's, and no number twice (compared ignoring case), the lead first. |
 
-The members' order is the order of `tasks`: with `FACTORY_RUN_FILE` set, `check-result.mjs` (and so `write-result.mjs` and the guard plugin's result gate) rejects `tasks` whose tickets are not the members' tickets, exactly and in that order, and a run file it cannot read.
+The members' order is the order of `tasks`: with `FACTORY_RUN_FILE` set, `check-result.mjs` (and so `write-result.mjs` and the guard plugin's result gate) rejects `tasks` whose tickets are not the members' tickets, exactly and in that order, and a run file it cannot read. A relative `FACTORY_RUN_FILE` is read from the session directory: the result gate resolves it against the session's `cwd`, and `write-result.mjs` against its own working directory, so the run calls it from the session directory.
 
 ## Member brief
 

@@ -8,6 +8,9 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { BRIEF_KEYS, RESULT_KEYS, RUN_KEYS, briefErrors, memberResultErrors, memberTask, runFileErrors } from '../plugins/factory/skills/ticket-run/scripts/check-handoff.mjs'
 
+// The runtime's variables never reach these tests: each case sets the ones it needs.
+for (const k of ['FACTORY_RUN_ID', 'FACTORY_TICKET', 'FACTORY_RUN_FILE']) delete process.env[k]
+
 const repo = join(dirname(fileURLToPath(import.meta.url)), '..')
 const script = join(repo, 'plugins/factory/skills/ticket-run/scripts/check-handoff.mjs')
 const fixtures = join(repo, 'tests/fixtures/factory/handoff')

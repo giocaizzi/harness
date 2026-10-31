@@ -98,6 +98,7 @@ test('group result: a run file that cannot be used fails closed', async () => {
       [join(dir, 'missing.json'), /no such file/],
       [put('bad.json', '{'), /not valid JSON/],
       [put('nomembers.json', '{}'), /no members list/],
+      [put('null.json', 'null'), /no members list/],
       [put('empty.json', '{"members":[]}'), /no members list/],
       [put('badticket.json', '{"members":[{"ticket":1}]}'), /no members list/],
       [dir, /cannot read \(EISDIR\)/],
