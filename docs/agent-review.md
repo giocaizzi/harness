@@ -25,7 +25,22 @@ A telemetry finding becomes an issue only with a reproduction (command text or a
 
 ## PR graph
 
-`make pr-graph [RANGE=30d]` measures how consistently dependent PRs are stacked. It reads your own PRs through the `gh` GraphQL search on every authenticated host, across all owners, and prints aggregates only: the stacked share, open-together pairs already stacked, and should-have-been-stacked pairs (open together, sharing a file, not stacked), with the manifest-only ones split out. `node scripts/pr-graph.mjs --repos` adds a per-repo table for local reading; never paste it into a PR, issue or committed file. It needs no Loki and skips cleanly, printing one line, without `gh` authentication.
+`make pr-graph [RANGE=30d]` measures how your PRs are sized, paced and stacked. It reads your own PRs through the `gh` GraphQL search on every authenticated host, across all owners, and prints aggregates only:
+
+- size and pace: PRs per day, changed lines (additions plus deletions) at p25, p50, p75 and p90, the share of PRs of 10 lines or fewer, the share of manifest-only PRs (every file a version manifest or changelog) and the median open-to-merge time;
+- stacking: the stacked share, open-together pairs already stacked, and should-have-been-stacked pairs (open together, sharing a file, not stacked). The primary pair row drops hot files, the ones touched by more than 20% of a repo's PRs in the window and by at least 3 of them (an index, a changelog, a manifest every PR edits), so a pair counts only when it shares a file that is not hot. The old row, any shared file, stays as a secondary row, with its manifest-only pairs split out.
+
+`node scripts/pr-graph.mjs --repos` adds a per-repo table for local reading; never paste it into a PR, issue or committed file. It needs no Loki and skips cleanly, printing one line, without `gh` authentication.
+
+## CI health
+
+`make ci-health [RANGE=30d]` compares the current window with the one before it, side by side, so it needs no stored baseline and writes nothing to disk. It measures the repos you merged PRs into across both windows (the same `gh` search as the PR graph, every authenticated host), read-only:
+
+- runs: workflow runs per merged PR, PR runs and merge-group runs apart; run time and queue-to-green (run created to success, re-runs included) at p50 and p90; queue wait (job start minus job created, on a sample of 30 runs per repo and window); the cancelled, failure and re-run (a second attempt) shares; a flake proxy (a re-run that passed after its previous attempt failed); the merge-group eject rate (merge-group runs that failed or were cancelled); and skipped-run noise (runs skipped outright);
+- flags: repos whose critical path (run time p50) grew by 20% or more, or whose re-run share rose, against their previous window, each with at least 5 runs in both windows;
+- workflow audit, per repo, summed: concurrency set, PR workflows cancelling superseded runs, `timeout-minutes` on jobs (reusable-workflow calls excluded), a `merge_group` trigger where the default branch has a merge queue, trigger-level path filters without an aggregate check (a job with `needs:` and `if: always()`), caches, actions pinned by SHA and top-level `permissions`. The audit reads workflow files line by line, without a YAML parser.
+
+Skipped runs count only toward the noise figure. `node scripts/ci-health.mjs --repos` adds a per-repo table with each repo's flags for local reading; never paste it into a PR, issue or committed file. It skips cleanly, printing one line, without `gh` authentication. How to read each figure and when to act: [reading.md](../.agents/skills/agent-review/references/reading.md).
 
 ## Tracing hook_prompt spend
 
