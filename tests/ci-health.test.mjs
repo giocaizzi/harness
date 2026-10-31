@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { windows, windowOf, dateChunks, percentile, duration, windowStats, mergeStats, flags, auditWorkflows, analyze, report, repoTable, collect, countFlakes, sampleWaits, MIN_RUNS, GROWTH, main, limited } from '../scripts/ci-health.mjs'
+import { windows, windowOf, dateChunks, percentile, duration, windowStats, mergeStats, flags, auditWorkflows, analyze, report, repoTable, collect, countFlakes, sampleWaits, MIN_RUNS, GROWTH, main, limited, GhError, parseIncluded, includeRunner, retrying, MAX_WAIT, fetchChunk, fetchWorkflows, hasMergeQueue, errorLine, isPartial } from '../scripts/ci-health.mjs'
 
 const NOW = Date.parse('2026-10-30T12:00:00Z')
 const iso = (d, t = '00:00:00') => `2026-10-${d}T${t}Z`
@@ -216,7 +216,7 @@ function fakeRunner(over = {}) {
     if (path === 'repos/acme/app/contents/.github/workflows') return JSON.stringify([{ type: 'file', name: 'a.yml', path: '.github/workflows/a.yml' }, { type: 'file', name: 'README.md', path: '.github/workflows/README.md' }])
     if (path === 'repos/acme/app/contents/.github/workflows/a.yml') return JSON.stringify({ content: b64('on: merge_group\njobs: {}\n') })
     if (path === 'repos/acme/app/rules/branches/main') return JSON.stringify([{ type: 'merge_queue' }])
-    throw new Error('404 acme/app')
+    throw new GhError(404)
   }
   return { runner, calls }
 }
@@ -257,9 +257,15 @@ test('a failed query continues and names no repo', async () => {
   const seen = []
   console.error = (m) => seen.push(m)
   try {
-    const repos = await collect(runner, 30, NOW)
+    const repos = await collect(runner, 30, NOW, 6, { tries: 1 })
     assert.equal(repos[0].cur.runs.length, 0)
     assert.equal(repos[0].files.length, 1)
+    assert.equal(repos[0].failures.runs, 9)
+    assert.ok(isPartial(repos[0]))
+    const agg = analyze(repos)
+    assert.deepEqual([agg.repos, agg.partial, agg.failedQueries, agg.cur.completed], [0, 1, 9, 0])
+    assert.match(report(agg, '30d'), /\| Repos left out as partial[^\n]*\| - \| 1 \|\n\| Queries failed after retries \| - \| 9 \|/)
+    assert.match(repoTable(agg), /github\.com\/acme\/app \| unknown \| unknown[^\n]*partial: 9 failed, 0 truncated/)
   } finally {
     console.error = err
   }
@@ -322,8 +328,10 @@ test('report has no repo names and the exact rows; repoTable has them', () => {
   const agg = analyze([rec])
   const out = report(agg, '30d')
   assert.ok(!out.includes('acme'))
-  assert.match(out, /## CI health \(last 30d vs the 30d before, every repo gh can reach\)/)
-  assert.match(out, /\| Merged PRs \| 1 \| 2 \|/)
+  assert.match(out, /## CI health \(last 30d vs the 30d before, repos you merged a PR into, every host gh can reach\)/)
+  assert.match(out, /\| Merged PRs \(all authors, in the measured repos\) \| 1 \| 2 \|/)
+  assert.match(out, /\| Repos left out as partial[^\n]*\| - \| 0 \|/)
+  assert.match(out, /repos you merged a PR into, every host gh can reach/)
   assert.match(out, /\| PR runs per merged PR \| 1\.0 \| 0\.5 \|/)
   assert.match(out, /\| Re-run share \| 100% \(1\) \| 0% \(0\) \|/)
   assert.match(out, /\| Queue wait p50 \/ p90 \(sampled jobs\) \| - \/ - \| 30s \/ 30s \|/)
@@ -331,4 +339,151 @@ test('report has no repo names and the exact rows; repoTable has them', () => {
   assert.match(out, /\| Repos with a merge queue and no merge_group trigger \| 1 \|/)
   assert.match(out, /How to read each figure: \.agents\/skills\/agent-review\/references\/reading\.md \(CI health\)\./)
   assert.match(repoTable(agg), /Local detail: never paste[\s\S]*github\.com\/acme\/app \| 2 \| 2 \|[^\n]*queue without merge_group/)
+})
+
+// ---- failures are counted, never read as zeros (review round 1) ----
+const quiet = async (fn) => {
+  const err = console.error
+  console.error = () => {}
+  try {
+    return await fn()
+  } finally {
+    console.error = err
+  }
+}
+
+test('a failed merged-PR count is null and counted, and the repo is partial', async () => {
+  const { runner } = fakeRunner()
+  const failing = async (a) => {
+    if (a[1] === 'graphql' && a.some((x) => x.includes('issueCount'))) throw new GhError(502)
+    return runner(a)
+  }
+  const [r] = await quiet(() => collect(failing, 30, NOW, 6, { tries: 1 }))
+  assert.deepEqual([r.prev.mergedPrs, r.cur.mergedPrs, r.failures.merged], [null, null, 2])
+  const agg = analyze([r])
+  assert.deepEqual([agg.repos, agg.partial, agg.cur.mergedPrs], [0, 1, 0])
+})
+
+test('a partial repo is left out of the figures and the flags', () => {
+  const runs = Array.from({ length: 6 }, () => run({ run_attempt: 2 }))
+  const ok = { key: 'h/acme/ok', prev: { runs: runs.map((x) => ({ ...x, run_attempt: 1 })), mergedPrs: 1, waits: [], flakes: 0 }, cur: { runs, mergedPrs: 1, waits: [], flakes: 0 }, files: [], hasQueue: false, failures: {}, truncated: 0 }
+  const bad = { ...ok, key: 'h/acme/bad', failures: { jobs: 1 } }
+  const cut = { ...ok, key: 'h/acme/cut', truncated: 1 }
+  const agg = analyze([ok, bad, cut])
+  assert.deepEqual([agg.repos, agg.partial, agg.rerunGrew, agg.cur.completed, agg.truncated, agg.failedQueries], [1, 2, 1, 6, 1, 1])
+  assert.equal(agg.perRepo['h/acme/bad'].rerunGrew, false)
+})
+
+test('workflows: a 404 is no directory, another failure is counted, a file over 1 MB is skipped and counted', async () => {
+  const t1 = {}
+  assert.deepEqual(await fetchWorkflows(async () => { throw new GhError(404) }, 'h', 'acme/app', t1), { files: [], tooLarge: 0 })
+  assert.equal(t1.workflows, undefined)
+  const t2 = {}
+  await quiet(() => fetchWorkflows(async () => { throw new GhError(500) }, 'h', 'acme/app', t2))
+  assert.equal(t2.workflows, 1)
+  const big = async (a) => (a.at(-1).endsWith('workflows') ? JSON.stringify([{ type: 'file', name: 'a.yml', path: '.github/workflows/a.yml' }, { type: 'file', name: 'b.yml', path: '.github/workflows/b.yml' }]) : a.at(-1).endsWith('a.yml') ? JSON.stringify({ content: '', encoding: 'none', size: 2000000 }) : JSON.stringify({ content: b64('on: push\n') }))
+  const w = await fetchWorkflows(big, 'h', 'acme/app', {})
+  assert.deepEqual([w.files.length, w.tooLarge], [1, 1])
+  const agg = analyze([{ key: 'h/acme/app', prev: { runs: [], mergedPrs: 0, waits: [], flakes: 0 }, cur: { runs: [], mergedPrs: 0, waits: [], flakes: 0 }, files: w.files, tooLarge: w.tooLarge, hasQueue: false, failures: {}, truncated: 0 }])
+  assert.match(report(agg, '30d'), /\| Workflow files skipped \(over 1 MB, the contents API limit\) \| 1 \|/)
+})
+
+test('merge queue: a 404 is no rules, another failure is counted', async () => {
+  const t = {}
+  assert.equal(await hasMergeQueue(async () => { throw new GhError(404) }, 'h', 'acme/app', 'main', t), false)
+  assert.equal(t.queue, undefined)
+  await quiet(() => hasMergeQueue(async () => { throw new GhError(503) }, 'h', 'acme/app', 'main', t))
+  assert.equal(t.queue, 1)
+})
+
+test('a run chunk over the 1000 cap is refetched per day, and a day still over it is truncated', async () => {
+  const seen = []
+  const runner = async (a) => {
+    const created = a.find((x) => x.startsWith('created=')).slice(8)
+    const page = Number(a.find((x) => x.startsWith('page=')).slice(5))
+    seen.push(`${created}#${page}`)
+    if (seen.length > 100) throw new Error('paged past the 1000-run cap')
+    const [from, to] = created.split('..')
+    if (from !== to) return JSON.stringify({ total_count: 1500, workflow_runs: Array.from({ length: 100 }, () => run()) })
+    if (from === '2026-10-02') return JSON.stringify({ total_count: 1200, workflow_runs: Array.from({ length: 100 }, () => run()) })
+    return JSON.stringify({ total_count: 1, workflow_runs: page === 1 ? [run()] : [] })
+  }
+  const tally = {}
+  const runs = await fetchChunk(runner, 'h', 'acme/app', '2026-10-01', '2026-10-03', tally)
+  assert.equal(tally.truncated, 1)
+  assert.equal(runs.length, 1 + 1000 + 1)
+  assert.equal(seen.filter((x) => x.startsWith('2026-10-01..2026-10-03')).length, 10)
+})
+
+test('greenTimes drops negative durations from clock skew', () => {
+  const s = S([run({ created_at: iso('05', '10:05:00'), updated_at: iso('05', '10:03:00') }), run()])
+  assert.deepEqual(s.greenTimes, [3 * MIN])
+})
+
+test('includeRunner parses --include output and turns a failure into a GhError without the command line', async () => {
+  const ok = await includeRunner(['api', 'x'], async (a) => {
+    assert.equal(a[1], '--include')
+    return 'HTTP/2.0 200 OK\r\nX-Ratelimit-Remaining: 9\r\n\r\n{"a":1}'
+  })
+  assert.equal(ok, '{"a":1}')
+  assert.equal(await includeRunner(['auth', 'status'], async (a) => a.join(' ')), 'auth status')
+  const e = await includeRunner(['api', 'repos/acme/app'], async () => { throw Object.assign(new Error('Command failed: gh api repos/acme/app'), { stdout: 'HTTP/2.0 429 Too Many\nRetry-After: 7\nX-RateLimit-Remaining: 0\nX-RateLimit-Reset: 100\n\n{}' }) }).catch((x) => x)
+  assert.ok(e instanceof GhError)
+  assert.deepEqual([e.status, e.retryAfter, e.remaining, e.reset], [429, 7, 0, 100])
+  assert.ok(!e.message.includes('acme'))
+  assert.deepEqual(parseIncluded('plain'), { status: null, headers: {}, body: 'plain' })
+})
+
+test('retrying honours Retry-After, backs off on 5xx, stops at the try limit and skips plain failures', async () => {
+  const waits = []
+  const wait = async (s) => { waits.push(s) }
+  let n = 0
+  const flaky = async () => {
+    n++
+    if (n === 1) throw new GhError(429, { 'retry-after': '7' })
+    if (n === 2) throw new GhError(502)
+    if (n === 3) throw new GhError(403, { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': '1030' })
+    return 'ok'
+  }
+  assert.equal(await retrying(flaky, { wait, now: () => 1000000 })(['api']), 'ok')
+  assert.deepEqual(waits, [7, 4, 31])
+  let m = 0
+  await assert.rejects(retrying(async () => { if (++m > 10) return 'retried past the limit'; throw new GhError(500) }, { tries: 3, wait })(['api']))
+  assert.equal(m, 3)
+  let p = 0
+  await assert.rejects(retrying(async () => { p++; throw new GhError(403) }, { wait })(['api']))
+  await assert.rejects(retrying(async () => { p++; throw new GhError(404) }, { wait })(['api']))
+  assert.equal(p, 2)
+  let q = 0
+  await assert.rejects(retrying(async () => { q++; throw new GhError(429, { 'retry-after': String(MAX_WAIT + 1) }) }, { wait })(['api']))
+  assert.equal(q, 1)
+})
+
+test('the top-level error line withholds a gh command line', () => {
+  assert.equal(errorLine(new Error('bad --range "x" (use Nd or Nw)')), 'bad --range "x" (use Nd or Nw)')
+  assert.ok(!errorLine(new Error('Command failed: gh api repos/acme/app/actions/runs')).includes('acme'))
+})
+
+test('collect retries a rate-limited call instead of counting it failed', async () => {
+  const { runner } = fakeRunner()
+  let hit = 0
+  const once = async (a) => {
+    if (a.includes('repos/acme/app/actions/runs') && !hit++) throw new GhError(429, { 'retry-after': '1' })
+    return runner(a)
+  }
+  const waits = []
+  const [r] = await quiet(() => collect(once, 30, NOW, 6, { wait: async (s) => { waits.push(s) } }))
+  assert.deepEqual([r.failures.runs, waits], [undefined, [1]])
+})
+
+test('a failed repo-discovery query is counted in the report', async () => {
+  const { runner } = fakeRunner()
+  const failing = async (a) => {
+    if (a[1] === 'graphql' && field(a, 'q').startsWith('author:@me') && field(a, 'q').endsWith('2026-10-27..2026-10-30')) throw new GhError(500)
+    return runner(a)
+  }
+  const repos = await quiet(() => collect(failing, 30, NOW, 6, { tries: 1 }))
+  const agg = analyze(repos)
+  assert.deepEqual([repos.discoveryFailed, agg.failedQueries, agg.discoveryFailed], [1, 1, 1])
+  assert.match(report(agg, '30d'), /\| Queries failed after retries \| - \| 1 \|/)
 })
