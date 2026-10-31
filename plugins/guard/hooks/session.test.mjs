@@ -202,6 +202,24 @@ test("result gate: a runtime run's invalid result, broken JSON or another run's 
   }
 })
 
+test("result gate: a group run's tasks follow FACTORY_RUN_FILE, a relative path read from the session's directory", async () => {
+  const task = (n) => ({ ticket: `acme/app#${n}`, outcome: 'done', reason: '', reason_code: null, pr_link: 'closes' })
+  const group = validResult({ schema: 3, pr: 'https://github.com/acme/app/pull/20', tasks: [task(12), task(13)] })
+  const withRun = (members) => {
+    const cwd = gateRepo(group)
+    writeFileSync(join(cwd, 'run.json'), JSON.stringify({ schema: 1, run_id: 'run-1', lead: 'acme/app#12', members: members.map((n) => ({ ticket: `acme/app#${n}` })) }))
+    return cwd
+  }
+  const env = { ...RUNTIME, FACTORY_RUN_FILE: 'run.json' }
+  try {
+    assert.equal(await resultGate({ cwd: withRun([12, 13]) }, undefined, env), null)
+    assert.match(await resultGate({ cwd: withRun([12, 14]) }, undefined, env), /block 1 of 2[\s\S]*differ from the run file's members/)
+    assert.match(await resultGate({ cwd: gateRepo(group) }, undefined, env), /block 1 of 2[\s\S]*cannot check against the run file/)
+  } finally {
+    delete process.env.CLAUDE_PLUGIN_DATA
+  }
+})
+
 test("result gate: an attended run is held only to an invalid file carrying its own run id", async () => {
   try {
     assert.equal(await resultGate({ cwd: gateRepo() }, undefined, ATTENDED), null)

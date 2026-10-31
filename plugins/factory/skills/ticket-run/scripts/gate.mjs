@@ -147,7 +147,7 @@ export const judge = ({ config, env, host, login, issue, timeline, edit, comment
     if (edit === null || typeof edit !== 'object' || Array.isArray(edit) || !('lastEditedAt' in edit) || (edit.lastEditedAt !== null && typeof edit.lastEditedAt !== 'string')) return 'refuse: the last edit of the body could not be read'
     // No string time: '' orders below every string, as the jq filter's null does, so an edit counts as after the approval.
     const at = typeof approval.created_at === 'string' ? approval.created_at : ''
-    // A rename with no string time counts as after the approval too, as jq's null >= null does.
+    // The gate counts a rename with no string time as after the approval. That agrees with the jq filter when the approval has no time either; otherwise it can only refuse where the filter lets the ticket through (fail closed; GitHub always sends a string time).
     const rename = timeline.filter((e) => e.event === 'renamed' && (typeof e.created_at !== 'string' || e.created_at >= at)).at(-1)
     if (edit.lastEditedAt !== null && edit.lastEditedAt >= at) return `refuse: body edited after approval by ${edit.editor?.login ?? 'an unknown editor'}`
     if (rename) return `refuse: title renamed after approval by ${rename.actor?.login ?? 'an unknown actor'}`
