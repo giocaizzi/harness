@@ -56,9 +56,15 @@ const scalar = (raw, key) => {
 export const parseConfig = (text) => {
   const top = {}
   let current = null
-  for (const raw of text.replace(/^﻿/, '').replace(/\r/g, '').split('\n')) {
+  let first = true
+  for (const raw of text.replace(/^\uFEFF/, '').replace(/\r/g, '').split('\n')) {
     const line = uncomment(raw).trimEnd()
     if (!line.trim()) continue
+    if (first && line === '---') {
+      first = false
+      continue
+    }
+    first = false
     const m = /^([A-Za-z_][\w-]*):(?:\s+(.*))?$/.exec(line)
     if (m) {
       current = { inline: (m[2] ?? '').trim(), block: [] }
@@ -139,7 +145,8 @@ export const judge = ({ config, env, host, login, issue, timeline, edit, comment
     const approval = lastEvent(labels.approval, ['labeled', 'unlabeled'])
     if (!approval || approval.event !== 'labeled' || !apr(approval.actor?.login) || !has(labels.approval)) return 'refuse: not approved by an approver'
     if (edit === null || typeof edit !== 'object' || Array.isArray(edit) || !('lastEditedAt' in edit) || (edit.lastEditedAt !== null && typeof edit.lastEditedAt !== 'string')) return 'refuse: the last edit of the body could not be read'
-    const at = approval.created_at
+    // No string time: '' orders below every string, as the jq filter's null does, so an edit counts as after the approval.
+    const at = typeof approval.created_at === 'string' ? approval.created_at : ''
     const rename = timeline.filter((e) => e.event === 'renamed' && e.created_at >= at).at(-1)
     if (edit.lastEditedAt !== null && edit.lastEditedAt >= at) return `refuse: body edited after approval by ${edit.editor?.login ?? 'an unknown editor'}`
     if (rename) return `refuse: title renamed after approval by ${rename.actor?.login ?? 'an unknown actor'}`
@@ -159,7 +166,8 @@ export const judge = ({ config, env, host, login, issue, timeline, edit, comment
   let claim
   if (runId) {
     const mine = claims.filter((c) => c['run id'] === runId)
-    if (!claimOn) claim = { state: 'none' }
+    const runtimeMine = mine.filter((c) => lc(c.runner ?? '') === 'runtime').at(-1)
+    if (!claimOn) claim = runtimeMine ? { state: 'own', comment_id: runtimeMine.id, url: runtimeMine.url } : { state: 'none' }
     else if (!mine.length) {
       // Runtime claim not from a writer: name the claim label's last labeled actor only when exactly one marked claim
       // with this run id is theirs; print logins only, never a body.
@@ -254,7 +262,7 @@ const main = (argv, env) => {
     verdict = { number: n, ...judge({ config, env, host: hostname(), ...read(n) }) }
   } catch (e) {
     if (!(e instanceof ReadError)) throw e
-    verdict = { number: n, verdict: 'stop', stop: { check: 'read', reason: `${e.message}: a read that fails counts as no`, reason_code: null } }
+    verdict = { number: n, verdict: 'stop', stop: { check: 'read', reason: `${e.message}: a read that fails counts as no`, reason_code: null }, checks: null, body: null, ready: null }
   }
   console.log(JSON.stringify(verdict, null, 2))
   return verdict.verdict === 'stop' ? 1 : 0
