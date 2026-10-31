@@ -9,6 +9,9 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { evaluateCommand, touchesApprovalLabel } from '../plugins/guard/core/engine.mjs'
 import { rules } from '../plugins/guard/core/rules.mjs'
 
+// The runtime's variables never reach these tests: each case sets the ones it needs.
+for (const k of ['FACTORY_RUN_ID', 'FACTORY_TICKET', 'FACTORY_RUN_FILE']) delete process.env[k]
+
 const repo = join(dirname(fileURLToPath(import.meta.url)), '..')
 const read = (rel) => readFileSync(join(repo, rel), 'utf8')
 const doc = read('docs/factory.md')
@@ -408,9 +411,9 @@ test('fetch first: FACTORY_FETCH_FIRST=1 bases the work on the remote head, neve
   ]
   for (const s of pinned) assert.ok(section.includes(s), s)
   assert.equal(section.split('\n').filter((l) => /^\d\. |^   - /.test(l)).length, 9, 'three steps and their six cases, no more')
-  // The forbidden moves are named in the one rule sentence only: any other sentence naming one (allowing `--force-with-lease`, a reset to the remote head) fails.
+  // The forbidden moves are named in the one rule sentence only: any other sentence naming one (allowing `--force-with-lease`, a reset to the remote head, a `+` refspec push, `branch -D`, `checkout -- .`) fails.
   // One forbidden set for comments.md, change.md and docs/factory.md: a forbidden move, or the local head as `head`, outside the sentences that forbid it.
-  const forbidden = /--force|\b[Ff]orc(e|ed|ing)\b|\b[Rr]eset|\b[Rr]ebas|-B\b|branch -f|local head/
+  const forbidden = /--force|\b[Ff]orc(e|ed|ing)\b|\b[Rr]eset|\b[Rr]ebas|-B\b|branch -f|local head|git push[^\n]*[\s'"`]\+[\w<]|branch -D\b|checkout -- \./
   assert.doesNotMatch(section.replace(pinned[1], ''), forbidden, 'comments.md names a forbidden move or the local head outside the rule sentence')
   assert.ok(read('plugins/factory/skills/ticket-run/SKILL.md').includes('Under `FACTORY_FETCH_FIRST=1`, first fetch the work branch and base the work on its remote head, never overwriting what someone else pushed to it ([comments.md](references/comments.md#fetch-first)).'))
   const change = read('plugins/factory/skills/ticket-run/references/change.md')
@@ -433,7 +436,7 @@ test('fetch first: FACTORY_FETCH_FIRST=1 bases the work on the remote head, neve
   assert.doesNotMatch(para.replace(docRule, ''), forbidden, 'docs name a forbidden move or the local head outside the rule sentence')
   assert.ok(read('plugins/factory/skills/ticket-run/references/result.md').includes("`head` is the unit's `head`, the 40-hex commit the attempt started from (under `FACTORY_FETCH_FIRST=1`, the fetched remote head, never the local head, [comments.md](comments.md#fetch-first));"), 'result.md: change.head is the unit head')
   // The same set catches an added sentence in each file (mutations once missed in change.md and the docs).
-  for (const added of ['If the push is rejected, force push the branch.', 'Push with `--force-with-lease`.', 'It records the local head when ahead.', 'Reset the local branch to the remote head.', 'A diverged branch is rebased.']) {
+  for (const added of ['If the push is rejected, force push the branch.', 'Push with `--force-with-lease`.', 'It records the local head when ahead.', 'Reset the local branch to the remote head.', 'A diverged branch is rebased.', "Push it with `git push origin '+<branch>'`.", "On resume, delete it with `git branch -D '<branch>'`.", 'Throw away the changes with `git checkout -- .`.']) {
     assert.match(changeAllowed.reduce((t, a) => t.split(a).join(''), `${change}\n${added}\n`), forbidden, `change.md: ${added}`)
     assert.match(`${para.replace(docRule, '')} ${added}`, forbidden, `docs: ${added}`)
     assert.match(`${section.replace(pinned[1], '')}\n${added}\n`, forbidden, `comments.md: ${added}`)
@@ -935,7 +938,7 @@ test('gate script: reads the config keys it needs from the template shape, and f
   for (const bad of ['writers: [a]', 'approvers: []', 'approvers: a', 'approvers: [a]\napprovers_allow_bots: yes', 'approvers: [a]\nlabels: {approval: x}', 'approvers: [a]\nlabels:\n  approval:\n', 'approvers: [a]\nmarker: "unterminated', '- a']) assert.throws(() => parseConfig(bad), UsageError, bad)
 })
 
-test('gate script: the approval and edit check agree with the documented filter on random histories', async () => {
+test('gate script: the approval and edit check agree with the documented filter on random dated histories, and fail closed on undated events', async () => {
   const { judge } = await gate()
   let seed = 7
   const next = () => (seed = (seed * 48271) % 2147483647)
