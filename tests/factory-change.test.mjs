@@ -28,6 +28,7 @@ const UNIT_EXPECTED = {
   'unit-invalid-duplicate-source.json': /appears twice/,
   'unit-invalid-issue-is-change.json': /must not include the change/,
   'unit-invalid-line-without-path.json': /line: needs a path/,
+  'unit-invalid-check-failed-foreign-head.json': /^head_author: a check_failed unit needs the factory or approver login that wrote or pushed head, or an approver's answer as a comment item$/,
 }
 const RESULT_EXPECTED = {
   'result-invalid-cap-without-change.json': /fix_attempts needs change/,
@@ -42,7 +43,7 @@ const RESULT_EXPECTED = {
 test('unit fixtures: valid ones pass, each invalid one fails with its expected error', async () => {
   const { unitErrors } = await changeMod()
   const valid = fixtures('unit-valid-')
-  assert.equal(valid.length, 3)
+  assert.equal(valid.length, 4)
   for (const f of valid) assert.deepEqual(unitErrors(fixture(f)), [], f)
   const invalid = fixtures('unit-invalid-')
   assert.deepEqual(invalid, Object.keys(UNIT_EXPECTED).sort())
@@ -95,7 +96,13 @@ const UNIT_MUTATIONS = [
   ['source http://', 'unit-valid-mention.json', (u) => { u.items[0].source = 'http://github.com/acme/app/pull/14#issuecomment-1' }, /source: must be an https:\/\/ URL/],
   ['check_failed without a check item', 'unit-valid-check-failed.json', (u) => { u.trigger = 'check_failed'; u.items = [{ source: 'https://github.com/acme/app/pull/14#issuecomment-9', kind: 'comment', author: 'a', role: 'approver', path: null, line: null, text: 'x' }] }, /a check_failed unit needs at least one check item/],
   ['trigger not in enum', 'unit-valid-changes-requested.json', (u) => { u.trigger = 'push' }, /trigger: must be one of/, false],
-  ['version 2', 'unit-valid-changes-requested.json', (u) => { u.version = 2 }, /version: must be 1/],
+  ['version 1', 'unit-valid-changes-requested.json', (u) => { u.version = 1 }, /version: must be 2/],
+  ['head_author missing', 'unit-valid-check-failed.json', (u) => { delete u.head_author }, /head_author: missing/],
+  ['head_author on another trigger', 'unit-valid-changes-requested.json', (u) => { u.head_author = 'owner-a' }, /head_author: must be null unless trigger is check_failed/],
+  ['head_author empty', 'unit-valid-check-failed.json', (u) => { u.head_author = '' }, /head_author: must be a login or null/],
+  ['head_author not a string', 'unit-valid-check-failed.json', (u) => { u.head_author = 7 }, /head_author: must be a login or null/],
+  ['foreign head allowed by a reviewer comment', 'unit-valid-check-failed-answered.json', (u) => { u.items[1].role = 'reviewer' }, /head_author: a check_failed unit needs/],
+  ['foreign head allowed by an approver review, not an answer', 'unit-valid-check-failed-answered.json', (u) => { u.items[1].kind = 'review' }, /head_author: a check_failed unit needs/],
   ['issues include the change ignoring case', 'unit-valid-changes-requested.json', (u) => { u.issues = ['ACME/APP#14'] }, /must not include the change/],
   ['issues duplicated ignoring case', 'unit-valid-changes-requested.json', (u) => { u.issues = ['acme/app#12', 'ACME/APP#12'] }, /issues: must be a non-empty array of unique/],
   ['comment item with path and line', 'unit-valid-changes-requested.json', (u) => { Object.assign(u.items[2], { path: 'x.js', line: 3 }) }, /path and line must be null unless kind is review_comment/],

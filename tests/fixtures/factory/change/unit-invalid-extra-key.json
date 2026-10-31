@@ -1,6 +1,6 @@
 {
   "unit": "change_fix",
-  "version": 1,
+  "version": 2,
   "run_id": "rt-14-1",
   "change": "acme/app#14",
   "pr": "https://github.com/acme/app/pull/14",
@@ -9,6 +9,7 @@
   ],
   "branch": "factory/12-add-export",
   "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "head_author": null,
   "trigger": "changes_requested",
   "attempt": 1,
   "max_attempts": 3,

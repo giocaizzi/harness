@@ -1,0 +1,36 @@
+{
+  "unit": "change_fix",
+  "version": 2,
+  "run_id": "rt-14-1",
+  "change": "acme/app#14",
+  "pr": "https://github.com/acme/app/pull/14",
+  "issues": [
+    "acme/app#12"
+  ],
+  "branch": "factory/12-add-export",
+  "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "head_author": null,
+  "trigger": "check_failed",
+  "attempt": 1,
+  "max_attempts": 3,
+  "items": [
+    {
+      "source": "https://github.com/acme/app/actions/runs/555/job/777",
+      "kind": "check",
+      "author": null,
+      "role": "check",
+      "path": null,
+      "line": null,
+      "text": "FAILED tests/test_export.py::test_empty - AssertionError"
+    },
+    {
+      "source": "https://github.com/acme/app/pull/14#issuecomment-31",
+      "kind": "comment",
+      "author": "owner-a",
+      "role": "approver",
+      "path": null,
+      "line": null,
+      "text": "Yes, fix the check on this head."
+    }
+  ]
+}

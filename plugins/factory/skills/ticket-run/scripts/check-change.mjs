@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { CHANGE_TRIGGERS, TICKET, report, show } from './check-result.mjs'
 
-export const UNIT_KEYS = ['unit', 'version', 'run_id', 'change', 'pr', 'issues', 'branch', 'head', 'trigger', 'attempt', 'max_attempts', 'items']
+export const UNIT_KEYS = ['unit', 'version', 'run_id', 'change', 'pr', 'issues', 'branch', 'head', 'head_author', 'trigger', 'attempt', 'max_attempts', 'items']
 export const ITEM_KEYS = ['source', 'kind', 'author', 'role', 'path', 'line', 'text']
 export const ITEM_KINDS = ['review', 'review_comment', 'comment', 'check']
 export const ROLES = ['approver', 'reviewer', 'check']
@@ -43,7 +43,7 @@ export const unitErrors = (unit) => {
   if (!isObject(unit)) return [`unit must be a JSON object, got ${show(unit)}`]
   const errors = keyErrors(unit, UNIT_KEYS, '')
   if (unit.unit !== 'change_fix') errors.push(`unit: must be "change_fix", got ${show(unit.unit)}`)
-  if (unit.version !== 1) errors.push(`version: must be 1, got ${show(unit.version)}`)
+  if (unit.version !== 2) errors.push(`version: must be 2, got ${show(unit.version)}`)
   if (!isString(unit.run_id)) errors.push(`run_id: must be a non-empty string, got ${show(unit.run_id)}`)
   const change = typeof unit.change === 'string' && TICKET.test(unit.change) ? unit.change : null
   if (!change) errors.push(`change: must be <owner>/<repo>#<number>, got ${show(unit.change)}`)
@@ -69,6 +69,14 @@ export const unitErrors = (unit) => {
       errors.push(unit.trigger === 'check_failed' ? 'items: a check_failed unit needs at least one check item' : `items: a ${unit.trigger} unit needs at least one approver item`)
     }
   }
+  // A failed check is acted on only on a head a factory or approver login wrote or pushed, or that an approver's
+  // answer on the change allowed (that answer is then an approver comment item).
+  const author = unit.head_author
+  if (unit.trigger !== 'check_failed') {
+    if ('head_author' in unit && author !== null) errors.push(`head_author: must be null unless trigger is check_failed, got ${show(author)}`)
+  } else if (author === null) {
+    if (!(Array.isArray(unit.items) && unit.items.some((i) => isObject(i) && i.role === 'approver' && i.kind === 'comment'))) errors.push("head_author: a check_failed unit needs the factory or approver login that wrote or pushed head, or an approver's answer as a comment item")
+  } else if (author !== undefined && !(isString(author) && author.trim() === author)) errors.push(`head_author: must be a login or null, got ${show(author)}`)
   return errors
 }
 
