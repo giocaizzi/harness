@@ -57,7 +57,7 @@ test('unit fixtures: valid ones pass, each invalid one fails with its expected e
 test('result fixtures: valid ones pass resultErrors, each invalid one fails with its expected error', async () => {
   const { resultErrors } = await resultMod()
   const valid = fixtures('result-valid-')
-  assert.equal(valid.length, 3)
+  assert.equal(valid.length, 4)
   for (const f of valid) assert.deepEqual(resultErrors(fixture(f), {}), [], f)
   const invalid = fixtures('result-invalid-')
   assert.deepEqual(invalid, Object.keys(RESULT_EXPECTED).sort())
@@ -81,6 +81,7 @@ const RESULT_MUTATIONS = [
   ['51 sources', 'result-valid-fix-done.json', (r) => { r.change.sources = Array.from({ length: 51 }, (_, i) => `https://github.com/acme/app/pull/14#issuecomment-${i}`) }, /change\.sources: must be 1 to 50/],
   ['pr is the ticket but change missing', 'result-valid-fix-done.json', (r) => { delete r.change }, /pr is the ticket itself/],
   ['pr is the ticket but change null', 'result-valid-fix-done.json', (r) => { r.change = null }, /pr is the ticket itself/],
+  ['gate and plan but change missing', 'result-valid-gate-stop.json', (r) => { r.phases.push({ name: 'plan', started_at: null, ended_at: null }) }, /pr is the ticket itself/],
   ['issues include the ticket ignoring case', 'result-valid-fix-done.json', (r) => { r.change.issues = ['ACME/APP#14'] }, /must not include the change/],
   ['issues duplicated ignoring case', 'result-valid-fix-done.json', (r) => { r.change.issues = ['acme/app#12', 'ACME/APP#12'] }, /change\.issues: must be a non-empty array of unique/],
 ]
