@@ -2,7 +2,8 @@
 // brief the run writes and the member result the member hands back, and turns them into the member's entry of result.json's `tasks`.
 // Usage `node check-handoff.mjs run [<run.json>]` (reads FACTORY_RUN_FILE without a file), `node check-handoff.mjs brief <brief.json>`
 // or `node check-handoff.mjs result <brief.json> <result.json>` (checks the brief too): exit 0 valid, 1 invalid or unreadable
-// (one line per error), 2 usage. `memberTask(ticket, brief, result, runId)` also parks a brief for another ticket or run.
+// (one line per error), 2 usage. `briefErrors(brief, runId)` (so both CLI modes and `memberTask`) rejects a brief whose run_id
+// differs from runId, FACTORY_RUN_ID by default, when that is set; `memberTask(ticket, brief, result, runId)` also parks a brief for another ticket.
 // Imports Node built-ins and ./check-result.mjs only.
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
@@ -58,13 +59,14 @@ export const runFileErrors = (run, env = process.env) => {
   return errors
 }
 
-export const briefErrors = (brief) => {
+export const briefErrors = (brief, runId = process.env.FACTORY_RUN_ID) => {
   if (!isObject(brief)) return [`brief must be a JSON object, got ${show(brief)}`]
   const errors = keyErrors(brief, BRIEF_KEYS)
   const bad = (key, want) => key in brief && errors.push(`${key} must be ${want}, got ${show(brief[key])}`)
   if (brief.handoff !== 'member_brief') bad('handoff', '"member_brief"')
   if (brief.version !== 1) bad('version', '1')
   if (!isText(brief.run_id)) bad('run_id', 'a non-empty string')
+  else if ((runId ?? '').trim() && brief.run_id !== runId.trim()) errors.push(`brief run_id ${show(brief.run_id)} differs from the run's ${show(runId.trim())}`)
   if (typeof brief.ticket !== 'string' || !TICKET.test(brief.ticket)) bad('ticket', 'of the form "<owner>/<repo>#<number>"')
   if (typeof brief.worktree !== 'string' || !(path.posix.isAbsolute(brief.worktree) || path.win32.isAbsolute(brief.worktree))) bad('worktree', 'an absolute path')
   if (typeof brief.branch !== 'string' || !REF.test(brief.branch) || brief.branch.includes('..')) bad('branch', 'one plain ref name')
@@ -125,10 +127,8 @@ export const memberTask = (ticket, brief, result, runId = process.env.FACTORY_RU
   const wrongBrief = []
   if (isObject(brief)) {
     if (typeof brief.ticket === 'string' && brief.ticket.toLowerCase() !== ticket.toLowerCase()) wrongBrief.push(`brief ticket ${show(brief.ticket)} differs from the member ${show(ticket)}`)
-    const run = (runId ?? '').trim()
-    if (run && brief.run_id !== run) wrongBrief.push(`brief run_id ${show(brief.run_id)} differs from the run's ${show(run)}`)
   }
-  const errors = [...briefErrors(brief), ...wrongBrief, ...(result === undefined ? ['no member result'] : memberResultErrors(result, brief))]
+  const errors = [...briefErrors(brief, runId), ...wrongBrief, ...(result === undefined ? ['no member result'] : memberResultErrors(result, brief))]
   if (errors.length) return { ticket, outcome: 'parked', reason: `malformed handoff: ${errors[0]}`.slice(0, 300), reason_code: 'handoff', pr_link: null }
   return { ticket, outcome: result.outcome, reason: result.reason, reason_code: result.reason_code, pr_link: null }
 }

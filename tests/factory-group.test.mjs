@@ -67,6 +67,52 @@ test('group result: schema 2 or 3 only, and handoff is a reason code', async () 
   assert.deepEqual([OUTCOMES, PR_LINKS], [['done', 'parked', 'released'], ['closes', 'refs']])
 })
 
+// Run-file fixtures sit in a subdirectory, so the map above still covers exactly the result fixtures.
+const RUN_FILE = join(FIXTURES, 'runfiles/valid-group-all-outcomes.json')
+
+test('group result: with FACTORY_RUN_FILE the tasks are the run file members, exactly and in order', async () => {
+  const { resultErrors } = await checker()
+  const result = fixture('valid-group-all-outcomes.json')
+  const env = { FACTORY_RUN_FILE: RUN_FILE }
+  assert.deepEqual(resultErrors(result, env), [])
+  const swap = (t) => ({ ...result, tasks: t })
+  const [a, b, c] = result.tasks
+  const differ = /tasks: tickets .* differ from the run file's members .*, in that order/
+  assert.match(resultErrors(swap([a, c, b]), env).join('\n'), differ)
+  assert.match(resultErrors(swap([a, b]), env).join('\n'), differ)
+  assert.match(resultErrors(swap([a, b, c, { ...c, ticket: 'acme/app#99' }]), env).join('\n'), differ)
+  assert.match(resultErrors(swap([a, b, { ...c, ticket: 'ACME/app#14' }]), env).join('\n'), differ)
+  // unset or blank: no check; schema 2 without tasks: nothing to check.
+  assert.deepEqual(resultErrors(swap([a, c, b]), {}).filter((e) => differ.test(e)), [])
+  assert.deepEqual(resultErrors(swap([a, c, b]), { FACTORY_RUN_FILE: '  ' }).filter((e) => differ.test(e)), [])
+  assert.deepEqual(resultErrors(fixture('valid-single.json'), { FACTORY_RUN_FILE: '/nonexistent/run.json' }), [])
+})
+
+test('group result: a run file that cannot be used fails closed', async () => {
+  const { resultErrors } = await checker()
+  const result = fixture('valid-group-all-outcomes.json')
+  const dir = mkdtempSync(join(tmpdir(), 'runfile-'))
+  try {
+    const put = (name, text) => { const p = join(dir, name); writeFileSync(p, text); return p }
+    const cases = [
+      [join(dir, 'missing.json'), /no such file/],
+      [put('bad.json', '{'), /not valid JSON/],
+      [put('nomembers.json', '{}'), /no members list/],
+      [put('null.json', 'null'), /no members list/],
+      [put('empty.json', '{"members":[]}'), /no members list/],
+      [put('badticket.json', '{"members":[{"ticket":1}]}'), /no members list/],
+      [dir, /cannot read \(EISDIR\)/],
+    ]
+    for (const [path, why] of cases) {
+      const errors = resultErrors(result, { FACTORY_RUN_FILE: path })
+      assert.ok(errors.some((e) => e.startsWith('tasks: cannot check against the run file ') && why.test(e)), `${path}: ${errors.join(' | ')}`)
+    }
+    assert.deepEqual(resultErrors(result, { FACTORY_RUN_FILE: put('bom.json', `\uFEFF${readFileSync(RUN_FILE, 'utf8')}`) }), [])
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 const cleanEnv = (env = {}) => ({ ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('FACTORY_'))), ...env })
 const scratchRepo = () => {
   const dir = mkdtempSync(join(tmpdir(), 'group-result-'))

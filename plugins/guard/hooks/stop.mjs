@@ -16,7 +16,7 @@ import { spawn, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { mkdirSync, readFileSync, rmSync, statfsSync, writeFileSync } from 'node:fs'
 import { loadavg, platform } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { docsOnly } from '../core/docsonly.mjs'
 import { emit } from '../core/otel.mjs'
@@ -192,7 +192,9 @@ export async function resultGate(input, run = spawnSync, env = process.env, onEv
     try {
       const result = JSON.parse(readFileSync(file, 'utf8').replace(/^\uFEFF/, ''))
       if (!runtime && result?.run_id !== runId) return null
-      errors = resultErrors(result, runtime ? env : {})
+      // A group run's run file resolves against the session's directory, as the run itself reads it.
+      const runFile = (env.FACTORY_RUN_FILE ?? '').trim()
+      errors = resultErrors(result, runtime ? (runFile ? { ...env, FACTORY_RUN_FILE: resolve(input.cwd || process.cwd(), runFile) } : env) : {})
     } catch (e) {
       if (!runtime) return null
       errors = [e.code === 'ENOENT' ? 'no such file' : e instanceof SyntaxError ? `not valid JSON (${e.message})` : `cannot read (${e.code ?? e.message})`]
