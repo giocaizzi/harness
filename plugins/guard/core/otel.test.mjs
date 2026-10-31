@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { emit, logRequest, otelOff, parsePairs } from './otel.mjs'
+import { emit, logRequest, otelOff, parsePairs, traceContext } from './otel.mjs'
 
 test('parsePairs: comma pairs, percent-decoded, bad pairs skipped', () => {
   assert.deepEqual(parsePairs('Authorization=Bearer%20abc,x=1,junk,=no'), { Authorization: 'Bearer abc', x: '1' })
@@ -51,4 +51,68 @@ test('emit: GUARD_OTEL=off sends nothing, even with an endpoint', async () => {
   for (const off of ['off', 'OFF', '0', 'false']) await emit({ GUARD_OTEL: off, OTEL_EXPORTER_OTLP_ENDPOINT: 'http://c', GUARD_OTEL_EXPORTER_OTLP_ENDPOINT: 'http://g' }, 'guard.decision', {}, never)
   assert.equal(otelOff({ GUARD_OTEL: 'on' }), false)
   assert.equal(otelOff({}), false)
+})
+
+const TP = '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01'
+const TRACE = { traceId: '4bf92f3577b34da6a3ce929d0e0e4736', spanId: '00f067aa0ba902b7' }
+
+test('traceContext: a well-formed GUARD_TRACEPARENT gives its trace and span ids', () => {
+  assert.deepEqual(traceContext({ GUARD_TRACEPARENT: TP }), TRACE)
+  assert.deepEqual(traceContext({ GUARD_TRACEPARENT: ` ${TP}\n` }), TRACE)
+  assert.deepEqual(traceContext({ GUARD_TRACEPARENT: TP.replace(/01$/, '00') }), TRACE)
+})
+
+test('traceContext: absent, empty or malformed is no trace context', () => {
+  const bad = [
+    undefined,
+    '',
+    '   ',
+    'garbage',
+    '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7', // flags missing
+    '00-4bf92f3577b34da6a3ce929d0e0e473-00f067aa0ba902b7-01', // trace id one short
+    '00-4bf92f3577b34da6a3ce929d0e0e47360-00f067aa0ba902b7-01', // trace id one long
+    '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b-01', // span id one short
+    '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-1', // flags one short
+    '00-4BF92F3577B34DA6A3CE929D0E0E4736-00f067aa0ba902b7-01', // uppercase trace id
+    '00-4bf92f3577b34da6a3ce929d0e0e4736-00F067AA0BA902B7-01', // uppercase span id
+    '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-0A', // uppercase flags
+    '00-00000000000000000000000000000000-00f067aa0ba902b7-01', // all-zero trace id
+    '00-4bf92f3577b34da6a3ce929d0e0e4736-0000000000000000-01', // all-zero span id
+    'ff-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01', // invalid version
+    '01-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01', // unsupported version
+    '00_4bf92f3577b34da6a3ce929d0e0e4736_00f067aa0ba902b7_01', // wrong separator
+    `${TP}-extra`,
+  ]
+  for (const v of bad) assert.equal(traceContext(v === undefined ? {} : { GUARD_TRACEPARENT: v }), null, String(v))
+  assert.equal(traceContext(undefined), null)
+})
+
+test('traceContext: only GUARD_TRACEPARENT, never TRACEPARENT or another source', () => {
+  assert.equal(traceContext({ TRACEPARENT: TP, OTEL_TRACEPARENT: TP }), null)
+})
+
+test('logRequest: a trace context sets the record traceId and spanId, never as attributes; none leaves both out', () => {
+  const rec = (trace) => JSON.parse(logRequest({ endpoint: 'http://c' }, 'guard.decision', { rule: 'r' }, 1, 'guard', trace).body).resourceLogs[0].scopeLogs[0].logRecords[0]
+  const withTrace = rec(TRACE)
+  assert.equal(withTrace.traceId, TRACE.traceId)
+  assert.equal(withTrace.spanId, TRACE.spanId)
+  assert.ok(!withTrace.attributes.some((a) => /trace|span/.test(a.key)))
+  for (const none of [undefined, null]) {
+    const r = rec(none)
+    assert.ok(!('traceId' in r) && !('spanId' in r))
+  }
+})
+
+test('emit: guard.decision carries a well-formed GUARD_TRACEPARENT, other events and malformed values do not', async () => {
+  const sent = []
+  const send = (env, event) => emit({ GUARD_OTEL_EXPORTER_OTLP_ENDPOINT: 'http://g', ...env }, event, { rule: 'r' }, async (_, init) => sent.push(JSON.parse(init.body).resourceLogs[0].scopeLogs[0].logRecords[0]))
+  await send({ GUARD_TRACEPARENT: TP }, 'guard.decision')
+  await send({ GUARD_TRACEPARENT: TP.toUpperCase() }, 'guard.decision')
+  await send({}, 'guard.decision')
+  await send({ GUARD_TRACEPARENT: TP }, 'guard.stop')
+  assert.equal(sent.length, 4)
+  assert.deepEqual([sent[0].traceId, sent[0].spanId], [TRACE.traceId, TRACE.spanId])
+  for (const r of sent.slice(1)) assert.ok(!('traceId' in r) && !('spanId' in r))
+  // The raw value (version and flags) is never sent as such.
+  assert.ok(!JSON.stringify(sent).includes(TP))
 })
