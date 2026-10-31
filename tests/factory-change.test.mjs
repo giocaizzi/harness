@@ -2,10 +2,11 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { gitEnv, originRepo } from './factory-git-lib.mjs'
 
 const repo = join(dirname(fileURLToPath(import.meta.url)), '..')
 const read = (rel) => readFileSync(join(repo, rel), 'utf8')
@@ -145,32 +146,9 @@ test('unit: item text is capped at 4000 characters, items at 50', async () => {
   assert.match(unitErrors({ ...unit, items: items(MAX_ITEMS + 1) })[0], /items: must be an array of 1 to 50/)
 })
 
-// A scratch repo whose default branch (origin/HEAD) commits `committed` as .factory/config.yaml (none when null), and
-// whose checkout then holds `local` instead, as a change branch could.
-const capRepo = (committed, local) => {
-  const dir = mkdtempSync(join(tmpdir(), 'cap-'))
-  const g = (...a) => assert.equal(spawnSync('git', ['-c', 'user.email=a@example.test', '-c', 'user.name=a', ...a], { cwd: dir }).status, 0, a.join(' '))
-  g('init', '-q')
-  if (committed !== null) {
-    mkdirSync(join(dir, '.factory'))
-    writeFileSync(join(dir, '.factory', 'config.yaml'), committed)
-    g('add', '.factory/config.yaml')
-  }
-  g('commit', '-q', '--allow-empty', '-m', 'init')
-  g('update-ref', 'refs/remotes/origin/main', 'HEAD')
-  g('symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main')
-  if (local !== undefined) {
-    mkdirSync(join(dir, '.factory'), { recursive: true })
-    writeFileSync(join(dir, '.factory', 'config.yaml'), local)
-    g('checkout', '-q', '-b', 'factory/12-change')
-    g('commit', '-q', '-am', 'raise the cap')
-  }
-  return { dir, done: () => rmSync(dir, { recursive: true, force: true }) }
-}
-
 test('check-change: the CLI exits 0 valid, 1 invalid or missing, 2 without an argument', () => {
-  const repo = capRepo(null)
-  const run = (...a) => spawnSync(process.execPath, [CHECK_CHANGE, ...a], { cwd: repo.dir, encoding: 'utf8', env: cleanEnv() })
+  const repo = originRepo(null)
+  const run = (...a) => spawnSync(process.execPath, [CHECK_CHANGE, ...a], { cwd: repo.work, encoding: 'utf8', env: gitEnv() })
   assert.equal(run(join(FIXTURES, 'unit-valid-changes-requested.json')).status, 0)
   const bad = run(join(FIXTURES, 'unit-invalid-extra-key.json'))
   assert.equal(bad.status, 1)
@@ -191,32 +169,61 @@ test('check-change: max_attempts is the cap committed on the default branch, nev
   assert.equal(parseCap('change_requests:\n  max_attempts: 2 # fewer\nlabels:\n  approval: agent-ok\n'), 2)
   assert.equal(parseCap('change_requests:\n  # none\nlabels:\n  max_attempts: 9\n'), 3)
   for (const bad of ['change_requests: {max_attempts: 9}\n', 'change_requests:\n  max_attempts: "9"\n', 'change_requests:\n  max_attempts: 0\n', 'change_requests:\n  max_attempts: lots\n']) assert.throws(() => parseCap(bad), bad)
-  // origin/HEAD unset or the file unreadable: the check fails, never a cap the run picks.
-  assert.throws(() => committedCap(() => { throw Object.assign(new Error('git failed'), { stderr: 'fatal: ambiguous argument' }) }))
-  assert.throws(() => committedCap((a) => (a[0] === 'rev-parse' ? 'origin/HEAD\n' : '')))
+  // A remote that names no default branch, or a git that fails: the check fails, never a cap the run picks.
+  assert.throws(() => committedCap(() => { throw Object.assign(new Error('git failed'), { stderr: 'fatal: no origin' }) }))
+  assert.throws(() => committedCap(() => ''), /named no default branch/)
+  assert.throws(() => committedCap((a) => (a[0] === 'ls-remote' ? `${'a'.repeat(40)}\tHEAD\n` : '')), /named no default branch/)
   assert.deepEqual(capErrors({ max_attempts: 3 }, 3), [])
   assert.match(capErrors({ max_attempts: 9 }, 3)[0], /max_attempts: 9 is not the cap committed on the default branch, 3/)
-  const unit = join(FIXTURES, 'unit-valid-changes-requested.json')
-  const cli = (dir) => spawnSync(process.execPath, [CHECK_CHANGE, unit], { cwd: dir, encoding: 'utf8', env: cleanEnv() })
-  // The change branch raises the cap to 9 and the unit claims 9: refused; the default branch's 3 is the cap.
-  const raised = capRepo('change_requests:\n  max_attempts: 3\n', 'change_requests:\n  max_attempts: 9\n')
-  const nine = join(raised.dir, 'unit-9.json')
-  writeFileSync(nine, JSON.stringify({ ...fixture('unit-valid-changes-requested.json'), max_attempts: 9 }))
-  const refused = spawnSync(process.execPath, [CHECK_CHANGE, nine], { cwd: raised.dir, encoding: 'utf8', env: cleanEnv() })
-  assert.equal(refused.status, 1)
-  assert.match(refused.stderr, /max_attempts: 9 is not the cap committed on the default branch, 3/)
-  assert.equal(cli(raised.dir).status, 0, cli(raised.dir).stderr)
-  raised.done()
-  // A committed cap of 2 binds a unit that claims the default 3.
-  const lower = capRepo('change_requests:\n  max_attempts: 2\n')
-  assert.match(cli(lower.dir).stderr, /max_attempts: 3 is not the cap committed on the default branch, 2/)
-  lower.done()
-  // No origin/HEAD: fails closed with how to fix it.
+  const unit = (dir, max) => {
+    const f = join(dir, `unit-${max}.json`)
+    writeFileSync(f, JSON.stringify({ ...fixture('unit-valid-changes-requested.json'), max_attempts: max }))
+    return f
+  }
+  const cli = (r, max) => spawnSync(process.execPath, [CHECK_CHANGE, unit(r.dir, max)], { cwd: r.work, encoding: 'utf8', env: gitEnv() })
+  const r = originRepo('change_requests:\n  max_attempts: 3\n')
+  try {
+    // The change branch raises the cap to 9 and the unit claims 9: refused; the default branch's 3 is the cap.
+    r.git('checkout', '-q', '-b', 'factory/12-change')
+    r.put('change_requests:\n  max_attempts: 9\n', 'raise the cap')
+    const raised = r.git('rev-parse', 'HEAD:.factory/config.yaml')
+    const committed = r.git('rev-parse', 'origin/main:.factory/config.yaml')
+    assert.equal(cli(r, 3).status, 0, cli(r, 3).stderr)
+    const refused = cli(r, 9)
+    assert.equal(refused.status, 1)
+    assert.match(refused.stderr, /max_attempts: 9 is not the cap committed on the default branch, 3/)
+    // Local refs and replace objects cannot redirect it: origin/HEAD, origin/main and the committed blob all point at
+    // the raised config, and the cap is still the remote default branch's 3.
+    r.git('update-ref', 'refs/remotes/origin/evil', 'HEAD')
+    r.git('symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/evil')
+    r.git('update-ref', 'refs/remotes/origin/main', 'HEAD')
+    r.git('replace', committed, raised)
+    assert.equal(r.git('show', 'origin/main:.factory/config.yaml'), 'change_requests:\n  max_attempts: 9')
+    assert.match(cli(r, 9).stderr, /max_attempts: 9 is not the cap committed on the default branch, 3/)
+    assert.equal(cli(r, 3).status, 0)
+    // A cap lowered on the default branch since the last fetch: the check fails closed until the fetch.
+    const other = join(r.dir, 'other')
+    spawnSync('git', ['clone', '-q', r.origin, other], { env: gitEnv() })
+    writeFileSync(join(other, '.factory', 'config.yaml'), 'change_requests:\n  max_attempts: 2\n')
+    for (const a of [['commit', '-qam', 'lower'], ['push', '-q', 'origin', 'main']]) assert.equal(spawnSync('git', a, { cwd: other, env: gitEnv() }).status, 0)
+    const stale = cli(r, 3)
+    assert.equal(stale.status, 1)
+    assert.match(stale.stderr, /cannot read the cap committed on the default branch .*is not fetched: run git fetch origin main/)
+    r.git('fetch', '-q', 'origin')
+    assert.match(cli(r, 3).stderr, /max_attempts: 3 is not the cap committed on the default branch, 2/)
+    assert.equal(cli(r, 2).status, 0)
+  } finally {
+    r.done()
+  }
+  // No config on the default branch: the default 3. No origin at all: fails closed.
+  const none = originRepo(null)
+  assert.equal(cli(none, 3).status, 0)
+  none.done()
   const bare = mkdtempSync(join(tmpdir(), 'cap-none-'))
-  spawnSync('git', ['init', '-q', bare])
-  const none = cli(bare)
-  assert.equal(none.status, 1)
-  assert.match(none.stderr, /max_attempts: cannot read the cap committed on the default branch .*git remote set-head origin --auto/)
+  spawnSync('git', ['init', '-q', bare], { env: gitEnv() })
+  const out = spawnSync(process.execPath, [CHECK_CHANGE, unit(bare, 3)], { cwd: bare, encoding: 'utf8', env: gitEnv() })
+  assert.equal(out.status, 1)
+  assert.match(out.stderr, /max_attempts: cannot read the cap committed on the default branch .*git fetch origin/)
   rmSync(bare, { recursive: true, force: true })
 })
 
@@ -256,6 +263,6 @@ test('change.md agrees with the checkers: unit keys, item keys, triggers; the sc
   for (const f of ['check-change.mjs', 'check-result.mjs']) {
     const imports = [...read(`plugins/factory/skills/ticket-run/scripts/${f}`).matchAll(/^\s*import\b[^'"]*['"]([^'"]+)['"]/gm)].map((m) => m[1])
     assert.ok(imports.length > 0)
-    for (const m of imports) assert.ok(m.startsWith('node:') || m === './check-result.mjs', `${f} imports ${m}`)
+    for (const m of imports) assert.ok(m.startsWith('node:') || m === './check-result.mjs' || (f === 'check-change.mjs' && m === './gate.mjs'), `${f} imports ${m}`)
   }
 })
