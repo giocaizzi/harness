@@ -51,7 +51,7 @@ The run writes the unit to `.factory/runs/<change>/unit-<attempt>.json` before i
 | `pr` | string | The change's URL, `https://github.com/<owner>/<repo>/pull/<number>`, the same owner, repo and number as `change`. |
 | `issues` | array of strings | The issues the change closes, each `<owner>/<repo>#<number>`, at least one, none equal to `change`. |
 | `branch` | string | The change's head branch, one plain ref name. |
-| `head` | string | The 40-hex commit the unit starts from, the change's head at the gate. |
+| `head` | string | The 40-hex commit the unit starts from: the change's head at the gate, or under `FACTORY_FETCH_FIRST=1` the commit the work starts from once the fetch-first steps are done ([comments.md](comments.md#fetch-first)). |
 | `trigger` | `changes_requested` \| `mention` \| `check_failed` | What started the unit. |
 | `attempt` | integer | This attempt's number, from 1 up to `max_attempts`. |
 | `max_attempts` | integer | The cap in force, at least 1. |
@@ -74,7 +74,7 @@ A `check_failed` unit has at least one `check` item; any other has at least one 
 
 ## Fix attempts
 
-One run is one attempt. It works on the change's branch from `head` (no second PR, no force push), verifies the delta with a scoped verifier round, pushes, and re-requests review from the approvers whose items it handled. It never dismisses a review, approves, merges, closes or reopens the change or an issue.
+One run is one attempt. It works on the change's branch from `head` (no second PR, no force push; under `FACTORY_FETCH_FIRST=1` it runs the fetch-first steps before writing the unit, and `head` is the fetched remote head, or the local head when the local branch is ahead of it, [comments.md](comments.md#fetch-first)), verifies the delta with a scoped verifier round, pushes, and re-requests review from the approvers whose items it handled. It never dismisses a review, approves, merges, closes or reopens the change or an issue.
 
 **Refers, never closes.** A fix attempt refers to the change and to its issues; only the change's merge closes them, through the closing line its PR body already carries. The run's commits and comments name the issues with `Refs #N` only, never a closing keyword (`Closes`, `Fixes`, `Resolves`), and the run never edits the PR body's closing line.
 
