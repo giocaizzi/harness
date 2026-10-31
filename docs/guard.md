@@ -112,7 +112,7 @@ Every harness, including updates and the Codex hook trust: [install.md](install.
 From a checkout, without starting a session:
 
 ```bash
-make check                                        # validate (incl. `claude plugin validate`) + node tests + `claude plugin test`
+make check                                        # validate (incl. `claude plugin validate`) + TypeScript lint/typecheck + node tests + `claude plugin test`
 claude plugin validate plugins/guard
 
 # Copilot: install into a throwaway home, never ~/.copilot

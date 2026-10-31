@@ -100,9 +100,10 @@ The other four harnesses read the same sources differently (details in [docs/com
 | Command | Purpose |
 |---|---|
 | `make help` | List all targets. |
-| `make build` | Generate `plugins/*/.generated/` and the Copilot and Codex `plugin.json`. |
+| `make build` | Compile TypeScript to the tracked `.mjs` runtime paths, then generate `plugins/*/.generated/` and the Copilot and Codex `plugin.json`. |
 | `make validate` | Build sync + plugin manifest hygiene + SKILL.md spec + marketplace ↔ disk + README ↔ disk + harness parity (`scripts/parity.mjs`: every skill and agent reaches every harness). |
-| `make check` | `make lint` + `make test` (standard entrypoint, run by CI on Linux; `make lint` is an alias for `make validate`). The `.ps1` script tests skip off Windows: CI's `windows-scripts` job runs them ([CI](docs/compatibility.md#verify)). |
+| `make typecheck` | Type-check authored TypeScript without emitting runtime files. |
+| `make check` | `make lint` + `make typecheck` + `make test` (standard entrypoint, run by CI on Linux). The `.ps1` script tests skip off Windows: CI's `windows-scripts` job runs them ([CI](docs/compatibility.md#verify)). |
 | `make e2e` | Copilot CLI, Codex, opencode and pi against a scripted model in throwaway homes (skips a CLI that is missing; CI runs it on Linux, macOS and Windows). |
 | `make agent-review` | Weekly agent-telemetry review without an agent; in a session use the repo-local `/agent-review` skill (`.agents/skills/`, linked from `.claude/skills/`): [docs/agent-review.md](docs/agent-review.md). |
 | `make install HARNESS="codex opencode antigravity"` | Copy what Codex, opencode and Antigravity cannot take from the marketplace into their config dirs. |

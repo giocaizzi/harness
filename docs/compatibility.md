@@ -138,7 +138,7 @@ Where each harness reads MCP servers, for the `repo-standard` rule (repo servers
 ## Verify
 
 ```bash
-make check   # validate (incl. `claude plugin validate` and the parity check) + node tests + `claude plugin test`
+make check   # validate (incl. `claude plugin validate` and the parity check) + TypeScript lint/typecheck + node tests + `claude plugin test`
 make e2e     # Copilot CLI, Codex, opencode and pi against a scripted model (tests/e2e), each in a throwaway home with OTEL_* and GUARD_OTEL_* unset
 ```
 
