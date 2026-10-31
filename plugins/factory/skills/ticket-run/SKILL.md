@@ -17,7 +17,7 @@ The run needs the `dev-tools` plugin: its agents and its `wt`, `ship` and `land`
 
 ## The run
 
-One ticket, one session, one ticket branch. (A runtime's group run works several tickets per [group.md](references/group.md); an attended run never does and writes no `tasks`.) A session started through this skill's `scripts/attended.sh` (or `attended.ps1`) for the ticket carries the factory telemetry tags and the run id to use ([done.md](references/done.md#record), `run_id`); one started without it works the same, untagged.
+One ticket, one session, one ticket branch. (A runtime's group run works several tickets per [group.md](references/group.md), a runtime naming the members in the run file (`FACTORY_RUN_FILE`); an attended run never does and writes no `tasks`.) A session started through this skill's `scripts/attended.sh` (or `attended.ps1`) for the ticket carries the factory telemetry tags and the run id to use ([done.md](references/done.md#record), `run_id`); one started without it works the same, untagged.
 
 1. **Gate and claim:** approved by an approver, not in grooming, ready (acceptance criteria and a proof command), not claimed by another run; then claim it ([comments.md](references/comments.md#gate)). Run the gate as one call, `node <skill dir>/scripts/gate.mjs N`, and act on its JSON verdict; judge only Ready from the body it prints. A ticket with the takeover label, applied by an approver, is handed from a runtime to you: wait for its release, gate again, claim, remove the label, then check out its WIP branch ([comments.md](references/comments.md#takeover)).
 2. **Resume** a parked ticket only on an approver's answer ([comments.md](references/comments.md#answers)), or, for a merge gate, an approver's merge ([done.md](references/done.md#ship-and-land)).
@@ -46,7 +46,7 @@ One line per real failure; prune a line once a model change makes it obsolete.
 
 ## Output
 
-Every run that passed the gate ends with the result comment and `result.json`, written by `scripts/write-result.mjs`; a stop at the gate writes what [done.md](references/done.md#record) says under Gate stops. Then this report:
+Every run that passed the gate ends with the result comment (in a runtime run, `result.json` only) and `result.json`, written by `scripts/write-result.mjs`; a stop at the gate writes what [done.md](references/done.md#record) says under Gate stops. Then this report:
 
 - **End state:** `done`, `parked`, `failed` or `budget_reached`, with the ticket and PR links.
 - **Blocked on me:** the open question or owner action, or "nothing".

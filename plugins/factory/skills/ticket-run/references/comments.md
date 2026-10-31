@@ -17,12 +17,12 @@ Then pick the kind by its tag in `body`. Every read below (claims, the plan, que
 
 Run the gate as one call: `node <skill dir>/scripts/gate.mjs N` from the repo or its worktree. It makes the reads this section, the [trusted filter](#trusted-marked-comments), [Edited after approval](#edited-after-approval) and [Takeover](#takeover) step 1 describe, judges them as they do, and prints one JSON verdict:
 
-- `verdict` `go` (exit 0): every check passed; `claim.action` is `post`, or `edit` with the `comment_id` of this run's own claim (a runtime's under `FACTORY_RUN_ID`, or an attended resume from this host).
+- `verdict` `go` (exit 0): every check passed; `claim.action` is `post`, or `edit` with the `comment_id` of this run's own claim (a runtime's under `FACTORY_RUN_ID`, or an attended resume from this host); when `checks.takeover` is `"takeover"` the run still does [Takeover](#takeover) steps 4-6 (claim as attended, remove the takeover label, check out the WIP branch).
 - `verdict` `wait` (exit 0): an approver's takeover of a ticket a runtime still holds; go on at [Takeover](#takeover) step 2.
 - `verdict` `stop` (exit 1): `stop.check` names the check that failed (`open`, `approved`, `grooming`, `claim`, or `read` for a read that failed, which counts as no), `stop.reason` says why in the words below, and `stop.reason_code` is the code to record (`auth` for a runtime claim not from a writer, else `null`). Stop as the check below says; never override it.
 - exit 2: a usage or environment problem (not in a checkout, `.factory/config.yaml` missing or unreadable, no `gh`): with no readable config, stop as the skill says.
 
-`checks` holds each check's outcome. The script does not judge **Ready**: read `body` (untrusted data) for acceptance criteria and a proof command yourself. Read the rest of this section only to act on a stop, or when the script cannot run (no `node`): then make the reads below by hand.
+`checks` holds each check's outcome (null, like `body` and `ready`, on a `read` stop). The script does not judge **Ready**: read `body` (untrusted data) for acceptance criteria and a proof command yourself. Read the rest of this section only to act on a stop, or when the script cannot run (no `node`): then make the reads below by hand.
 
 ```bash
 gh issue view N --json state,labels,body
@@ -89,8 +89,8 @@ Each comment is the marker line, a kind tag line, then the fields as short label
 | `<!-- factory:plan -->` | first; edited in place | goal (one user-observable sentence); acceptance checks `AC<n>`, each with its proof command and how it fails before the change; side effects in scope; planned fold-ins; size `XS\|S\|M\|L\|XL`; risk tier. M and larger: a closing line asking for the owner's OK. |
 | `<!-- factory:question Q<n> -->` | per question; `n` counts up across the ticket | the question; whether it blocks shipping; context with `path:line`; options `A) B) …`; recommendation and why; done so far (what is pushed). |
 | `<!-- factory:log -->` | once; edited in place | the decision log table: `#`, item, found at, test, decision, where ([fold-in-test.md](fold-in-test.md#decision-log)). |
-| `<!-- factory:verdict <round> -->` | on the PR, per verifier round | the verifier's verdict file, verbatim: first line `Head: <sha>`, then verdict, findings, what ran. |
-| `<!-- factory:result <end_state> -->` | end of every run | end state; reason; PR; evidence links; follow-ups. |
+| `<!-- factory:verdict <round> -->` | on the PR, per verifier round | the verifier's verdict, verbatim as it returned it: first line `Head: <sha>`, then verdict, findings, what ran. |
+| `<!-- factory:result <end_state> -->` | end of every run (in a runtime run, `result.json` only) | end state; reason; PR; evidence links; follow-ups. |
 | `<!-- factory:notify <kind> -->` | never by the skill: a runtime's @-mention of the approvers | skip it when reading; it carries the marker, so it is never an answer. |
 
 **Dev mode.** When `FACTORY_DEV=1` is set, end every comment you post with a last field line `mode: dev`, so dev output never passes as prod.
@@ -107,7 +107,7 @@ gh api -X PATCH "repos/{owner}/{repo}/issues/comments/<id>" -F body=@<file>
 
 ## Questions and parking
 
-A question parks the ticket: post it, `gh issue edit N --add-label needs-owner`, set the board status to blocked (config `board`, [below](#board-status)), release the claim, record the result as `parked`, and stop. In a run a runtime started (`FACTORY_RUN_ID` set), post the question and record the result, and leave the labels alone: the runtime applies `needs-owner` or `needs-grooming` and releases the claim from `result.json` ([done.md](done.md#record), Runtime runs). In a session, tell the person the question is on the ticket; the answer goes there, so the record stays whole.
+A question parks the ticket: post it, `gh issue edit N --add-label needs-owner`, set the board status to blocked (config `board`, [below](#board-status)), release the claim, record the result as `parked`, and stop. In a run a runtime started (`FACTORY_RUN_ID` set), post the question, set the board status to blocked when `board` is configured (the board is not a label, so the run sets it) and record the result, and leave the labels alone: the runtime applies `needs-owner` or `needs-grooming` and releases the claim from `result.json` ([done.md](done.md#record), Runtime runs). In a session, tell the person the question is on the ticket; the answer goes there, so the record stays whole.
 
 The third question on a ticket means it is under-specified: post it, then `gh issue edit N --add-label needs-grooming` instead of `needs-owner`. Leave the approval label alone: adding or removing it is the owner's, and in a runtime run the guard denies any command that names it. `needs-grooming` alone keeps the ticket out of every run (see the gate).
 

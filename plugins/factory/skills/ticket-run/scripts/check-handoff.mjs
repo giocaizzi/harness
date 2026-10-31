@@ -1,13 +1,15 @@
-// Checks a group run's member handoffs (references/group.md): the member brief the run writes and the member result the
-// member hands back, and turns them into the member's entry of result.json's `tasks`.
-// Usage `node check-handoff.mjs brief <brief.json>` or `node check-handoff.mjs result <brief.json> <result.json>` (checks
-// the brief too): exit 0 valid, 1 invalid or unreadable (one line per error), 2 usage.
+// Checks a group run's run file and member handoffs (references/group.md): the run file a runtime hands the run, the member
+// brief the run writes and the member result the member hands back, and turns them into the member's entry of result.json's `tasks`.
+// Usage `node check-handoff.mjs run [<run.json>]` (reads FACTORY_RUN_FILE without a file), `node check-handoff.mjs brief <brief.json>`
+// or `node check-handoff.mjs result <brief.json> <result.json>` (checks the brief too): exit 0 valid, 1 invalid or unreadable
+// (one line per error), 2 usage.
 // Imports Node built-ins and ./check-result.mjs only.
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { REASON_CODES, TICKET, report, show } from './check-result.mjs'
 
+export const RUN_KEYS = ['schema', 'run_id', 'lead', 'members']
 export const BRIEF_KEYS = ['handoff', 'version', 'run_id', 'ticket', 'worktree', 'branch', 'base', 'brief']
 export const RESULT_KEYS = ['handoff', 'version', 'run_id', 'ticket', 'outcome', 'reason', 'reason_code', 'branch', 'head', 'checks']
 
@@ -23,6 +25,30 @@ const keyErrors = (obj, keys) => [
   ...keys.filter((k) => !(k in obj)).map((k) => `missing key ${k}`),
   ...Object.keys(obj).filter((k) => !keys.includes(k)).map((k) => `unknown key ${show(k)}`),
 ]
+
+export const runFileErrors = (run, env = process.env) => {
+  if (!isObject(run)) return [`run file must be a JSON object, got ${show(run)}`]
+  const errors = keyErrors(run, RUN_KEYS)
+  const bad = (key, want) => key in run && errors.push(`${key} must be ${want}, got ${show(run[key])}`)
+  if (run.schema !== 1) bad('schema', '1')
+  if (!isText(run.run_id)) bad('run_id', 'a non-empty string')
+  else if (env.FACTORY_RUN_ID && run.run_id !== env.FACTORY_RUN_ID) errors.push(`run_id ${show(run.run_id)} differs from FACTORY_RUN_ID ${show(env.FACTORY_RUN_ID)}`)
+  if (typeof run.lead !== 'string' || !TICKET.test(run.lead)) bad('lead', 'of the form "<owner>/<repo>#<number>"')
+  else if (env.FACTORY_TICKET && run.lead !== env.FACTORY_TICKET) errors.push(`lead ${show(run.lead)} differs from FACTORY_TICKET ${show(env.FACTORY_TICKET)}`)
+  if (!('members' in run)) return errors
+  if (!Array.isArray(run.members) || run.members.length === 0) return [...errors, `members must be a non-empty array, got ${show(run.members)}`]
+  const seen = new Set()
+  run.members.forEach((m, i) => {
+    const at = `members[${i}]`
+    if (!isObject(m)) return errors.push(`${at}: must be an object with ticket`)
+    errors.push(...keyErrors(m, ['ticket']).map((e) => `${at}: ${e}`))
+    if (typeof m.ticket !== 'string' || !TICKET.test(m.ticket)) return 'ticket' in m && errors.push(`${at}: ticket must be of the form "<owner>/<repo>#<number>", got ${show(m.ticket)}`)
+    if (seen.has(m.ticket)) errors.push(`${at}: duplicate ticket ${show(m.ticket)}`)
+    seen.add(m.ticket)
+  })
+  if (typeof run.lead === 'string' && TICKET.test(run.lead) && run.members[0]?.ticket !== run.lead) errors.push(`members[0] must be the lead ${show(run.lead)}`)
+  return errors
+}
 
 export const briefErrors = (brief) => {
   if (!isObject(brief)) return [`brief must be a JSON object, got ${show(brief)}`]
@@ -101,17 +127,20 @@ const load = (file) => {
 
 // Exit code, not process.exit: an exit mid-pipe can cut stderr short.
 const main = (args) => {
-  const [mode, ...files] = args
-  if (!((mode === 'brief' && files.length === 1) || (mode === 'result' && files.length === 2))) {
-    console.error('usage: node check-handoff.mjs brief <brief.json> | node check-handoff.mjs result <brief.json> <result.json>')
+  const [mode, ...rest] = args
+  const files = mode === 'run' && rest.length === 0 && process.env.FACTORY_RUN_FILE ? [process.env.FACTORY_RUN_FILE] : rest
+  if (!((mode === 'run' && files.length === 1) || (mode === 'brief' && files.length === 1) || (mode === 'result' && files.length === 2))) {
+    console.error('usage: node check-handoff.mjs run [<run.json>] | node check-handoff.mjs brief <brief.json> | node check-handoff.mjs result <brief.json> <result.json>')
     return 2
   }
   const loaded = files.map(load)
   const errors = loaded.some((l) => l.errors)
     ? loaded.flatMap((l) => l.errors ?? [])
-    : mode === 'brief'
-      ? briefErrors(loaded[0].value)
-      : [...briefErrors(loaded[0].value), ...memberResultErrors(loaded[1].value, loaded[0].value)]
+    : mode === 'run'
+      ? runFileErrors(loaded[0].value)
+      : mode === 'brief'
+        ? briefErrors(loaded[0].value)
+        : [...briefErrors(loaded[0].value), ...memberResultErrors(loaded[1].value, loaded[0].value)]
   for (const line of report(errors)) console.error(line)
   return errors.length ? 1 : 0
 }
