@@ -9,7 +9,7 @@ A group run works several approved tickets in one session and ships at most one 
 - **Released means unchanged.** A `released` member goes back to the queue as it was before the run: the runtime releases its claim (removes the claim label) as at any run end, and the member gets no result comment, no `needs-owner` and no other label or comment from the run.
 - **No done member ships nothing.** When no entry is `done`, the run opens no PR (`pr` is `null`, every `pr_link` is `null`), `end_state` is not `done`, and `reason` says why no member finished.
 - **No subagent.** Where a harness runs no subagent, each member runs as a separate session given its brief, in the foreground, its last message the member result.
-- **One PR.** The PR carries every `done` member's branch and names each member per its entry's `pr_link`: `Closes #N` for `closes` (done), `Refs #N` for `refs` (parked or released).
+- **One PR.** The PR carries every `done` member's branch and names each member per its entry's `pr_link`: `Closes #N` for `closes` (done), `Refs #N` for `refs` (parked); a released member is not named in the PR.
 
 ## Run file
 

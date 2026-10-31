@@ -30,6 +30,7 @@ const EXPECTED = {
   'parked-no-code': /tasks\[1\].*reason_code must be .*when parked/,
   'released-no-reason': /tasks\[1\].*reason must be a non-empty string when released/,
   'link-mismatch': /tasks\[1\].*pr_link must be "closes"/,
+  'released-with-link': /tasks\[2\]: pr_link must be null when released/,
   'link-without-pr': /tasks\[0\].*pr_link must be null when parked without a pr/,
   'no-done-with-pr': /tasks: no done entry, so pr must be null/,
   'no-done-end-done': /tasks: no done entry, so end_state must not be done/,
