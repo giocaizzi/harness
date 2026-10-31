@@ -8,7 +8,7 @@ import { statfs } from 'node:fs/promises'
 import { cpus, homedir, loadavg, platform } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { analysis, branchFacts, cdDirs, cmdClass, codexRules, deniedBy, deniedDir, evaluateCommand, evaluateEdit, evaluateRouting, hostJudged, isHeavy, isRisky, nativeAsk, previewCommand, pureRead, refFacts, tagFacts, tagTargets, regenFacts, unattendedSet, withPreview, worktreeFacts } from '../core/engine.mjs'
+import { analysis, branchFacts, cdDirs, cmdClass, codexRules, deniedBy, deniedDir, evaluateCommand, evaluateEdit, evaluateRouting, hostJudged, isHeavy, isRisky, nativeAsk, previewCommand, pureRead, refFacts, stackFacts, stackTargets, tagFacts, tagTargets, regenFacts, unattendedSet, withPreview, worktreeFacts } from '../core/engine.mjs'
 import { cpuPercentFrom } from '../core/host.mjs'
 import { commandWords, units } from '../core/shell.mjs'
 import { emit } from '../core/otel.mjs'
@@ -206,8 +206,8 @@ export function pythonManager(cwd) {
 }
 
 // Blast-radius previews and worktree git checks: argv only (no shell), short timeout, null on failure.
-export const run = (argv, cwd) =>
-  new Promise((resolve) => execFile(argv[0], argv.slice(1), { cwd, timeout: 5000 }, (err, stdout) => resolve(err ? null : stdout)))
+export const run = (argv, cwd, ms = 5000) =>
+  new Promise((resolve) => execFile(argv[0], argv.slice(1), { cwd, timeout: ms }, (err, stdout) => resolve(err ? null : stdout)))
 
 // The host facts behind a host deny: what the caps were compared with.
 const hostAttrs = (host) => ({ load1: host.load1, cpu_percent: host.cpuPercent, free_gb: host.freeGb })
@@ -245,6 +245,8 @@ const within = (promise, ms, fallback) =>
 const FACTS_MS = 20_000
 const ALLOW_SAMPLE = 10
 const PREVIEW_MS = 3_000
+// The stacked-PR hint's lookups: a hint never holds a PR command back for long.
+const STACK_MS = 5_000
 
 // Unattended: GUARD_UNATTENDED in the environment the harness was launched with, or set by a command in this session
 // (`export GUARD_UNATTENDED=1`), which a hook cannot otherwise see: each hook is its own process. The command's own
@@ -326,9 +328,9 @@ async function onShell(input, state, deps) {
     let unfinished = false
     const facts = { env: { TMPDIR: deps.env.TMPDIR, TEMP: deps.env.TEMP, TMP: deps.env.TMP, HOME: deps.env.HOME || deps.env.USERPROFILE } }
     facts.env.dirs = existingDirs(command, facts.env, input.cwd)
+    // A lookup's own directory (a `cd` the engine followed) is relative to the call's cwd.
+    const inCwd = (argv, cwd, ms) => deps.run(argv, cwd == null ? input.cwd : resolve(input.cwd || '.', cwd), ms)
     if (isRisky(command, rules)) {
-      // A lookup's own directory (a `cd` the engine followed) is relative to the call's cwd.
-      const inCwd = (argv, cwd) => deps.run(argv, cwd == null ? input.cwd : resolve(input.cwd || '.', cwd))
       const gathered = await within(
         Promise.all([worktreeFacts(command, facts.env, rules, inCwd), branchFacts(command, rules, inCwd, facts.env), regenFacts(command, facts.env, rules, inCwd), refFacts(command, rules, inCwd, facts.env)]),
         deps.factsMs ?? FACTS_MS,
@@ -336,6 +338,16 @@ async function onShell(input, state, deps) {
       )
       if (gathered) [facts.worktrees, facts.branches, facts.regenerable, facts.refs] = gathered
       else unfinished = true
+    }
+    // The stacked-PR hint (once per agent) costs a few git and gh lookups, on `gh pr create|merge` only.
+    if (!/^(0|false|off)$/i.test(deps.env?.GUARD_STACK_HINT ?? '') && !state.reminded.includes('stack') && stackTargets(command, rules, facts.env).length) {
+      const budget = deps.factsMs ?? STACK_MS
+      const deadline = Date.now() + budget
+      const stackRun = (argv, cwd) => {
+        const left = deadline - Date.now()
+        return left <= 0 ? Promise.resolve(null) : inCwd(argv, cwd, left)
+      }
+      facts.stack = await within(stackFacts(command, rules, stackRun, facts.env), budget, {})
     }
     // A `git tag -f`/`-d` of a tag no remote has is not a release (one `ls-remote` per remote, same budget).
     if (tagTargets(command, rules, facts.env).some((t) => !t.name.startsWith('<'))) {

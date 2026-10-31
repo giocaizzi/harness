@@ -68,6 +68,8 @@ When a runtime started the run (`FACTORY_RUN_ID` set), the runtime owns the tick
 
 A claim is visible on the forge, never only a local lock, so runs on different hosts never take the same ticket. A run claims a ticket by adding the claim label and posting a `factory:claim` comment with its host and run id (a run a runtime started finds both already there, under the run id in `FACTORY_RUN_ID`, and edits that comment instead of posting a second), and releases it by removing the label when it ends, in any end state (a runtime releases its own claim). A run that finds the label with another run's claim stops; only a claim comment by a writer (see [Authors](#comments)) is a claim. A claim left by a run that died is cleared by the owner, by removing the label. A runtime on several hosts uses the same protocol; the race between two claims at the same moment is its to settle (for example by re-reading the newest claim comment after posting).
 
+A runtime may open a ticket's dependent work as a stack of PRs; the result, labels and claim stay per PR, so each PR is reported and labelled on its own.
+
 ## Takeover
 
 An approver who wants to finish a ticket a runtime is working, attended, applies the takeover label. The two sides never hold the ticket at once: the runtime releases it before the attended run claims it, and the label stays on until that claim is posted, so the runtime cannot claim in between. Both sides fail closed: a read that errors or cannot be judged never lets a step go on.
