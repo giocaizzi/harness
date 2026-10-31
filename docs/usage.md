@@ -134,6 +134,7 @@ Settings are env vars, set in the shell that starts the harness (or the `env` bl
 | `GUARD_THROTTLE` | `warn` | Claude Code: what a subagent spawn does once a plan window is at 90 %. `warn` starts it with a toast, `ask` puts it in an Allow/Deny prompt (parked like any ask: after `GUARD_ASK_TIMEOUT_MS`, at once under `GUARD_UNATTENDED`), `deny` refuses it, `off` turns the throttle off. Any other value is `warn`. |
 | `GUARD_OTEL=off` | on | Sends no guard telemetry, whatever the OTel endpoint (`make test` sets it). |
 | `GUARD_OTEL_EXPORTER_OTLP_ENDPOINT`, `GUARD_OTEL_EXPORTER_OTLP_HEADERS` | unset | Send each deny and ask to Grafana as logs ([guard.md](guard.md#grafana)). |
+| `GUARD_TRACEPARENT` | unset | A W3C `traceparent` a runtime sets for a traced run: each decision record carries its trace and span ids; a malformed value is ignored ([guard.md](guard.md#grafana)). |
 
 A repo with a slow suite defines a `check-fast` make target; the stop hook runs that instead of `check`.
 

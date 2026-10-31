@@ -193,6 +193,26 @@ test('opencode and pi: GUARD_UNATTENDED turns a risky ask into a deny, even with
   assert.match(blocked.reason, /Unattended run/)
 })
 
+test('opencode and pi: GUARD_TRACEPARENT adds trace_id and span_id to the events file line, a malformed one adds neither', async () => {
+  const tp = '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01'
+  const lines = (file) => readFileSync(file, 'utf8').trim().split('\n').map((l) => JSON.parse(l))
+  for (const [value, want] of [[tp, ['4bf92f3577b34da6a3ce929d0e0e4736', '00f067aa0ba902b7']], [tp.toUpperCase(), [undefined, undefined]]]) {
+    const ocFile = join(dir(), 'events.jsonl')
+    const oc = await GuardPlugin({ client: {}, directory: dir() }, { ...deps(), env: { FACTORY_EVENTS_FILE: ocFile, GUARD_TRACEPARENT: value } })
+    await assert.rejects(oc['tool.execute.before']({ tool: 'bash', sessionID: 's', callID: 'c' }, { args: { command: 'git commit -m "bad title"' } }), /Conventional/)
+    const piFile = join(dir(), 'events.jsonl')
+    const { handlers, api } = fakePi()
+    guardExtension(api, { ...deps(), env: { FACTORY_EVENTS_FILE: piFile, GUARD_TRACEPARENT: value } })
+    const blocked = await handlers.tool_call({ toolName: 'bash', toolCallId: 't', input: { command: 'git commit -m "bad title"' } }, { cwd: dir(), hasUI: false, sessionManager: { getSessionId: () => 's' } })
+    assert.equal(blocked?.block, true)
+    for (const file of [ocFile, piFile]) {
+      const [line] = lines(file)
+      assert.equal(line.decision, 'deny')
+      assert.deepEqual([line.trace_id, line.span_id], want, `${file} ${value}`)
+    }
+  }
+})
+
 test('pi: every ask outcome is logged as guard.ask_result with its class; no UI is unavailable via no-ui', async () => {
   const { handlers, api } = fakePi()
   const events = []
