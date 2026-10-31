@@ -123,7 +123,7 @@ export const taskErrors = (result) => {
       if (!isText(t.reason)) e.push(`${at}: reason must be a non-empty string when ${t.outcome}, got ${show(t.reason)}`)
       if (t.outcome === 'parked' ? !coded : t.reason_code !== null && !coded) e.push(`${at}: reason_code must be ${t.outcome === 'parked' ? '' : 'null or '}one of ${REASON_CODES.join(', ')} when ${t.outcome}, got ${show(t.reason_code)}`)
     }
-    const link = !hasPr ? null : t.outcome === 'done' ? 'closes' : 'refs'
+    const link = !hasPr || t.outcome === 'released' ? null : t.outcome === 'done' ? 'closes' : 'refs'
     if (t.pr_link !== link) e.push(`${at}: pr_link must be ${show(link)} when ${t.outcome}${hasPr ? '' : ' without a pr'}, got ${show(t.pr_link)}`)
     return e
   })
