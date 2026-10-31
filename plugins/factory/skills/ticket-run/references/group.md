@@ -8,7 +8,7 @@ A group run works several approved tickets in one session and ships at most one 
 - **A malformed handoff parks only that member.** A brief or result that fails the check, or a member that returned no JSON, becomes a `parked` entry with `reason_code: handoff` and the first error as its `reason`; the other members go on. `check-handoff.mjs`'s `memberTask` makes that entry.
 - **Released means unchanged.** A `released` member goes back to the queue as it was before the run: the runtime releases its claim (removes the claim label) as at any run end, and the member gets no result comment, no `needs-owner` and no other label or comment from the run.
 - **No done member ships nothing.** When no entry is `done`, the run opens no PR (`pr` is `null`, every `pr_link` is `null`), `end_state` is not `done`, and `reason` says why no member finished.
-- **No subagent.** Where a harness runs no subagent, each member runs as a separate session given its brief, in the foreground, its last message the member result.
+- **No subagent.** Where a harness runs no subagent, each member runs as a separate session given its brief, in the foreground, its last message the member result, and started with `GUARD_RESULT_GATE=off` in its environment: it inherits the run's factory variables, and without it the `guard` plugin's stop hook would hold the member until the lead's `result.json` is valid and use up the run's two blocks. A member subagent told by that hook that the result file is invalid ignores it and ends its turn. On Codex the hook cannot tell a subagent's stop apart, so member subagents there can use up the two blocks and the lead is not held to a valid file: the lead runs the Record steps and checks the file itself.
 - **One PR.** The PR carries every `done` member's branch and names each member per its entry's `pr_link`: `Closes #N` for `closes` (done), `Refs #N` for `refs` (parked); a released member is not named in the PR.
 
 ## Run file
@@ -20,7 +20,7 @@ The multi-task brief a runtime hands the run, one JSON object in the file named 
 | `schema` | integer | Run file format, `1`. |
 | `run_id` | string | The group run's `run_id`; equal to `FACTORY_RUN_ID` when that is set. |
 | `lead` | string | The lead, `<owner>/<repo>#<number>`; equal to `FACTORY_TICKET` when that is set. |
-| `members` | array | Non-empty: one `{ticket}` object per member (that key only), each `<owner>/<repo>#<number>`, none twice, the lead first. |
+| `members` | array | Non-empty: one `{ticket}` object per member (that key only), each `<owner>/<repo>#<number>`, all in one repo, the lead's, and no number twice (compared ignoring case), the lead first. |
 
 The members' order is the order of `tasks`.
 
@@ -54,4 +54,4 @@ The members' order is the order of `tasks`.
 | `reason_code` | string \| null | `null` when `done`; one of `result.md`'s codes when `parked`; `null` or one of them when `released`. |
 | `branch` | string | Equal to the brief's. |
 | `head` | string \| null | The 40-hex commit the member ends on; required when `done`, else the WIP commit or `null`. |
-| `checks` | array | `{command, result}` per check run, `result` one of `pass`, `fail`, `not_run` (with a `note` on why); none is `fail` when `done`. |
+| `checks` | array | `{command, result}` per check run, `result` one of `pass`, `fail`, `not_run` (with a `note` on why); none is `fail` and at least one is `pass` when `done`. |

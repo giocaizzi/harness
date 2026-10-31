@@ -1,7 +1,7 @@
 // Checks a group run's run file and member handoffs (references/group.md): the run file a runtime hands the run, the member
 // brief the run writes and the member result the member hands back, and turns them into the member's entry of result.json's `tasks`.
 // Usage `node check-handoff.mjs run [<run.json>]` (reads FACTORY_RUN_FILE without a file), `node check-handoff.mjs brief <brief.json>`
-// or `node check-handoff.mjs result <brief.json> <result.json>` (checks the brief too): exit 0 valid, 1 invalid or unreadable
+// or `node check-handoff.mjs result <brief.json> <result.json>` (checks the brief too); `memberTask(ticket, brief, result, runId)` also parks a brief for another ticket or run: exit 0 valid, 1 invalid or unreadable
 // (one line per error), 2 usage.
 // Imports Node built-ins and ./check-result.mjs only.
 import { readFileSync } from 'node:fs'
@@ -15,6 +15,7 @@ export const RESULT_KEYS = ['handoff', 'version', 'run_id', 'ticket', 'outcome',
 
 const SHA = /^[0-9a-f]{40}$/
 const REF = /^(?!-)[\w.\/-]+$/
+const MEMBER_FORBIDDEN_CODES = ['handoff', 'takeover']
 const OUTCOMES = ['done', 'parked', 'released']
 const CHECK_RESULTS = ['pass', 'fail', 'not_run']
 
@@ -26,27 +27,34 @@ const keyErrors = (obj, keys) => [
   ...Object.keys(obj).filter((k) => !keys.includes(k)).map((k) => `unknown key ${show(k)}`),
 ]
 
+const repoOf = (ticket) => ticket.slice(0, ticket.lastIndexOf('#')).toLowerCase()
+
 export const runFileErrors = (run, env = process.env) => {
   if (!isObject(run)) return [`run file must be a JSON object, got ${show(run)}`]
   const errors = keyErrors(run, RUN_KEYS)
+  const envRun = (env.FACTORY_RUN_ID ?? '').trim()
+  const envTicket = (env.FACTORY_TICKET ?? '').trim()
   const bad = (key, want) => key in run && errors.push(`${key} must be ${want}, got ${show(run[key])}`)
   if (run.schema !== 1) bad('schema', '1')
   if (!isText(run.run_id)) bad('run_id', 'a non-empty string')
-  else if (env.FACTORY_RUN_ID && run.run_id !== env.FACTORY_RUN_ID) errors.push(`run_id ${show(run.run_id)} differs from FACTORY_RUN_ID ${show(env.FACTORY_RUN_ID)}`)
+  else if (envRun && run.run_id !== envRun) errors.push(`run_id ${show(run.run_id)} differs from FACTORY_RUN_ID ${show(envRun)}`)
   if (typeof run.lead !== 'string' || !TICKET.test(run.lead)) bad('lead', 'of the form "<owner>/<repo>#<number>"')
-  else if (env.FACTORY_TICKET && run.lead !== env.FACTORY_TICKET) errors.push(`lead ${show(run.lead)} differs from FACTORY_TICKET ${show(env.FACTORY_TICKET)}`)
+  else if (envTicket && run.lead !== envTicket) errors.push(`lead ${show(run.lead)} differs from FACTORY_TICKET ${show(envTicket)}`)
   if (!('members' in run)) return errors
   if (!Array.isArray(run.members) || run.members.length === 0) return [...errors, `members must be a non-empty array, got ${show(run.members)}`]
   const seen = new Set()
+  const leadOk = typeof run.lead === 'string' && TICKET.test(run.lead)
   run.members.forEach((m, i) => {
     const at = `members[${i}]`
     if (!isObject(m)) return errors.push(`${at}: must be an object with ticket`)
     errors.push(...keyErrors(m, ['ticket']).map((e) => `${at}: ${e}`))
     if (typeof m.ticket !== 'string' || !TICKET.test(m.ticket)) return 'ticket' in m && errors.push(`${at}: ticket must be of the form "<owner>/<repo>#<number>", got ${show(m.ticket)}`)
-    if (seen.has(m.ticket)) errors.push(`${at}: duplicate ticket ${show(m.ticket)}`)
-    seen.add(m.ticket)
+    if (leadOk && repoOf(m.ticket) !== repoOf(run.lead)) errors.push(`${at}: ticket ${show(m.ticket)} is not in the lead's repo ${show(repoOf(run.lead))}`)
+    const key = m.ticket.toLowerCase()
+    if (seen.has(key)) errors.push(`${at}: duplicate ticket ${show(m.ticket)}`)
+    seen.add(key)
   })
-  if (typeof run.lead === 'string' && TICKET.test(run.lead) && run.members[0]?.ticket !== run.lead) errors.push(`members[0] must be the lead ${show(run.lead)}`)
+  if (leadOk && run.members[0]?.ticket?.toLowerCase() !== run.lead.toLowerCase()) errors.push(`members[0] must be the lead ${show(run.lead)}`)
   return errors
 }
 
@@ -98,7 +106,9 @@ export const memberResultErrors = (result, brief) => {
     if (result.reason_code !== null) bad('reason_code', 'null when done')
     if (typeof result.head !== 'string' || !SHA.test(result.head)) bad('head', 'a 40-hex commit when done')
     if (Array.isArray(result.checks) && result.checks.some((c) => c?.result === 'fail')) errors.push('a done member has a failing check')
+    if (Array.isArray(result.checks) && !result.checks.some((c) => c?.result === 'pass')) errors.push('a done member needs at least one passed check')
   } else if (OUTCOMES.includes(outcome)) {
+    if (MEMBER_FORBIDDEN_CODES.includes(result.reason_code)) errors.push(`reason_code ${show(result.reason_code)} is not for a member to report`)
     if (!isText(result.reason)) bad('reason', `non-empty when ${outcome}`)
     if (outcome === 'parked' && !REASON_CODES.includes(result.reason_code)) bad('reason_code', `one of ${REASON_CODES.join(', ')} when parked`)
     if (outcome === 'released' && result.reason_code !== null && !REASON_CODES.includes(result.reason_code)) bad('reason_code', 'null or one of the codes when released')
@@ -109,9 +119,16 @@ export const memberResultErrors = (result, brief) => {
 }
 
 // The result.json task entry of one member; the run sets pr_link once it knows the PR. `ticket` comes from the group's
-// list, never from the files. A result of undefined means the member returned no JSON.
-export const memberTask = (ticket, brief, result) => {
-  const errors = [...briefErrors(brief), ...(result === undefined ? ['no member result'] : memberResultErrors(result, brief))]
+// list, never from the files, and the brief must name that ticket (ignoring case) and, when runId is set, that run.
+// A result of undefined means the member returned no JSON.
+export const memberTask = (ticket, brief, result, runId = process.env.FACTORY_RUN_ID) => {
+  const wrongBrief = []
+  if (isObject(brief)) {
+    if (typeof brief.ticket === 'string' && brief.ticket.toLowerCase() !== ticket.toLowerCase()) wrongBrief.push(`brief ticket ${show(brief.ticket)} differs from the member ${show(ticket)}`)
+    const run = (runId ?? '').trim()
+    if (run && brief.run_id !== run) wrongBrief.push(`brief run_id ${show(brief.run_id)} differs from the run's ${show(run)}`)
+  }
+  const errors = [...briefErrors(brief), ...wrongBrief, ...(result === undefined ? ['no member result'] : memberResultErrors(result, brief))]
   if (errors.length) return { ticket, outcome: 'parked', reason: `malformed handoff: ${errors[0]}`.slice(0, 300), reason_code: 'handoff', pr_link: null }
   return { ticket, outcome: result.outcome, reason: result.reason, reason_code: result.reason_code, pr_link: null }
 }
