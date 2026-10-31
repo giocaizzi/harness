@@ -52,7 +52,7 @@ const scalar = (raw, key) => {
   return v
 }
 
-/** The gate's keys from the config text: approvers, writers, approvers_allow_bots, labels, marker. Throws UsageError when one cannot be read. */
+/** The gate's keys from the config text: approvers, writers, approvers_allow_bots, labels, marker, identity ({ logins, mention }, or null when the block is absent). Throws UsageError when one cannot be read. */
 export const parseConfig = (text) => {
   const top = {}
   let current = null
@@ -105,23 +105,62 @@ export const parseConfig = (text) => {
     }
   }
   const marker = top.marker ? scalar(top.marker.inline, 'marker') : ''
-  return { approvers, writers: writers ?? null, approversAllowBots: bots === 'true', labels, marker: marker || DEFAULT_MARKER }
+  return { approvers, writers: writers ?? null, approversAllowBots: bots === 'true', labels, marker: marker || DEFAULT_MARKER, identity: identityBlock(top.identity) }
+}
+
+// The optional `identity:` block: `logins` (a flow list or list items) and `mention` (a scalar); other keys are ignored with their lines.
+const identityBlock = (e) => {
+  if (!e) return null
+  const bad = (what) => new UsageError(`.factory/config.yaml: identity ${what}`)
+  if (e.inline) throw bad('must be a block mapping')
+  const indent = /^\s*/.exec(e.block[0] ?? '')?.[0].length ?? 0
+  const logins = []
+  let mention = null
+  let key = null
+  for (const l of e.block) {
+    const kv = /^(\s+)([A-Za-z_]\w*):\s*(.*)$/.exec(l)
+    if (kv && kv[1].length === indent) {
+      key = kv[2]
+      const value = kv[3].trim()
+      if (key === 'logins') {
+        if (value.startsWith('[')) {
+          if (!value.endsWith(']')) throw bad('has a logins list the gate cannot read')
+          const body = value.slice(1, -1).trim()
+          if (body) logins.push(...body.split(',').map((x) => scalar(x, 'identity.logins')))
+        } else if (value) throw bad('has logins that must be a list')
+      } else if (key === 'mention') mention = scalar(value, 'identity.mention') || null
+      continue
+    }
+    const item = /^(\s+)-\s+(.+)$/.exec(l)
+    if (item && key === 'logins' && item[1].length >= indent) logins.push(scalar(item[2], 'identity.logins'))
+    else if (key && key !== 'logins' && key !== 'mention' && (item || /^\s*/.exec(l)[0].length > indent)) continue
+    else throw bad('is a mapping the gate cannot read')
+  }
+  if (logins.some((x) => !x)) throw bad('has an empty login')
+  return { logins, mention }
 }
 
 // --- the judgement, pure: every input is what one read returned ---
 
 const lines = (body) => String(body).split('\n').map((l) => l.replace(/\r$/, ''))
-const fields = (body) => Object.fromEntries(lines(body).slice(2).flatMap((l) => {
+const fieldLines = (body) => lines(body).slice(2).flatMap((l) => {
   const m = /^([a-z][a-z ]*):\s*(.*)$/.exec(l)
   return m ? [[m[1], m[2].trim()]] : []
-}))
+})
+// The first occurrence of a key wins: a later line with the same key is ignored.
+export const fields = (body) => {
+  const out = {}
+  for (const [k, v] of fieldLines(body)) if (!Object.hasOwn(out, k)) out[k] = v
+  return out
+}
 const shortHost = (h) => lc(String(h ?? '').split('.')[0])
 
 /**
  * The gate verdict from the reads.
  * @param {object} reads  config (parseConfig), env, host (this host's name), login (the login this run posts as, or
  *   null), issue (`gh issue view --json state,labels,body`), timeline (one page), edit (the GraphQL issue: lastEditedAt,
- *   editor; null when it printed nothing), comments ({id, login, created_at, html_url, body}, oldest first).
+ *   editor; null when it printed nothing), comments ({id, login, created_at, updated_at, html_url, body}, oldest first).
+ *   config.identity ({ logins, mention } or null) lets a runtime run take its approval from the run's own claim.
  * @returns {object} The verdict: `go`, `wait` (takeover: the runtime still holds the ticket) or `stop`, and each check.
  */
 export const judge = ({ config, env, host, login, issue, timeline, edit, comments }) => {
@@ -133,26 +172,10 @@ export const judge = ({ config, env, host, login, issue, timeline, edit, comment
   const marked = (c) => typeof c.body === 'string' && c.body.startsWith(marker)
   const trusted = comments.filter((c) => marked(c) && inList(writers, c.login))
   const isClaim = (c) => lines(c.body)[1] === CLAIM_TAG
-  const claims = trusted.filter(isClaim).map((c) => ({ id: c.id, url: c.html_url, login: c.login, ...fields(c.body) }))
+  const claims = trusted.filter(isClaim).map((c) => ({ ...fields(c.body), id: c.id, url: c.html_url, login: c.login }))
   const partial = !Array.isArray(timeline) || timeline.length >= PAGE
   const PARTIAL = `refuse: the timeline has ${PAGE} or more events, more than one read covers`
   const lastEvent = (label, kinds) => [...(partial ? [] : timeline)].reverse().find((e) => kinds.includes(e.event) && lc(e.label?.name ?? '') === lc(label))
-
-  // Approved and not edited since: the reference's edit check, which judges the approval too.
-  const apr = (u) => inList(approvers, u) && (config.approversAllowBots || !lc(u).endsWith('[bot]'))
-  const approved = (() => {
-    if (partial) return PARTIAL
-    const approval = lastEvent(labels.approval, ['labeled', 'unlabeled'])
-    if (!approval || approval.event !== 'labeled' || !apr(approval.actor?.login) || !has(labels.approval)) return 'refuse: not approved by an approver'
-    if (edit === null || typeof edit !== 'object' || Array.isArray(edit) || !('lastEditedAt' in edit) || (edit.lastEditedAt !== null && typeof edit.lastEditedAt !== 'string')) return 'refuse: the last edit of the body could not be read'
-    // No string time: '' orders below every string, as the jq filter's null does, so an edit counts as after the approval.
-    const at = typeof approval.created_at === 'string' ? approval.created_at : ''
-    // The gate counts a rename with no string time as after the approval. That agrees with the jq filter when the approval has no time either; otherwise it can only refuse where the filter lets the ticket through (fail closed; GitHub always sends a string time).
-    const rename = timeline.filter((e) => e.event === 'renamed' && (typeof e.created_at !== 'string' || e.created_at >= at)).at(-1)
-    if (edit.lastEditedAt !== null && edit.lastEditedAt >= at) return `refuse: body edited after approval by ${edit.editor?.login ?? 'an unknown editor'}`
-    if (rename) return `refuse: title renamed after approval by ${rename.actor?.login ?? 'an unknown actor'}`
-    return 'ok'
-  })()
 
   const runId = String(env.FACTORY_RUN_ID ?? '').trim()
   // Takeover counts only in an attended run, applied by an approver (approvers_allow_bots does not apply here).
@@ -183,11 +206,65 @@ export const judge = ({ config, env, host, login, issue, timeline, edit, comment
   else if (newest && lc(newest.runner ?? '') === 'runtime' && takeover === 'takeover') claim = { state: 'held', newest }
   else claim = { state: 'other', newest }
 
-  const checks = { open: lc(issue.state) === 'open', approved, grooming: has(labels.needs_grooming), takeover, claim }
+  const apr = (u) => inList(approvers, u) && (config.approversAllowBots || !lc(u).endsWith('[bot]'))
+  // Not edited since `at`: the reference's edit check (the body's last edit, then a rename).
+  const editedSince = (at) => {
+    if (edit === null || typeof edit !== 'object' || Array.isArray(edit) || !('lastEditedAt' in edit) || (edit.lastEditedAt !== null && typeof edit.lastEditedAt !== 'string')) return 'refuse: the last edit of the body could not be read'
+    // The gate counts a rename with no string time as after the approval. That agrees with the jq filter when the approval has no time either; otherwise it can only refuse where the filter lets the ticket through (fail closed; GitHub always sends a string time).
+    const rename = timeline.filter((e) => e.event === 'renamed' && (typeof e.created_at !== 'string' || e.created_at >= at)).at(-1)
+    if (edit.lastEditedAt !== null && edit.lastEditedAt >= at) return `refuse: body edited after approval by ${edit.editor?.login ?? 'an unknown editor'}`
+    if (rename) return `refuse: title renamed after approval by ${rename.actor?.login ?? 'an unknown actor'}`
+    return 'ok'
+  }
+  const handles = typeof config.identity?.mention === 'string' && config.identity.mention
+    ? [config.identity.mention.replace(/^@/, '')]
+    : (config.identity?.logins ?? []).map((l) => l.replace(/\[bot\]$/i, ''))
+  const mentions = (body) => handles.filter(Boolean).some((h) => new RegExp(`(?<![A-Za-z0-9_-])@${h.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:\\[bot\\])?(?![A-Za-z0-9_-])`, 'i').test(body))
+  const own = claim.state === 'own' ? claims.find((c) => c.id === claim.comment_id) : null
+  // A runtime run takes the approval pinned in its own claim unless the label was touched at or after the pin.
+  const pinned = runId && config.identity?.logins?.length && own && !partial && Object.hasOwn(own, 'approved by') && Object.hasOwn(own, 'approved at')
+    && !timeline.some((e) => ['labeled', 'unlabeled'].includes(e.event) && lc(e.label?.name ?? '') === lc(labels.approval) && (typeof e.created_at !== 'string' || e.created_at >= own['approved at']))
+  let approvedCode = null
+  let approvalSource = null
+  const approved = (() => {
+    if (partial) return PARTIAL
+    if (pinned) {
+      const by = own['approved by']
+      const at = own['approved at']
+      if (!inList([...config.identity.logins, ...approvers], own.login)) {
+        approvedCode = 'auth'
+        return `refuse: the claim that pins the approval is by \`${own.login}\`, which is in neither \`identity.logins\` nor \`approvers\``
+      }
+      const body = trusted.find((c) => c.id === own.id).body
+      const seen = fieldLines(body).map(([k]) => k)
+      if (seen.filter((k) => k === 'approved by').length > 1 || seen.filter((k) => k === 'approved at').length > 1) return 'refuse: the claim repeats approved by or approved at'
+      if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(at)) return 'refuse: approved at is not a UTC time'
+      let source
+      if (by.startsWith('schedule:')) {
+        if (!by.slice(9).trim()) return 'refuse: a schedule pin names no schedule'
+        source = 'schedule'
+      } else if (apr(by)) {
+        const found = comments.some((c) => lc(c.login) === lc(by) && c.created_at === at && c.updated_at === c.created_at && typeof c.body === 'string' && !c.body.startsWith(marker) && mentions(c.body))
+        if (!found) return `refuse: no comment by ${by} created at ${at}, unedited and unmarked, mentions the factory`
+        source = 'mention'
+      } else return `refuse: approved by ${by} is not an approver`
+      const edited = editedSince(at)
+      if (edited === 'ok') approvalSource = source
+      return edited
+    }
+    const approval = lastEvent(labels.approval, ['labeled', 'unlabeled'])
+    if (!approval || approval.event !== 'labeled' || !apr(approval.actor?.login) || !has(labels.approval)) return 'refuse: not approved by an approver'
+    // No string time: '' orders below every string, as the jq filter's null does, so an edit counts as after the approval.
+    const edited = editedSince(typeof approval.created_at === 'string' ? approval.created_at : '')
+    if (edited === 'ok') approvalSource = 'label'
+    return edited
+  })()
+
+  const checks = { open: lc(issue.state) === 'open', approved, approval_source: approved === 'ok' ? approvalSource : null, grooming: has(labels.needs_grooming), takeover, claim }
   const stop = (check, reason, reason_code = null) => ({ verdict: 'stop', stop: { check, reason, reason_code }, checks })
   const base = { checks, ready: 'judge from body: acceptance criteria and a proof command; without them ask on the ticket (a park, not a stop)', body: issue.body ?? '' }
   if (!checks.open) return { ...base, ...stop('open', 'the issue is closed') }
-  if (approved !== 'ok') return { ...base, ...stop('approved', approved) }
+  if (approved !== 'ok') return { ...base, ...stop('approved', approved, approvedCode) }
   if (checks.grooming) return { ...base, ...stop('grooming', `the ${labels.needs_grooming} label is on: the owner removes it once the ticket is refined`) }
   if (claim.state === 'untrusted') {
     const reason = claim.login
@@ -230,7 +307,7 @@ export const read = (n) => {
   const timeline = json(gh(['api', `repos/{owner}/{repo}/issues/${n}/timeline?per_page=${PAGE}`]), 'timeline')
   const editText = gh(['api', 'graphql', '-F', `n=${n}`, '-F', 'owner=:owner', '-F', 'name=:repo', '--jq', '.data.repository.issue', '-f', 'query=query($owner:String!,$name:String!,$n:Int!){repository(owner:$owner,name:$name){issue(number:$n){lastEditedAt editor{login}}}}']).trim()
   const edit = editText ? json(editText, 'last edit') : null
-  const comments = gh(['api', `repos/{owner}/{repo}/issues/${n}/comments`, '--paginate', '--jq', '.[] | {id, login: .user.login, created_at, html_url, body}'])
+  const comments = gh(['api', `repos/{owner}/{repo}/issues/${n}/comments`, '--paginate', '--jq', '.[] | {id, login: .user.login, created_at, updated_at, html_url, body}'])
     .split('\n').filter(Boolean).map((l) => json(l, 'comments'))
   return { login, issue, timeline, edit, comments }
 }

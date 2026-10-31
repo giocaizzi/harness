@@ -906,7 +906,7 @@ test('result scripts: a BOM is stripped by an escape sequence, never a literal U
 
 const GATE = join(SCRIPTS, 'gate.mjs')
 const gate = () => import(pathToFileURL(GATE).href)
-const gateConfig = { approvers: ['example-owner'], writers: ['example-owner', 'example-bot[bot]'], approversAllowBots: false, labels: { approval: 'agent-ok', claimed: 'factory-claimed', needs_grooming: 'needs-grooming', takeover: 'factory-takeover' }, marker: '<!-- factory -->' }
+const gateConfig = { approvers: ['example-owner'], writers: ['example-owner', 'example-bot[bot]'], approversAllowBots: false, labels: { approval: 'agent-ok', claimed: 'factory-claimed', needs_grooming: 'needs-grooming', takeover: 'factory-takeover' }, marker: '<!-- factory -->', identity: null }
 const ev = (event, label, login, at = '2026-10-20T09:00:00Z') => ({ event, label: { name: label }, actor: { login }, created_at: at })
 const claimComment = (id, login, host, runId, runner) => ({ id, login, created_at: `2026-10-2${id}T00:00:00Z`, html_url: `https://example.test/c/${id}`, body: `<!-- factory -->\n<!-- factory:claim -->\nhost: ${host}\nrun id: ${runId}\nrunner: ${runner}` })
 const reads = (patch = {}) => ({
@@ -923,19 +923,25 @@ const reads = (patch = {}) => ({
 const withLabels = (...names) => ({ state: 'OPEN', labels: ['agent-ok', ...names].map((name) => ({ name })), body: 'b' })
 
 test('gate script: reads the config keys it needs from the template shape, and fails closed on what it cannot read', async () => {
-  const { parseConfig, UsageError } = await gate()
+  const { parseConfig, fields, UsageError } = await gate()
   const scaffold = read('plugins/factory/evals/ticket-run-runtime-claim-writer/scaffold.sh').split("<<'YML'\n")[1].split('\nYML')[0]
   assert.deepEqual(parseConfig(scaffold), gateConfig)
   const template = parseConfig(read('plugins/factory/template/config.yaml'))
   assert.deepEqual(template.approvers, ['<github-login>'])
   assert.equal(template.marker, '<!-- factory -->')
   assert.equal(template.approversAllowBots, false)
+  assert.deepEqual(template.identity, { logins: ['<bot-login>'], mention: '@<bot-handle>' })
+  assert.deepEqual(parseConfig('approvers: [a]\nidentity:\n  logins: [x, "y[bot]"]\n  mention: "@z"\n  other:\n    - ignored\n    deep: 1\n').identity, { logins: ['x', 'y[bot]'], mention: '@z' })
+  assert.deepEqual(parseConfig('approvers: [a]\nidentity:\n  logins:\n  - x\n  - y\n').identity, { logins: ['x', 'y'], mention: null })
+  assert.deepEqual(parseConfig('approvers: [a]\nidentity:\n  mention: ""\n').identity, { logins: [], mention: null })
+  assert.deepEqual(fields('m\nt\nrun id: a\nrun id: b'), { 'run id': 'a' }, 'the first occurrence of a key wins')
+  assert.equal(fields('m\nt\nconstructor: x').constructor, 'x')
   const flow = parseConfig('approvers: [a, "b"]\r\nwriters:\n- a\n- \'c[bot]\'  # the runtime\nmarker: ""\nlabels:\n  approval: ok-go\n  # a comment\n  takeover: "hand-over"\n')
   assert.deepEqual(flow, { ...gateConfig, approvers: ['a', 'b'], writers: ['a', 'c[bot]'], labels: { ...gateConfig.labels, approval: 'ok-go', takeover: 'hand-over' } })
   assert.deepEqual(parseConfig('---\napprovers: [a]\n').approvers, ['a'], 'a leading document marker')
   const decision = evaluateCommand({ command: 'node /home/runner/.claude/plugins/cache/m/factory/1/skills/ticket-run/scripts/gate.mjs 12', state: { reminded: new Set(), loaded: new Set(), hinted: new Set() }, host: {}, factory: { approval: 'agent-ok' }, rules })
   assert.notEqual(decision.action, 'deny', 'the gate call passes the factory-run guard')
-  for (const bad of ['writers: [a]', 'approvers: []', 'approvers: a', 'approvers: [a]\napprovers_allow_bots: yes', 'approvers: [a]\nlabels: {approval: x}', 'approvers: [a]\nlabels:\n  approval:\n', 'approvers: [a]\nmarker: "unterminated', '- a']) assert.throws(() => parseConfig(bad), UsageError, bad)
+  for (const bad of ['writers: [a]', 'approvers: []', 'approvers: a', 'approvers: [a]\napprovers_allow_bots: yes', 'approvers: [a]\nlabels: {approval: x}', 'approvers: [a]\nlabels:\n  approval:\n', 'approvers: [a]\nmarker: "unterminated', '- a', ...['identity: x', 'identity:\n  logins: x', 'identity:\n  mention: "@m"\n  - x', 'identity:\n  - x', 'identity:\n  logins:\n    - ""', 'identity:\n  logins: [a, ]', 'identity:\n  logins: [a', 'identity:\n  garbage'].map((b) => `approvers: [a]\n${b}`)]) assert.throws(() => parseConfig(bad), UsageError, bad)
 })
 
 test('gate script: the approval and edit check agree with the documented filter on random dated histories, and fail closed on undated events', async () => {
@@ -1006,6 +1012,80 @@ test('gate script: claims, the runtime claim not from a writer, takeover and gro
   // Grooming and a closed issue stop before any claim is judged.
   assert.equal(judge(reads({ issue: withLabels('needs-grooming') })).stop.check, 'grooming')
   assert.equal(judge(reads({ issue: { ...withLabels(), state: 'CLOSED' } })).stop.check, 'open')
+})
+
+test('gate script: a runtime approval pinned in the run\'s own claim, as comments.md judges it', async () => {
+  const { judge } = await gate()
+  const T = '2026-10-21T10:00:00Z'
+  const config = { ...gateConfig, writers: ['example-owner', 'example-bot[bot]', 'other-writer'], identity: { logins: ['example-bot[bot]'], mention: '@example-factory' } }
+  const env = { FACTORY_RUN_ID: 'rt-77' }
+  const issue = withLabels('factory-claimed')
+  issue.labels = issue.labels.filter((l) => l.name !== 'agent-ok')
+  const claimLabel = ev('labeled', 'factory-claimed', 'example-bot[bot]', '2026-10-21T11:00:00Z')
+  const pin = (by = 'example-owner', at = T, { login = 'example-bot[bot]', runId = 'rt-77', extra = [], id = 1 } = {}) => ({ id, login, created_at: '2026-10-21T11:00:00Z', updated_at: '2026-10-21T11:00:00Z', html_url: 'https://example.test/c/1', body: ['<!-- factory -->', '<!-- factory:claim -->', 'host: runner-1', `run id: ${runId}`, 'runner: runtime', `approved by: ${by}`, `approved at: ${at}`, ...extra].join('\n') })
+  const mention = (patch = {}) => ({ id: 9, login: 'example-owner', created_at: T, updated_at: T, html_url: 'https://example.test/c/9', body: '@example-factory please take this', ...patch })
+  const run = (patch = {}) => judge(reads({ config, env, issue, login: null, timeline: [claimLabel], comments: [pin(), mention()], ...patch }))
+  const refused = (v, re, code = null) => {
+    assert.equal(v.verdict, 'stop')
+    assert.equal(v.stop.check, 'approved')
+    assert.match(v.stop.reason, re)
+    assert.equal(v.stop.reason_code, code)
+    assert.equal(v.checks.approval_source, null)
+  }
+
+  const go = run()
+  assert.equal(go.verdict, 'go')
+  assert.equal(go.checks.approval_source, 'mention')
+  assert.deepEqual(go.claim, { action: 'edit', comment_id: 1 })
+  refused(run({ comments: [pin('other-writer'), mention({ login: 'other-writer' })] }), /^refuse: approved by other-writer is not an approver/)
+  refused(run({ comments: [pin(), mention({ updated_at: '2026-10-21T10:05:00Z' })] }), /unedited and unmarked/)
+  refused(run({ comments: [pin(), mention({ body: '<!-- factory -->\n@example-factory go' })] }), /unedited and unmarked/)
+  refused(run({ comments: [pin(), mention({ body: 'please take this' })] }), /mentions the factory/)
+  refused(run({ comments: [pin(), mention({ body: '@example-factoryx go' })] }), /mentions the factory/)
+  refused(run({ comments: [pin(), mention({ created_at: '2026-10-21T10:00:01Z', updated_at: '2026-10-21T10:00:01Z' })] }), /^refuse: no comment by example-owner created at 2026-10-21T10:00:00Z/)
+  const loose = { ...config, identity: { logins: ['example-bot[bot]'], mention: null } }
+  for (const body of ['@example-bot go', '@example-bot[bot] go']) assert.equal(run({ config: loose, comments: [pin(), mention({ body })] }).checks.approval_source, 'mention', body)
+  refused(run({ config: loose, comments: [pin(), mention({ body: '@example-botx' })] }), /mentions the factory/)
+  const second = run({ comments: [pin(), mention({ id: 8, body: 'thanks' }), mention()] })
+  assert.equal(second.verdict, 'go', 'every comment of the second is checked')
+  refused(run({ comments: [pin('example-owner', T, { extra: ['approved by: other-writer'] }), mention()] }), /^refuse: the claim repeats approved by or approved at/)
+  refused(run({ comments: [pin('example-owner', T, { extra: ['approved at: 2026-10-21T10:00:01Z'] }), mention()] }), /^refuse: the claim repeats/)
+  refused(run({ comments: [pin('example-owner', 'yesterday'), mention()] }), /^refuse: approved at is not a UTC time/)
+  // The claim's author and run id.
+  const copied = run({ comments: [pin('example-owner', T, { login: 'stranger' }), mention()] })
+  assert.equal(copied.checks.approval_source, null)
+  assert.equal(copied.verdict, 'stop')
+  const other = run({ comments: [pin('example-owner', T, { runId: 'rt-1' }), mention()] })
+  assert.equal(other.verdict, 'stop')
+  assert.equal(other.checks.approval_source, null)
+  refused(run({ comments: [pin('example-owner', T, { login: 'other-writer' }), mention()] }), /^refuse: the claim that pins the approval is by `other-writer`, which is in neither/, 'auth')
+  // A schedule pin.
+  const sched = run({ comments: [pin('schedule:nightly')] })
+  assert.equal(sched.verdict, 'go')
+  assert.equal(sched.checks.approval_source, 'schedule')
+  refused(run({ comments: [pin('schedule:nightly', T, { login: 'other-writer' })] }), /^refuse: the claim that pins/, 'auth')
+  refused(run({ comments: [pin('schedule:  ')] }), /^refuse: a schedule pin names no schedule/)
+  // The label wins when it was touched at or after the pin.
+  const unlabeled = [ev('labeled', 'agent-ok', 'example-owner', '2026-10-21T09:00:00Z'), ev('unlabeled', 'agent-ok', 'example-owner', '2026-10-21T10:30:00Z'), claimLabel]
+  const viaLabel = run({ timeline: unlabeled })
+  assert.equal(viaLabel.verdict, 'stop')
+  assert.equal(viaLabel.checks.approved, 'refuse: not approved by an approver')
+  const labeled = [ev('labeled', 'agent-ok', 'example-owner', '2026-10-21T10:30:00Z'), claimLabel]
+  const withLabel = { ...issue, labels: [...issue.labels, { name: 'agent-ok' }] }
+  assert.equal(run({ timeline: labeled, issue: withLabel }).checks.approval_source, 'label')
+  assert.equal(run({ timeline: [ev('labeled', 'agent-ok', 'example-owner', T), claimLabel], issue: withLabel }).checks.approval_source, 'label', 'an event at the pin goes to the label path')
+  // Edits: after a label approval then a body edit, the mention still goes; an edit after the mention refuses.
+  const early = [ev('labeled', 'agent-ok', 'example-owner', '2026-10-21T08:00:00Z'), claimLabel]
+  const edited = (at) => ({ lastEditedAt: at, editor: { login: 'example-owner' } })
+  assert.equal(run({ timeline: early, issue: withLabel, edit: edited('2026-10-21T09:00:00Z') }).checks.approval_source, 'mention')
+  refused(run({ edit: edited('2026-10-21T10:30:00Z') }), /^refuse: body edited after approval/)
+  refused(run({ timeline: [claimLabel, { event: 'renamed', actor: { login: 'example-owner' }, created_at: '2026-10-21T10:30:00Z' }] }), /^refuse: title renamed after approval/)
+  // Not a runtime run, no identity, a partial timeline: the label path decides.
+  const attended = judge(reads({ config, env: {}, issue: { ...issue, labels: [] }, comments: [pin(), mention()], timeline: [] }))
+  assert.equal(attended.verdict, 'stop')
+  assert.equal(attended.checks.approval_source, null)
+  refused(run({ config: { ...config, identity: null } }), /^refuse: not approved by an approver/)
+  refused(run({ timeline: Array(100).fill(claimLabel) }), /^refuse: the timeline has 100/)
 })
 
 test('gate script: the CLI prints one JSON verdict from gh, exit 0 go, 1 stop, 2 usage', { skip: process.platform === 'win32' && 'POSIX shim only' }, () => {
