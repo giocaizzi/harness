@@ -52,7 +52,7 @@ const scalar = (raw, key) => {
   return v
 }
 
-/** The gate's keys from the config text: approvers, writers, approvers_allow_bots, labels, marker, identity ({ logins, mention }, or null when the block is absent). Throws UsageError when one cannot be read. */
+/** The gate's keys from the config text: approvers, writers, approvers_allow_bots, labels, marker, identity ({ logins, mention }, null when the block is absent, or { logins: [], mention: null, error } when it cannot be read). Throws UsageError when one cannot be read. */
 export const parseConfig = (text) => {
   const top = {}
   let current = null
@@ -105,7 +105,17 @@ export const parseConfig = (text) => {
     }
   }
   const marker = top.marker ? scalar(top.marker.inline, 'marker') : ''
-  return { approvers, writers: writers ?? null, approversAllowBots: bots === 'true', labels, marker: marker || DEFAULT_MARKER, identity: identityBlock(top.identity) }
+  return { approvers, writers: writers ?? null, approversAllowBots: bots === 'true', labels, marker: marker || DEFAULT_MARKER, identity: readIdentity(top.identity) }
+}
+
+// An identity block the gate cannot read does not stop a label approval: it is kept as `error`, and only a runtime pin refuses on it.
+const readIdentity = (e) => {
+  try {
+    return identityBlock(e)
+  } catch (err) {
+    if (!(err instanceof UsageError)) throw err
+    return { logins: [], mention: null, error: err.message }
+  }
 }
 
 // The optional `identity:` block: `logins` (a flow list or list items) and `mention` (a scalar); other keys are ignored with their lines.
@@ -225,7 +235,7 @@ export const judge = ({ config, env, host, login, issue, timeline, edit, comment
   const mentions = (body) => handles.filter(Boolean).some((h) => new RegExp(`(?<![A-Za-z0-9_-])@${h.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:\\[bot\\])?(?![A-Za-z0-9_-])`, 'i').test(body))
   const own = claim.state === 'own' ? claims.find((c) => c.id === claim.comment_id) : null
   // A runtime run takes the approval pinned in its own claim unless the label was touched at or after the pin.
-  const pinned = runId && config.identity?.logins?.length && own && !partial && Object.hasOwn(own, 'approved by') && Object.hasOwn(own, 'approved at')
+  const pinned = runId && (config.identity?.error || config.identity?.logins?.length) && own && !partial && Object.hasOwn(own, 'approved by') && Object.hasOwn(own, 'approved at')
     && !timeline.some((e) => ['labeled', 'unlabeled'].includes(e.event) && lc(e.label?.name ?? '') === lc(labels.approval) && (typeof e.created_at !== 'string' || e.created_at >= own['approved at']))
   let approvedCode = null
   let approvalSource = null
@@ -234,6 +244,7 @@ export const judge = ({ config, env, host, login, issue, timeline, edit, comment
     if (pinned) {
       const by = own['approved by']
       const at = own['approved at']
+      if (config.identity.error) return `refuse: ${config.identity.error}, so the runtime approval cannot be judged`
       if (!inList([...config.identity.logins, ...approvers], own.login)) {
         approvedCode = 'auth'
         return `refuse: the claim that pins the approval is by \`${own.login}\`, which is in neither \`identity.logins\` nor \`approvers\``

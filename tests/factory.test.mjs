@@ -942,7 +942,13 @@ test('gate script: reads the config keys it needs from the template shape, and f
   assert.deepEqual(parseConfig('---\napprovers: [a]\n').approvers, ['a'], 'a leading document marker')
   const decision = evaluateCommand({ command: 'node /home/runner/.claude/plugins/cache/m/factory/1/skills/ticket-run/scripts/gate.mjs 12', state: { reminded: new Set(), loaded: new Set(), hinted: new Set() }, host: {}, factory: { approval: 'agent-ok' }, rules })
   assert.notEqual(decision.action, 'deny', 'the gate call passes the factory-run guard')
-  for (const bad of ['writers: [a]', 'approvers: []', 'approvers: a', 'approvers: [a]\napprovers_allow_bots: yes', 'approvers: [a]\nlabels: {approval: x}', 'approvers: [a]\nlabels:\n  approval:\n', 'approvers: [a]\nmarker: "unterminated', '- a', ...['identity: x', 'identity:\n  logins: x', 'identity:\n  mention: "@m"\n  - x', 'identity:\n  - x', 'identity:\n  logins:\n    - ""', 'identity:\n  logins: [a, ]', 'identity:\n  logins: [a', 'identity:\n  garbage', 'identity:\n  logins: [a]\n  logins: [b]', 'identity:\n  mention: x\n  mention: y', 'identity:\n  other: 1\n  - x'].map((b) => `approvers: [a]\n${b}`)]) assert.throws(() => parseConfig(bad), UsageError, bad)
+  for (const bad of ['writers: [a]', 'approvers: []', 'approvers: a', 'approvers: [a]\napprovers_allow_bots: yes', 'approvers: [a]\nlabels: {approval: x}', 'approvers: [a]\nlabels:\n  approval:\n', 'approvers: [a]\nmarker: "unterminated', '- a']) assert.throws(() => parseConfig(bad), UsageError, bad)
+  // An identity block the gate cannot read is kept as an error, so a label approval still decides; only a runtime pin refuses on it.
+  for (const bad of ['identity: x', 'identity:\n  logins: x', 'identity:\n  mention: "@m"\n  - x', 'identity:\n  - x', 'identity:\n  logins:\n    - ""', 'identity:\n  logins: [a, ]', 'identity:\n  logins: [a', 'identity:\n  garbage', 'identity:\n  logins: [a]\n  logins: [b]', 'identity:\n  mention: x\n  mention: y', 'identity:\n  other: 1\n  - x']) {
+    const { identity } = parseConfig(`approvers: [a]\n${bad}`)
+    assert.deepEqual([identity.logins, identity.mention], [[], null], bad)
+    assert.match(identity.error, /^\.factory\/config\.yaml: identity /, bad)
+  }
 })
 
 test('gate script: the approval and edit check agree with the documented filter on random dated histories, and fail closed on undated events', async () => {
@@ -1099,6 +1105,11 @@ test('gate script: a runtime approval pinned in the run\'s own claim, as comment
   assert.equal(attended.verdict, 'stop')
   assert.equal(attended.checks.approval_source, null)
   refused(run({ config: { ...config, identity: null } }), /^refuse: not approved by an approver/)
+  // An unreadable identity block: a pin refuses on it, a label approval still goes, as in a repo without identity.
+  const broken = { ...config, identity: { logins: [], mention: null, error: '.factory/config.yaml: identity is a mapping the gate cannot read' } }
+  refused(run({ config: broken }), /^refuse: \.factory\/config\.yaml: identity is a mapping the gate cannot read, so the runtime approval cannot be judged/)
+  assert.equal(run({ config: broken, timeline: labeled, issue: withLabel }).checks.approval_source, 'label')
+  assert.equal(judge(reads({ config: broken })).checks.approval_source, 'label', 'an attended run reads the label as before')
   refused(run({ timeline: Array(100).fill(claimLabel) }), /^refuse: the timeline has 100/)
 })
 
