@@ -213,6 +213,28 @@ test('opencode and pi: GUARD_TRACEPARENT adds trace_id and span_id to the events
   }
 })
 
+test('pi: the default emit sends the guard.decision OTLP record with traceId and spanId', async () => {
+  const sent = []
+  const keys = ['GUARD_OTEL', 'OTEL_EXPORTER_OTLP_ENDPOINT', 'GUARD_OTEL_EXPORTER_OTLP_ENDPOINT', 'GUARD_TRACEPARENT', 'FACTORY_EVENTS_FILE']
+  const saved = Object.fromEntries(keys.map((k) => [k, process.env[k]]))
+  const realFetch = globalThis.fetch
+  Object.assign(process.env, { GUARD_OTEL: '', OTEL_EXPORTER_OTLP_ENDPOINT: '', GUARD_OTEL_EXPORTER_OTLP_ENDPOINT: 'http://collector.invalid', GUARD_TRACEPARENT: '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01', FACTORY_EVENTS_FILE: '' })
+  globalThis.fetch = async (_, init) => (sent.push(JSON.parse(init.body)), { ok: true })
+  try {
+    const { handlers, api } = fakePi()
+    const { emit, ...rest } = deps()
+    guardExtension(api, rest)
+    const blocked = await handlers.tool_call({ toolName: 'bash', toolCallId: 't', input: { command: 'git commit -m "bad title"' } }, { cwd: dir(), hasUI: false, sessionManager: { getSessionId: () => 's' } })
+    assert.equal(blocked?.block, true)
+    for (let i = 0; i < 50 && !sent.length; i++) await new Promise((r) => setTimeout(r, 10))
+  } finally {
+    globalThis.fetch = realFetch
+    for (const [k, v] of Object.entries(saved)) v === undefined ? delete process.env[k] : (process.env[k] = v)
+  }
+  const rec = sent.flatMap((b) => b.resourceLogs[0].scopeLogs[0].logRecords).find((r) => r.body.stringValue === 'guard.decision')
+  assert.deepEqual([rec.traceId, rec.spanId], ['4bf92f3577b34da6a3ce929d0e0e4736', '00f067aa0ba902b7'])
+})
+
 test('pi: every ask outcome is logged as guard.ask_result with its class; no UI is unavailable via no-ui', async () => {
   const { handlers, api } = fakePi()
   const events = []

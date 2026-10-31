@@ -79,12 +79,23 @@ test('traceContext: absent, empty or malformed is no trace context', () => {
     '00-00000000000000000000000000000000-00f067aa0ba902b7-01', // all-zero trace id
     '00-4bf92f3577b34da6a3ce929d0e0e4736-0000000000000000-01', // all-zero span id
     'ff-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01', // invalid version
-    '01-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01', // unsupported version
+    '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01-extra', // version 00 takes no more fields
+    '01-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01x', // a higher version: the 55 characters end in `-` or the value
+    '0g-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01', // version not hex
+    '1-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01', // version one short
+    'FE-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01', // uppercase version
+    'fe-00000000000000000000000000000000-00f067aa0ba902b7-01', // all-zero trace id under a higher version
     '00_4bf92f3577b34da6a3ce929d0e0e4736_00f067aa0ba902b7_01', // wrong separator
     `${TP}-extra`,
   ]
   for (const v of bad) assert.equal(traceContext(v === undefined ? {} : { GUARD_TRACEPARENT: v }), null, String(v))
   assert.equal(traceContext(undefined), null)
+})
+
+test('traceContext: a higher version is read by its first 55 characters (W3C), ff never', () => {
+  const ids = '4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01'
+  for (const v of [`01-${ids}`, `01-${ids}-future`, `fe-${ids}-a-b-c`, `cc-${ids}-`]) assert.deepEqual(traceContext({ GUARD_TRACEPARENT: v }), TRACE, v)
+  for (const v of [`ff-${ids}`, `ff-${ids}-future`]) assert.equal(traceContext({ GUARD_TRACEPARENT: v }), null, v)
 })
 
 test('traceContext: only GUARD_TRACEPARENT, never TRACEPARENT or another source', () => {
