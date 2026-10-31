@@ -20,6 +20,7 @@ if [ -z "$base" ]; then
 fi
 case $base in -*) usage ;; esac
 git check-ref-format --branch "$base" >/dev/null 2>&1 || usage
+cd "$(git rev-parse --show-toplevel)" || die "cannot reach the top of the worktree"
 sha=$(git rev-parse --verify --quiet "$1^{commit}") || die "$1 is not a commit"
 [ -z "$(git status --porcelain --untracked-files=no)" ] || die "the working tree has uncommitted changes"
 git merge-base --is-ancestor "$sha" HEAD || die "the current branch does not contain $sha"
@@ -28,7 +29,9 @@ upstream=$(git rev-parse --verify --quiet "refs/remotes/origin/$base^{commit}") 
 if git merge-base --is-ancestor "$upstream" HEAD; then echo "already up to date with origin/$base"; exit 0; fi
 old=$(git rev-parse HEAD)
 git merge --quiet --no-commit -s ours "$upstream" >/dev/null || die "git merge -s ours origin/$base failed"
-diff=(git diff --no-ext-diff --no-color --no-textconv --src-prefix=a/ --dst-prefix=b/)
+# Fixed diff options, so repo or user config (diff.context, diff.relative, submodule settings) cannot change the patch
+# or the file lists (the script runs from the top level: git apply ignores paths outside the current directory).
+diff=(git diff --no-ext-diff --no-color --no-textconv -U3 --no-relative --ignore-submodules=none --submodule=short --src-prefix=a/ --dst-prefix=b/)
 if ! "${diff[@]}" --binary "$sha" "$upstream" -- | git apply --index --allow-empty; then
   git merge --abort
   die "the base's changes since $sha do not apply on this branch: merge by hand"

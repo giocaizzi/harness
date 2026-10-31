@@ -5,9 +5,9 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawn, execFileSync } from 'node:child_process'
-import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { delimiter, join } from 'node:path'
+import { delimiter, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const scripts = fileURLToPath(new URL('../plugins/dev-tools/skills/land/scripts/', import.meta.url))
@@ -322,7 +322,7 @@ function repo(onFeature) {
 }
 
 export function resyncTests(kind) {
-  const resync = (r, args) => { const [exe, argv] = runner(kind, 'resync-after-squash', args); return exec(exe, argv, { cwd: r.work, env: r.env }) }
+  const resync = (r, args, cwd = r.work) => { const [exe, argv] = runner(kind, 'resync-after-squash', args); return exec(exe, argv, { cwd, env: r.env }) }
 
   test(`${kind} resync-after-squash: merges only the base's changes and proves it`, async () => {
     const r = repo()
@@ -337,6 +337,22 @@ export function resyncTests(kind) {
     const again = await resync(r, [r.last, 'main'])
     assert.equal(again.code, 0, again.err)
     assert.match(again.out, /already up to date/)
+  })
+
+  test(`${kind} resync-after-squash: diff config and a subdirectory do not drop the base's changes`, async () => {
+    // From sub/ with diff.relative and diff.context=0 set, an unpinned diff would carry none of d.txt.
+    const r = repo(({ git, work }) => {
+      mkdirSync(join(work, 'sub'))
+      writeFileSync(join(work, 'sub', 'x.txt'), 'x\n')
+      git('add', 'sub/x.txt')
+      git('commit', '-q', '-m', 'sub')
+      git('config', 'diff.relative', 'true')
+      git('config', 'diff.context', '0')
+    })
+    const res = await resync(r, [r.last], join(r.work, 'sub'))
+    assert.equal(res.code, 0, res.err + res.out)
+    assert.equal(r.git('show', 'HEAD:d.txt'), 'd1')
+    assert.match(res.out, /files changed by the merge.*\n {2}d\.txt\nfiles the base changed/)
   })
 
   test(`${kind} resync-after-squash: refuses a sha the branch lacks, a dirty tree and bad arguments`, async () => {
@@ -381,41 +397,81 @@ export function resyncTests(kind) {
   })
 }
 
-// A repo with a bare origin: main holds a.txt, `feature` adds pr.txt (two lines) and is the approved head, and
-// main then gains d.txt on a file the PR does not touch. onFeature runs on feature after that, with origin/main fetched.
-function mergeRepo(onFeature) {
+
+// A repo with a bare origin. main commits `base` (plus a gitlink `mod` at `gitlink` when given) and is pushed with
+// origin/HEAD set; `feature` then commits `pr` and is the approved head; main then commits `main` and is pushed.
+// onFeature runs on feature after that, with origin/main fetched. Values are strings or Buffers.
+const gitmodules = (extra = '') => `[submodule "mod"]\n\tpath = mod\n\turl = ./mod\n${extra}`
+const LINK_A = 'a'.repeat(40)
+const LINK_B = 'b'.repeat(40)
+function mergeRepo(onFeature, { base = {}, gitlink, pr = { 'pr.txt': 'one\ntwo\n' }, main = { 'd.txt': 'd1\n' } } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'verify-merge-'))
   const env = { ...process.env, GIT_CONFIG_GLOBAL: win ? 'NUL' : '/dev/null', GIT_CONFIG_NOSYSTEM: '1', GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@example.com', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@example.com' }
   const work = join(dir, 'work')
   const git = (...a) => execFileSync('git', a, { cwd: work, env, encoding: 'utf8' }).trim()
+  const write = (files) => {
+    for (const [f, text] of Object.entries(files)) {
+      mkdirSync(dirname(join(work, f)), { recursive: true })
+      writeFileSync(join(work, f), text)
+      git('add', f)
+    }
+  }
+  const put = (files, msg) => { write(files); git('commit', '-q', '-m', msg) }
+  const link = (sha) => git('update-index', '--add', '--cacheinfo', `160000,${sha},mod`)
   execFileSync('git', ['init', '-q', '--bare', '-b', 'main', join(dir, 'origin.git')], { env })
   execFileSync('git', ['clone', '-q', join(dir, 'origin.git'), work], { env, stdio: 'ignore' })
-  const put = (f, text, msg) => { writeFileSync(join(work, f), text); git('add', f); git('commit', '-q', '-m', msg) }
   git('checkout', '-q', '-b', 'main')
-  put('a.txt', 'a0\n', 'base')
+  write({ 'a.txt': 'a0\n', 'sub/s.txt': 's0\n', ...base })
+  if (gitlink) link(gitlink)
+  git('commit', '-q', '-m', 'base')
   git('push', '-q', '-u', 'origin', 'main')
   git('remote', 'set-head', 'origin', 'main')
   git('checkout', '-q', '-b', 'feature')
-  put('pr.txt', 'one\ntwo\n', 'the PR')
+  put(pr, 'the PR')
   const approved = git('rev-parse', 'HEAD')
   git('checkout', '-q', 'main')
-  put('d.txt', 'd1\n', 'main moves on')
+  put(main, 'main moves on')
   git('push', '-q', 'origin', 'main')
   git('checkout', '-q', 'feature')
   git('fetch', '-q', 'origin')
-  onFeature?.({ put, git, work })
+  // evil(files): a merge of origin/main that also writes these files (or swaps the gitlink when files is a sha).
+  const evil = (files) => {
+    git('merge', '-q', '--no-commit', 'origin/main')
+    if (typeof files === 'string') link(files)
+    else write(files)
+    git('commit', '-q', '-m', 'Merge origin/main')
+  }
+  onFeature?.({ put, git, work, evil })
   return { work, env, git, approved, head: git('rev-parse', 'HEAD') }
 }
 
+// Two blocks with the same body: the PR adds `  allow` to the deploy block.
+const ci = (build, deploy) => `job: build\n${build}\njob: deploy\n${deploy}\n`
+const block = 'a\nb\nc\nd\ne\nf'
+const allowed = 'a\nb\nc\n  allow\nd\ne\nf'
+
 export function verifyMergeTests(kind) {
-  const verify = (r, args) => { const [exe, argv] = runner(kind, 'verify-merge-only', args); return exec(exe, argv, { cwd: r.work, env: r.env }) }
+  const verify = (r, args, cwd = r.work) => { const [exe, argv] = runner(kind, 'verify-merge-only', args); return exec(exe, argv, { cwd, env: r.env }) }
+  const refused = async (r, pattern, cwd) => {
+    const res = await verify(r, [r.approved, r.head], cwd)
+    assert.equal(res.code, 1, res.out + res.err)
+    assert.match(res.err, pattern)
+    assert.doesNotMatch(res.out, /Landing note/)
+  }
+  const differs = /differs from the merge git makes/
 
   test(`${kind} verify-merge-only: proves a pure base merge and prints the landing note`, async () => {
     const r = mergeRepo(({ git }) => git('merge', '-q', '--no-edit', 'origin/main'))
     const res = await verify(r, [r.approved, r.head])
     assert.equal(res.code, 0, res.err + res.out)
     assert.match(res.out, new RegExp(`Landing note: approved head ${r.approved}; merging head ${r.head}`))
-    assert.match(res.out, /is a pure merge of origin\/main at [0-9a-f]{40}/)
+    assert.match(res.out, /is a pure merge of origin\/main at [0-9a-f]{40}: .*git merge-tree --write-tree/)
+  })
+
+  test(`${kind} verify-merge-only: proves a pure merge run from a subdirectory, the base named`, async () => {
+    const r = mergeRepo(({ git }) => git('merge', '-q', '--no-edit', 'origin/main'))
+    const res = await verify(r, [r.approved, r.head, 'main'], join(r.work, 'sub'))
+    assert.equal(res.code, 0, res.err + res.out)
   })
 
   test(`${kind} verify-merge-only: no commits since the approval`, async () => {
@@ -427,50 +483,104 @@ export function verifyMergeTests(kind) {
   })
 
   test(`${kind} verify-merge-only: refuses a plain commit after the approval`, async () => {
-    const r = mergeRepo(({ put }) => put('e.txt', 'e1\n', 'one more'))
-    const res = await verify(r, [r.approved, r.head])
-    assert.equal(res.code, 1, res.out)
-    assert.match(res.err, /not a merge whose first parent is the approved head/)
+    await refused(mergeRepo(({ put }) => put({ 'e.txt': 'e1\n' }, 'one more')), /not a two-parent merge whose first parent is the approved head/)
+  })
+
+  test(`${kind} verify-merge-only: refuses a merge whose first parent is another commit with the approved tree`, async () => {
+    await refused(mergeRepo(({ git }) => {
+      git('commit', '-q', '--allow-empty', '-m', 'unreviewed')
+      git('merge', '-q', '--no-edit', 'origin/main')
+    }), /first parent is the approved head/)
   })
 
   test(`${kind} verify-merge-only: refuses a merge that also edits a PR file`, async () => {
-    const r = mergeRepo(({ git, put }) => {
-      git('merge', '-q', '--no-commit', 'origin/main')
-      put('pr.txt', 'one\nTWO\n', 'merge origin/main')
-    })
-    const res = await verify(r, [r.approved, r.head])
-    assert.equal(res.code, 1, res.out)
-    assert.match(res.err, /changed the PR's own diff/)
+    await refused(mergeRepo(({ evil }) => evil({ 'pr.txt': 'one\nTWO\n' })), differs)
   })
 
   test(`${kind} verify-merge-only: refuses a whitespace-only edit slipped into the merge`, async () => {
-    const r = mergeRepo(({ git, put }) => {
+    await refused(mergeRepo(({ evil }) => evil({ 'pr.txt': 'one  \ntwo\n' })), differs)
+  })
+
+  test(`${kind} verify-merge-only: refuses a merge that moves the PR's hunk to an identical block`, async () => {
+    const opts = { base: { 'ci.txt': ci(block, block) }, pr: { 'ci.txt': ci(block, allowed) } }
+    await refused(mergeRepo(({ evil }) => evil({ 'ci.txt': ci(allowed, block) }), opts), differs)
+  })
+
+  test(`${kind} verify-merge-only: refuses a binary edit and a rename slipped into the merge`, async () => {
+    const opts = { pr: { 'pr.txt': 'one\ntwo\n', 'bin.dat': Buffer.from([0, 1, 2, 0, 255]) } }
+    await refused(mergeRepo(({ evil }) => evil({ 'bin.dat': Buffer.from([0, 1, 3, 0, 255]) }), opts), differs)
+    await refused(mergeRepo(({ git }) => {
       git('merge', '-q', '--no-commit', 'origin/main')
-      put('pr.txt', 'one  \ntwo\n', 'merge origin/main')
-    })
-    const res = await verify(r, [r.approved, r.head])
-    assert.equal(res.code, 1, res.out)
-    assert.match(res.err, /changed the PR's own diff/)
+      git('mv', 'pr.txt', 'pr2.txt')
+      git('commit', '-q', '-m', 'Merge origin/main')
+    }), differs)
+  })
+
+  test(`${kind} verify-merge-only: refuses a merge that needed a conflict resolution`, async () => {
+    const opts = { pr: { 'a.txt': 'pr\n' }, main: { 'a.txt': 'main\n' } }
+    await refused(mergeRepo(({ git, work }) => {
+      try { git('merge', '-q', '--no-edit', 'origin/main') } catch { /* the conflict is the point */ }
+      writeFileSync(join(work, 'a.txt'), 'pr\n')
+      git('add', 'a.txt')
+      git('commit', '-q', '--no-edit')
+    }, opts), /cannot redo the merge/)
   })
 
   test(`${kind} verify-merge-only: refuses a merge of a branch that is not on origin/main`, async () => {
-    const r = mergeRepo(({ git, put }) => {
+    await refused(mergeRepo(({ git, put }) => {
       git('checkout', '-q', '-b', 'side', 'origin/main')
-      put('side.txt', 's1\n', 'unreviewed')
+      put({ 'side.txt': 's1\n' }, 'unreviewed')
       git('checkout', '-q', 'feature')
       git('merge', '-q', '--no-edit', 'side')
-    })
-    const res = await verify(r, [r.approved, r.head])
-    assert.equal(res.code, 1, res.out)
-    assert.match(res.err, /not on origin\/main/)
+    }), /not on origin\/main/)
   })
 
-  test(`${kind} verify-merge-only: refuses bad arguments`, async () => {
-    const r = mergeRepo()
-    assert.equal((await verify(r, [])).code, 2)
-    assert.equal((await verify(r, ['-h'])).code, 2)
+  // Repo config the script does not control must not hide a change: each case is an evil merge with that config set.
+  test(`${kind} verify-merge-only: diff.context=0 does not hide a moved hunk`, async () => {
+    const opts = { base: { 'ci.txt': ci(block, block) }, pr: { 'ci.txt': ci(block, allowed) } }
+    await refused(mergeRepo(({ git, evil }) => { git('config', 'diff.context', '0'); evil({ 'ci.txt': ci(allowed, block) }) }, opts), differs)
+  })
+
+  test(`${kind} verify-merge-only: diff.relative from a subdirectory does not hide a change outside it`, async () => {
+    const r = mergeRepo(({ git, evil }) => { git('config', 'diff.relative', 'true'); evil({ 'a.txt': 'evil\n' }) })
+    await refused(r, differs, join(r.work, 'sub'))
+  })
+
+  for (const [name, setup] of [
+    ['diff.submodule=log', (git) => git('config', 'diff.submodule', 'log')],
+    ['diff.ignoreSubmodules=all', (git) => git('config', 'diff.ignoreSubmodules', 'all')],
+    ['submodule.mod.ignore=all', (git) => git('config', 'submodule.mod.ignore', 'all')],
+  ]) {
+    test(`${kind} verify-merge-only: ${name} does not hide a submodule pointer swap`, async () => {
+      const opts = { base: { '.gitmodules': gitmodules() }, gitlink: LINK_A }
+      await refused(mergeRepo(({ git, evil }) => { setup(git); evil(LINK_B) }, opts), differs)
+    })
+  }
+
+  test(`${kind} verify-merge-only: ignore = all in .gitmodules does not hide a submodule pointer swap`, async () => {
+    const opts = { base: { '.gitmodules': gitmodules('\tignore = all\n') }, gitlink: LINK_A }
+    await refused(mergeRepo(({ evil }) => evil(LINK_B), opts), differs)
+  })
+
+  test(`${kind} verify-merge-only: takes only full SHAs and the default branch`, async () => {
+    const r = mergeRepo(({ git }) => git('merge', '-q', '--no-edit', 'origin/main'))
+    for (const args of [[], ['-h'], [r.approved], ['-x', r.head], [r.approved, '-x'], ['feature', 'feature'], ['HEAD', 'HEAD'],
+      [r.approved.slice(0, 12), r.head], [r.approved.toUpperCase(), r.head], [r.approved, r.head, 'main', 'x']]) {
+      assert.equal((await verify(r, args)).code, 2, args.join(' '))
+    }
+    const other = await verify(r, [r.approved, r.head, 'other'])
+    assert.equal(other.code, 1)
+    assert.match(other.err, /must be origin's default branch \(main\)/)
     const inject = await verify(r, [r.approved, r.head, '--upload-pack=touch X;false'])
-    assert.equal(inject.code, 2)
+    assert.equal(inject.code, 1)
     assert.equal(existsSync(join(r.work, 'X')), false)
+    const missing = await verify(r, ['c'.repeat(40), r.head])
+    assert.equal(missing.code, 1)
+    assert.match(missing.err, /is not a commit here/)
+  })
+
+  test(`${kind} verify-merge-only: refuses without origin/HEAD`, async () => {
+    const r = mergeRepo(({ git }) => { git('merge', '-q', '--no-edit', 'origin/main'); git('remote', 'set-head', 'origin', '-d') })
+    await refused(r, /origin\/HEAD is not set/)
   })
 }
