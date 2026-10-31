@@ -120,7 +120,7 @@ Owner checklist (settings are the owner's: propose, never change them):
 - `max_entries_to_build` is at least the peak number of PRs ready together.
 - "Require branches to be up to date" only on a repo without a queue.
 
-Read the ruleset with `gh api repos/OWNER/REPO/rulesets --jq '.[] | {id,name}'`, then `gh api repos/OWNER/REPO/rulesets/<id> > ruleset.json`. After the owner approves, edit the `merge_queue` rule's `parameters` in that file and `gh api -X PUT repos/OWNER/REPO/rulesets/<id> --input ruleset.json` (same caveat as Rulesets on the default branch: confirm field names against the docs).
+Read the ruleset with `gh api repos/OWNER/REPO/rulesets --jq '.[] | {id,name}'`, then `gh api repos/OWNER/REPO/rulesets/<id> --jq '{name, target, enforcement, conditions, rules, bypass_actors}' > ruleset.json` (only the fields an update takes). After the owner approves, edit the `merge_queue` rule's `parameters` in that file and `gh api -X PUT repos/OWNER/REPO/rulesets/<id> --input ruleset.json` (same caveat as Rulesets on the default branch: confirm field names against the docs).
 
 With a queue, leave "require branches to be up to date before merging" off: the queue tests each entry on the latest base, so the rule only forces a merge-up and a re-review after every merge, and it serialises entries the queue would build in parallel. The consequence: a PR that conflicts with the base still needs the base merged in, and a semantic break between two PRs shows up in the queue run, not on the PR.
 
