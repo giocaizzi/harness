@@ -44,8 +44,10 @@ The durable channel is a PR or MR comment with a fixed marker (`Review round N â
 ## Review rounds
 
 - **The hub checks merges itself** (`gh pr view <n> --json state,mergeCommit`, or the forge's equivalent), never trusting a "will merge" or "merged" report.
-- **At most 2 review rounds per PR.** Round 2 reviews only the round-1 fix diff, including regressions it causes. A Minor in a file the PR touches, or under about 20 changed lines, is fixed in the PR before the final round. After round 2 there is no round 3: fix Blockers, Majors and any regression, put the remaining Minors in one rolled-up `review follow-ups: <plugin>` issue per plugin (never one issue each), then `land` with checks green. Never merge with a known regression.
-- **Commits after approval need a hub check and a landing note** before the merge: `land` step 2.
+- **At most 2 review rounds per PR.** Round 2 reviews only the delta since the round-1 verdict, including regressions it causes. A Minor in a file the PR touches, or under about 20 changed lines, is fixed in the PR before the final round. After round 2 there is no round 3: fix Blockers, Majors and any regression, put the remaining Minors in one rolled-up `review follow-ups: <plugin>` issue per plugin (never one issue each), then `land` with checks green. Never merge with a known regression. A PR approved at the cap takes no other push: a change other than a base merge `verify-merge-only` proves is not pushed to it; stop and ask the owner (`github-workflow`, Landing a change, rule 8).
+- **Minors do not block.** A reviewer lists them and still APPROVEs when only Minors remain. After APPROVE they go to the one rolled-up follow-ups issue above, or are folded into the next PR on the same theme, never a new push on the approved head.
+- **A pure base merge needs no round.** `land`'s `verify-merge-only` script proves the delta is only a base merge, and its output is the landing note.
+- **Commits after approval need a hub check and a landing note** before the merge: `land` step 2, with `verify-merge-only` for a base merge.
 
 ## Rules
 
