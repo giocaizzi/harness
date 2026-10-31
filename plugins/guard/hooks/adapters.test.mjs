@@ -20,6 +20,15 @@ const dir = (files = {}) => {
   return d
 }
 const deps = () => ({ hostFacts: async () => ({}), run: async () => null, emit: async () => {}, launch: () => null, dataDir: dir() })
+// The stop check reads the real host load and defers on a busy host, so nothing is sent back: force it for the tests that expect it to run.
+const forced = async (fn) => {
+  process.env.GUARD_STOP_CHECK = 'force'
+  try {
+    await fn()
+  } finally {
+    delete process.env.GUARD_STOP_CHECK
+  }
+}
 
 test('opencode: a denied command throws, a risky one too (no ask), a plain one passes', async () => {
   const hooks = await GuardPlugin({ client: {}, directory: dir({ 'uv.lock': '' }) }, deps())
@@ -93,8 +102,10 @@ test('opencode: a failing make check on idle is sent back once', async () => {
   const client = { session: { prompt: async (p) => sent.push(p) } }
   const hooks = await GuardPlugin({ client, directory: dir({ Makefile: 'check:\n\t@false\n' }) }, deps())
   const idle = () => hooks.event({ event: { type: 'session.idle', properties: { sessionID: 's' } } })
-  await idle()
-  await idle()
+  await forced(async () => {
+    await idle()
+    await idle()
+  })
   assert.equal(sent.length, 1)
   assert.match(sent[0].body.parts[0].text, /make check failed/)
 })
@@ -252,9 +263,11 @@ test('pi: a failing make check on settle is sent back once, an aborted run is le
   const { handlers, sent, api } = fakePi()
   guardExtension(api, deps())
   const ctx = { cwd: dir({ Makefile: 'check:\n\t@false\n' }) }
-  await handlers.agent_settled({ aborted: true }, ctx)
-  await handlers.agent_settled({ aborted: false }, ctx)
-  await handlers.agent_settled({ aborted: false }, ctx)
+  await forced(async () => {
+    await handlers.agent_settled({ aborted: true }, ctx)
+    await handlers.agent_settled({ aborted: false }, ctx)
+    await handlers.agent_settled({ aborted: false }, ctx)
+  })
   assert.equal(sent.length, 1)
   assert.match(sent[0], /make check failed/)
 })
