@@ -135,6 +135,7 @@ export const coreErrors = (result, env = process.env) => {
   if (!END_STATES.includes(result.end_state)) errors.push(`end_state must be one of ${END_STATES.join(', ')}, got ${show(result.end_state)}`)
   if (typeof result.reason !== 'string') errors.push(`reason must be a string (empty when done), got ${show(result.reason)}`)
   if (result.reason_code !== null && !REASON_CODES.includes(result.reason_code)) errors.push(`reason_code must be null or one of ${REASON_CODES.join(', ')}, got ${show(result.reason_code)}`)
+  else if (result.reason_code === 'handoff') errors.push('reason_code handoff belongs only in a tasks entry')
   return errors
 }
 

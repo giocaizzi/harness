@@ -72,6 +72,7 @@ export const inputErrors = (input, env = {}) => {
   }
   if (input.end_state === 'halted') errors.push('end_state halted is written only by a runtime')
   if (input.reason_code === 'takeover') errors.push('reason_code takeover is written only by a runtime')
+  if (Array.isArray(input.tasks) && input.tasks.some((t) => t?.reason_code === 'takeover')) errors.push('tasks: reason_code takeover is written only by a runtime')
   return errors
 }
 
