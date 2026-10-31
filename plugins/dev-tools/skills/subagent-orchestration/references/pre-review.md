@@ -9,4 +9,4 @@ An author (a driver, a worker, or a session shipping its own change) runs this b
 - Assumptions are labelled as assumptions in the report and the PR body.
 - The lint ratchet (a baseline, an ignore list, a coverage floor, a warning count) is not raised to make the change pass.
 - The base is merged in and the full check passed on the merged tree (`github-workflow`, Landing a change, rule 5).
-- Nothing in scope is left for a follow-up (rule 7): related findings and Minors are folded in.
+- Nothing in scope is left for a follow-up (`github-workflow`, Landing a change, rule 7): related findings and Minors are folded in.
