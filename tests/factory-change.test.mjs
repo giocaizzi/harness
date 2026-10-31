@@ -249,7 +249,7 @@ test("check-change: approver items and head_pusher are judged by the default bra
   const { roleErrors } = await changeMod()
   const { parseConfig } = await import(pathToFileURL(join(SCRIPTS, 'gate.mjs')).href)
   const config = parseConfig(cfg())
-  assert.deepEqual(config.identityLogins, ['acme-factory[bot]'])
+  assert.deepEqual(config.identity.logins, ['acme-factory[bot]'])
   for (const f of fixtures('unit-valid-')) assert.deepEqual(roleErrors(fixture(f), config), [], f)
   const cr = fixture('unit-valid-changes-requested.json')
   const cf = fixture('unit-valid-check-failed.json')
@@ -264,9 +264,10 @@ test("check-change: approver items and head_pusher are judged by the default bra
   assert.match(roleErrors(as('helper[bot]'), bots(false))[0], /is not an approver/)
   assert.deepEqual(roleErrors(as('helper[bot]'), bots(true)), [])
   // identity.logins inline or absent.
-  assert.deepEqual(parseConfig('approvers:\n  - a\nidentity:\n  logins: [x, "y[bot]"]\n').identityLogins, ['x', 'y[bot]'])
-  assert.deepEqual(parseConfig('approvers:\n  - a\n').identityLogins, [])
-  assert.throws(() => parseConfig('approvers:\n  - a\nidentity:\n  logins: x\n'), /identity\.logins must be a list/)
+  assert.deepEqual(parseConfig('approvers:\n  - a\nidentity:\n  logins: [x, "y[bot]"]\n').identity.logins, ['x', 'y[bot]'])
+  assert.equal(parseConfig('approvers:\n  - a\n').identity, null)
+  // An identity block that cannot be read fails the role check closed.
+  assert.match(roleErrors(cr, parseConfig('approvers:\n  - owner-login\nidentity:\n  logins: x\n'))[0], /^identity: .*identity\.logins must be a list/)
   // A change branch that adds mallory as an approver: the CLI still refuses mallory's items and pushes.
   const r = originRepo(cfg())
   try {

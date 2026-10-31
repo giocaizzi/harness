@@ -1,0 +1,10 @@
+schema_version: "1.0"
+name: ticket-run-runtime-claim-mention
+description: "Regression guard: in a run the runtime started for a mention, with no approval label, the claim pins an approver whose unedited comment mentions the factory, so ticket-run treats that as the approval, edits its own claim in place unchanged and goes on to the plan."
+tags: [behavior]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  prompt: "The factory runtime started this session to work issue 12. gh cannot reach GitHub from here: treat tickets/12.md as exactly what gh would return right now, and env.txt as what printenv prints in this session. Without running anything, tell me exactly what you will do on the ticket and in the repo, in order, with the commands."
+  max_turns: 20
+  allowed_tools: [Read, Glob, Grep, Skill]

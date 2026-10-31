@@ -112,8 +112,8 @@ export const roleErrors = (unit, config) => {
   const lc = (s) => String(s).toLowerCase()
   const inList = (list, u) => typeof u === 'string' && list.map(lc).includes(lc(u))
   const apr = (u) => inList(config.approvers, u) && (config.approversAllowBots || !lc(u).endsWith('[bot]'))
-  const factory = (u) => inList(config.identityLogins, u)
-  const errors = []
+  const factory = (u) => inList(config.identity?.logins ?? [], u)
+  const errors = config.identity?.error ? [`identity: ${config.identity.error}`] : []
   if (Array.isArray(unit.items)) unit.items.forEach((item, i) => {
     if (!isObject(item) || typeof item.author !== 'string') return
     if (factory(item.author)) errors.push(`items[${i}].author: ${show(item.author)} is a factory login (identity.logins on the default branch); no item is the factory's own`)
