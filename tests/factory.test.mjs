@@ -819,9 +819,147 @@ test('check-result: echoed values and the report are capped, and a long report i
 })
 
 test('result scripts: a BOM is stripped by an escape sequence, never a literal U+FEFF', () => {
-  for (const f of ['check-result.mjs', 'write-result.mjs']) {
+  for (const f of ['check-result.mjs', 'write-result.mjs', 'gate.mjs']) {
     const text = readFileSync(join(SCRIPTS, f), 'utf8')
     assert.ok(!text.includes('\uFEFF'), `${f} holds a literal U+FEFF`)
     assert.ok(text.includes('.replace(/^\\uFEFF/, \'\')'), `${f} strips the BOM by its escape`)
+  }
+})
+
+const GATE = join(SCRIPTS, 'gate.mjs')
+const gate = () => import(pathToFileURL(GATE).href)
+const gateConfig = { approvers: ['example-owner'], writers: ['example-owner', 'example-bot[bot]'], approversAllowBots: false, labels: { approval: 'agent-ok', claimed: 'factory-claimed', needs_grooming: 'needs-grooming', takeover: 'factory-takeover' }, marker: '<!-- factory -->' }
+const ev = (event, label, login, at = '2026-10-20T09:00:00Z') => ({ event, label: { name: label }, actor: { login }, created_at: at })
+const claimComment = (id, login, host, runId, runner) => ({ id, login, created_at: `2026-10-2${id}T00:00:00Z`, html_url: `https://example.test/c/${id}`, body: `<!-- factory -->\n<!-- factory:claim -->\nhost: ${host}\nrun id: ${runId}\nrunner: ${runner}` })
+const reads = (patch = {}) => ({
+  config: gateConfig,
+  env: {},
+  host: 'runner-1.example.test',
+  login: 'example-owner',
+  issue: { state: 'OPEN', labels: [{ name: 'agent-ok' }], body: 'Acceptance: `make test` passes.' },
+  timeline: [ev('labeled', 'agent-ok', 'example-owner')],
+  edit: { lastEditedAt: null, editor: null },
+  comments: [],
+  ...patch,
+})
+const withLabels = (...names) => ({ state: 'OPEN', labels: ['agent-ok', ...names].map((name) => ({ name })), body: 'b' })
+
+test('gate script: reads the config keys it needs from the template shape, and fails closed on what it cannot read', async () => {
+  const { parseConfig, UsageError } = await gate()
+  const scaffold = read('plugins/factory/evals/ticket-run-runtime-claim-writer/scaffold.sh').split("<<'YML'\n")[1].split('\nYML')[0]
+  assert.deepEqual(parseConfig(scaffold), gateConfig)
+  const template = parseConfig(read('plugins/factory/template/config.yaml'))
+  assert.deepEqual(template.approvers, ['<github-login>'])
+  assert.equal(template.marker, '<!-- factory -->')
+  assert.equal(template.approversAllowBots, false)
+  const flow = parseConfig('approvers: [a, "b"]\r\nwriters:\n- a\n- \'c[bot]\'  # the runtime\nmarker: ""\nlabels:\n  approval: ok-go\n  # a comment\n  takeover: "hand-over"\n')
+  assert.deepEqual(flow, { ...gateConfig, approvers: ['a', 'b'], writers: ['a', 'c[bot]'], labels: { ...gateConfig.labels, approval: 'ok-go', takeover: 'hand-over' } })
+  assert.deepEqual(parseConfig('---\napprovers: [a]\n').approvers, ['a'], 'a leading document marker')
+  const decision = evaluateCommand({ command: 'node /home/runner/.claude/plugins/cache/m/factory/1/skills/ticket-run/scripts/gate.mjs 12', state: { reminded: new Set(), loaded: new Set(), hinted: new Set() }, host: {}, factory: { approval: 'agent-ok' }, rules })
+  assert.notEqual(decision.action, 'deny', 'the gate call passes the factory-run guard')
+  for (const bad of ['writers: [a]', 'approvers: []', 'approvers: a', 'approvers: [a]\napprovers_allow_bots: yes', 'approvers: [a]\nlabels: {approval: x}', 'approvers: [a]\nlabels:\n  approval:\n', 'approvers: [a]\nmarker: "unterminated', '- a']) assert.throws(() => parseConfig(bad), UsageError, bad)
+})
+
+test('gate script: the approval and edit check agree with the documented filter on random histories', async () => {
+  const { judge } = await gate()
+  let seed = 7
+  const next = () => (seed = (seed * 48271) % 2147483647)
+  const pick = (xs) => xs[next() % xs.length]
+  const day = () => `2026-01-0${1 + (next() % 4)}T00:00:00Z`
+  const actors = ['owner', 'owner', 'OWNER', 'stranger', 'owner-app[bot]', null]
+  const seen = new Set()
+  for (let i = 0; i < 300; i++) {
+    const timeline = Array.from({ length: next() % 6 }, () => pick([
+      () => ({ event: pick(['labeled', 'unlabeled']), actor: { login: pick(actors) }, label: { name: pick(['agent-ok', 'agent-ok', 'Agent-OK', 'other']) }, created_at: day() }),
+      () => ({ event: 'renamed', actor: pick([null, { login: pick(actors) }]), created_at: day() }),
+      () => ({ event: 'commented', actor: { login: 'x' }, created_at: day() }),
+    ])()).sort((a, b) => a.created_at.localeCompare(b.created_at))
+    const edit = pick([null, {}, { lastEditedAt: null, editor: null }, { lastEditedAt: day(), editor: pick([null, { login: pick(['stranger', 'owner']) }]) }, { lastEditedAt: 5 }])
+    const allowBots = next() % 2 === 0
+    const approvers = pick([['owner'], ['owner', 'owner-app[bot]']])
+    const got = judge(reads({ config: { ...gateConfig, approvers, writers: null, approversAllowBots: allowBots }, timeline, edit })).checks.approved
+    assert.equal(got, editCheck(timeline, edit, approvers, 'agent-ok', allowBots), JSON.stringify({ timeline, edit, approvers, allowBots }))
+    seen.add(got.split(' by ')[0])
+  }
+  assert.equal(seen.size, 5, `every outcome drawn: ${[...seen]}`)
+  const long = Array(100).fill(ev('labeled', 'agent-ok', 'owner'))
+  const undated = [{ event: 'labeled', label: { name: 'agent-ok' }, actor: { login: 'example-owner' } }]
+  assert.match(judge(reads({ timeline: undated, edit: { lastEditedAt: '2026-01-01T00:00:00Z', editor: { login: 'stranger' } } })).checks.approved, /^refuse: body edited after approval/, 'an approval without a time fails closed')
+  assert.match(judge(reads({ timeline: [...undated, { event: 'renamed', actor: { login: 'stranger' } }] })).checks.approved, /^refuse: title renamed after approval by stranger/, 'a rename without a time fails closed')
+  assert.equal(judge(reads({ timeline: long })).checks.approved, editCheck(long, { lastEditedAt: null, editor: null }, ['example-owner']))
+})
+
+test('gate script: claims, the runtime claim not from a writer, takeover and grooming, as comments.md judges them', async () => {
+  const { judge } = await gate()
+  const runtime = { FACTORY_RUN_ID: 'rt-77' }
+  const claimed = withLabels('factory-claimed')
+  const own = judge(reads({ env: runtime, issue: claimed, login: null, comments: [claimComment(1, 'example-bot[bot]', 'runner-1', 'rt-77', 'runtime')] }))
+  assert.equal(own.verdict, 'go')
+  assert.deepEqual(own.claim, { action: 'edit', comment_id: 1 })
+  assert.equal(own.body, 'b', 'the run judges readiness from the body')
+  assert.deepEqual(judge(reads()).claim, { action: 'post' }, 'no claim label: claim it')
+  // A runtime run with the claim label off but its claim comment there edits it; with none, it posts.
+  const early = judge(reads({ env: runtime, comments: [claimComment(1, 'example-bot[bot]', 'runner-1', 'rt-77', 'runtime')] }))
+  assert.deepEqual(early.claim, { action: 'edit', comment_id: 1 })
+  assert.deepEqual(judge(reads({ env: runtime })).claim, { action: 'post' })
+  // The runtime claimed under a login missing from writers: name it only when the label's actor posted exactly one copy.
+  const untrusted = (comments, timeline = [ev('labeled', 'agent-ok', 'example-owner'), ev('labeled', 'factory-claimed', 'other-bot[bot]')]) => judge(reads({ env: runtime, issue: claimed, login: null, timeline, comments })).stop
+  assert.deepEqual(untrusted([claimComment(1, 'other-bot[bot]', 'runner-1', 'rt-77', 'runtime')]), { check: 'claim', reason: "the runtime's claim is by `other-bot[bot]`, which is not in `writers`: check it is the runtime's login, then add `other-bot[bot]` to `writers` in `.factory/config.yaml`", reason_code: 'auth' })
+  for (const comments of [[], [claimComment(1, 'drive-by', 'h', 'rt-77', 'runtime')], [claimComment(1, 'other-bot[bot]', 'h', 'rt-77', 'runtime'), claimComment(2, 'other-bot[bot]', 'h', 'rt-77', 'runtime')]]) {
+    const stop = untrusted(comments)
+    assert.equal(stop.reason_code, 'auth')
+    assert.match(stop.reason, /^no trusted claim carries this run's id/)
+  }
+  assert.match(untrusted([claimComment(1, 'other-bot[bot]', 'h', 'rt-77', 'runtime')], Array(100).fill(ev('labeled', 'factory-claimed', 'other-bot[bot]'))).reason, /^refuse: the timeline has 100/, 'a partial timeline refuses first')
+  // Another run's claim stops; a spoofed claim is ignored; an attended claim from this host is a resume.
+  assert.equal(judge(reads({ env: runtime, issue: claimed, comments: [claimComment(1, 'example-bot[bot]', 'h', 'rt-77', 'runtime'), claimComment(2, 'example-owner', 'laptop', 'a-1', 'attended')] })).stop.check, 'claim')
+  assert.equal(judge(reads({ issue: claimed, comments: [claimComment(1, 'example-owner', 'runner-1', 'a-1', 'attended')] })).claim.comment_id, 1)
+  assert.equal(judge(reads({ issue: claimed, comments: [claimComment(1, 'example-owner', 'laptop', 'a-1', 'attended')] })).verdict, 'stop')
+  assert.equal(judge(reads({ issue: claimed, comments: [claimComment(1, 'stranger', 'runner-1', 'a-1', 'attended')] })).verdict, 'stop', 'an untrusted claim is no claim of ours')
+  // Takeover: an approver's label on a runtime-held ticket waits; anyone else's is ignored; a runtime run never judges it.
+  const handed = withLabels('factory-claimed', 'factory-takeover')
+  const held = [claimComment(1, 'example-bot[bot]', 'runner-1', 'rt-77', 'runtime')]
+  const by = (login) => [ev('labeled', 'agent-ok', 'example-owner'), ev('labeled', 'factory-takeover', login, '2026-10-21T00:00:00Z')]
+  assert.equal(judge(reads({ issue: handed, timeline: by('example-owner'), comments: held })).verdict, 'wait')
+  const ignored = judge(reads({ issue: handed, timeline: by('stranger'), comments: held }))
+  assert.equal(ignored.verdict, 'stop')
+  assert.match(ignored.checks.takeover, /^ignore/)
+  assert.equal(judge(reads({ env: runtime, issue: handed, timeline: by('example-owner'), comments: held })).checks.takeover, null)
+  // Grooming and a closed issue stop before any claim is judged.
+  assert.equal(judge(reads({ issue: withLabels('needs-grooming') })).stop.check, 'grooming')
+  assert.equal(judge(reads({ issue: { ...withLabels(), state: 'CLOSED' } })).stop.check, 'open')
+})
+
+test('gate script: the CLI prints one JSON verdict from gh, exit 0 go, 1 stop, 2 usage', { skip: process.platform === 'win32' && 'POSIX shim only' }, () => {
+  const repo = scratchRepo()
+  const bin = join(repo.dir, 'bin')
+  spawnSync('mkdir', ['-p', bin, join(repo.main, '.factory')])
+  writeFileSync(join(repo.main, '.factory', 'config.yaml'), read('plugins/factory/evals/ticket-run-runtime-claim-writer/scaffold.sh').split("<<'YML'\n")[1].split('\nYML')[0])
+  // A fake gh: answers each read the script makes from files beside it, and logs its arguments.
+  const data = { 'api user': 'example-owner', 'issue view': JSON.stringify(withLabels()), timeline: JSON.stringify([ev('labeled', 'agent-ok', 'example-owner')]), graphql: '{"lastEditedAt":null,"editor":null}', comments: '' }
+  for (const [k, v] of Object.entries(data)) writeFileSync(join(bin, k.replace(' ', '-')), `${v}\n`)
+  writeFileSync(join(bin, 'gh'), `#!/bin/sh\nd=$(dirname "$0"); echo "$*" >> "$d/log"\ncase "$*" in\n  "api user"*) cat "$d/api-user";;\n  "issue view"*) cat "$d/issue-view";;\n  *timeline*) cat "$d/timeline";;\n  *graphql*) cat "$d/graphql";;\n  *comments*) cat "$d/comments";;\n  *) exit 9;;\nesac\n`, { mode: 0o755 })
+  const run = (args, env = {}) => spawnSync(process.execPath, [GATE, ...args], { cwd: repo.main, encoding: 'utf8', env: cleanEnv({ PATH: `${bin}:${process.env.PATH}`, ...env }) })
+  try {
+    const go = run(['12'])
+    assert.equal(go.status, 0, go.stderr)
+    assert.equal(JSON.parse(go.stdout).verdict, 'go')
+    assert.match(readFileSync(join(bin, 'log'), 'utf8'), /issues\/12\/timeline\?per_page=100/)
+    writeFileSync(join(bin, 'issue-view'), JSON.stringify(withLabels('needs-grooming')))
+    const stop = run(['#12'])
+    assert.equal(stop.status, 1)
+    assert.equal(JSON.parse(stop.stdout).stop.check, 'grooming')
+    writeFileSync(join(bin, 'graphql'), 'not json')
+    const failed = JSON.parse(run(['12']).stdout)
+    assert.equal(failed.stop.check, 'read', 'a failed read stops')
+    assert.deepEqual([failed.checks, failed.body, failed.ready], [null, null, null], 'the same keys as every verdict')
+    assert.equal(run(['12'], { FACTORY_TICKET: 'acme/app#13' }).status, 2)
+    assert.equal(run([]).status, 2)
+    rmSync(join(repo.main, '.factory'), { recursive: true })
+    const none = run(['12'])
+    assert.equal(none.status, 2)
+    assert.match(none.stderr, /config\.yaml: missing/)
+  } finally {
+    repo.done()
   }
 })
