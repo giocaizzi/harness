@@ -1,4 +1,4 @@
-.PHONY: help check lint test e2e install build validate new-agent new-skill clean agent-review pr-graph eval
+.PHONY: help check lint test e2e install build validate new-agent new-skill clean agent-review pr-graph ci-health eval
 
 help: ## Show this help.
 	@awk 'BEGIN {FS = ":.*##"; printf "Usage: make \033[36m<target>\033[0m\n\nTargets:\n"} /^[a-zA-Z0-9_-]+:.*?##/ { printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
@@ -58,8 +58,11 @@ eval: ## Run the plugins' skill evals (calls a model, costs money, not part of c
 agent-review: ## Weekly agent telemetry review from Loki (docs/agent-review.md).  Usage: make agent-review [RANGE=7d] [EVALS=<dir>]
 	@node scripts/agent-review.mjs --range $(or $(RANGE),7d) $(if $(EVALS),--evals $(EVALS))
 
-pr-graph: ## PR graph: stacked share and should-have-been-stacked pairs across every repo gh can reach (docs/agent-review.md).  Usage: make pr-graph [RANGE=30d]
+pr-graph: ## PR graph: PR size and pace, stacked share and should-have-been-stacked pairs across every repo gh can reach (docs/agent-review.md).  Usage: make pr-graph [RANGE=30d]
 	@node scripts/pr-graph.mjs --range $(or $(RANGE),30d)
+
+ci-health: ## CI health: run counts, run time, queue, re-runs, flakes and a workflow audit, this window vs the one before (docs/agent-review.md).  Usage: make ci-health [RANGE=30d]
+	@node scripts/ci-health.mjs --range $(or $(RANGE),30d)
 
 install: ## Install what Codex and opencode cannot take from the marketplace.  Usage: make install HARNESS="codex opencode"
 	@node scripts/install.mjs $(or $(HARNESS),codex opencode)

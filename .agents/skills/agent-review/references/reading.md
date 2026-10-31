@@ -22,7 +22,31 @@
 | Guard asks answered | `timeout` or `unavailable` is a large share of asks: the asks land while the user is away; look at which rule asks (decisions, `via`) before raising the timeout. A rule whose asks are nearly all `allow` is a false positive. |
 | Manual approvals | A tool approved often by hand is a candidate for an allow rule in the harness settings. |
 | Failing shell commands | A tool that is missing, a wrong flag, or reads done through the shell. |
-| PR graph | Should-have-been-stacked pairs are above 0 or rise, or the stacked share falls: dependent PRs were opened against the default branch instead of as a stack (`github-workflow`, the guard `stack` hint). Manifest-only pairs are parallel PRs bumping the same version, which the versioning rules handle, not stacking. |
+| PR graph | Should-have-been-stacked pairs with hot files dropped are above 0 or rise, or the stacked share falls: dependent PRs were opened against the default branch instead of as a stack (`github-workflow`, the guard `stack` hint). Pairs on any shared file well above the hot-file-free row mean a few hot files (an index, a changelog) collide, not dependent work: give each PR its own entry file or generate the shared one. Manifest-only pairs are parallel PRs bumping the same version, which the versioning rules handle, not stacking. |
+| PR graph: PRs per day | Read with the size figures: a rising rate of tiny PRs multiplies CI runs and queue entries per change; a falling rate with growing size means work is batching up. |
+| PR graph: changed lines p25 / p50 / p75 / p90 | The p90 grows against the previous window: large PRs review and merge slower; split them into a stack. A p50 near zero with a high rate: changes are sliced finer than one reviewable unit. |
+| PR graph: PRs of 10 lines or fewer | A large and rising share: fold follow-up fixes into the PR that needs them (the fold-in test), batch related issues in one PR (`github-workflow`), and fix review findings before merging rather than after. |
+| PR graph: manifest-only PRs | Above 0 outside a release flow: a version bump went out on its own; bump as the last commit of the change that needs it (AGENTS.md, Versioning). Release-bot PRs land here by design. |
+| PR graph: median open-to-merge | Rises against the previous window: PRs wait on review or CI; read CI health (queue-to-green, queue wait) before blaming review. |
+
+## CI health
+
+`make ci-health` prints the previous window beside the current one; act on the direction of a figure against its own previous window, not on a fixed number.
+
+| Figure | Act when |
+|---|---|
+| Repos left out as partial, queries failed, run queries truncated | Above 0: the figures cover fewer repos than were found; compare windows only with this in mind. Failed queries after retries point at a rate limit or a permission gap: rerun when the token has headroom or with a shorter `RANGE`. Truncated queries mean a repo runs over 1000 workflow runs in an hour: that volume is itself the finding (skipped-run noise, superseded runs). |
+| Runs per merged PR | PR runs per merged PR rise: pushes re-trigger full CI; batch fix-up commits before pushing, cancel superseded runs (concurrency with `cancel-in-progress` on PR workflows), and keep docs-only changes off the expensive jobs with job-level path filtering behind one aggregate check. Merge-group runs well above 1: the queue re-runs groups after ejects; read the eject rate. |
+| Run time p50 / p90 | Rises, or the repo is flagged for critical path: the longest job chain grew. Split the slow job, run independent jobs in parallel, cache dependencies, and move heavy suites to the merge group only. A p90 far above the p50 is a few slow runs: read the queue wait and the cancelled share. |
+| Queue-to-green p50 / p90 | Rises while run time does not: the time goes to runner queues and re-runs; read queue wait and re-run share. |
+| Queue wait p50 / p90 | Rises: runners are saturated; cancel superseded runs, drop redundant matrix legs, or add runner capacity. |
+| Cancelled share | High with low failure: superseded runs cancelled by concurrency, which is the point. High in merge groups: the queue reshuffles after ejects. |
+| Failure share | Rises: read which workflow fails; a failure that passes on a re-run is a flake (next rows). |
+| Re-run share | Rises, or the repo is flagged for re-runs: re-runs paper over flakes or infrastructure errors; fix the flaky test or step rather than re-running. |
+| Flake proxy | Above 0: the same commit failed then passed. Quarantine or fix the test, add retries only around the network step that flakes, and keep `timeout-minutes` on every job so a hung job fails fast. |
+| Merge-group eject rate | Rises: PRs pass on their branch but fail merged with the queue ahead; run the same checks on PRs as on the merge group, and rebase stacks before queuing. |
+| Skipped-run noise | A large share: workflows trigger on every event and then skip; narrow their triggers (`on:` filters, a workflow per event) so the Actions list and run counts show real work. |
+| Workflow audit | Any check below 100% (or a count above 0) is a technique to apply: concurrency on every workflow with `cancel-in-progress` on PR ones, `timeout-minutes` on every job, a `merge_group` trigger on required checks where a merge queue runs, path filters at job level behind one aggregate `check` (a trigger-level filter leaves a required check pending), dependency caches, actions pinned by SHA with an update bot, and a top-level `permissions:` of least privilege (`repo-standard`). |
 
 File each action as a GitHub issue, or fix it in a PR the same day.
 
