@@ -7,7 +7,7 @@ description: Work one owner-approved GitHub issue end to end, attended - check t
 
 One ticket, from approval to merged, deployed and verified work. The owner chose *which* ticket; you own *everything it needs to be done*, and nothing else. The argument is the issue number or URL; it is the text after the skill name, repeated here when the harness fills it in: $ARGUMENTS
 
-A pull request number or URL starts a change run instead, worked as [change.md](references/change.md) says (its gate, unit and result), with the change as the ticket in the steps below.
+A pull request number or URL starts a change run instead, worked as [change.md](references/change.md) says (its gate, unit and result), with the change as the ticket in the steps below, except where change.md overrides them: no second PR and no closing keyword at ship, a push to the change's branch and a review re-request instead of land (never a merge), no deploy, and `done` meaning pushed, verified and required checks passing with the change still open.
 
 The repo's `.factory/config.yaml` holds what is particular to it: forge, approvers, writers, labels, the marker, components with their checks and deploys, risk tiers. If it is missing or unreadable, stop and point to [adopt-factory.md](https://github.com/giocaizzi/harness/blob/main/docs/adopt-factory.md); never fall back to defaults for a config you could not read. [factory.md](https://github.com/giocaizzi/harness/blob/main/docs/factory.md) explains the protocol.
 

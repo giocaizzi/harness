@@ -22,7 +22,9 @@ A unit starts on one trigger, its `trigger` value:
 - **`mention`:** an approver's comment, review body or inline comment on the change that contains the `identity.mention` handle as a whole word. That comment is an item; so is each comment it links on the same change.
 - **`check_failed`:** a required check failed on the change's current head. Each failed required check on that head is an item.
 
-A trigger is handled once. Its source (the review's, comment's or check run's `html_url`) is listed in the attempt's result; a source listed in a trusted `factory:result` comment on the change never starts another unit. A check that fails again on a head a fix attempt pushed is a new source, so a fix that breaks a check gets one more attempt, inside the cap.
+A source (the review's, comment's or check run's `html_url`) is handled once a `done` attempt lists it: a source in the `sources` of a trusted `factory:result done` comment on the change never starts another unit. A park or a stop (`parked`, `failed`, `budget_reached`, `halted`) handles nothing: its result lists the sources it left pending, and the [resume](#resume-after-a-park) takes them up again. A check that fails again on a head a fix attempt pushed is a new source, so a fix that breaks a check gets one more attempt, inside the cap.
+
+**Unedited.** An approver's review body or comment counts as that approver's only when it was never edited, or its last editor is that approver (GraphQL `lastEditedAt` and `editor`), as the issue gate's [edit check](comments.md#edited-after-approval) judges a ticket: anyone with write access can edit another's comment. An item edited by anyone else is left out of the unit; when it was the trigger, there is none.
 
 ## Gate
 
@@ -31,9 +33,9 @@ Every check reads the live forge state, and a read that fails counts as no.
 - **Open, same repo:** the change is open and its head branch is in the repo, never a fork: the factory pushes only to branches of the repo it works.
 - **Author:** as in [Roles](#roles-on-the-change).
 - **Issues approved:** the change closes at least one issue (the forge's closing references), and each passes the issue gate's approval and edit checks ([comments.md](comments.md#gate)). A change that closes none, or one whose issue lost its approval, is stopped: the approval of the issue is what scopes the change, and an approver's request (a review or a mention) never stands in for it.
-- **A trigger not yet handled**, as above. With none, stop: there is nothing to do.
+- **A source not yet handled**, as above. With none, stop: there is nothing to do.
 - **Not claimed:** the claim label on the change and the newest trusted `factory:claim` comment on it, judged as for an issue. A change run claims the change, never its issues.
-- **Not parked:** `needs-owner` is off the change. An approver removing it is also what resets the attempt count.
+- **Not parked:** `needs-owner` is off the change, or an approver answered its open question ([Resume](#resume-after-a-park)). An approver removing it is also what resets the attempt count.
 - **Attempts left:** fewer than the cap were made ([Bounded retry](#bounded-retry)). Otherwise record the stop below and post nothing else.
 
 ## Unit brief
@@ -95,7 +97,15 @@ followed by one sentence such as "Fix attempt 2 of 3 pushed; the change stays op
 
 `change_requests.max_attempts` in `.factory/config.yaml` caps the attempts per change (default `3`). The attempts made are the trusted `factory:result` comments on the change whose `attempt:` field is at most the cap, counted from the newest event in which an approver removed `needs-owner` from the change (or from the change's opening). This attempt's number is that count plus one.
 
-When it would exceed the cap, the run makes no change: it writes `result.json` with `end_state: parked`, `reason_code: fix_attempts`, `change.attempt` the cap plus one, `change.pushed` `null`, `change.sources` the unhandled sources, and a `reason` naming the cap and how to allow more ("3 of 3 fix attempts used on acme/app#14; an approver removes needs-owner from it to allow 3 more"). The change gets `needs-owner` (in a runtime run, the runtime applies it from the result), and a runtime notifies the approvers. No unit is written.
+When it would exceed the cap, the run makes no change: it writes `result.json` with `end_state: parked`, `reason_code: fix_attempts`, `change.attempt` the cap plus one, `change.pushed` `null`, `change.sources` the pending sources, and a `reason` naming the cap and how to allow more ("3 of 3 fix attempts used on acme/app#14; an approver removes needs-owner from it to allow 3 more"). The change gets `needs-owner` (in a runtime run, the runtime applies it from the result), and a runtime notifies the approvers. No unit is written.
+
+## Resume after a park
+
+A parked or stopped attempt leaves its sources pending, listed in its result; the next attempt's unit is those pending sources (from the newest trusted `factory:result` on the change) plus any new source. Each resume is a new attempt, within the cap.
+
+- **A question** (`reason_code: question`) resumes on an approver's answer on the change ([comments.md](comments.md#answers)): the run removes `needs-owner` and adds the answer to the unit as an approver `comment` item.
+- **The cap** (`fix_attempts`) and **the verifier's rounds** (`verify_rounds`) resume when an approver removes `needs-owner` from the change, which also resets the count.
+- **`failed`, `budget_reached` or `halted`** set no `needs-owner`: the pending sources are still unhandled, so the next run on the change takes them up.
 
 ## Identity
 
