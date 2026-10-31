@@ -30,7 +30,7 @@ Every check reads the live forge state, and a read that fails counts as no.
 
 - **Open, same repo:** the change is open and its head branch is in the repo, never a fork: the factory pushes only to branches of the repo it works.
 - **Author:** as in [Roles](#roles-on-the-change).
-- **Issues approved:** the change closes at least one issue (the forge's closing references), and each passes the issue gate's approval and edit checks ([comments.md](comments.md#gate)). A change that closes none, or one whose issue lost its approval, is stopped: the approval of the issue is what scopes the change.
+- **Issues approved:** the change closes at least one issue (the forge's closing references), and each passes the issue gate's approval and edit checks ([comments.md](comments.md#gate)). A change that closes none, or one whose issue lost its approval, is stopped: the approval of the issue is what scopes the change, and an approver's request (a review or a mention) never stands in for it.
 - **A trigger not yet handled**, as above. With none, stop: there is nothing to do.
 - **Not claimed:** the claim label on the change and the newest trusted `factory:claim` comment on it, judged as for an issue. A change run claims the change, never its issues.
 - **Not parked:** `needs-owner` is off the change. An approver removing it is also what resets the attempt count.
