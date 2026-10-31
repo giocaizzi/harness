@@ -4,7 +4,7 @@ A group run works several approved tickets in one session and ships at most one 
 
 - **Lead.** The run's `ticket` (`FACTORY_TICKET`) is the group's lead and the first entry of `tasks`; `result.json` sits under its number. Every member passed the gate and is claimed under the run's `run_id` before its brief is written.
 - **The run file names the members.** The run reads its members, lead first, from the run file ([Run file](#run-file)).
-- **Handoffs are files.** The run writes each brief to `.factory/runs/<lead>/members/<number>.brief.json` before it spawns the member, and writes the member's final message (the result as JSON text) verbatim to `.factory/runs/<lead>/members/<number>.result.json`. A runtime validates both with `scripts/check-handoff.mjs`.
+- **Handoffs are files.** The run writes each brief to `.factory/runs/<lead>/members/<number>.brief.json` before it spawns the member, and writes the member's final message (the result as JSON text) verbatim to `.factory/runs/<lead>/members/<number>.result.json`. A runtime validates both with `scripts/check-handoff.mjs`; its `brief` and `result` modes, like `memberTask`, reject a brief whose `run_id` differs from `FACTORY_RUN_ID` when that is set.
 - **A malformed handoff parks only that member.** A brief or result that fails the check, or a member that returned no JSON, becomes a `parked` entry with `reason_code: handoff` and the first error as its `reason`; the other members go on. `check-handoff.mjs`'s `memberTask` makes that entry.
 - **Released means unchanged.** A `released` member goes back to the queue as it was before the run: the runtime releases its claim (removes the claim label) as at any run end, and the member gets no result comment, no `needs-owner` and no other label or comment from the run.
 - **No done member ships nothing.** When no entry is `done`, the run opens no PR (`pr` is `null`, every `pr_link` is `null`), `end_state` is not `done`, and `reason` says why no member finished.
@@ -22,7 +22,7 @@ The multi-task brief a runtime hands the run, one JSON object in the file named 
 | `lead` | string | The lead, `<owner>/<repo>#<number>`; equal to `FACTORY_TICKET` when that is set. |
 | `members` | array | Non-empty: one `{ticket}` object per member (that key only), each `<owner>/<repo>#<number>`, all in one repo, the lead's, and no number twice (compared ignoring case), the lead first. |
 
-The members' order is the order of `tasks`.
+The members' order is the order of `tasks`: with `FACTORY_RUN_FILE` set, `check-result.mjs` (and so `write-result.mjs` and the guard plugin's result gate) rejects `tasks` whose tickets are not the members' tickets, exactly and in that order, and a run file it cannot read.
 
 ## Member brief
 
