@@ -53,14 +53,16 @@ export function repoSlug(url) {
 }
 
 // The trace context a runtime gives the run in GUARD_TRACEPARENT, a W3C traceparent
-// (`00-<32 hex trace id>-<16 hex span id>-<2 hex flags>`, lowercase): { traceId, spanId }, or null when it is absent,
-// malformed, of another version or names an all-zero id. Only that variable (harnesses strip TRACEPARENT and OTEL_*
-// from hooks); the guard never derives one or starts spans of its own.
-const TRACEPARENT = /^00-([0-9a-f]{32})-([0-9a-f]{16})-[0-9a-f]{2}$/
+// (`<2 hex version>-<32 hex trace id>-<16 hex span id>-<2 hex flags>`, lowercase): { traceId, spanId }, or null when it
+// is absent, malformed or names an all-zero id. Version 00 is exactly that; a higher version is read by its first 55
+// characters when they end the value or a `-` follows (W3C's forward compatibility), and version ff is invalid. Only
+// that variable (harnesses strip TRACEPARENT and OTEL_* from hooks); the guard never derives one or starts spans of
+// its own.
+const TRACEPARENT = /^([0-9a-f]{2})-([0-9a-f]{32})-([0-9a-f]{16})-[0-9a-f]{2}(-[^]*)?$/
 export function traceContext(env) {
   const m = TRACEPARENT.exec(String(env?.GUARD_TRACEPARENT ?? '').trim())
-  if (!m || /^0+$/.test(m[1]) || /^0+$/.test(m[2])) return null
-  return { traceId: m[1], spanId: m[2] }
+  if (!m || m[1] === 'ff' || (m[1] === '00' && m[4] !== undefined) || /^0+$/.test(m[2]) || /^0+$/.test(m[3])) return null
+  return { traceId: m[2], spanId: m[3] }
 }
 
 const attr = (key, value) => ({ key, value: { stringValue: String(value) } })

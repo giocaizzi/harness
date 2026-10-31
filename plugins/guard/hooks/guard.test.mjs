@@ -2,6 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtempSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { spawn, spawnSync } from 'node:child_process'
+import { createServer } from 'node:http'
 import { fileURLToPath } from 'node:url'
 import { tmpdir, userInfo } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -323,18 +324,44 @@ test('FACTORY_EVENTS_FILE: a well-formed GUARD_TRACEPARENT adds trace_id and spa
   const [line] = await lines(tp)
   assert.deepEqual(Object.keys(line), ['ts', 'decision', 'rule', 'cmd_hash', 'trace_id', 'span_id'])
   assert.deepEqual([line.trace_id, line.span_id], ['4bf92f3577b34da6a3ce929d0e0e4736', '00f067aa0ba902b7'])
-  for (const bad of ['', 'garbage', tp.toUpperCase(), tp.slice(0, -3), `ff${tp.slice(2)}`, '00-00000000000000000000000000000000-00f067aa0ba902b7-01', '00-4bf92f3577b34da6a3ce929d0e0e4736-0000000000000000-01']) {
+  const [future] = await lines(`01${tp.slice(2)}-future`)
+  assert.deepEqual([future.trace_id, future.span_id], ['4bf92f3577b34da6a3ce929d0e0e4736', '00f067aa0ba902b7'])
+  for (const bad of ['', 'garbage', tp.toUpperCase(), tp.slice(0, -3), `ff${tp.slice(2)}`, `${tp}-extra`, '00-00000000000000000000000000000000-00f067aa0ba902b7-01', '00-4bf92f3577b34da6a3ce929d0e0e4736-0000000000000000-01']) {
     const [plain] = await lines(bad)
     assert.deepEqual(Object.keys(plain), ['ts', 'decision', 'rule', 'cmd_hash'], bad)
   }
 })
 
-test('guard.decision: the trace context reaches the OTLP record through the command hook, not its attributes', async () => {
+test('guard.decision: the trace context is never one of the record attributes', async () => {
   const sent = []
   const run = setup({ env: { GUARD_TRACEPARENT: '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01' }, emit: (event, attrs) => sent.push([event, attrs]) })
   await run(pre('Bash', 'git commit -m "bad title"'))
   const [, attrs] = sent.find(([e]) => e === 'guard.decision')
   assert.ok(!JSON.stringify(attrs).includes('4bf92f3577b34da6a3ce929d0e0e4736'))
+})
+
+test('through the real hook and its real emit, the OTLP guard.decision record carries traceId and spanId', async () => {
+  const bodies = []
+  const server = createServer((req, res) => {
+    let body = ''
+    req.on('data', (c) => (body += c))
+    req.on('end', () => (bodies.push(JSON.parse(body)), res.end('{}')))
+  })
+  await new Promise((r) => server.listen(0, '127.0.0.1', r))
+  try {
+    const script = fileURLToPath(new URL('./guard.mjs', import.meta.url))
+    const child = spawn(process.execPath, [script, 'PreToolUse'], { env: { ...process.env, GUARD_OTEL: '', OTEL_EXPORTER_OTLP_ENDPOINT: '', GUARD_OTEL_EXPORTER_OTLP_ENDPOINT: `http://127.0.0.1:${server.address().port}`, GUARD_UNATTENDED: '', FACTORY_RUN_ID: '', FACTORY_EVENTS_FILE: '', GUARD_TRACEPARENT: '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01', CLAUDE_PLUGIN_DATA: mkdtempSync(join(tmpdir(), 'guard-test-')) } })
+    let stdout = ''
+    child.stdout.on('data', (c) => (stdout += c))
+    child.stdin.end(JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'git commit -m "bad title"' }, cwd: tmpdir(), session_id: 's' }))
+    assert.equal(await new Promise((r) => child.on('close', r)), 0)
+    assert.match(stdout, /"permissionDecision":"deny"/)
+  } finally {
+    server.close()
+  }
+  const records = bodies.flatMap((b) => b.resourceLogs[0].scopeLogs[0].logRecords)
+  const rec = records.find((r) => r.body.stringValue === 'guard.decision')
+  assert.deepEqual([rec.traceId, rec.spanId], ['4bf92f3577b34da6a3ce929d0e0e4736', '00f067aa0ba902b7'])
 })
 
 test('through the real hook (Claude, Copilot CLI, VS Code; Codex with --harness=codex), GUARD_TRACEPARENT reaches the events file', () => {
