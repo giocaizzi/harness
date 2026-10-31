@@ -885,6 +885,7 @@ test('gate script: the approval and edit check agree with the documented filter 
   const long = Array(100).fill(ev('labeled', 'agent-ok', 'owner'))
   const undated = [{ event: 'labeled', label: { name: 'agent-ok' }, actor: { login: 'example-owner' } }]
   assert.match(judge(reads({ timeline: undated, edit: { lastEditedAt: '2026-01-01T00:00:00Z', editor: { login: 'stranger' } } })).checks.approved, /^refuse: body edited after approval/, 'an approval without a time fails closed')
+  assert.match(judge(reads({ timeline: [...undated, { event: 'renamed', actor: { login: 'stranger' } }] })).checks.approved, /^refuse: title renamed after approval by stranger/, 'a rename without a time fails closed')
   assert.equal(judge(reads({ timeline: long })).checks.approved, editCheck(long, { lastEditedAt: null, editor: null }, ['example-owner']))
 })
 
