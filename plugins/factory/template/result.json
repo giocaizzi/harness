@@ -6,6 +6,7 @@
   "reason": "",
   "reason_code": null,
   "pr": "https://github.com/<owner>/<repo>/pull/<number>",
+  "change": null,
   "decisions": [
     { "item": "<what was found>", "test": "R2", "decision": "folded", "where": "<commit sha>" }
   ],

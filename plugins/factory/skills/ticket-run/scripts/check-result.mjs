@@ -1,6 +1,6 @@
 // Checks a run's result.json: the core fields (`schema`, `ticket`, `run_id`, `end_state`, `reason`, `reason_code`),
 // `finished_at` and `phases` times, the optional `routing` entries and `mode` (only `dev`),
-// and `tasks` (a group run's members, schema 3).
+// `tasks` (a group run's members, schema 3) and a change run's `change`.
 // Usage `node check-result.mjs <result.json>`: exit 0 valid, 1 invalid or unreadable (one line per error), 2 usage.
 // A deviation (model or effort differing from the policy's) needs a non-empty deviation_reason; a time the run could not
 // find is null, never a dropped key. Imports Node built-ins only, so a hook can copy it.
@@ -58,6 +58,53 @@ export const ticketErrors = (result, expected = process.env.FACTORY_TICKET) => {
 
 export const modeErrors = (result) => (result.mode === undefined || result.mode === 'dev' ? [] : ['mode must be "dev" or absent'])
 
+export const CHANGE_TRIGGERS = ['changes_requested', 'mention', 'check_failed']
+const CHANGE_KEYS = ['issues', 'trigger', 'attempt', 'max_attempts', 'sources', 'head', 'pushed']
+const SHA = /^[0-9a-f]{40}$/
+const PULL = /^https:\/\/github\.com\/([\w.-]+)\/([\w.-]+)\/pull\/([1-9]\d*)$/
+
+// A change run's `change` object: a fix attempt on the PR that is `ticket` (change.md).
+export const changeErrors = (result) => {
+  const change = result.change
+  if (change === undefined || change === null) {
+    const errors = result.reason_code === 'fix_attempts' ? ['change: reason_code fix_attempts needs change'] : []
+    const t = typeof result.ticket === 'string' ? /^([\w.-]+)\/([\w.-]+)#(\d+)$/.exec(result.ticket) : null
+    const q = typeof result.pr === 'string' ? PULL.exec(result.pr) : null
+    // Issues and PRs share one number space: an issue run's PR never has the ticket's number.
+    if (t && q && q[1].toLowerCase() === t[1].toLowerCase() && q[2].toLowerCase() === t[2].toLowerCase() && q[3] === t[3]) errors.push('change: pr is the ticket itself, so this is a change run and needs change')
+    return errors
+  }
+  if (typeof change !== 'object' || Array.isArray(change)) return [`change: must be an object or null, got ${show(change)}`]
+  const errors = []
+  for (const key of CHANGE_KEYS) if (!(key in change)) errors.push(`change.${key}: missing`)
+  for (const key of Object.keys(change)) if (!CHANGE_KEYS.includes(key)) errors.push(`change.${show(key)}: unknown key`)
+  if ('tasks' in result) errors.push('change: a change run has no tasks')
+  const { issues, trigger, attempt, max_attempts: max, sources, head, pushed } = change
+  const isList = (v) => Array.isArray(v) && new Set(v).size === v.length
+  const lower = (v) => (typeof v === 'string' ? v.toLowerCase() : v)
+  if (!isList(issues) || issues.length === 0 || !issues.every((i) => typeof i === 'string' && TICKET.test(i)) || new Set(issues.map(lower)).size !== issues.length) errors.push(`change.issues: must be a non-empty array of unique <owner>/<repo>#<number>, got ${show(issues)}`)
+  else if (issues.map(lower).includes(lower(result.ticket))) errors.push(`change.issues: must not include the change ${show(result.ticket)}`)
+  if (!CHANGE_TRIGGERS.includes(trigger)) errors.push(`change.trigger: must be one of ${CHANGE_TRIGGERS.join(', ')}, got ${show(trigger)}`)
+  const isInt = (v) => Number.isInteger(v) && v >= 1
+  if (!isInt(max)) errors.push(`change.max_attempts: must be an integer of at least 1, got ${show(max)}`)
+  if (!isInt(attempt)) errors.push(`change.attempt: must be an integer of at least 1, got ${show(attempt)}`)
+  if (!isList(sources) || sources.length < 1 || sources.length > 50 || !sources.every((s) => typeof s === 'string' && s.startsWith('https://'))) errors.push(`change.sources: must be 1 to 50 unique https:// URLs, got ${show(sources)}`)
+  if (typeof head !== 'string' || !SHA.test(head)) errors.push(`change.head: must be 40 lowercase hex, got ${show(head)}`)
+  if (pushed !== null && (typeof pushed !== 'string' || !SHA.test(pushed))) errors.push(`change.pushed: must be 40 lowercase hex or null, got ${show(pushed)}`)
+  const m = typeof result.ticket === 'string' ? /^([\w.-]+)\/([\w.-]+)#(\d+)$/.exec(result.ticket) : null
+  const p = typeof result.pr === 'string' ? PULL.exec(result.pr) : null
+  if (!p || !m || p[1].toLowerCase() !== m[1].toLowerCase() || p[2].toLowerCase() !== m[2].toLowerCase() || p[3] !== m[3]) errors.push(`change: pr must be the change's URL https://github.com/<owner>/<repo>/pull/<number> for ticket ${show(result.ticket)}, got ${show(result.pr)}`)
+  if (isInt(attempt) && isInt(max)) {
+    if (result.reason_code === 'fix_attempts') {
+      if (result.end_state !== 'parked') errors.push(`change: reason_code fix_attempts needs end_state parked, got ${show(result.end_state)}`)
+      if (attempt !== max + 1) errors.push(`change.attempt: must be max_attempts + 1 (${max + 1}) for fix_attempts, got ${show(attempt)}`)
+      if (pushed !== null) errors.push(`change.pushed: must be null for fix_attempts, got ${show(pushed)}`)
+    } else if (attempt > max) errors.push(`change.attempt: ${attempt} is over max_attempts ${max}`)
+  }
+  if (result.end_state === 'done' && (pushed === null || pushed === undefined || pushed === head)) errors.push('change.pushed: end_state done needs a pushed commit different from head')
+  return errors
+}
+
 export const routingErrors = (result) => {
   if (result.routing === undefined) return []
   if (!Array.isArray(result.routing)) return ['routing must be an array']
@@ -74,7 +121,7 @@ export const routingErrors = (result) => {
 }
 
 export const END_STATES = ['done', 'parked', 'failed', 'budget_reached', 'halted']
-export const REASON_CODES = ['question', 'plan_gate', 'merge_gate', 'grooming', 'verify_rounds', 'live_verify_failed', 'env_blocked', 'budget', 'auth', 'handoff', 'takeover']
+export const REASON_CODES = ['question', 'plan_gate', 'merge_gate', 'grooming', 'verify_rounds', 'live_verify_failed', 'env_blocked', 'budget', 'auth', 'fix_attempts', 'handoff', 'takeover']
 export const OUTCOMES = ['done', 'parked', 'released']
 export const PR_LINKS = ['closes', 'refs']
 
@@ -140,7 +187,7 @@ export const taskErrors = (result) => {
 // Every check, in one list; a value that is not a JSON object is one error, never a throw.
 export const resultErrors = (result, env = process.env) => {
   if (result === null || typeof result !== 'object' || Array.isArray(result)) return [`result.json must hold a JSON object, got ${show(result)}`]
-  return [...coreErrors(result, env), ...ticketErrors(result, env.FACTORY_TICKET ?? ''), ...timeErrors(result), ...routingErrors(result), ...modeErrors(result), ...taskErrors(result)]
+  return [...coreErrors(result, env), ...ticketErrors(result, env.FACTORY_TICKET ?? ''), ...timeErrors(result), ...routingErrors(result), ...modeErrors(result), ...taskErrors(result), ...changeErrors(result)]
 }
 
 // Exit code, not process.exit: an exit mid-pipe can cut stderr short.
