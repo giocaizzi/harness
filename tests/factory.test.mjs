@@ -409,14 +409,16 @@ test('fetch first: FACTORY_FETCH_FIRST=1 bases the work on the remote head, neve
   for (const s of pinned) assert.ok(section.includes(s), s)
   assert.equal(section.split('\n').filter((l) => /^\d\. |^   - /.test(l)).length, 9, 'three steps and their six cases, no more')
   // The forbidden moves are named in the one rule sentence only: any other sentence naming one (allowing `--force-with-lease`, a reset to the remote head) fails.
-  const forbidden = /--force|\b[Ff]orc(e|ed|ing)\b|\b[Rr]eset|\b[Rr]ebas|-B\b|branch -f/
-  assert.doesNotMatch(section.replace(pinned[1], ''), forbidden, 'a forbidden move named outside the rule sentence')
-  assert.doesNotMatch(section, /local head\b(?! when)|local head when the local branch is ahead/, 'head is the fetched remote head, never the local head')
+  // One forbidden set for comments.md, change.md and docs/factory.md: a forbidden move, or the local head as `head`, outside the sentences that forbid it.
+  const forbidden = /--force|\b[Ff]orc(e|ed|ing)\b|\b[Rr]eset|\b[Rr]ebas|-B\b|branch -f|local head/
+  assert.doesNotMatch(section.replace(pinned[1], ''), forbidden, 'comments.md names a forbidden move or the local head outside the rule sentence')
   assert.ok(read('plugins/factory/skills/ticket-run/SKILL.md').includes('Under `FACTORY_FETCH_FIRST=1`, first fetch the work branch and base the work on its remote head, never overwriting what someone else pushed to it ([comments.md](references/comments.md#fetch-first)).'))
   const change = read('plugins/factory/skills/ticket-run/references/change.md')
   assert.ok(change.includes("| `head` | string | The 40-hex commit the unit starts from: the change's head at the gate, or under `FACTORY_FETCH_FIRST=1` the branch's fetched remote head, also when the local branch is ahead of it ([comments.md](comments.md#fetch-first)). |"))
   assert.ok(change.includes("(no second PR, no force push; under `FACTORY_FETCH_FIRST=1` it runs the fetch-first steps before writing the unit, and `head` is the fetched remote head even when the local branch is ahead of it; local commits ahead of `head` are part of this attempt's delta and pass its verifier round before they are pushed, [comments.md](comments.md#fetch-first))"))
-  assert.doesNotMatch(change, /--force|\bgit reset\b|\b[Rr]eset (it|the branch|to)\b|\b[Rr]ebas|-B\b|branch -f|local head(?! when)/, 'change.md allows no forbidden move and never records the local head')
+  // change.md's own prohibition, its attempt-count resets and "the cap in force" are the only allowed matches.
+  const changeAllowed = ['no force push;', 'which also resets the count', 'is also what resets the attempt count', 'The cap in force,']
+  assert.doesNotMatch(changeAllowed.reduce((t, a) => t.split(a).join(''), change), forbidden, 'change.md names a forbidden move or the local head')
   const para = doc.split('\n').find((l) => l.startsWith('**Fetch first.**'))
   assert.ok(para, 'docs/factory.md has the Fetch first paragraph')
   const docRule = "The run never discards commits, its own or anyone else's: no reset, no rebase, no `-B` or `branch -f`, and every push is a plain push, never forced."
@@ -428,7 +430,14 @@ test('fetch first: FACTORY_FETCH_FIRST=1 bases the work on the remote head, neve
     'and a lookup or fetch that fails ends the run `failed`, never read as an absent branch.',
     'Unset, or set to any other value, the run behaves as without it.',
   ]) assert.ok(para.includes(s), s)
-  assert.doesNotMatch(para.replace(docRule, ''), forbidden, 'docs name a forbidden move outside the rule sentence')
+  assert.doesNotMatch(para.replace(docRule, ''), forbidden, 'docs name a forbidden move or the local head outside the rule sentence')
+  assert.ok(read('plugins/factory/skills/ticket-run/references/result.md').includes("`head` is the unit's `head`, the 40-hex commit the attempt started from (under `FACTORY_FETCH_FIRST=1`, the fetched remote head, never the local head, [comments.md](comments.md#fetch-first));"), 'result.md: change.head is the unit head')
+  // The same set catches an added sentence in each file (mutations once missed in change.md and the docs).
+  for (const added of ['If the push is rejected, force push the branch.', 'Push with `--force-with-lease`.', 'It records the local head when ahead.', 'Reset the local branch to the remote head.', 'A diverged branch is rebased.']) {
+    assert.match(changeAllowed.reduce((t, a) => t.split(a).join(''), `${change}\n${added}\n`), forbidden, `change.md: ${added}`)
+    assert.match(`${para.replace(docRule, '')} ${added}`, forbidden, `docs: ${added}`)
+    assert.match(`${section.replace(pinned[1], '')}\n${added}\n`, forbidden, `comments.md: ${added}`)
+  }
   assert.match(doc.split('\n## Layers')[1], /`FACTORY_FETCH_FIRST`/)
 })
 
