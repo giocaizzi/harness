@@ -31,6 +31,8 @@ const invalidResults = {
   'run-mismatch': /run_id .* differs/,
   'extra-key': /unknown key "notes"/,
   'done-with-reason': /reason must be empty/,
+  'member-handoff': /reason_code "handoff" is not for a member/,
+  'done-no-pass': /at least one passed check/,
 }
 
 const invalidRuns = {
@@ -41,6 +43,8 @@ const invalidRuns = {
   'bad-ticket': /members\[1\]: ticket must be/,
   'extra-key': /unknown key "priority"/,
   schema: /schema must be 1/,
+  'cross-repo': /members\[1\]: ticket .* is not in the lead's repo/,
+  'case-duplicate': /members\[1\]: duplicate ticket/,
 }
 
 const on = (prefix) => readdirSync(fixtures).filter((f) => f.startsWith(prefix)).map((f) => f.slice(prefix.length, -'.json'.length)).sort()
@@ -65,6 +69,7 @@ test('handoff: the run file must match FACTORY_RUN_ID and FACTORY_TICKET when se
   assert.deepEqual(runFileErrors(valid, { FACTORY_RUN_ID: 'r-1', FACTORY_TICKET: 'acme/app#12' }), [])
   assert.ok(runFileErrors(valid, { FACTORY_RUN_ID: 'r-2' }).some((e) => /differs from FACTORY_RUN_ID/.test(e)))
   assert.ok(runFileErrors(valid, { FACTORY_TICKET: 'acme/app#13' }).some((e) => /differs from FACTORY_TICKET/.test(e)))
+  assert.deepEqual(runFileErrors(valid, { FACTORY_RUN_ID: 'r-1\n', FACTORY_TICKET: ' acme/app#12 ' }), [])
 })
 
 test('handoff: valid fixtures have no errors', () => {
@@ -104,22 +109,35 @@ test('handoff: the keys in the code equal the key columns of the tables in group
 })
 
 test('handoff: memberTask parks a malformed or missing handoff and keeps a valid one', () => {
-  const done = memberTask('acme/app#13', brief, fixture('result-valid-done'))
+  const task = (ticket, b, r) => memberTask(ticket, { ...b, ticket }, r, 'r-1')
+  const done = memberTask('acme/app#13', brief, fixture('result-valid-done'), 'r-1')
   assert.deepEqual(done, { ticket: 'acme/app#13', outcome: 'done', reason: '', reason_code: null, pr_link: null })
-  const bad = memberTask('acme/app#14', brief, fixture('result-invalid-done-no-head'))
+  const bad = task('acme/app#14', brief, fixture('result-invalid-done-no-head'))
   assert.equal(bad.outcome, 'parked')
   assert.equal(bad.reason_code, 'handoff')
   assert.match(bad.reason, /^malformed handoff: /)
   assert.equal(bad.ticket, 'acme/app#14')
-  const none = memberTask('acme/app#15', brief, undefined)
+  const none = task('acme/app#15', brief, undefined)
   assert.deepEqual([none.outcome, none.reason_code, none.pr_link], ['parked', 'handoff', null])
   assert.match(none.reason, /no member result/)
-  assert.equal(memberTask('acme/app#16', fixture('brief-invalid-bad-base'), fixture('result-valid-done')).reason_code, 'handoff')
-  assert.ok(memberTask('acme/app#14', brief, { ...fixture('result-invalid-extra-key'), [`k${'x'.repeat(1000)}`]: 1 }).reason.length <= 300)
-  const parked = memberTask('acme/app#13', brief, fixture('result-valid-parked'))
+  assert.equal(task('acme/app#16', fixture('brief-invalid-bad-base'), fixture('result-valid-done')).reason_code, 'handoff')
+  assert.ok(task('acme/app#14', brief, { ...fixture('result-invalid-extra-key'), [`k${'x'.repeat(1000)}`]: 1 }).reason.length <= 300)
+  const parked = memberTask('acme/app#13', brief, fixture('result-valid-parked'), 'r-1')
   assert.deepEqual([parked.outcome, parked.reason_code], ['parked', 'question'])
-  const released = memberTask('acme/app#13', brief, fixture('result-valid-released'))
+  const released = memberTask('acme/app#13', brief, fixture('result-valid-released'), 'r-1')
   assert.deepEqual([released.outcome, released.reason, released.reason_code], ['released', 'ticket already fixed upstream', null])
+})
+
+test('handoff: memberTask parks a brief for another ticket or another run, and skips the run check when no run id is set', () => {
+  const result = fixture('result-valid-done')
+  const wrongTicket = memberTask('acme/app#99', brief, result, 'r-1')
+  assert.deepEqual([wrongTicket.ticket, wrongTicket.outcome, wrongTicket.reason_code], ['acme/app#99', 'parked', 'handoff'])
+  assert.match(wrongTicket.reason, /brief ticket .* differs/)
+  const wrongRun = memberTask('acme/app#13', brief, result, 'r-2')
+  assert.deepEqual([wrongRun.outcome, wrongRun.reason_code], ['parked', 'handoff'])
+  assert.match(wrongRun.reason, /brief run_id .* differs/)
+  assert.equal(memberTask('ACME/app#13', brief, result, ' r-1\n').outcome, 'done')
+  assert.equal(memberTask('acme/app#13', brief, result, '').outcome, 'done')
 })
 
 test('handoff: the tasks memberTask builds pass the result checker, a malformed member parked and a no-done group with no PR', async () => {
@@ -127,12 +145,12 @@ test('handoff: the tasks memberTask builds pass the result checker, a malformed 
   const base = JSON.parse(readFileSync(join(repo, 'tests/fixtures/factory/result/valid-group-no-done.json'), 'utf8'))
   const withPr = (tasks, pr) => tasks.map((t) => ({ ...t, pr_link: pr === null ? null : t.outcome === 'done' ? 'closes' : t.outcome === 'parked' ? 'refs' : null }))
   const lead = { ...brief, ticket: 'acme/app#12' }
-  const shipped = [memberTask('acme/app#12', lead, { ...fixture('result-valid-done'), ticket: 'acme/app#12' }), memberTask('acme/app#13', brief, fixture('result-invalid-done-no-head'))]
+  const shipped = [memberTask('acme/app#12', lead, { ...fixture('result-valid-done'), ticket: 'acme/app#12' }, 'r-1'), memberTask('acme/app#13', brief, fixture('result-invalid-done-no-head'), 'r-1')]
   const pr = 'https://github.com/acme/app/pull/20'
   assert.deepEqual(resultErrors({ ...base, end_state: 'done', reason: '', reason_code: null, pr, tasks: withPr(shipped, pr) }, {}), [])
-  const none = [memberTask('acme/app#12', lead, undefined), memberTask('acme/app#13', brief, fixture('result-invalid-extra-key'))]
+  const none = [memberTask('acme/app#12', lead, undefined, 'r-1'), memberTask('acme/app#13', brief, fixture('result-invalid-extra-key'), 'r-1')]
   assert.deepEqual(none.map((t) => t.reason_code), ['handoff', 'handoff'])
-  assert.deepEqual(resultErrors({ ...base, end_state: 'parked', reason: 'no member finished: both handoffs were malformed', reason_code: 'handoff', pr: null, tasks: withPr(none, null) }, {}), [])
+  assert.deepEqual(resultErrors({ ...base, end_state: 'parked', reason: 'no member finished: both handoffs were malformed', reason_code: null, pr: null, tasks: withPr(none, null) }, {}), [])
 })
 
 const run = (...args) => spawnSync(process.execPath, [script, ...args], { encoding: 'utf8' })
