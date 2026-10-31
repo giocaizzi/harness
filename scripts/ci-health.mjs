@@ -62,9 +62,10 @@ export function limited(runner, n) {
 
 // A failed gh call: the HTTP status and rate-limit headers only, never the command line (it names the repo).
 export class GhError extends Error {
-  constructor(status, headers = {}) {
+  constructor(status, headers = {}, detail = '') {
     super(`gh call failed${status ? ` (HTTP ${status})` : ''}`)
     this.status = status
+    this.detail = detail // the API's own message, kept off .message and never printed
     this.retryAfter = headers['retry-after'] != null ? Number(headers['retry-after']) : null
     this.remaining = headers['x-ratelimit-remaining'] != null ? Number(headers['x-ratelimit-remaining']) : null
     this.reset = headers['x-ratelimit-reset'] != null ? Number(headers['x-ratelimit-reset']) : null
@@ -74,10 +75,10 @@ export class GhError extends Error {
 // Splits `gh api --include` output into the status, headers and body.
 export function parseIncluded(out) {
   const text = String(out ?? '').replace(/\r\n/g, '\n')
-  const m = /^HTTP\/[\d.]+ (\d{3})[^\n]*\n([\s\S]*?)\n\n([\s\S]*)$/.exec(text)
+  const m = /^HTTP\/[\d.]+ (\d{3})[^\n]*\n(?:([\s\S]*?)\n)?\n([\s\S]*)$/.exec(text)
   if (!m) return { status: null, headers: {}, body: text }
   const headers = {}
-  for (const l of m[2].split('\n')) {
+  for (const l of (m[2] || '').split('\n')) {
     const i = l.indexOf(':')
     if (i > 0) headers[l.slice(0, i).trim().toLowerCase()] = l.slice(i + 1).trim()
   }
@@ -92,7 +93,11 @@ export async function includeRunner(args, exec = ghRunner) {
     out = await exec(['api', '--include', ...args.slice(1)])
   } catch (e) {
     const p = parseIncluded(e?.stdout)
-    throw new GhError(p.status, p.headers)
+    let detail = ''
+    try {
+      detail = JSON.parse(p.body).message || ''
+    } catch {}
+    throw new GhError(p.status, p.headers, detail)
   }
   return parseIncluded(out).body
 }
@@ -219,14 +224,16 @@ export async function fetchWorkflows(runner, host, repo, tally = {}) {
   return { files, tooLarge }
 }
 
-// A 404 means no rules on the branch; any other failure is counted.
+// A 404 means no rules on the branch, and a 403 asking for a plan upgrade means the plan has no branch rules (so no
+// merge queue) for a private repo; any other failure is counted.
+const noRulesOnPlan = (e) => e?.status === 403 && /upgrade to github pro|make this repository public/i.test(e.detail || '')
 export async function hasMergeQueue(runner, host, repo, branch, tally = {}) {
   if (!branch) return false
   try {
     const rules = JSON.parse(await runner(gh(host, `repos/${repo}/rules/branches/${branch}`)))
     return Array.isArray(rules) && rules.some((r) => r.type === 'merge_queue')
   } catch (e) {
-    if (notFound(e)) return false
+    if (notFound(e) || noRulesOnPlan(e)) return false
     console.error('CI health: a query failed; continuing')
     tally.queue = (tally.queue || 0) + 1
     return false

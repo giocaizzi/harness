@@ -392,8 +392,11 @@ test('merge queue: a 404 is no rules, another failure is counted', async () => {
   const t = {}
   assert.equal(await hasMergeQueue(async () => { throw new GhError(404) }, 'h', 'acme/app', 'main', t), false)
   assert.equal(t.queue, undefined)
+  assert.equal(await hasMergeQueue(async () => { throw new GhError(403, {}, 'Upgrade to GitHub Pro or make this repository public to enable this feature.') }, 'h', 'acme/app', 'main', t), false)
+  assert.equal(t.queue, undefined)
   await quiet(() => hasMergeQueue(async () => { throw new GhError(503) }, 'h', 'acme/app', 'main', t))
-  assert.equal(t.queue, 1)
+  await quiet(() => hasMergeQueue(async () => { throw new GhError(403, {}, 'Resource not accessible') }, 'h', 'acme/app', 'main', t))
+  assert.equal(t.queue, 2)
 })
 
 test('a run chunk over the 1000 cap is refetched per day, and a day still over it is truncated', async () => {
@@ -430,6 +433,8 @@ test('includeRunner parses --include output and turns a failure into a GhError w
   const e = await includeRunner(['api', 'repos/acme/app'], async () => { throw Object.assign(new Error('Command failed: gh api repos/acme/app'), { stdout: 'HTTP/2.0 429 Too Many\nRetry-After: 7\nX-RateLimit-Remaining: 0\nX-RateLimit-Reset: 100\n\n{}' }) }).catch((x) => x)
   assert.ok(e instanceof GhError)
   assert.deepEqual([e.status, e.retryAfter, e.remaining, e.reset], [429, 7, 0, 100])
+  const d = await includeRunner(['api', 'x'], async () => { throw Object.assign(new Error('x'), { stdout: 'HTTP/2.0 403 Forbidden\n\n{"message":"Upgrade to GitHub Pro"}' }) }).catch((x) => x)
+  assert.deepEqual([d.status, d.detail, d.message], [403, 'Upgrade to GitHub Pro', 'gh call failed (HTTP 403)'])
   assert.ok(!e.message.includes('acme'))
   assert.deepEqual(parseIncluded('plain'), { status: null, headers: {}, body: 'plain' })
 })
