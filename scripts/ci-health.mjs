@@ -60,13 +60,22 @@ export function limited(runner, n) {
   })
 }
 
+// Retry-After is seconds or an HTTP date; anything else is null, so the caller backs off instead.
+export function retryAfterSeconds(v, now = Date.now()) {
+  if (v == null || v === '') return null
+  const n = Number(v)
+  if (Number.isFinite(n)) return n
+  const at = Date.parse(v)
+  return Number.isFinite(at) ? Math.max(Math.ceil((at - now) / 1000), 0) : null
+}
+
 // A failed gh call: the HTTP status and rate-limit headers only, never the command line (it names the repo).
 export class GhError extends Error {
   constructor(status, headers = {}, detail = '') {
     super(`gh call failed${status ? ` (HTTP ${status})` : ''}`)
     this.status = status
     this.detail = detail // the API's own message, kept off .message and never printed
-    this.retryAfter = headers['retry-after'] != null ? Number(headers['retry-after']) : null
+    this.retryAfter = retryAfterSeconds(headers['retry-after'])
     this.remaining = headers['x-ratelimit-remaining'] != null ? Number(headers['x-ratelimit-remaining']) : null
     this.reset = headers['x-ratelimit-reset'] != null ? Number(headers['x-ratelimit-reset']) : null
   }
@@ -115,7 +124,7 @@ export function retrying(runner, { tries = TRIES, wait = sleep, now = () => Date
       } catch (e) {
         const limit = e?.status === 429 || (e?.status === 403 && (e.retryAfter != null || e.remaining === 0))
         if (i >= tries || !(limit || e?.status >= 500)) throw e
-        let s = e.retryAfter ?? (e.remaining === 0 && e.reset ? e.reset - Math.floor(now() / 1000) + 1 : 2 ** i)
+        let s = Number.isFinite(e.retryAfter) ? e.retryAfter : (e.remaining === 0 && e.reset ? e.reset - Math.floor(now() / 1000) + 1 : 2 ** i)
         if (s > MAX_WAIT) throw e
         await wait(Math.max(s, 1))
       }

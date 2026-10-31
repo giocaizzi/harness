@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { windows, windowOf, dateChunks, percentile, duration, windowStats, mergeStats, flags, auditWorkflows, analyze, report, repoTable, collect, countFlakes, sampleWaits, MIN_RUNS, GROWTH, main, limited, GhError, parseIncluded, includeRunner, retrying, MAX_WAIT, fetchChunk, splitRange, fetchWorkflows, hasMergeQueue, errorLine, isPartial } from '../scripts/ci-health.mjs'
+import { windows, windowOf, dateChunks, percentile, duration, windowStats, mergeStats, flags, auditWorkflows, analyze, report, repoTable, collect, countFlakes, sampleWaits, MIN_RUNS, GROWTH, main, limited, GhError, parseIncluded, includeRunner, retrying, MAX_WAIT, fetchChunk, splitRange, fetchWorkflows, hasMergeQueue, errorLine, isPartial, retryAfterSeconds } from '../scripts/ci-health.mjs'
 
 const NOW = Date.parse('2026-10-30T12:00:00Z')
 const iso = (d, t = '00:00:00') => `2026-10-${d}T${t}Z`
@@ -502,4 +502,20 @@ test('a failed repo-discovery query is counted in the report', async () => {
   const agg = analyze(repos)
   assert.deepEqual([repos.discoveryFailed, agg.failedQueries, agg.discoveryFailed], [1, 1, 1])
   assert.match(report(agg, '30d'), /\| Queries failed after retries \| - \| 1 \(discovery 1\) \|/)
+})
+
+test('Retry-After takes seconds or an HTTP date; anything else falls back to backoff', async () => {
+  const now = Date.parse('2026-10-30T12:00:00Z')
+  assert.equal(retryAfterSeconds('7', now), 7)
+  assert.equal(retryAfterSeconds('Fri, 30 Oct 2026 12:00:09 GMT', now), 9)
+  assert.equal(retryAfterSeconds('Fri, 30 Oct 2026 11:00:00 GMT', now), 0)
+  assert.equal(retryAfterSeconds('soon', now), null)
+  assert.equal(retryAfterSeconds(undefined, now), null)
+  const e = new GhError(429, { 'retry-after': 'soon' })
+  e.retryAfter = NaN // a value that slipped past parsing still backs off
+  const waits = []
+  let n = 0
+  const r = retrying(async () => { if (!n++) throw e; return 'ok' }, { wait: async (s) => { waits.push(s) } })
+  assert.equal(await r(['api']), 'ok')
+  assert.deepEqual(waits, [2])
 })

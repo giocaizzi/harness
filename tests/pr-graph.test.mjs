@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { chunks, graph, report, repoTable, collect, parseRange, main, fmtDuration, HOT_SHARE, HOT_MIN } from '../scripts/pr-graph.mjs'
+import { chunks, graph, report, repoTable, collect, parseRange, errorLine, main, fmtDuration, HOT_SHARE, HOT_MIN } from '../scripts/pr-graph.mjs'
 
 const NOW = Date.parse('2026-10-30T12:00:00Z')
 const pr = (o) => ({ repo: 'h/acme/app', base: 'main', head: 'x', defaultBranch: 'main', created: Date.parse('2026-10-01T00:00:00Z'), closed: null, paths: [], fileCount: 0, ...o })
@@ -199,4 +199,10 @@ test('a file under the share threshold is not hot even with HOT_MIN PRs', () => 
   const g = graph(list, NOW)
   assert.equal(g.hotFiles, 0)
   assert.equal(g.refinedPairs, 3)
+})
+
+test('the top-level error line withholds a gh command line', () => {
+  assert.equal(errorLine(new Error('bad --range "x" (use Nd or Nw)')), 'bad --range "x" (use Nd or Nw)')
+  const line = errorLine(new Error('Command failed: gh api graphql --hostname h -f q=repo:acme/app'))
+  assert.ok(!line.includes('acme') && line.startsWith('PR graph: failed'))
 })

@@ -173,6 +173,9 @@ export function repoTable(agg) {
   return ['Local detail: never paste into a PR, issue or committed file.', '', '| Repo | PRs | Stacked | Overlap pairs | Refined pairs |', '|---|---|---|---|---|', ...rows, ''].join('\n')
 }
 
+// A gh failure message holds the command line, which names a repo: print the message only for a bad --range.
+export const errorLine = (e) => (/^bad --range/.test(e?.message) ? e.message : 'PR graph: failed with an unexpected error (detail withheld, it may name a repo)')
+
 export async function main(argv, runner = ghRunner, now = Date.now()) {
   const i = argv.indexOf('--range')
   const range = i >= 0 ? argv[i + 1] : '30d'
@@ -186,7 +189,7 @@ export async function main(argv, runner = ghRunner, now = Date.now()) {
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   main(process.argv.slice(2)).catch((e) => {
-    console.error(e.message)
+    console.error(errorLine(e))
     process.exit(1)
   })
 }
