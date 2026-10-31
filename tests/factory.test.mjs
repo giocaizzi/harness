@@ -420,7 +420,7 @@ test('fetch first: FACTORY_FETCH_FIRST=1 bases the work on the remote head, neve
   assert.ok(change.includes("| `head` | string | The 40-hex commit the unit starts from: the change's head at the gate, or under `FACTORY_FETCH_FIRST=1` the branch's fetched remote head, also when the local branch is ahead of it ([comments.md](comments.md#fetch-first)). |"))
   assert.ok(change.includes("(no second PR, no force push; under `FACTORY_FETCH_FIRST=1` it runs the fetch-first steps before writing the unit, and `head` is the fetched remote head even when the local branch is ahead of it; local commits ahead of `head` are part of this attempt's delta and pass its verifier round before they are pushed, [comments.md](comments.md#fetch-first))"))
   // change.md's own prohibition, its attempt-count resets and "the cap in force" are the only allowed matches.
-  const changeAllowed = ['no force push;', 'which also resets the count', 'is also what resets the attempt count', 'The cap in force,']
+  const changeAllowed = ['no force push;', 'resets the count', 'the count resets only when', 'is also what resets the attempt count', 'The cap in force,']
   assert.doesNotMatch(changeAllowed.reduce((t, a) => t.split(a).join(''), change), forbidden, 'change.md names a forbidden move or the local head')
   const para = doc.split('\n').find((l) => l.startsWith('**Fetch first.**'))
   assert.ok(para, 'docs/factory.md has the Fetch first paragraph')
