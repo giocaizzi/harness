@@ -2,9 +2,9 @@
   "schema": 3,
   "ticket": "acme/app#12",
   "run_id": "r-1",
-  "end_state": "halted",
-  "reason": "halted",
-  "reason_code": null,
+  "end_state": "budget_reached",
+  "reason": "the budget ran out during ship",
+  "reason_code": "budget",
   "pr": "https://github.com/acme/app/pull/20",
   "tasks": [
     {

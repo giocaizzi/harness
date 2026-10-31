@@ -1,7 +1,7 @@
 // Checks a run's result.json: the core fields (`schema`, `ticket`, `run_id`, `end_state`, `reason`, `reason_code`),
 // `finished_at` and `phases` times, the optional `routing` entries and `mode` (only `dev`),
-// `tasks` (a group run's members, schema 3, and the `end_state` they derive; with FACTORY_RUN_FILE set, a result needs them,
-// a stop at the gate aside, and their tickets are the run file's members) and a change run's `change`.
+// `tasks` (a group run's members, schema 3, and the highest `end_state` they allow; with FACTORY_RUN_FILE set, a result
+// needs them, a stop at the gate aside, and their tickets are the run file's members) and a change run's `change`.
 // Usage `node check-result.mjs <result.json>`: exit 0 valid, 1 invalid or unreadable (one line per error), 2 usage.
 // A deviation (model or effort differing from the policy's) needs a non-empty deviation_reason; a time the run could not
 // find is null, never a dropped key. Imports Node built-ins only, so a hook can copy it.
@@ -145,11 +145,10 @@ export const coreErrors = (result, env = process.env) => {
 }
 
 const TASK_KEYS = ['ticket', 'outcome', 'reason', 'reason_code', 'pr_link']
-// Stops a runtime or a budget cap makes on the run as a whole, not derived from how the members ended.
-const RUN_STOPS = ['budget_reached', 'halted']
 
-// A group run's `end_state` from its members' outcomes: `done` when every member is done or released and one is done,
-// else `parked` when one is parked, else `failed`.
+// The highest `end_state` a group run's members allow: `done` when every member is done or released and one is done,
+// else `parked` when one is parked, else `failed`. The run may end lower when it stops as a whole after the members
+// (`parked` on its merge or live verify, `failed`, `budget_reached`, `halted`), never higher.
 export const groupEndState = (outcomes) => {
   if (outcomes.includes('done') && outcomes.every((o) => o === 'done' || o === 'released')) return 'done'
   return outcomes.includes('parked') ? 'parked' : 'failed'
@@ -161,9 +160,10 @@ export const taskErrors = (result, env = process.env) => {
   const { tasks } = result
   if (tasks === undefined) {
     if (result.schema === 3) return ['schema 3 needs tasks']
-    // A runtime names a group run's members in the run file: its result lists them, unless the run stopped at the gate.
+    // A runtime names a group run's members in the run file: its result lists them, unless the run stopped at the gate,
+    // which worked no member and opened nothing.
     const runFile = (env.FACTORY_RUN_FILE ?? '').trim()
-    return runFile && !isGateStop(result) ? [`tasks: FACTORY_RUN_FILE is set, so this group run's result needs tasks (schema 3); only a stop at the gate leaves them out`] : []
+    return runFile && !(isGateStop(result) && (result.pr === null || result.pr === undefined)) ? [`tasks: FACTORY_RUN_FILE is set, so this group run's result needs tasks (schema 3); only a stop at the gate, with pr null, leaves them out`] : []
   }
   if (result.schema !== 3) return ['tasks needs schema 3']
   if (!Array.isArray(tasks) || tasks.length === 0) return [`tasks must be a non-empty array, got ${show(tasks)}`]
@@ -200,11 +200,13 @@ export const taskErrors = (result, env = process.env) => {
     if (result.end_state === 'done') errors.push('tasks: no done entry, so end_state must not be done')
     if (!isText(result.reason)) errors.push('tasks: no done entry, so reason must say why')
   } else if (!hasPr) errors.push('tasks: a done entry needs pr to be a non-empty string')
-  // The run's end_state follows its members; a budget or halt stop stands in for it only when not every member finished.
+  // The members bound the run's end_state from above: done needs every member finished, parked needs none only released.
   const outcomes = tasks.map((t) => t?.outcome)
-  if (outcomes.every((o) => OUTCOMES.includes(o)) && END_STATES.includes(result.end_state) && !(result.end_state === 'done' && !done)) {
-    const derived = groupEndState(outcomes)
-    if (RUN_STOPS.includes(result.end_state) ? derived === 'done' : result.end_state !== derived) errors.push(`tasks: the members' outcomes ${show(outcomes)} make end_state ${derived}, got ${show(result.end_state)}`)
+  if (outcomes.every((o) => OUTCOMES.includes(o)) && !(result.end_state === 'done' && !done)) {
+    const bound = groupEndState(outcomes)
+    const rank = { done: 2, parked: 1 }
+    if ((rank[result.end_state] ?? 0) > (rank[bound] ?? 0)) errors.push(`tasks: the members' outcomes ${show(outcomes)} allow end_state ${bound} at most, got ${show(result.end_state)}`)
+    else if (bound === 'done' && result.end_state === 'parked' && !REASON_CODES.includes(result.reason_code)) errors.push(`tasks: every member finished, so a parked run needs the reason_code it waits on (such as merge_gate), got ${show(result.reason_code)}`)
   }
   return [...errors, ...runFileErrors(tasks, env)]
 }

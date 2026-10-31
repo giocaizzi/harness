@@ -219,10 +219,15 @@ test("result gate: a group run's tasks follow FACTORY_RUN_FILE, a relative path 
     const single = (over) => { const cwd = gateRepo(validResult(over)); writeFileSync(join(cwd, 'run.json'), JSON.stringify({ schema: 1, run_id: 'run-1', lead: 'acme/app#12', members: [{ ticket: 'acme/app#12' }] })); return cwd }
     assert.match(await resultGate({ cwd: single() }, undefined, env), /block 1 of 2[\s\S]*FACTORY_RUN_FILE is set, so this group run's result needs tasks/)
     assert.equal(await resultGate({ cwd: single({ end_state: 'failed', reason: 'refuse: not approved', reason_code: 'auth' }) }, undefined, env), null)
+    assert.match(await resultGate({ cwd: single({ end_state: 'failed', reason: 'refuse: not approved', reason_code: 'auth', pr: 'https://github.com/acme/app/pull/20' }) }, undefined, env), /block 1 of 2[\s\S]*needs tasks/)
+    // Every member done, the one PR waiting on an owner merge: an honest parked result passes.
+    const merged = validResult({ schema: 3, end_state: 'parked', reason: 'the PR waits on an owner merge', reason_code: 'merge_gate', pr: 'https://github.com/acme/app/pull/20', tasks: [task(12), task(13)] })
+    const mergedRepo = () => { const cwd = gateRepo(merged); writeFileSync(join(cwd, 'run.json'), JSON.stringify({ schema: 1, run_id: 'run-1', lead: 'acme/app#12', members: [{ ticket: 'acme/app#12' }, { ticket: 'acme/app#13' }] })); return cwd }
+    assert.equal(await resultGate({ cwd: mergedRepo() }, undefined, env), null)
     // A member left parked makes the group parked, never done.
     const mixed = validResult({ schema: 3, pr: 'https://github.com/acme/app/pull/20', tasks: [task(12), { ...task(13), outcome: 'parked', reason: 'waits', reason_code: 'question', pr_link: 'refs' }] })
     const mixedRepo = () => { const cwd = gateRepo(mixed); writeFileSync(join(cwd, 'run.json'), JSON.stringify({ schema: 1, run_id: 'run-1', lead: 'acme/app#12', members: [{ ticket: 'acme/app#12' }, { ticket: 'acme/app#13' }] })); return cwd }
-    assert.match(await resultGate({ cwd: mixedRepo() }, undefined, env), /block 1 of 2[\s\S]*make end_state parked, got "done"/)
+    assert.match(await resultGate({ cwd: mixedRepo() }, undefined, env), /block 1 of 2[\s\S]*allow end_state parked at most, got "done"/)
   } finally {
     delete process.env.CLAUDE_PLUGIN_DATA
   }

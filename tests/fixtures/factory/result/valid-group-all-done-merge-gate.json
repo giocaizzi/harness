@@ -2,9 +2,9 @@
   "schema": 3,
   "ticket": "acme/app#12",
   "run_id": "r-1",
-  "end_state": "failed",
-  "reason": "deploy did not run",
-  "reason_code": null,
+  "end_state": "parked",
+  "reason": "the PR waits on an owner merge",
+  "reason_code": "merge_gate",
   "pr": "https://github.com/acme/app/pull/20",
   "tasks": [
     {
