@@ -171,7 +171,7 @@ Per harness ([compatibility.md](compatibility.md)):
 
 ## Config: `.factory/config.yaml`
 
-Template with placeholders: [`plugins/factory/template/config.yaml`](../plugins/factory/template/config.yaml).
+Template with placeholders: [`plugins/factory/template/config.yaml`](../plugins/factory/template/config.yaml). The gate (`gate.mjs`) and the change-run unit check (`check-change.mjs`) read this file as committed on the forge's default branch, never the checkout's copy: a change to it counts once it is merged, and a branch (a change's included) that edits it cannot add an approver or raise a cap.
 
 | Key | Required | Meaning |
 |---|---|---|

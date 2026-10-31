@@ -4,11 +4,11 @@
 // the verdict carries the body and leaves it open.
 // Usage: node gate.mjs <n>   (from the repo or a worktree; gh fills {owner}/{repo} from the checkout)
 // Exit 0 go or wait, 1 stop (the verdict says which check), 2 usage or environment (no checkout, no or unreadable
-// .factory/config.yaml, no gh). Every read that fails or cannot be judged fails closed: it stops, never lets the run on.
+// .factory/config.yaml on the default branch, no gh). Every read that fails or cannot be judged fails closed: it stops,
+// never lets the run on. The config is the one committed on the forge's default branch (committedConfig), never the
+// checkout's copy.
 import { execFileSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
 import { hostname } from 'node:os'
-import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 export class UsageError extends Error {}
@@ -279,6 +279,30 @@ export const judge = ({ config, env, host, login, issue, timeline, edit, comment
 
 // --- the reads ---
 
+const git = (args) => execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 60_000, windowsHide: true })
+const SHA = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/
+
+/**
+ * .factory/config.yaml as committed on the forge's default branch, never the checkout's copy: a run may stand on a
+ * branch (a change's) where a writer or the session changed it. The default branch and its head commit come from the
+ * remote (`git ls-remote --symref origin HEAD`), never from local refs a session can move (`origin/HEAD`, `update-ref`),
+ * and the file is read from that commit with replace objects off, so `git replace` cannot swap it. The commit must be
+ * fetched. Returns the text, or null when that commit has no such file; throws when any of it cannot be read.
+ */
+export const committedConfig = (run = git) => {
+  const out = run(['ls-remote', '--symref', 'origin', 'HEAD'])
+  const branch = /^ref: refs\/heads\/(\S+)\tHEAD$/m.exec(out)?.[1]
+  const sha = /^(\S+)\tHEAD$/m.exec(out)?.[1]
+  if (!branch || !sha || !SHA.test(sha)) throw new Error('git ls-remote --symref origin HEAD named no default branch and head')
+  try {
+    run(['--no-replace-objects', 'cat-file', '-e', `${sha}^{commit}`])
+  } catch {
+    throw new Error(`the head of the default branch ${branch} (${sha.slice(0, 12)}) is not fetched: run git fetch origin ${branch}`)
+  }
+  if (run(['--no-replace-objects', 'ls-tree', '--name-only', sha, '--', '.factory/config.yaml']).trim() === '') return null
+  return run(['--no-replace-objects', 'show', `${sha}:.factory/config.yaml`])
+}
+
 const gh = (args) => {
   try {
     return execFileSync('gh', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024, windowsHide: true })
@@ -322,18 +346,18 @@ const parseNumber = (argv, env) => {
 
 const main = (argv, env) => {
   const n = parseNumber(argv, env)
-  let top
   try {
-    top = execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }).trim()
+    git(['rev-parse', '--show-toplevel'])
   } catch {
     throw new UsageError('not inside a git checkout: run it from the repo or one of its worktrees')
   }
   let text
   try {
-    text = readFileSync(path.join(top, '.factory', 'config.yaml'), 'utf8')
+    text = committedConfig()
   } catch (e) {
-    throw new UsageError(`.factory/config.yaml: ${e.code === 'ENOENT' ? 'missing: adopt the repo first (https://github.com/giocaizzi/harness/blob/main/docs/adopt-factory.md)' : `cannot read (${e.code ?? e.message})`}`)
+    throw new UsageError(`.factory/config.yaml: cannot read it from the default branch (${cut(String(e.stderr ?? '').trim().split('\n')[0] || e.message, 200)})`)
   }
+  if (text === null) throw new UsageError('.factory/config.yaml: missing on the default branch: adopt the repo first and merge the config (https://github.com/giocaizzi/harness/blob/main/docs/adopt-factory.md)')
   const config = parseConfig(text)
   let verdict
   try {

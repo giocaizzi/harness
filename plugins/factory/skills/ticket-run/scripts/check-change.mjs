@@ -1,11 +1,11 @@
 // Checks a change run's unit brief (.factory/runs/<change>/unit-<attempt>.json), the format in references/change.md.
 // Usage `node check-change.mjs <unit.json>`: exit 0 valid, 1 invalid or unreadable (one line per error), 2 usage.
 // The CLI also checks `max_attempts` against the cap committed on the default branch (committedCap below).
-// Imports Node built-ins and ./check-result.mjs only.
-import { execFileSync } from 'node:child_process'
+// Imports Node built-ins, ./check-result.mjs and ./gate.mjs (its committedConfig) only.
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { CHANGE_TRIGGERS, TICKET, report, show } from './check-result.mjs'
+import { committedConfig } from './gate.mjs'
 
 export const UNIT_KEYS = ['unit', 'version', 'run_id', 'change', 'pr', 'issues', 'branch', 'head', 'head_pusher', 'trigger', 'attempt', 'max_attempts', 'items']
 export const ITEM_KEYS = ['source', 'kind', 'author', 'role', 'path', 'line', 'text']
@@ -99,16 +99,10 @@ export const parseCap = (text) => {
   return DEFAULT_MAX_ATTEMPTS
 }
 
-const git = (args) => execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true })
-
-// The cap as committed on the default branch (origin/HEAD), never the checkout's copy: a change run works the change's
-// branch, where a session could raise it. No config file there: the default; a ref or file that cannot be read throws.
-export const committedCap = (run = git) => {
-  const ref = run(['rev-parse', '--abbrev-ref', 'origin/HEAD']).trim()
-  if (!/^origin\/\S+$/.test(ref) || ref === 'origin/HEAD') throw new Error(`origin/HEAD is ${show(ref)}, not a remote branch`)
-  if (run(['ls-tree', '--name-only', ref, '--', '.factory/config.yaml']).trim() === '') return DEFAULT_MAX_ATTEMPTS
-  return parseCap(run(['show', `${ref}:.factory/config.yaml`]))
-}
+// The cap as committed on the forge's default branch (gate.mjs's committedConfig), never the checkout's copy: a change
+// run works the change's branch, where a session could raise it. No config file there: the default; any read that
+// fails throws.
+export const committedCap = (run) => parseCap(committedConfig(run) ?? '')
 
 export const capErrors = (unit, cap) =>
   isObject(unit) && Number.isInteger(unit.max_attempts) && unit.max_attempts !== cap ? [`max_attempts: ${unit.max_attempts} is not the cap committed on the default branch, ${cap}`] : []
@@ -133,7 +127,7 @@ const main = (args) => {
     errors.push(...capErrors(unit, committedCap()))
   } catch (e) {
     const why = String(e.stderr ?? '').trim().split('\n')[0] || e.message
-    errors.push(`max_attempts: cannot read the cap committed on the default branch (${why}): fetch the default branch and set origin/HEAD (git remote set-head origin --auto)`)
+    errors.push(`max_attempts: cannot read the cap committed on the default branch (${why}): fetch the default branch (git fetch origin)`)
   }
   for (const line of report(errors)) console.error(line)
   return errors.length ? 1 : 0

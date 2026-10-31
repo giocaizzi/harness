@@ -8,6 +8,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { evaluateCommand, touchesApprovalLabel } from '../plugins/guard/core/engine.mjs'
 import { rules } from '../plugins/guard/core/rules.mjs'
+import { gitEnv, originRepo } from './factory-git-lib.mjs'
 
 // The runtime's variables never reach these tests: each case sets the ones it needs.
 for (const k of ['FACTORY_RUN_ID', 'FACTORY_TICKET', 'FACTORY_RUN_FILE']) delete process.env[k]
@@ -1089,15 +1090,16 @@ test('gate script: a runtime approval pinned in the run\'s own claim, as comment
 })
 
 test('gate script: the CLI prints one JSON verdict from gh, exit 0 go, 1 stop, 2 usage', { skip: process.platform === 'win32' && 'POSIX shim only' }, () => {
-  const repo = scratchRepo()
+  const config = read('plugins/factory/evals/ticket-run-runtime-claim-writer/scaffold.sh').split("<<'YML'\n")[1].split('\nYML')[0]
+  const repo = originRepo(config)
+  repo.main = repo.work
   const bin = join(repo.dir, 'bin')
-  spawnSync('mkdir', ['-p', bin, join(repo.main, '.factory')])
-  writeFileSync(join(repo.main, '.factory', 'config.yaml'), read('plugins/factory/evals/ticket-run-runtime-claim-writer/scaffold.sh').split("<<'YML'\n")[1].split('\nYML')[0])
+  spawnSync('mkdir', ['-p', bin])
   // A fake gh: answers each read the script makes from files beside it, and logs its arguments.
   const data = { 'api user': 'example-owner', 'issue view': JSON.stringify(withLabels()), timeline: JSON.stringify([ev('labeled', 'agent-ok', 'example-owner')]), graphql: '{"lastEditedAt":null,"editor":null}', comments: '' }
   for (const [k, v] of Object.entries(data)) writeFileSync(join(bin, k.replace(' ', '-')), `${v}\n`)
   writeFileSync(join(bin, 'gh'), `#!/bin/sh\nd=$(dirname "$0"); echo "$*" >> "$d/log"\ncase "$*" in\n  "api user"*) cat "$d/api-user";;\n  "issue view"*) cat "$d/issue-view";;\n  *timeline*) cat "$d/timeline";;\n  *graphql*) cat "$d/graphql";;\n  *comments*) cat "$d/comments";;\n  *) exit 9;;\nesac\n`, { mode: 0o755 })
-  const run = (args, env = {}) => spawnSync(process.execPath, [GATE, ...args], { cwd: repo.main, encoding: 'utf8', env: cleanEnv({ PATH: `${bin}:${process.env.PATH}`, ...env }) })
+  const run = (args, env = {}) => spawnSync(process.execPath, [GATE, ...args], { cwd: repo.main, encoding: 'utf8', env: gitEnv({ PATH: `${bin}:${process.env.PATH}`, ...env }) })
   try {
     const go = run(['12'])
     assert.equal(go.status, 0, go.stderr)
@@ -1113,12 +1115,37 @@ test('gate script: the CLI prints one JSON verdict from gh, exit 0 go, 1 stop, 2
     assert.deepEqual([failed.checks, failed.body, failed.ready], [null, null, null], 'the same keys as every verdict')
     assert.equal(run(['12'], { FACTORY_TICKET: 'acme/app#13' }).status, 2)
     assert.equal(run([]).status, 2)
-    rmSync(join(repo.main, '.factory'), { recursive: true })
-    const none = run(['12'])
-    assert.equal(none.status, 2)
-    assert.match(none.stderr, /config\.yaml: missing/)
+    writeFileSync(join(bin, 'graphql'), '{"lastEditedAt":null,"editor":null}')
+    writeFileSync(join(bin, 'issue-view'), JSON.stringify(withLabels()))
+    // A branch whose config adds an approver, labelled by that login: the default branch's approvers judge it.
+    writeFileSync(join(bin, 'timeline'), JSON.stringify([ev('labeled', 'agent-ok', 'mallory')]))
+    repo.git('checkout', '-q', '-b', 'factory/12-change')
+    repo.put(config.replace('approvers:\n  - example-owner', 'approvers:\n  - example-owner\n  - mallory'), 'add an approver')
+    const forged = run(['12'])
+    assert.equal(forged.status, 1, forged.stderr)
+    assert.match(JSON.parse(forged.stdout).stop.reason, /not approved by an approver/)
+    // Nor do moved local refs or a replaced blob.
+    repo.git('update-ref', 'refs/remotes/origin/main', 'HEAD')
+    repo.git('replace', repo.git('rev-parse', 'main:.factory/config.yaml'), repo.git('rev-parse', 'HEAD:.factory/config.yaml'))
+    assert.equal(run(['12']).status, 1)
+    writeFileSync(join(bin, 'timeline'), JSON.stringify([ev('labeled', 'agent-ok', 'example-owner')]))
+    assert.equal(run(['12']).status, 0)
   } finally {
     repo.done()
+  }
+  // No config on the default branch (one in the checkout only), or no origin: exit 2.
+  const bare = originRepo(null)
+  try {
+    bare.put(config, 'local only')
+    const none = spawnSync(process.execPath, [GATE, '12'], { cwd: bare.work, encoding: 'utf8', env: gitEnv() })
+    assert.equal(none.status, 2)
+    assert.match(none.stderr, /config\.yaml: missing on the default branch/)
+    bare.git('remote', 'remove', 'origin')
+    const unread = spawnSync(process.execPath, [GATE, '12'], { cwd: bare.work, encoding: 'utf8', env: gitEnv() })
+    assert.equal(unread.status, 2)
+    assert.match(unread.stderr, /config\.yaml: cannot read it from the default branch/)
+  } finally {
+    bare.done()
   }
 })
 
