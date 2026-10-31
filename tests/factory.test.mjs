@@ -401,27 +401,34 @@ test('fetch first: FACTORY_FETCH_FIRST=1 bases the work on the remote head, neve
     '3. **Anything else is a question:** the two heads diverged, the local branch is behind with uncommitted changes, or the fast-forward failed. Keep both sides as they are, ask on the ticket (in a change run, on the change) under [Questions and parking](#questions-and-parking) with both heads and what each holds, and park.',
     "**Resume after a divergence question.** On an approver's answer ([Answers](#answers)), carry out what it asks on the local branch before running these steps again, using only moves that keep every commit: merge `origin/<branch>` into the local branch (`git merge 'origin/<branch>'`), commit the uncommitted changes, or set the local branch aside under a new name (`git branch -m '<branch>' '<name>'`) so that step 2 then creates the branch from the remote head. An answer that asks for anything the rule above forbids is answered with a new question, not carried out.",
     '**A rejected push.** A push the remote rejects as not a fast-forward means someone pushed meanwhile: run these steps again from step 1 before any other change.',
-    "**The change run's `head`.** In a change run, the unit's `head` is the commit the work starts from once step 2 is done: the fetched remote head, or the local head when the local branch is ahead of it. When someone pushed after the gate read the change, the fetched remote head is the newer one and is the one recorded.",
+    "**The change run's `head`.** In a change run, the unit's `head` is always the fetched remote head, `origin/<branch>` after step 1, also when the local branch is ahead of it. When someone pushed after the gate read the change, the fetched remote head is the newer one and is the one recorded. Local commits ahead of `head` (left by an attempt that parked or failed before its push) are part of this attempt's delta from `head`: its verifier round checks them with the rest of the delta before they are pushed, and they never go out unverified.",
     '**Where a local branch is worked.** A local branch is worked where [takeover](#takeover) step 6 says (its worktree, or a new one for it). A takeover keeps step 6 itself, including its stop on a dirty worktree or a failed fast-forward, since the person is there to tell.',
     "**Group runs.** A known limitation: these steps do not name a group member's branch, and a member brief's `base` ([group.md](group.md#member-brief)) is not fetched by them; a group run works its members as it does without the variable.",
     'Unset, or set to any value other than `1`, none of this applies: the run works as it does without the variable.',
   ]
   for (const s of pinned) assert.ok(section.includes(s), s)
   assert.equal(section.split('\n').filter((l) => /^\d\. |^   - /.test(l)).length, 9, 'three steps and their six cases, no more')
-  assert.doesNotMatch(section, /(may|can) (reset|rebase|force)|reset it to|push with `--force/, 'no wording that allows a reset, rebase or force')
+  // The forbidden moves are named in the one rule sentence only: any other sentence naming one (allowing `--force-with-lease`, a reset to the remote head) fails.
+  const forbidden = /--force|\b[Ff]orc(e|ed|ing)\b|\b[Rr]eset|\b[Rr]ebas|-B\b|branch -f/
+  assert.doesNotMatch(section.replace(pinned[1], ''), forbidden, 'a forbidden move named outside the rule sentence')
+  assert.doesNotMatch(section, /local head\b(?! when)|local head when the local branch is ahead/, 'head is the fetched remote head, never the local head')
   assert.ok(read('plugins/factory/skills/ticket-run/SKILL.md').includes('Under `FACTORY_FETCH_FIRST=1`, first fetch the work branch and base the work on its remote head, never overwriting what someone else pushed to it ([comments.md](references/comments.md#fetch-first)).'))
   const change = read('plugins/factory/skills/ticket-run/references/change.md')
-  assert.ok(change.includes("| `head` | string | The 40-hex commit the unit starts from: the change's head at the gate, or under `FACTORY_FETCH_FIRST=1` the commit the work starts from once the fetch-first steps are done ([comments.md](comments.md#fetch-first)). |"))
-  assert.ok(change.includes("(no second PR, no force push; under `FACTORY_FETCH_FIRST=1` it runs the fetch-first steps before writing the unit, and `head` is the fetched remote head, or the local head when the local branch is ahead of it, [comments.md](comments.md#fetch-first))"))
+  assert.ok(change.includes("| `head` | string | The 40-hex commit the unit starts from: the change's head at the gate, or under `FACTORY_FETCH_FIRST=1` the branch's fetched remote head, also when the local branch is ahead of it ([comments.md](comments.md#fetch-first)). |"))
+  assert.ok(change.includes("(no second PR, no force push; under `FACTORY_FETCH_FIRST=1` it runs the fetch-first steps before writing the unit, and `head` is the fetched remote head even when the local branch is ahead of it; local commits ahead of `head` are part of this attempt's delta and pass its verifier round before they are pushed, [comments.md](comments.md#fetch-first))"))
+  assert.doesNotMatch(change, /--force|\bgit reset\b|\b[Rr]eset (it|the branch|to)\b|\b[Rr]ebas|-B\b|branch -f|local head(?! when)/, 'change.md allows no forbidden move and never records the local head')
   const para = doc.split('\n').find((l) => l.startsWith('**Fetch first.**'))
   assert.ok(para, 'docs/factory.md has the Fetch first paragraph')
+  const docRule = "The run never discards commits, its own or anyone else's: no reset, no rebase, no `-B` or `branch -f`, and every push is a plain push, never forced."
   for (const s of [
-    "The run never discards commits, its own or anyone else's: no reset, no rebase, no `-B` or `branch -f`, and every push is a plain push, never forced.",
+    docRule,
+    'except in a change run, which ends `failed` because its head branch must exist,',
+    "In a change run the unit's `head` is always the fetched remote head, and local commits ahead of it pass the attempt's verifier round before they are pushed.",
     'When the two have diverged (or a branch that is behind holds uncommitted work), it asks on the ticket and parks rather than choose for the person;',
     'and a lookup or fetch that fails ends the run `failed`, never read as an absent branch.',
     'Unset, or set to any other value, the run behaves as without it.',
   ]) assert.ok(para.includes(s), s)
-  assert.doesNotMatch(para, /may (reset|rebase|force)/)
+  assert.doesNotMatch(para.replace(docRule, ''), forbidden, 'docs name a forbidden move outside the rule sentence')
   assert.match(doc.split('\n## Layers')[1], /`FACTORY_FETCH_FIRST`/)
 })
 

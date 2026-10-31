@@ -88,7 +88,7 @@ The run never discards commits, its own or anyone else's, and never overwrites t
 
 **A rejected push.** A push the remote rejects as not a fast-forward means someone pushed meanwhile: run these steps again from step 1 before any other change.
 
-**The change run's `head`.** In a change run, the unit's `head` is the commit the work starts from once step 2 is done: the fetched remote head, or the local head when the local branch is ahead of it. When someone pushed after the gate read the change, the fetched remote head is the newer one and is the one recorded.
+**The change run's `head`.** In a change run, the unit's `head` is always the fetched remote head, `origin/<branch>` after step 1, also when the local branch is ahead of it. When someone pushed after the gate read the change, the fetched remote head is the newer one and is the one recorded. Local commits ahead of `head` (left by an attempt that parked or failed before its push) are part of this attempt's delta from `head`: its verifier round checks them with the rest of the delta before they are pushed, and they never go out unverified.
 
 **Where a local branch is worked.** A local branch is worked where [takeover](#takeover) step 6 says (its worktree, or a new one for it). A takeover keeps step 6 itself, including its stop on a dirty worktree or a failed fast-forward, since the person is there to tell.
 
