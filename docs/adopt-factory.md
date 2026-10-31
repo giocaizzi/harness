@@ -33,7 +33,7 @@
    ```
    (PowerShell: `Select-String '<' .factory/config.yaml`.)
 4. If the repo has a project board, fill `board` with its owner, number and the status field's option names (`gh project field-list <number> --owner <owner>` lists them); otherwise delete the `board` block.
-5. Link the factory from the repo's `AGENTS.md` (one line: tickets labelled `agent-ok` are worked with the `ticket-run` skill; config in `.factory/config.yaml`), then commit and open a PR.
+5. Link the factory from the repo's `AGENTS.md` (one line: tickets labelled `agent-ok` are worked with the `ticket-run` skill; config in `.factory/config.yaml`), then commit and open a PR. The gate reads the config from the default branch only, so tickets can be worked once that PR is merged.
 
 ## Verify
 

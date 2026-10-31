@@ -2,9 +2,9 @@
   "schema": 3,
   "ticket": "acme/app#12",
   "run_id": "r-1",
-  "end_state": "done",
-  "reason": "",
-  "reason_code": null,
+  "end_state": "parked",
+  "reason": "acme/app#13 waits on the owner",
+  "reason_code": "question",
   "pr": "https://github.com/acme/app/pull/20",
   "tasks": [
     {

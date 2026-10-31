@@ -1,11 +1,14 @@
 // Checks a change run's unit brief (.factory/runs/<change>/unit-<attempt>.json), the format in references/change.md.
 // Usage `node check-change.mjs <unit.json>`: exit 0 valid, 1 invalid or unreadable (one line per error), 2 usage.
-// Imports Node built-ins and ./check-result.mjs only.
+// The CLI also checks `max_attempts` and the roles (approver item authors, `head_pusher`) against the config committed
+// on the default branch (committedConfig in gate.mjs).
+// Imports Node built-ins, ./check-result.mjs and ./gate.mjs (its committedConfig) only.
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { CHANGE_TRIGGERS, TICKET, report, show } from './check-result.mjs'
+import { committedConfig, parseConfig } from './gate.mjs'
 
-export const UNIT_KEYS = ['unit', 'version', 'run_id', 'change', 'pr', 'issues', 'branch', 'head', 'trigger', 'attempt', 'max_attempts', 'items']
+export const UNIT_KEYS = ['unit', 'version', 'run_id', 'change', 'pr', 'issues', 'branch', 'head', 'head_pusher', 'trigger', 'attempt', 'max_attempts', 'items']
 export const ITEM_KEYS = ['source', 'kind', 'author', 'role', 'path', 'line', 'text']
 export const ITEM_KINDS = ['review', 'review_comment', 'comment', 'check']
 export const ROLES = ['approver', 'reviewer', 'check']
@@ -43,7 +46,7 @@ export const unitErrors = (unit) => {
   if (!isObject(unit)) return [`unit must be a JSON object, got ${show(unit)}`]
   const errors = keyErrors(unit, UNIT_KEYS, '')
   if (unit.unit !== 'change_fix') errors.push(`unit: must be "change_fix", got ${show(unit.unit)}`)
-  if (unit.version !== 1) errors.push(`version: must be 1, got ${show(unit.version)}`)
+  if (unit.version !== 2) errors.push(`version: must be 2, got ${show(unit.version)}`)
   if (!isString(unit.run_id)) errors.push(`run_id: must be a non-empty string, got ${show(unit.run_id)}`)
   const change = typeof unit.change === 'string' && TICKET.test(unit.change) ? unit.change : null
   if (!change) errors.push(`change: must be <owner>/<repo>#<number>, got ${show(unit.change)}`)
@@ -69,8 +72,59 @@ export const unitErrors = (unit) => {
       errors.push(unit.trigger === 'check_failed' ? 'items: a check_failed unit needs at least one check item' : `items: a ${unit.trigger} unit needs at least one approver item`)
     }
   }
+  // A failed check is acted on only on a head a factory or approver login pushed, or that an approver's answer on the
+  // change allowed (that answer is then an approver comment item).
+  const pusher = unit.head_pusher
+  if (unit.trigger !== 'check_failed') {
+    if ('head_pusher' in unit && pusher !== null) errors.push(`head_pusher: must be null unless trigger is check_failed, got ${show(pusher)}`)
+  } else if (pusher === null) {
+    if (!(Array.isArray(unit.items) && unit.items.some((i) => isObject(i) && i.role === 'approver' && i.kind === 'comment'))) errors.push("head_pusher: a check_failed unit needs the factory or approver login that pushed head, or an approver's answer as a comment item")
+  } else if (pusher !== undefined && !(isString(pusher) && pusher.trim() === pusher)) errors.push(`head_pusher: must be a login or null, got ${show(pusher)}`)
   return errors
 }
+
+// `change_requests.max_attempts` from a config text, in the plain YAML the template uses; absent, the default.
+export const DEFAULT_MAX_ATTEMPTS = 3
+export const parseCap = (text) => {
+  const lines = text.replace(/^\uFEFF/, '').split(/\r?\n/)
+  const at = lines.findIndex((l) => /^change_requests:/.test(l))
+  if (at === -1) return DEFAULT_MAX_ATTEMPTS
+  if (!/^change_requests:\s*(?:#.*)?$/.test(lines[at])) throw new Error('change_requests must be a block mapping')
+  for (const line of lines.slice(at + 1)) {
+    if (/^\S/.test(line) && !/^#/.test(line)) break
+    const m = /^\s+max_attempts:\s*(.*?)\s*(?:#.*)?$/.exec(line)
+    if (!m) continue
+    if (!/^[1-9]\d{0,3}$/.test(m[1])) throw new Error(`change_requests.max_attempts must be a whole number from 1, got ${show(m[1])}`)
+    return Number(m[1])
+  }
+  return DEFAULT_MAX_ATTEMPTS
+}
+
+// The cap as committed on the default branch (gate.mjs's committedConfig), never the checkout's copy: a change run
+// works the change's branch, where a session could raise it. No config key there: the default; any read that fails
+// throws. The CLI needs the config file itself, for the roles.
+export const committedCap = (run) => parseCap(committedConfig(run) ?? '')
+
+// Roles from the default branch's committed config, never the checkout's (a change's branch can list anyone): every
+// approver item's author is an approver, `head_pusher` is an approver or an identity login, and no item is the factory's.
+export const roleErrors = (unit, config) => {
+  if (!isObject(unit)) return []
+  const lc = (s) => String(s).toLowerCase()
+  const inList = (list, u) => typeof u === 'string' && list.map(lc).includes(lc(u))
+  const apr = (u) => inList(config.approvers, u) && (config.approversAllowBots || !lc(u).endsWith('[bot]'))
+  const factory = (u) => inList(config.identityLogins, u)
+  const errors = []
+  if (Array.isArray(unit.items)) unit.items.forEach((item, i) => {
+    if (!isObject(item) || typeof item.author !== 'string') return
+    if (factory(item.author)) errors.push(`items[${i}].author: ${show(item.author)} is a factory login (identity.logins on the default branch); no item is the factory's own`)
+    else if (item.role === 'approver' && !apr(item.author)) errors.push(`items[${i}].author: ${show(item.author)} is not an approver in the default branch's config`)
+  })
+  if (typeof unit.head_pusher === 'string' && !apr(unit.head_pusher) && !factory(unit.head_pusher)) errors.push(`head_pusher: ${show(unit.head_pusher)} is neither an approver nor in identity.logins in the default branch's config`)
+  return errors
+}
+
+export const capErrors = (unit, cap) =>
+  isObject(unit) && Number.isInteger(unit.max_attempts) && unit.max_attempts !== cap ? [`max_attempts: ${unit.max_attempts} is not the cap committed on the default branch, ${cap}`] : []
 
 // Exit code, not process.exit: an exit mid-pipe can cut stderr short.
 const main = (args) => {
@@ -88,6 +142,15 @@ const main = (args) => {
     return 1
   }
   const errors = unitErrors(unit)
+  // The cap and the roles come from the config committed on the default branch; any read that fails fails the check.
+  try {
+    const text = committedConfig()
+    if (text === null) throw new Error('no .factory/config.yaml there')
+    errors.push(...capErrors(unit, parseCap(text)), ...roleErrors(unit, parseConfig(text)))
+  } catch (e) {
+    const why = String(e.stderr ?? '').trim().split('\n')[0] || e.message
+    errors.push(`config: cannot read .factory/config.yaml committed on the default branch (${why}): fetch the default branch (git fetch origin)`)
+  }
   for (const line of report(errors)) console.error(line)
   return errors.length ? 1 : 0
 }

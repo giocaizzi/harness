@@ -8,6 +8,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { evaluateCommand, touchesApprovalLabel } from '../plugins/guard/core/engine.mjs'
 import { rules } from '../plugins/guard/core/rules.mjs'
+import { gitEnv, originRepo } from './factory-git-lib.mjs'
 
 // The runtime's variables never reach these tests: each case sets the ones it needs.
 for (const k of ['FACTORY_RUN_ID', 'FACTORY_TICKET', 'FACTORY_RUN_FILE']) delete process.env[k]
@@ -420,7 +421,7 @@ test('fetch first: FACTORY_FETCH_FIRST=1 bases the work on the remote head, neve
   assert.ok(change.includes("| `head` | string | The 40-hex commit the unit starts from: the change's head at the gate, or under `FACTORY_FETCH_FIRST=1` the branch's fetched remote head, also when the local branch is ahead of it ([comments.md](comments.md#fetch-first)). |"))
   assert.ok(change.includes("(no second PR, no force push; under `FACTORY_FETCH_FIRST=1` it runs the fetch-first steps before writing the unit, and `head` is the fetched remote head even when the local branch is ahead of it; local commits ahead of `head` are part of this attempt's delta and pass its verifier round before they are pushed, [comments.md](comments.md#fetch-first))"))
   // change.md's own prohibition, its attempt-count resets and "the cap in force" are the only allowed matches.
-  const changeAllowed = ['no force push;', 'which also resets the count', 'is also what resets the attempt count', 'The cap in force,']
+  const changeAllowed = ['no force push;', 'resets the count', 'the count resets only when', 'is also what resets the attempt count', 'The cap in force,']
   assert.doesNotMatch(changeAllowed.reduce((t, a) => t.split(a).join(''), change), forbidden, 'change.md names a forbidden move or the local head')
   const para = doc.split('\n').find((l) => l.startsWith('**Fetch first.**'))
   assert.ok(para, 'docs/factory.md has the Fetch first paragraph')
@@ -906,7 +907,7 @@ test('result scripts: a BOM is stripped by an escape sequence, never a literal U
 
 const GATE = join(SCRIPTS, 'gate.mjs')
 const gate = () => import(pathToFileURL(GATE).href)
-const gateConfig = { approvers: ['example-owner'], writers: ['example-owner', 'example-bot[bot]'], approversAllowBots: false, labels: { approval: 'agent-ok', claimed: 'factory-claimed', needs_grooming: 'needs-grooming', takeover: 'factory-takeover' }, marker: '<!-- factory -->' }
+const gateConfig = { approvers: ['example-owner'], writers: ['example-owner', 'example-bot[bot]'], approversAllowBots: false, labels: { approval: 'agent-ok', claimed: 'factory-claimed', needs_grooming: 'needs-grooming', takeover: 'factory-takeover' }, marker: '<!-- factory -->', identityLogins: [] }
 const ev = (event, label, login, at = '2026-10-20T09:00:00Z') => ({ event, label: { name: label }, actor: { login }, created_at: at })
 const claimComment = (id, login, host, runId, runner) => ({ id, login, created_at: `2026-10-2${id}T00:00:00Z`, html_url: `https://example.test/c/${id}`, body: `<!-- factory -->\n<!-- factory:claim -->\nhost: ${host}\nrun id: ${runId}\nrunner: ${runner}` })
 const reads = (patch = {}) => ({
@@ -930,6 +931,7 @@ test('gate script: reads the config keys it needs from the template shape, and f
   assert.deepEqual(template.approvers, ['<github-login>'])
   assert.equal(template.marker, '<!-- factory -->')
   assert.equal(template.approversAllowBots, false)
+  assert.deepEqual(template.identityLogins, ['<bot-login>'])
   const flow = parseConfig('approvers: [a, "b"]\r\nwriters:\n- a\n- \'c[bot]\'  # the runtime\nmarker: ""\nlabels:\n  approval: ok-go\n  # a comment\n  takeover: "hand-over"\n')
   assert.deepEqual(flow, { ...gateConfig, approvers: ['a', 'b'], writers: ['a', 'c[bot]'], labels: { ...gateConfig.labels, approval: 'ok-go', takeover: 'hand-over' } })
   assert.deepEqual(parseConfig('---\napprovers: [a]\n').approvers, ['a'], 'a leading document marker')
@@ -1009,20 +1011,25 @@ test('gate script: claims, the runtime claim not from a writer, takeover and gro
 })
 
 test('gate script: the CLI prints one JSON verdict from gh, exit 0 go, 1 stop, 2 usage', { skip: process.platform === 'win32' && 'POSIX shim only' }, () => {
-  const repo = scratchRepo()
+  const config = read('plugins/factory/evals/ticket-run-runtime-claim-writer/scaffold.sh').split("<<'YML'\n")[1].split('\nYML')[0]
+  const repo = originRepo(config)
+  repo.main = repo.work
   const bin = join(repo.dir, 'bin')
-  spawnSync('mkdir', ['-p', bin, join(repo.main, '.factory')])
-  writeFileSync(join(repo.main, '.factory', 'config.yaml'), read('plugins/factory/evals/ticket-run-runtime-claim-writer/scaffold.sh').split("<<'YML'\n")[1].split('\nYML')[0])
+  spawnSync('mkdir', ['-p', bin])
   // A fake gh: answers each read the script makes from files beside it, and logs its arguments.
   const data = { 'api user': 'example-owner', 'issue view': JSON.stringify(withLabels()), timeline: JSON.stringify([ev('labeled', 'agent-ok', 'example-owner')]), graphql: '{"lastEditedAt":null,"editor":null}', comments: '' }
   for (const [k, v] of Object.entries(data)) writeFileSync(join(bin, k.replace(' ', '-')), `${v}\n`)
   writeFileSync(join(bin, 'gh'), `#!/bin/sh\nd=$(dirname "$0"); echo "$*" >> "$d/log"\ncase "$*" in\n  "api user"*) cat "$d/api-user";;\n  "issue view"*) cat "$d/issue-view";;\n  *timeline*) cat "$d/timeline";;\n  *graphql*) cat "$d/graphql";;\n  *comments*) cat "$d/comments";;\n  *) exit 9;;\nesac\n`, { mode: 0o755 })
-  const run = (args, env = {}) => spawnSync(process.execPath, [GATE, ...args], { cwd: repo.main, encoding: 'utf8', env: cleanEnv({ PATH: `${bin}:${process.env.PATH}`, ...env }) })
+  const run = (args, env = {}) => spawnSync(process.execPath, [GATE, ...args], { cwd: repo.main, encoding: 'utf8', env: gitEnv({ PATH: `${bin}:${process.env.PATH}`, ...env }) })
   try {
     const go = run(['12'])
     assert.equal(go.status, 0, go.stderr)
     assert.equal(JSON.parse(go.stdout).verdict, 'go')
     assert.match(readFileSync(join(bin, 'log'), 'utf8'), /issues\/12\/timeline\?per_page=100/)
+    // From a subdirectory the gate reads the same committed config, never "missing".
+    spawnSync('mkdir', ['-p', join(repo.main, 'app', 'src')])
+    const sub = spawnSync(process.execPath, [GATE, '12'], { cwd: join(repo.main, 'app', 'src'), encoding: 'utf8', env: gitEnv({ PATH: `${bin}:${process.env.PATH}` }) })
+    assert.equal(sub.status, 0, sub.stderr)
     writeFileSync(join(bin, 'issue-view'), JSON.stringify(withLabels('needs-grooming')))
     const stop = run(['#12'])
     assert.equal(stop.status, 1)
@@ -1033,12 +1040,37 @@ test('gate script: the CLI prints one JSON verdict from gh, exit 0 go, 1 stop, 2
     assert.deepEqual([failed.checks, failed.body, failed.ready], [null, null, null], 'the same keys as every verdict')
     assert.equal(run(['12'], { FACTORY_TICKET: 'acme/app#13' }).status, 2)
     assert.equal(run([]).status, 2)
-    rmSync(join(repo.main, '.factory'), { recursive: true })
-    const none = run(['12'])
-    assert.equal(none.status, 2)
-    assert.match(none.stderr, /config\.yaml: missing/)
+    writeFileSync(join(bin, 'graphql'), '{"lastEditedAt":null,"editor":null}')
+    writeFileSync(join(bin, 'issue-view'), JSON.stringify(withLabels()))
+    // A branch whose config adds an approver, labelled by that login: the default branch's approvers judge it.
+    writeFileSync(join(bin, 'timeline'), JSON.stringify([ev('labeled', 'agent-ok', 'mallory')]))
+    repo.git('checkout', '-q', '-b', 'factory/12-change')
+    repo.put(config.replace('approvers:\n  - example-owner', 'approvers:\n  - example-owner\n  - mallory'), 'add an approver')
+    const forged = run(['12'])
+    assert.equal(forged.status, 1, forged.stderr)
+    assert.match(JSON.parse(forged.stdout).stop.reason, /not approved by an approver/)
+    // Nor do moved local refs or a replaced blob.
+    repo.git('update-ref', 'refs/remotes/origin/main', 'HEAD')
+    repo.git('replace', repo.git('rev-parse', 'main:.factory/config.yaml'), repo.git('rev-parse', 'HEAD:.factory/config.yaml'))
+    assert.equal(run(['12']).status, 1)
+    writeFileSync(join(bin, 'timeline'), JSON.stringify([ev('labeled', 'agent-ok', 'example-owner')]))
+    assert.equal(run(['12']).status, 0)
   } finally {
     repo.done()
+  }
+  // No config on the default branch (one in the checkout only), or no origin: exit 2.
+  const bare = originRepo(null)
+  try {
+    bare.put(config, 'local only')
+    const none = spawnSync(process.execPath, [GATE, '12'], { cwd: bare.work, encoding: 'utf8', env: gitEnv() })
+    assert.equal(none.status, 2)
+    assert.match(none.stderr, /config\.yaml: missing on the default branch/)
+    bare.git('remote', 'remove', 'origin')
+    const unread = spawnSync(process.execPath, [GATE, '12'], { cwd: bare.work, encoding: 'utf8', env: gitEnv() })
+    assert.equal(unread.status, 2)
+    assert.match(unread.stderr, /config\.yaml: cannot read it from the default branch/)
+  } finally {
+    bare.done()
   }
 })
 
