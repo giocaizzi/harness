@@ -1,6 +1,6 @@
 // Shared by tests/land-scripts-sh.test.mjs and tests/land-scripts-ps1.test.mjs: the tests of
-// plugins/dev-tools/skills/land/scripts/{land-many,resync-after-squash}.{sh,ps1}. land-many runs against a
-// scripted `gh` on PATH; resync-after-squash against a temp repo with a bare origin. The .sh runs on
+// plugins/dev-tools/skills/land/scripts/{land-many,resync-after-squash,verify-merge-only}.{sh,ps1}. land-many runs
+// against a scripted `gh` on PATH; resync-after-squash and verify-merge-only against a temp repo with a bare origin. The .sh runs on
 // macOS/Linux, the .ps1 on Windows (CI's windows-scripts job), like the scripts themselves.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -378,5 +378,99 @@ export function resyncTests(kind) {
     assert.equal(res.code, 1, res.out)
     assert.match(res.err, /the lists differ/)
     assert.equal(r.git('rev-parse', 'HEAD'), head)
+  })
+}
+
+// A repo with a bare origin: main holds a.txt, `feature` adds pr.txt (two lines) and is the approved head, and
+// main then gains d.txt on a file the PR does not touch. onFeature runs on feature after that, with origin/main fetched.
+function mergeRepo(onFeature) {
+  const dir = mkdtempSync(join(tmpdir(), 'verify-merge-'))
+  const env = { ...process.env, GIT_CONFIG_GLOBAL: win ? 'NUL' : '/dev/null', GIT_CONFIG_NOSYSTEM: '1', GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@example.com', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@example.com' }
+  const work = join(dir, 'work')
+  const git = (...a) => execFileSync('git', a, { cwd: work, env, encoding: 'utf8' }).trim()
+  execFileSync('git', ['init', '-q', '--bare', '-b', 'main', join(dir, 'origin.git')], { env })
+  execFileSync('git', ['clone', '-q', join(dir, 'origin.git'), work], { env, stdio: 'ignore' })
+  const put = (f, text, msg) => { writeFileSync(join(work, f), text); git('add', f); git('commit', '-q', '-m', msg) }
+  git('checkout', '-q', '-b', 'main')
+  put('a.txt', 'a0\n', 'base')
+  git('push', '-q', '-u', 'origin', 'main')
+  git('remote', 'set-head', 'origin', 'main')
+  git('checkout', '-q', '-b', 'feature')
+  put('pr.txt', 'one\ntwo\n', 'the PR')
+  const approved = git('rev-parse', 'HEAD')
+  git('checkout', '-q', 'main')
+  put('d.txt', 'd1\n', 'main moves on')
+  git('push', '-q', 'origin', 'main')
+  git('checkout', '-q', 'feature')
+  git('fetch', '-q', 'origin')
+  onFeature?.({ put, git, work })
+  return { work, env, git, approved, head: git('rev-parse', 'HEAD') }
+}
+
+export function verifyMergeTests(kind) {
+  const verify = (r, args) => { const [exe, argv] = runner(kind, 'verify-merge-only', args); return exec(exe, argv, { cwd: r.work, env: r.env }) }
+
+  test(`${kind} verify-merge-only: proves a pure base merge and prints the landing note`, async () => {
+    const r = mergeRepo(({ git }) => git('merge', '-q', '--no-edit', 'origin/main'))
+    const res = await verify(r, [r.approved, r.head])
+    assert.equal(res.code, 0, res.err + res.out)
+    assert.match(res.out, new RegExp(`Landing note: approved head ${r.approved}; merging head ${r.head}`))
+    assert.match(res.out, /is a pure merge of origin\/main at [0-9a-f]{40}/)
+  })
+
+  test(`${kind} verify-merge-only: no commits since the approval`, async () => {
+    const r = mergeRepo()
+    const res = await verify(r, [r.approved, r.approved])
+    assert.equal(res.code, 0, res.err + res.out)
+    assert.match(res.out, /no commits since approval/)
+    assert.match(res.out, /Landing note: approved head/)
+  })
+
+  test(`${kind} verify-merge-only: refuses a plain commit after the approval`, async () => {
+    const r = mergeRepo(({ put }) => put('e.txt', 'e1\n', 'one more'))
+    const res = await verify(r, [r.approved, r.head])
+    assert.equal(res.code, 1, res.out)
+    assert.match(res.err, /not a merge whose first parent is the approved head/)
+  })
+
+  test(`${kind} verify-merge-only: refuses a merge that also edits a PR file`, async () => {
+    const r = mergeRepo(({ git, put }) => {
+      git('merge', '-q', '--no-commit', 'origin/main')
+      put('pr.txt', 'one\nTWO\n', 'merge origin/main')
+    })
+    const res = await verify(r, [r.approved, r.head])
+    assert.equal(res.code, 1, res.out)
+    assert.match(res.err, /changed the PR's own diff/)
+  })
+
+  test(`${kind} verify-merge-only: refuses a whitespace-only edit slipped into the merge`, async () => {
+    const r = mergeRepo(({ git, put }) => {
+      git('merge', '-q', '--no-commit', 'origin/main')
+      put('pr.txt', 'one  \ntwo\n', 'merge origin/main')
+    })
+    const res = await verify(r, [r.approved, r.head])
+    assert.equal(res.code, 1, res.out)
+    assert.match(res.err, /changed the PR's own diff/)
+  })
+
+  test(`${kind} verify-merge-only: refuses a merge of a branch that is not on origin/main`, async () => {
+    const r = mergeRepo(({ git, put }) => {
+      git('checkout', '-q', '-b', 'side', 'origin/main')
+      put('side.txt', 's1\n', 'unreviewed')
+      git('checkout', '-q', 'feature')
+      git('merge', '-q', '--no-edit', 'side')
+    })
+    const res = await verify(r, [r.approved, r.head])
+    assert.equal(res.code, 1, res.out)
+    assert.match(res.err, /not on origin\/main/)
+  })
+
+  test(`${kind} verify-merge-only: refuses bad arguments`, async () => {
+    const r = mergeRepo()
+    assert.equal((await verify(r, [])).code, 2)
+    assert.equal((await verify(r, ['-h'])).code, 2)
+    const inject = await verify(r, [r.approved, r.head, '--upload-pack=touch X;false'])
+    assert.equal(inject.code, 2)
+    assert.equal(existsSync(join(r.work, 'X')), false)
   })
 }
