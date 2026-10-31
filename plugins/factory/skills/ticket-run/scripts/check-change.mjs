@@ -33,6 +33,7 @@ const itemErrors = (item, i, seen) => {
   if (item.path !== null && typeof item.path !== 'string') errors.push(`${at}.path: must be a string or null, got ${show(item.path)}`)
   if (item.line !== null && !(Number.isInteger(item.line) && item.line > 0)) errors.push(`${at}.line: must be a positive integer or null, got ${show(item.line)}`)
   else if (item.line !== null && item.path === null) errors.push(`${at}.line: needs a path`)
+  if (item.kind !== 'review_comment' && (item.path !== null || item.line !== null)) errors.push(`${at}: path and line must be null unless kind is review_comment, got kind ${show(item.kind)}`)
   if (typeof item.text !== 'string') errors.push(`${at}.text: must be a string, got ${show(item.text)}`)
   else if (item.text.length > MAX_TEXT) errors.push(`${at}.text: ${item.text.length} characters, at most ${MAX_TEXT}`)
   return errors
@@ -51,8 +52,8 @@ export const unitErrors = (unit) => {
   if (!p) errors.push(`pr: must be https://github.com/<owner>/<repo>/pull/<number>, got ${show(unit.pr)}`)
   else if (m && (p[1].toLowerCase() !== m[1].toLowerCase() || p[2].toLowerCase() !== m[2].toLowerCase() || p[3] !== m[3])) errors.push(`pr: ${show(unit.pr)} is not the change ${show(change)}`)
   const { issues } = unit
-  if (!Array.isArray(issues) || issues.length === 0 || !issues.every((i) => typeof i === 'string' && TICKET.test(i)) || new Set(issues).size !== issues.length) errors.push(`issues: must be a non-empty array of unique <owner>/<repo>#<number>, got ${show(issues)}`)
-  else if (issues.includes(unit.change)) errors.push(`issues: must not include the change ${show(unit.change)}`)
+  if (!Array.isArray(issues) || issues.length === 0 || !issues.every((i) => typeof i === 'string' && TICKET.test(i)) || new Set(issues.map((i) => i.toLowerCase())).size !== issues.length) errors.push(`issues: must be a non-empty array of unique <owner>/<repo>#<number>, got ${show(issues)}`)
+  else if (issues.some((i) => i.toLowerCase() === String(unit.change).toLowerCase())) errors.push(`issues: must not include the change ${show(unit.change)}`)
   if (typeof unit.branch !== 'string' || !/^(?!-)[\w.\/-]+$/.test(unit.branch) || unit.branch.includes('..')) errors.push(`branch: must be one plain ref name, got ${show(unit.branch)}`)
   if (typeof unit.head !== 'string' || !/^[0-9a-f]{40}$/.test(unit.head)) errors.push(`head: must be 40 lowercase hex, got ${show(unit.head)}`)
   if (!CHANGE_TRIGGERS.includes(unit.trigger)) errors.push(`trigger: must be one of ${CHANGE_TRIGGERS.join(', ')}, got ${show(unit.trigger)}`)

@@ -66,7 +66,14 @@ const PULL = /^https:\/\/github\.com\/([\w.-]+)\/([\w.-]+)\/pull\/([1-9]\d*)$/
 // A change run's `change` object: a fix attempt on the PR that is `ticket` (change.md).
 export const changeErrors = (result) => {
   const change = result.change
-  if (change === undefined || change === null) return result.reason_code === 'fix_attempts' ? ['change: reason_code fix_attempts needs change'] : []
+  if (change === undefined || change === null) {
+    const errors = result.reason_code === 'fix_attempts' ? ['change: reason_code fix_attempts needs change'] : []
+    const t = typeof result.ticket === 'string' ? /^([\w.-]+)\/([\w.-]+)#(\d+)$/.exec(result.ticket) : null
+    const q = typeof result.pr === 'string' ? PULL.exec(result.pr) : null
+    // Issues and PRs share one number space: an issue run's PR never has the ticket's number.
+    if (t && q && q[1].toLowerCase() === t[1].toLowerCase() && q[2].toLowerCase() === t[2].toLowerCase() && q[3] === t[3]) errors.push('change: pr is the ticket itself, so this is a change run and needs change')
+    return errors
+  }
   if (typeof change !== 'object' || Array.isArray(change)) return [`change: must be an object or null, got ${show(change)}`]
   const errors = []
   for (const key of CHANGE_KEYS) if (!(key in change)) errors.push(`change.${key}: missing`)
@@ -74,8 +81,9 @@ export const changeErrors = (result) => {
   if ('tasks' in result) errors.push('change: a change run has no tasks')
   const { issues, trigger, attempt, max_attempts: max, sources, head, pushed } = change
   const isList = (v) => Array.isArray(v) && new Set(v).size === v.length
-  if (!isList(issues) || issues.length === 0 || !issues.every((i) => typeof i === 'string' && TICKET.test(i))) errors.push(`change.issues: must be a non-empty array of unique <owner>/<repo>#<number>, got ${show(issues)}`)
-  else if (issues.includes(result.ticket)) errors.push(`change.issues: must not include the change ${show(result.ticket)}`)
+  const lower = (v) => (typeof v === 'string' ? v.toLowerCase() : v)
+  if (!isList(issues) || issues.length === 0 || !issues.every((i) => typeof i === 'string' && TICKET.test(i)) || new Set(issues.map(lower)).size !== issues.length) errors.push(`change.issues: must be a non-empty array of unique <owner>/<repo>#<number>, got ${show(issues)}`)
+  else if (issues.map(lower).includes(lower(result.ticket))) errors.push(`change.issues: must not include the change ${show(result.ticket)}`)
   if (!CHANGE_TRIGGERS.includes(trigger)) errors.push(`change.trigger: must be one of ${CHANGE_TRIGGERS.join(', ')}, got ${show(trigger)}`)
   const isInt = (v) => Number.isInteger(v) && v >= 1
   if (!isInt(max)) errors.push(`change.max_attempts: must be an integer of at least 1, got ${show(max)}`)
