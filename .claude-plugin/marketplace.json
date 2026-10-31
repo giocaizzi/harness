@@ -118,7 +118,7 @@
       "name": "factory",
       "source": "./plugins/factory",
       "description": "Attended ticket runs on a GitHub issue board: owner-approved tickets worked end to end, scope logged on the ticket, questions on the ticket, a result contract per run",
-      "version": "0.25.0",
+      "version": "0.26.0",
       "keywords": [
         "github-issues",
         "workflow",
