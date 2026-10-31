@@ -1,11 +1,15 @@
+import { fileURLToPath } from "node:url";
+import { defineConfig } from "eslint/config";
 import tseslint from "typescript-eslint";
 
-export default tseslint.config(
+const repoRoot = fileURLToPath(new URL("..", import.meta.url));
+
+export default defineConfig(
   {
     ignores: ["**/*.mjs", "node_modules/**", "plugins/**/tests/**"],
   },
   {
-    files: ["src/**/*.mts"],
+    files: ["**/*.mts"],
     extends: [
       tseslint.configs.strictTypeChecked,
       tseslint.configs.stylisticTypeChecked,
@@ -13,7 +17,7 @@ export default tseslint.config(
     languageOptions: {
       parserOptions: {
         projectService: true,
-        tsconfigRootDir: import.meta.dirname,
+        tsconfigRootDir: repoRoot,
       },
     },
   },

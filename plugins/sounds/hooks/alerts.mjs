@@ -1,70 +1,112 @@
-// Which alerts and sounds a turn raises, free of engine imports so node can test them. Pure: facts in, alerts out.
-export const TTL_MS = { '5m': 300_000, '1h': 3_600_000 }
-
-export const clock = (ms) => `${Math.floor(ms / 60_000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}`
-
-// The limits that raise a toast and a sound: the sound setting, the label, and the percent each reads.
-export const LIMITS = [
-  { key: 'soundLimit5h', kind: 'five_hour', label: '5h window' },
-  { key: 'soundLimit7d', kind: 'seven_day', label: '7d window' },
-  { key: 'soundLimitSpend', kind: 'spend_limit', label: 'Spend limit' },
-]
-const levelOf = (pct) => (pct >= 100 ? 100 : pct >= 90 ? 90 : pct >= 80 ? 80 : 0)
-
-// What a turn's end raises: the context and each limit crossing 80, 90 and 100. `before` holds the levels raised
-// already, so a level is announced once and again only after it was left. Each alert names the sound setting it plays.
-export function alerts(ctx, limits, before = {}) {
-  const now = { ctx: levelOf(ctx ?? 0) >= 90 ? 90 : levelOf(ctx ?? 0) }
-  const out = []
-  if (now.ctx > (before.ctx ?? 0)) out.push({ key: 'soundContext', text: now.ctx === 90 ? `Context ${ctx}%: compact now` : `Context ${ctx}%: compact soon` })
-  for (const { key, kind, label } of LIMITS) {
-    const pct = limits[kind]
-    now[kind] = pct == null ? 0 : levelOf(pct)
-    if (now[kind] > (before[kind] ?? 0)) out.push({ key, text: now[kind] === 100 ? `${label} reached` : `${label} ${Math.round(pct)}% used` })
-  }
-  return { alerts: out, now }
+export const TTL_MS = {
+    "5m": 300_000,
+    "1h": 3_600_000,
+};
+export const clock = (milliseconds) => `${String(Math.floor(milliseconds / 60_000))}:${String(Math.floor(milliseconds / 1000) % 60).padStart(2, "0")}`;
+const LIMITS = [
+    { key: "soundLimit5h", kind: "five_hour", label: "5h window" },
+    { key: "soundLimit7d", kind: "seven_day", label: "7d window" },
+    { key: "soundLimitSpend", kind: "spend_limit", label: "Spend limit" },
+];
+const levelOf = (percent) => percent >= 100 ? 100 : percent >= 90 ? 90 : percent >= 80 ? 80 : 0;
+/** Return newly crossed context and rate-limit alert levels. */
+export function alerts(context, limits, before = {}) {
+    const contextLevel = levelOf(context ?? 0);
+    const now = { ctx: contextLevel >= 90 ? 90 : contextLevel };
+    const raised = [];
+    if (now.ctx !== undefined && now.ctx > (before.ctx ?? 0)) {
+        const percentage = String(context ?? 0);
+        raised.push({
+            key: "soundContext",
+            text: now.ctx === 90
+                ? `Context ${percentage}%: compact now`
+                : `Context ${percentage}%: compact soon`,
+        });
+    }
+    for (const { key, kind, label } of LIMITS) {
+        const percent = limits[kind];
+        const level = percent === undefined ? 0 : levelOf(percent);
+        now[kind] = level;
+        if (level > (before[kind] ?? 0)) {
+            raised.push({
+                key,
+                text: level === 100
+                    ? `${label} reached`
+                    : `${label} ${String(Math.round(percent ?? 0))}% used`,
+            });
+        }
+    }
+    return { alerts: raised, now };
 }
-
-// The sound setting a finished turn plays, if any: a subagent's, an interrupt, a refusal, an error, or an answer
-// that took at least `doneAfterSeconds`.
-export function turnSound(e, doneAfterSeconds = 0) {
-  if (e.agentId) return 'soundSubagent'
-  if (e.reason === 'aborted') return 'soundAborted'
-  if (e.reason === 'refusal') return 'soundRefused'
-  if (e.reason === 'error') return 'soundError'
-  return e.durationMs >= doneAfterSeconds * 1000 ? 'soundDone' : null
+/** Select the setting for a completed turn, if it should make a sound. */
+export function turnSound(turn, doneAfterSeconds = 0) {
+    if (turn.agentId)
+        return "soundSubagent";
+    if (turn.reason === "aborted")
+        return "soundAborted";
+    if (turn.reason === "refusal")
+        return "soundRefused";
+    if (turn.reason === "error")
+        return "soundError";
+    return turn.durationMs >= doneAfterSeconds * 1000 ? "soundDone" : null;
 }
-
-// A minute-and-seconds duration for a notification: 45s, 2m 3s.
-const took = (ms) => (ms < 60_000 ? `${Math.round(ms / 1000)}s` : `${Math.floor(ms / 60_000)}m ${Math.round((ms % 60_000) / 1000)}s`)
-
-// The system notification a finished main-loop turn raises, if any: an answer after at least `afterSeconds`, or a
-// turn that ended badly. An interrupt is the person's own doing and raises none.
-export function turnNotice(e, afterSeconds = 60) {
-  if (e.agentId || e.reason === 'aborted') return null
-  if (e.reason === 'refusal') return 'The model refused the turn'
-  if (e.reason === 'error') return 'The turn ended on an API error'
-  return e.durationMs >= afterSeconds * 1000 ? `Turn finished in ${took(e.durationMs)}` : null
+const took = (milliseconds) => milliseconds < 60_000
+    ? `${String(Math.round(milliseconds / 1000))}s`
+    : `${String(Math.floor(milliseconds / 60_000))}m ${String(Math.round((milliseconds % 60_000) / 1000))}s`;
+/** Return a user-facing completion notice when the completed turn warrants one. */
+export function turnNotice(turn, afterSeconds = 60) {
+    if (turn.agentId || turn.reason === "aborted")
+        return null;
+    if (turn.reason === "refusal")
+        return "The model refused the turn";
+    if (turn.reason === "error")
+        return "The turn ended on an API error";
+    return turn.durationMs >= afterSeconds * 1000
+        ? `Turn finished in ${took(turn.durationMs)}`
+        : null;
 }
-
-// The notification a change of the branch's PR checks raises (from the hud plugin's repo state), if any: checks that
-// were running and now passed or failed, on the same PR.
+/** Describe a completed check transition on the current pull request. */
 export function ciNotice(previous, value) {
-  const [a, b] = [previous?.pr, value?.pr]
-  if (!a || !b || a.number !== b.number || a.ci !== 'pending' || b.ci === 'pending' || !b.ci) return null
-  return b.ci === 'fail' ? `Checks failed on #${b.number}` : `Checks passed on #${b.number}`
+    const before = previous?.pr;
+    const after = value?.pr;
+    if (!before || !after)
+        return null;
+    if (before.number !== after.number ||
+        before.ci !== "pending" ||
+        !after.ci ||
+        after.ci === "pending")
+        return null;
+    return after.ci === "fail"
+        ? `Checks failed on #${String(after.number)}`
+        : `Checks passed on #${String(after.number)}`;
 }
-
-// The plugin.json defaults, for the harnesses without per-plugin settings (pi, Codex, opencode): the clip per alert
-// or turn ending, and for a prompt waiting on the person.
-export const CLIPS = { soundContext: 'alert', soundDone: 'done', soundAborted: null, soundRefused: 'error', soundError: 'error', soundSubagent: 'tick', soundNeedsInput: 'chime' }
-
-// What a finished run raises there: the clips to play, the notices to show, and the context levels raised so far
-// (`before` for the next run).
-export function settle({ durationMs, aborted, error, agentId, pct, before }) {
-  const e = { durationMs, agentId, reason: aborted ? 'aborted' : error ? 'error' : 'done' }
-  const { alerts: raised, now } = alerts(pct, {}, before)
-  const clips = [CLIPS[turnSound(e)], ...raised.map((a) => CLIPS[a.key])].filter(Boolean)
-  const notices = [turnNotice(e), ...raised.map((a) => a.text)].filter(Boolean)
-  return { clips: [...new Set(clips)], notices, now }
+export const CLIPS = {
+    soundContext: "alert",
+    soundDone: "done",
+    soundAborted: null,
+    soundRefused: "error",
+    soundError: "error",
+    soundSubagent: "tick",
+    soundNeedsInput: "chime",
+    soundLimit5h: "alert",
+    soundLimit7d: "alert",
+    soundLimitSpend: "alert",
+};
+const isClip = (clip) => clip !== null;
+/** Collect clips, notices, and the next alert state for a completed harness run. */
+export function settle({ durationMs, aborted, error, agentId, pct, before, }) {
+    const turn = {
+        durationMs,
+        agentId,
+        reason: aborted ? "aborted" : error ? "error" : "done",
+    };
+    const { alerts: raised, now } = alerts(pct, {}, before);
+    const clips = [turnSound(turn), ...raised.map((alert) => alert.key)]
+        .map((key) => (key === null ? null : CLIPS[key]))
+        .filter(isClip);
+    const notices = [
+        turnNotice(turn),
+        ...raised.map((alert) => alert.text),
+    ].filter((notice) => notice !== null);
+    return { clips: [...new Set(clips)], notices, now };
 }

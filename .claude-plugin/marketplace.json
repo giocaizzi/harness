@@ -6,7 +6,7 @@
   },
   "metadata": {
     "description": "Personal agent harness: skills, agents and guards for Claude Code, Copilot CLI, VS Code, Codex, opencode, pi and Antigravity",
-    "version": "3.6.0"
+    "version": "3.6.1"
   },
   "plugins": [
     {
@@ -65,7 +65,7 @@
       "name": "dev-tools",
       "source": "./plugins/dev-tools",
       "description": "General development tooling — git, GitHub, conventional commits, semantic versioning",
-      "version": "1.50.0",
+      "version": "1.50.1",
       "keywords": [
         "git",
         "github",
@@ -80,7 +80,7 @@
       "name": "guard",
       "source": "./plugins/guard",
       "description": "Agent guardrails for Claude Code, Copilot CLI, VS Code, Codex, opencode, pi and Antigravity: skill enforcer, title guard, pip deny, host guard, risky-command ask, make check on stop, post-edit lint, keep-awake; Claude-only usage throttle",
-      "version": "0.72.0",
+      "version": "0.72.1",
       "keywords": [
         "hooks",
         "guardrails",
@@ -106,7 +106,7 @@
       "name": "sounds",
       "source": "./plugins/sounds",
       "description": "Toasts, configurable sounds and system notifications for Claude Code: usage limits, context, prompt-cache expiry, every way a turn ends, questions and permission prompts waiting and PR checks finishing (Claude mod)",
-      "version": "0.6.1",
+      "version": "0.6.2",
       "keywords": [
         "sounds",
         "notifications",

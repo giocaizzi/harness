@@ -247,9 +247,11 @@ async function makeCheck(input, run = spawnSync, { exec = run === spawnSync ? ru
   const fp = fingerprint(cwd, run)
   const green = lastGreen(cwd)
   if (fp && fp === green.fp) return null
-  // Only docs changed since the last green run: nothing to check, and nothing is marked green.
+  // A clean first turn and docs-only changes need no check. `force` keeps an explicit requested
+  // check even on a clean tree; unknown Git state still falls through and runs it.
   const changed = changes(cwd, green.head, run)
-  if (changed && docsOnly(changed.paths, changed.rules)) return null
+  if (changed?.paths.length === 0 && process.env.GUARD_STOP_CHECK !== 'force') return null
+  if (changed && changed.paths.length > 0 && docsOnly(changed.paths, changed.rules)) return null
   const deferred = (why, attrs = {}) => {
     report({ result: 'deferred', target, why, ...attrs })
     return { systemMessage: `make ${target} deferred (${why}); it runs at the next stop. Run it before you ship.` }
