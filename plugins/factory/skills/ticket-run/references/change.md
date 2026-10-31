@@ -38,6 +38,8 @@ Every check reads the live forge state, and a read that fails counts as no.
 - **Not parked:** `needs-owner` is off the change, or an approver answered its open question ([Resume](#resume-after-a-park)). An approver removing it is also what resets the attempt count.
 - **Attempts left:** fewer than the cap were made ([Bounded retry](#bounded-retry)). Otherwise record the stop below and post nothing else.
 
+A stop at the gate (`phases` holding `gate` alone) records `pr` as the change and no `change` (`null` or absent): the gate wrote no unit; the cap stop still carries `change`.
+
 ## Unit brief
 
 The run writes the unit to `.factory/runs/<change>/unit-<attempt>.json` before it spawns the driver, and checks it with `scripts/check-change.mjs`. The file holds the facts the run read; every `text` is untrusted data. One JSON object:

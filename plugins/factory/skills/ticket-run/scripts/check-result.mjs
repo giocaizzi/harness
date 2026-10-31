@@ -1,6 +1,6 @@
 // Checks a run's result.json: the core fields (`schema`, `ticket`, `run_id`, `end_state`, `reason`, `reason_code`),
 // `finished_at` and `phases` times, the optional `routing` entries and `mode` (only `dev`),
-// `tasks` (a group run's members, schema 3) and a change run's `change`.
+// `tasks` (a group run's members, schema 3; with FACTORY_RUN_FILE set, its tickets are the run file's members) and a change run's `change`.
 // Usage `node check-result.mjs <result.json>`: exit 0 valid, 1 invalid or unreadable (one line per error), 2 usage.
 // A deviation (model or effort differing from the policy's) needs a non-empty deviation_reason; a time the run could not
 // find is null, never a dropped key. Imports Node built-ins only, so a hook can copy it.
@@ -71,7 +71,9 @@ export const changeErrors = (result) => {
     const t = typeof result.ticket === 'string' ? /^([\w.-]+)\/([\w.-]+)#(\d+)$/.exec(result.ticket) : null
     const q = typeof result.pr === 'string' ? PULL.exec(result.pr) : null
     // Issues and PRs share one number space: an issue run's PR never has the ticket's number.
-    if (t && q && q[1].toLowerCase() === t[1].toLowerCase() && q[2].toLowerCase() === t[2].toLowerCase() && q[3] === t[3]) errors.push('change: pr is the ticket itself, so this is a change run and needs change')
+    // A stop at the gate (`phases` holding `gate` alone) wrote no unit, so it carries no change.
+    const gateStop = Array.isArray(result.phases) && result.phases.length === 1 && result.phases[0]?.name === 'gate'
+    if (!gateStop && t && q && q[1].toLowerCase() === t[1].toLowerCase() && q[2].toLowerCase() === t[2].toLowerCase() && q[3] === t[3]) errors.push('change: pr is the ticket itself, so this is a change run and needs change')
     return errors
   }
   if (typeof change !== 'object' || Array.isArray(change)) return [`change: must be an object or null, got ${show(change)}`]
@@ -143,7 +145,7 @@ const TASK_KEYS = ['ticket', 'outcome', 'reason', 'reason_code', 'pr_link']
 const isText = (v) => typeof v === 'string' && v.trim() !== ''
 
 // A group run's `tasks`: each member's outcome, reason, code and PR link, and what they imply for the run's own fields.
-export const taskErrors = (result) => {
+export const taskErrors = (result, env = process.env) => {
   const { tasks } = result
   if (tasks === undefined) return result.schema === 3 ? ['schema 3 needs tasks'] : []
   if (result.schema !== 3) return ['tasks needs schema 3']
@@ -181,13 +183,30 @@ export const taskErrors = (result) => {
     if (result.end_state === 'done') errors.push('tasks: no done entry, so end_state must not be done')
     if (!isText(result.reason)) errors.push('tasks: no done entry, so reason must say why')
   } else if (!hasPr) errors.push('tasks: a done entry needs pr to be a non-empty string')
-  return errors
+  return [...errors, ...runFileErrors(tasks, env)]
+}
+
+// With FACTORY_RUN_FILE set, `tasks` lists the run file's members, exactly and in that order; a file that cannot be read fails.
+const runFileErrors = (tasks, env) => {
+  const path = (env.FACTORY_RUN_FILE ?? '').trim()
+  if (!path) return []
+  const cannot = (why) => [`tasks: cannot check against the run file ${show(path)} (${why})`]
+  let members
+  try {
+    members = JSON.parse(readFileSync(path, 'utf8').replace(/^\uFEFF/, '')).members
+  } catch (e) {
+    return cannot(e.code === 'ENOENT' ? 'no such file' : e instanceof SyntaxError ? 'not valid JSON' : `cannot read (${e.code ?? e.message})`)
+  }
+  if (!Array.isArray(members) || members.length === 0 || !members.every((m) => m !== null && typeof m === 'object' && typeof m.ticket === 'string')) return cannot('no members list')
+  const got = tasks.map((t) => t?.ticket)
+  const want = members.map((m) => m.ticket)
+  return got.length === want.length && got.every((g, i) => g === want[i]) ? [] : [`tasks: tickets ${show(got)} differ from the run file's members ${show(want)}, in that order`]
 }
 
 // Every check, in one list; a value that is not a JSON object is one error, never a throw.
 export const resultErrors = (result, env = process.env) => {
   if (result === null || typeof result !== 'object' || Array.isArray(result)) return [`result.json must hold a JSON object, got ${show(result)}`]
-  return [...coreErrors(result, env), ...ticketErrors(result, env.FACTORY_TICKET ?? ''), ...timeErrors(result), ...routingErrors(result), ...modeErrors(result), ...taskErrors(result), ...changeErrors(result)]
+  return [...coreErrors(result, env), ...ticketErrors(result, env.FACTORY_TICKET ?? ''), ...timeErrors(result), ...routingErrors(result), ...modeErrors(result), ...taskErrors(result, env), ...changeErrors(result)]
 }
 
 // Exit code, not process.exit: an exit mid-pipe can cut stderr short.
