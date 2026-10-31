@@ -104,7 +104,7 @@ jobs:
       - shell: bash
         run: |
           node --test --test-reporter=tap tests/land-scripts-ps1.test.mjs | tee tap.txt
-          if ! grep -qx '# tests 22' tap.txt || ! grep -qx '# pass 22' tap.txt; then echo "::error::expected 22 land-many.ps1 and resync-after-squash.ps1 tests to pass"; exit 1; fi
+          if ! grep -qx '# tests 60' tap.txt || ! grep -qx '# pass 60' tap.txt; then echo "::error::expected 60 land-many.ps1, resync-after-squash.ps1 and verify-merge-only.ps1 tests to pass"; exit 1; fi
       # The factory's ps1 launcher, its result writer and checker, and the gate script's config reader (Node scripts that handle Windows paths and CRLF).
       - shell: bash
         run: |

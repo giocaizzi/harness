@@ -171,7 +171,7 @@ Per harness ([compatibility.md](compatibility.md)):
 
 ## Config: `.factory/config.yaml`
 
-Template with placeholders: [`plugins/factory/template/config.yaml`](../plugins/factory/template/config.yaml). The gate (`gate.mjs`) and the change-run unit check (`check-change.mjs`) read this file as committed on the forge's default branch, never the checkout's copy: a change to it counts once it is merged, and a branch (a change's included) that edits it cannot add an approver or raise a cap.
+Template with placeholders: [`plugins/factory/template/config.yaml`](../plugins/factory/template/config.yaml). Every run judges roles and caps from this file as committed on the default branch, never the checkout's copy: the gate (`gate.mjs`, approvers, writers and labels) and the change-run unit check (`check-change.mjs`, the cap, approver item authors and the head pusher against `approvers` and `identity.logins`) read it there, and a change run's attempt reset counts only an approver listed there. A change to it counts once it is merged, and a branch (a change's included) that edits it cannot add an approver, a factory login or attempts. Both read the default branch and its head from `git ls-remote --symref origin HEAD` and the file from that fetched commit; this guards against branch content and moved local refs, not against a session that rewrites its own git config (the `origin` URL), and reading through the forge's API is a follow-up.
 
 | Key | Required | Meaning |
 |---|---|---|

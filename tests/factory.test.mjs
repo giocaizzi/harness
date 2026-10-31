@@ -947,7 +947,7 @@ test('gate script: reads the config keys it needs from the template shape, and f
   for (const bad of ['identity: x', 'identity:\n  logins: x', 'identity:\n  mention: "@m"\n  - x', 'identity:\n  - x', 'identity:\n  logins:\n    - ""', 'identity:\n  logins: [a, ]', 'identity:\n  logins: [a', 'identity:\n  garbage', 'identity:\n  logins: [a]\n  logins: [b]', 'identity:\n  mention: x\n  mention: y', 'identity:\n  other: 1\n  - x']) {
     const { identity } = parseConfig(`approvers: [a]\n${bad}`)
     assert.deepEqual([identity.logins, identity.mention], [[], null], bad)
-    assert.match(identity.error, /^\.factory\/config\.yaml: identity /, bad)
+    assert.match(identity.error, /^\.factory\/config\.yaml: identity[ .]/, bad)
   }
 })
 
@@ -1129,6 +1129,10 @@ test('gate script: the CLI prints one JSON verdict from gh, exit 0 go, 1 stop, 2
     assert.equal(go.status, 0, go.stderr)
     assert.equal(JSON.parse(go.stdout).verdict, 'go')
     assert.match(readFileSync(join(bin, 'log'), 'utf8'), /issues\/12\/timeline\?per_page=100/)
+    // From a subdirectory the gate reads the same committed config, never "missing".
+    spawnSync('mkdir', ['-p', join(repo.main, 'app', 'src')])
+    const sub = spawnSync(process.execPath, [GATE, '12'], { cwd: join(repo.main, 'app', 'src'), encoding: 'utf8', env: gitEnv({ PATH: `${bin}:${process.env.PATH}` }) })
+    assert.equal(sub.status, 0, sub.stderr)
     writeFileSync(join(bin, 'issue-view'), JSON.stringify(withLabels('needs-grooming')))
     const stop = run(['#12'])
     assert.equal(stop.status, 1)

@@ -1,11 +1,12 @@
 // Checks a change run's unit brief (.factory/runs/<change>/unit-<attempt>.json), the format in references/change.md.
 // Usage `node check-change.mjs <unit.json>`: exit 0 valid, 1 invalid or unreadable (one line per error), 2 usage.
-// The CLI also checks `max_attempts` against the cap committed on the default branch (committedCap below).
+// The CLI also checks `max_attempts` and the roles (approver item authors, `head_pusher`) against the config committed
+// on the default branch (committedConfig in gate.mjs).
 // Imports Node built-ins, ./check-result.mjs and ./gate.mjs (its committedConfig) only.
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { CHANGE_TRIGGERS, TICKET, report, show } from './check-result.mjs'
-import { committedConfig } from './gate.mjs'
+import { committedConfig, parseConfig } from './gate.mjs'
 
 export const UNIT_KEYS = ['unit', 'version', 'run_id', 'change', 'pr', 'issues', 'branch', 'head', 'head_pusher', 'trigger', 'attempt', 'max_attempts', 'items']
 export const ITEM_KEYS = ['source', 'kind', 'author', 'role', 'path', 'line', 'text']
@@ -99,10 +100,28 @@ export const parseCap = (text) => {
   return DEFAULT_MAX_ATTEMPTS
 }
 
-// The cap as committed on the forge's default branch (gate.mjs's committedConfig), never the checkout's copy: a change
-// run works the change's branch, where a session could raise it. No config file there: the default; any read that
-// fails throws.
+// The cap as committed on the default branch (gate.mjs's committedConfig), never the checkout's copy: a change run
+// works the change's branch, where a session could raise it. No config key there: the default; any read that fails
+// throws. The CLI needs the config file itself, for the roles.
 export const committedCap = (run) => parseCap(committedConfig(run) ?? '')
+
+// Roles from the default branch's committed config, never the checkout's (a change's branch can list anyone): every
+// approver item's author is an approver, `head_pusher` is an approver or an identity login, and no item is the factory's.
+export const roleErrors = (unit, config) => {
+  if (!isObject(unit)) return []
+  const lc = (s) => String(s).toLowerCase()
+  const inList = (list, u) => typeof u === 'string' && list.map(lc).includes(lc(u))
+  const apr = (u) => inList(config.approvers, u) && (config.approversAllowBots || !lc(u).endsWith('[bot]'))
+  const factory = (u) => inList(config.identity?.logins ?? [], u)
+  const errors = config.identity?.error ? [`identity: ${config.identity.error}`] : []
+  if (Array.isArray(unit.items)) unit.items.forEach((item, i) => {
+    if (!isObject(item) || typeof item.author !== 'string') return
+    if (factory(item.author)) errors.push(`items[${i}].author: ${show(item.author)} is a factory login (identity.logins on the default branch); no item is the factory's own`)
+    else if (item.role === 'approver' && !apr(item.author)) errors.push(`items[${i}].author: ${show(item.author)} is not an approver in the default branch's config`)
+  })
+  if (typeof unit.head_pusher === 'string' && !apr(unit.head_pusher) && !factory(unit.head_pusher)) errors.push(`head_pusher: ${show(unit.head_pusher)} is neither an approver nor in identity.logins in the default branch's config`)
+  return errors
+}
 
 export const capErrors = (unit, cap) =>
   isObject(unit) && Number.isInteger(unit.max_attempts) && unit.max_attempts !== cap ? [`max_attempts: ${unit.max_attempts} is not the cap committed on the default branch, ${cap}`] : []
@@ -123,11 +142,14 @@ const main = (args) => {
     return 1
   }
   const errors = unitErrors(unit)
+  // The cap and the roles come from the config committed on the default branch; any read that fails fails the check.
   try {
-    errors.push(...capErrors(unit, committedCap()))
+    const text = committedConfig()
+    if (text === null) throw new Error('no .factory/config.yaml there')
+    errors.push(...capErrors(unit, parseCap(text)), ...roleErrors(unit, parseConfig(text)))
   } catch (e) {
     const why = String(e.stderr ?? '').trim().split('\n')[0] || e.message
-    errors.push(`max_attempts: cannot read the cap committed on the default branch (${why}): fetch the default branch (git fetch origin)`)
+    errors.push(`config: cannot read .factory/config.yaml committed on the default branch (${why}): fetch the default branch (git fetch origin)`)
   }
   for (const line of report(errors)) console.error(line)
   return errors.length ? 1 : 0

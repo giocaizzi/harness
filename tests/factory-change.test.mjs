@@ -2,7 +2,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -146,10 +146,22 @@ test('unit: item text is capped at 4000 characters, items at 50', async () => {
   assert.match(unitErrors({ ...unit, items: items(MAX_ITEMS + 1) })[0], /items: must be an array of 1 to 50/)
 })
 
+// The config a change run's default branch commits: the fixtures' approver and factory login, and a cap.
+const cfg = (max = 3, approvers = ['owner-login']) => `version: 1
+approvers:
+${approvers.map((a) => `  - ${a}`).join('\n')}
+identity:
+  logins:
+    - acme-factory[bot]
+  mention: "@acme-factory"
+change_requests:
+  max_attempts: ${max}
+`
+
 test('check-change: the CLI exits 0 valid, 1 invalid or missing, 2 without an argument', () => {
-  const repo = originRepo(null)
+  const repo = originRepo(cfg())
   const run = (...a) => spawnSync(process.execPath, [CHECK_CHANGE, ...a], { cwd: repo.work, encoding: 'utf8', env: gitEnv() })
-  assert.equal(run(join(FIXTURES, 'unit-valid-changes-requested.json')).status, 0)
+  for (const f of fixtures('unit-valid-')) assert.equal(run(join(FIXTURES, f)).status, 0, `${f}: ${run(join(FIXTURES, f)).stderr}`)
   const bad = run(join(FIXTURES, 'unit-invalid-extra-key.json'))
   assert.equal(bad.status, 1)
   assert.match(bad.stderr, /unknown key/)
@@ -161,6 +173,13 @@ test('check-change: the CLI exits 0 valid, 1 invalid or missing, 2 without an ar
   assert.match(run2.stderr, /usage:/)
   repo.done()
 })
+
+const unitFile = (dir, over = {}, base = 'unit-valid-changes-requested.json') => {
+  const f = join(dir, `unit-${Object.keys(over).join('-') || 'base'}-${Math.random().toString(36).slice(2)}.json`)
+  writeFileSync(f, JSON.stringify({ ...fixture(base), ...over }))
+  return f
+}
+const cliIn = (cwd, file) => spawnSync(process.execPath, [CHECK_CHANGE, file], { cwd, encoding: 'utf8', env: gitEnv() })
 
 test('check-change: max_attempts is the cap committed on the default branch, never the checkout copy', async () => {
   const { parseCap, committedCap, capErrors, DEFAULT_MAX_ATTEMPTS } = await changeMod()
@@ -175,17 +194,12 @@ test('check-change: max_attempts is the cap committed on the default branch, nev
   assert.throws(() => committedCap((a) => (a[0] === 'ls-remote' ? `${'a'.repeat(40)}\tHEAD\n` : '')), /named no default branch/)
   assert.deepEqual(capErrors({ max_attempts: 3 }, 3), [])
   assert.match(capErrors({ max_attempts: 9 }, 3)[0], /max_attempts: 9 is not the cap committed on the default branch, 3/)
-  const unit = (dir, max) => {
-    const f = join(dir, `unit-${max}.json`)
-    writeFileSync(f, JSON.stringify({ ...fixture('unit-valid-changes-requested.json'), max_attempts: max }))
-    return f
-  }
-  const cli = (r, max) => spawnSync(process.execPath, [CHECK_CHANGE, unit(r.dir, max)], { cwd: r.work, encoding: 'utf8', env: gitEnv() })
-  const r = originRepo('change_requests:\n  max_attempts: 3\n')
+  const cli = (r, max) => cliIn(r.work, unitFile(r.dir, { max_attempts: max }))
+  const r = originRepo(cfg(3))
   try {
     // The change branch raises the cap to 9 and the unit claims 9: refused; the default branch's 3 is the cap.
     r.git('checkout', '-q', '-b', 'factory/12-change')
-    r.put('change_requests:\n  max_attempts: 9\n', 'raise the cap')
+    r.put(cfg(9), 'raise the cap')
     const raised = r.git('rev-parse', 'HEAD:.factory/config.yaml')
     const committed = r.git('rev-parse', 'origin/main:.factory/config.yaml')
     assert.equal(cli(r, 3).status, 0, cli(r, 3).stderr)
@@ -198,33 +212,83 @@ test('check-change: max_attempts is the cap committed on the default branch, nev
     r.git('symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/evil')
     r.git('update-ref', 'refs/remotes/origin/main', 'HEAD')
     r.git('replace', committed, raised)
-    assert.equal(r.git('show', 'origin/main:.factory/config.yaml'), 'change_requests:\n  max_attempts: 9')
+    assert.match(r.git('show', 'origin/main:.factory/config.yaml'), /max_attempts: 9/)
     assert.match(cli(r, 9).stderr, /max_attempts: 9 is not the cap committed on the default branch, 3/)
     assert.equal(cli(r, 3).status, 0)
     // A cap lowered on the default branch since the last fetch: the check fails closed until the fetch.
     const other = join(r.dir, 'other')
     spawnSync('git', ['clone', '-q', r.origin, other], { env: gitEnv() })
-    writeFileSync(join(other, '.factory', 'config.yaml'), 'change_requests:\n  max_attempts: 2\n')
+    writeFileSync(join(other, '.factory', 'config.yaml'), cfg(2))
     for (const a of [['commit', '-qam', 'lower'], ['push', '-q', 'origin', 'main']]) assert.equal(spawnSync('git', a, { cwd: other, env: gitEnv() }).status, 0)
     const stale = cli(r, 3)
     assert.equal(stale.status, 1)
-    assert.match(stale.stderr, /cannot read the cap committed on the default branch .*is not fetched: run git fetch origin main/)
+    assert.match(stale.stderr, /config: cannot read \.factory\/config\.yaml committed on the default branch .*is not fetched: run git fetch origin main/)
     r.git('fetch', '-q', 'origin')
     assert.match(cli(r, 3).stderr, /max_attempts: 3 is not the cap committed on the default branch, 2/)
     assert.equal(cli(r, 2).status, 0)
+    // From a subdirectory the same file is read: the committed 2 binds, never a fallback to the default 3.
+    mkdirSync(join(r.work, 'sub', 'deeper'), { recursive: true })
+    const fromSub = cliIn(join(r.work, 'sub', 'deeper'), unitFile(r.dir, { max_attempts: 3 }))
+    assert.match(fromSub.stderr, /max_attempts: 3 is not the cap committed on the default branch, 2/)
   } finally {
     r.done()
   }
-  // No config on the default branch: the default 3. No origin at all: fails closed.
+  // No config on the default branch, or no origin at all: fails closed (the roles need the committed config).
   const none = originRepo(null)
-  assert.equal(cli(none, 3).status, 0)
+  assert.match(cli(none, 3).stderr, /config: cannot read \.factory\/config\.yaml committed on the default branch \(no \.factory\/config\.yaml there\)/)
   none.done()
   const bare = mkdtempSync(join(tmpdir(), 'cap-none-'))
   spawnSync('git', ['init', '-q', bare], { env: gitEnv() })
-  const out = spawnSync(process.execPath, [CHECK_CHANGE, unit(bare, 3)], { cwd: bare, encoding: 'utf8', env: gitEnv() })
+  const out = cliIn(bare, unitFile(bare, { max_attempts: 3 }))
   assert.equal(out.status, 1)
-  assert.match(out.stderr, /max_attempts: cannot read the cap committed on the default branch .*git fetch origin/)
+  assert.match(out.stderr, /config: cannot read \.factory\/config\.yaml committed on the default branch .*git fetch origin/)
   rmSync(bare, { recursive: true, force: true })
+})
+
+test("check-change: approver items and head_pusher are judged by the default branch's config, never the change branch's", async () => {
+  const { roleErrors } = await changeMod()
+  const { parseConfig } = await import(pathToFileURL(join(SCRIPTS, 'gate.mjs')).href)
+  const config = parseConfig(cfg())
+  assert.deepEqual(config.identity.logins, ['acme-factory[bot]'])
+  for (const f of fixtures('unit-valid-')) assert.deepEqual(roleErrors(fixture(f), config), [], f)
+  const cr = fixture('unit-valid-changes-requested.json')
+  const cf = fixture('unit-valid-check-failed.json')
+  const as = (author, role = 'approver') => ({ ...cr, items: cr.items.map((it, i) => (i === 0 ? { ...it, author, role } : it)) })
+  assert.match(roleErrors(as('mallory'), config)[0], /items\[0\]\.author: "mallory" is not an approver in the default branch's config/)
+  assert.deepEqual(roleErrors(as('OWNER-LOGIN'), config), [], 'logins compare ignoring case')
+  assert.match(roleErrors(as('acme-factory[bot]', 'reviewer'), config)[0], /is a factory login .*no item is the factory's own/)
+  assert.match(roleErrors({ ...cf, head_pusher: 'mallory' }, config)[0], /head_pusher: "mallory" is neither an approver nor in identity\.logins/)
+  assert.deepEqual(roleErrors({ ...cf, head_pusher: 'owner-login' }, config), [])
+  // A [bot] approver counts only with approvers_allow_bots.
+  const bots = (allow) => parseConfig(`${cfg(3, ['owner-login', 'helper[bot]'])}approvers_allow_bots: ${allow}\n`)
+  assert.match(roleErrors(as('helper[bot]'), bots(false))[0], /is not an approver/)
+  assert.deepEqual(roleErrors(as('helper[bot]'), bots(true)), [])
+  // identity.logins inline or absent.
+  assert.deepEqual(parseConfig('approvers:\n  - a\nidentity:\n  logins: [x, "y[bot]"]\n').identity.logins, ['x', 'y[bot]'])
+  assert.equal(parseConfig('approvers:\n  - a\n').identity, null)
+  // An identity block that cannot be read fails the role check closed.
+  assert.match(roleErrors(cr, parseConfig('approvers:\n  - owner-login\nidentity:\n  logins: x\n'))[0], /^identity: .*identity\.logins must be a list/)
+  // A change branch that adds mallory as an approver: the CLI still refuses mallory's items and pushes.
+  const r = originRepo(cfg())
+  try {
+    r.git('checkout', '-q', '-b', 'factory/12-change')
+    r.put(cfg(3, ['owner-login', 'mallory']), 'add an approver')
+    const item = cliIn(r.work, unitFile(r.dir, { items: as('mallory').items }))
+    assert.equal(item.status, 1)
+    assert.match(item.stderr, /items\[0\]\.author: "mallory" is not an approver/)
+    const pushed = cliIn(r.work, unitFile(r.dir, { head_pusher: 'mallory' }, 'unit-valid-check-failed.json'))
+    assert.equal(pushed.status, 1)
+    assert.match(pushed.stderr, /head_pusher: "mallory" is neither an approver/)
+    assert.equal(cliIn(r.work, unitFile(r.dir, {}, 'unit-valid-check-failed.json')).status, 0)
+  } finally {
+    r.done()
+  }
+})
+
+test('gate.mjs: git never waits on a credential prompt', async () => {
+  const { gitEnv: gateGitEnv } = await import(pathToFileURL(join(SCRIPTS, 'gate.mjs')).href)
+  assert.equal(gateGitEnv({ GIT_TERMINAL_PROMPT: '1' }).GIT_TERMINAL_PROMPT, '0')
+  assert.equal(gateGitEnv({}).GIT_TERMINAL_PROMPT, '0')
 })
 
 test('write-result: a change object lands right after pr; fix_attempts without change is refused', () => {

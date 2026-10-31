@@ -52,7 +52,7 @@ const scalar = (raw, key) => {
   return v
 }
 
-/** The gate's keys from the config text: approvers, writers, approvers_allow_bots, labels, marker, identity ({ logins, mention }, null when the block is absent, or { logins: [], mention: null, error } when it cannot be read). Throws UsageError when one cannot be read. */
+/** The gate's keys from the config text: approvers, writers, approvers_allow_bots, labels, marker, identity ({ logins, mention }, null when the block is absent, or { logins: [], mention: null, error } when it cannot be read; check-change.mjs refuses on that error, the gate only for a runtime pin). Throws UsageError when one cannot be read. */
 export const parseConfig = (text) => {
   const top = {}
   let current = null
@@ -140,7 +140,7 @@ const identityBlock = (e) => {
           if (!value.endsWith(']')) throw bad('has a logins list the gate cannot read')
           const body = value.slice(1, -1).trim()
           if (body) logins.push(...body.split(',').map((x) => scalar(x, 'identity.logins')))
-        } else if (value) throw bad('has logins that must be a list')
+        } else if (value) throw new UsageError('.factory/config.yaml: identity.logins must be a list')
       } else if (key === 'mention') mention = scalar(value, 'identity.mention') || null
       continue
     }
@@ -152,6 +152,7 @@ const identityBlock = (e) => {
   if (logins.some((x) => !x)) throw bad('has an empty login')
   return { logins, mention }
 }
+
 
 // --- the judgement, pure: every input is what one read returned ---
 
@@ -298,15 +299,19 @@ export const judge = ({ config, env, host, login, issue, timeline, edit, comment
 
 // --- the reads ---
 
-const git = (args) => execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 60_000, windowsHide: true })
+// Git never waits on a credential prompt: a remote that asks fails at once (and the read fails closed).
+export const gitEnv = (env = process.env) => ({ ...env, GIT_TERMINAL_PROMPT: '0' })
+const git = (args) => execFileSync('git', args, { encoding: 'utf8', env: gitEnv(), stdio: ['ignore', 'pipe', 'pipe'], timeout: 60_000, windowsHide: true })
 const SHA = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/
 
 /**
- * .factory/config.yaml as committed on the forge's default branch, never the checkout's copy: a run may stand on a
- * branch (a change's) where a writer or the session changed it. The default branch and its head commit come from the
- * remote (`git ls-remote --symref origin HEAD`), never from local refs a session can move (`origin/HEAD`, `update-ref`),
- * and the file is read from that commit with replace objects off, so `git replace` cannot swap it. The commit must be
- * fetched. Returns the text, or null when that commit has no such file; throws when any of it cannot be read.
+ * .factory/config.yaml as committed on the default branch, never the checkout's copy: a run may stand on a branch (a
+ * change's) where a writer or the session changed it. The default branch and its head commit come from the remote
+ * (`git ls-remote --symref origin HEAD`), not from local refs (`origin/HEAD`, `update-ref`), and the file is read from
+ * that commit, from the repo root whatever the cwd, with replace objects off, so `git replace` cannot swap it. The
+ * commit must be fetched. A session that rewrites its own git config (the origin URL, `insteadOf`) can still point
+ * this at another repo: that limit stays until the read goes through the forge's API. Returns the text, or null when
+ * that commit has no such file; throws when any of it cannot be read.
  */
 export const committedConfig = (run = git) => {
   const out = run(['ls-remote', '--symref', 'origin', 'HEAD'])
@@ -318,7 +323,7 @@ export const committedConfig = (run = git) => {
   } catch {
     throw new Error(`the head of the default branch ${branch} (${sha.slice(0, 12)}) is not fetched: run git fetch origin ${branch}`)
   }
-  if (run(['--no-replace-objects', 'ls-tree', '--name-only', sha, '--', '.factory/config.yaml']).trim() === '') return null
+  if (run(['--no-replace-objects', 'ls-tree', '--full-tree', '--name-only', sha, '--', '.factory/config.yaml']).trim() === '') return null
   return run(['--no-replace-objects', 'show', `${sha}:.factory/config.yaml`])
 }
 
