@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 // Install what a harness cannot take from the marketplace, from this checkout, on every OS (plain copies, no
 // symlinks). Re-run after `git pull`; files a previous run installed and this one no longer ships are removed.
-//   node scripts/install.mjs codex      agents (.generated/codex/*.toml) -> $CODEX_HOME/agents (default ~/.codex), guard prompt rules -> rules/
-//   node scripts/install.mjs opencode   skills, agents and the guard and sounds plugins -> $XDG_CONFIG_HOME/opencode (default ~/.config),
-//                                       hud's TUI plugin -> its tui.json
+//   node scripts/install.mjs codex        agents (.generated/codex/*.toml) -> $CODEX_HOME/agents (default ~/.codex), guard prompt rules -> rules/
+//   node scripts/install.mjs opencode     skills, agents and the guard and sounds plugins -> $XDG_CONFIG_HOME/opencode (default ~/.config),
+//                                         hud's TUI plugin -> its tui.json
+//   node scripts/install.mjs antigravity  skills, agents (.generated/antigravity/*.md) -> $GEMINI_CONFIG_DIR (default ~/.gemini/config), guard hooks -> hooks.json
 // Claude Code, Copilot CLI and VS Code install from the marketplace, Codex its plugins too, pi with
 // `pi install git:github.com/giocaizzi/harness`: see docs/install.md.
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -35,7 +36,44 @@ export function plan(harness) {
       ...['guard', 'sounds'].map((plugin) => [null, join('plugins', `giocaizzi-${plugin}.js`), stub(plugin)]),
     ]
   }
-  throw new Error(`unknown harness ${harness}: codex or opencode`)
+  if (harness === 'antigravity') {
+    const guardScript = join(PLUGINS, 'guard', 'hooks', 'guard.mjs')
+    const stopScript = join(PLUGINS, 'guard', 'hooks', 'stop.mjs')
+    const agyHooks = JSON.stringify({
+      'giocaizzi-guard': {
+        PreToolUse: [
+          {
+            matcher: 'run_command|read_file|view_file|edit_file|write_file|invoke_subagent',
+            hooks: [
+              {
+                type: 'command',
+                command: `node ${JSON.stringify(guardScript)} PreToolUse --harness=antigravity`,
+              },
+            ],
+          },
+        ],
+        Stop: [
+          {
+            type: 'command',
+            command: `node ${JSON.stringify(stopScript)} Stop --harness=antigravity`,
+          },
+        ],
+      },
+    }, null, 2) + '\n'
+
+    return [
+      ...plugins().flatMap((p) => ls(join(p, 'skills')).filter((d) => d.isDirectory()).map((d) => [join(p, 'skills', d.name), join('skills', d.name)])),
+      ...plugins().flatMap((p) => ls(join(p, '.generated', 'antigravity')).filter((f) => f.name.endsWith('.md')).flatMap((f) => {
+        const name = f.name.slice(0, -3)
+        return [
+          [join(p, '.generated', 'antigravity', f.name), join('agents', name, 'agent.md')],
+          [join(p, '.generated', 'antigravity', f.name), join('agents', f.name)],
+        ]
+      })),
+      [null, 'hooks.json', agyHooks],
+    ]
+  }
+  throw new Error(`unknown harness ${harness}: codex, opencode or antigravity`)
 }
 
 // opencode lists TUI plugins in tui.json, which may hold the user's own settings, so hud's entry is merged in: added,
@@ -62,6 +100,7 @@ export function addTuiPlugin(dir) {
 
 export function targetDir(harness, env = process.env) {
   if (harness === 'codex') return env.CODEX_HOME || join(homedir(), '.codex')
+  if (harness === 'antigravity') return env.GEMINI_CONFIG_DIR || join(homedir(), '.gemini', 'config')
   return join(env.XDG_CONFIG_HOME || join(homedir(), '.config'), 'opencode')
 }
 
@@ -91,7 +130,7 @@ export function install(harness, dir = targetDir(harness)) {
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
   const harnesses = process.argv.slice(2)
   if (!harnesses.length) {
-    console.error('usage: node scripts/install.mjs codex|opencode [...]')
+    console.error('usage: node scripts/install.mjs codex|opencode|antigravity [...]')
     process.exit(2)
   }
   for (const h of harnesses) console.log(`${h}: ${install(h).length} item(s) in ${targetDir(h)}`)

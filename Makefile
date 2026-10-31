@@ -64,8 +64,8 @@ pr-graph: ## PR graph: PR size and pace, stacked share and should-have-been-stac
 ci-health: ## CI health: run counts, run time, queue, re-runs, flakes and a workflow audit, this window vs the one before (docs/agent-review.md).  Usage: make ci-health [RANGE=30d]
 	@node scripts/ci-health.mjs --range $(or $(RANGE),30d)
 
-install: ## Install what Codex and opencode cannot take from the marketplace.  Usage: make install HARNESS="codex opencode"
-	@node scripts/install.mjs $(or $(HARNESS),codex opencode)
+install: ## Install what Codex, opencode and Antigravity cannot take from the marketplace.  Usage: make install HARNESS="codex opencode antigravity"
+	@node scripts/install.mjs $(or $(HARNESS),codex opencode antigravity)
 
 new-agent: ## Scaffold plugins/<PLUGIN>/agents/<NAME>.md and .yaml.  Usage: make new-agent NAME=<name> PLUGIN=<plugin>
 	@scripts/new-agent.sh "$(NAME)" "$(PLUGIN)"
@@ -75,5 +75,5 @@ new-skill: ## Scaffold plugins/<PLUGIN>/skills/<NAME>/SKILL.md.  Usage: make new
 
 clean: ## Remove all generated files (plugins/*/.generated, per-harness manifests).
 	@rm -rf plugins/*/.generated
-	@find plugins -type f \( -path '*/.github/plugin/plugin.json' -o -path '*/.codex-plugin/plugin.json' \) -delete
+	@find plugins -type f \( -path '*/.github/plugin/plugin.json' -o -path '*/.codex-plugin/plugin.json' -o -path '*/.antigravity-plugin/plugin.json' \) -delete
 	@echo "Removed generated files."

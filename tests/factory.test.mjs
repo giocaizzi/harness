@@ -359,7 +359,7 @@ test('attended launcher (sh): no hostname binary falls back to uname -n, silentl
 test('attended telemetry: the contract, ticket-run and the parity matrix agree on the launcher', () => {
   const section = doc.split('\n### Attended telemetry\n')[1].split('\n## ')[0]
   for (const s of ['attended.sh', 'attended.ps1', '`FACTORY_ATTENDED_RUN_ID`', '`factory.mode=attended`', '`factory.phase` is absent', '`factory.role` is `main` for the whole session']) assert.ok(section.includes(s), s)
-  for (const h of ['Claude Code', 'Copilot CLI', 'VS Code', 'Codex', 'opencode', 'pi']) assert.match(section, new RegExp(`^\\| ${h} \\|`, 'm'), `no row for ${h}`)
+  for (const h of ['Claude Code', 'Copilot CLI', 'VS Code', 'Codex', 'opencode', 'pi', 'Antigravity']) assert.match(section, new RegExp(`^\\| ${h} \\|`, 'm'), `no row for ${h}`)
   assert.match(contract.split('\n').find((l) => l.startsWith('| `run_id`')), /else `FACTORY_ATTENDED_RUN_ID` when an attended session was started through the launcher for this ticket/)
   const done = read('plugins/factory/skills/ticket-run/references/done.md').split('\n').find((l) => l.startsWith('- **`run_id`:**'))
   assert.match(done, /Else `FACTORY_ATTENDED_RUN_ID` when it is set and `FACTORY_ATTENDED_TICKET` is this ticket/)
@@ -373,7 +373,7 @@ test('attended telemetry: the contract, ticket-run and the parity matrix agree o
   assert.match(read("plugins/factory/skills/ticket-run/references/comments.md"), /Otherwise the run id is the one \[done\.md\]\(done\.md#record\) gives for `run_id`/)
   const row = read('docs/compatibility.md').split('\n').find((l) => l.startsWith('| `factory` attended telemetry tags'))
   assert.ok(row, 'docs/compatibility.md has the parity row')
-  assert.equal(row.split(' | ').length, 7, 'one cell per harness')
+  assert.equal(row.split(' | ').length, 8, 'one cell per harness')
 })
 
 test('result.json mode: only dev or absent passes validation', async () => {

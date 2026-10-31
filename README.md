@@ -13,7 +13,7 @@
 
 My personal marketplace with plugins for AI coding assistants, including skills, agents, slash commands and more.
 
-Works with [Claude Code](https://code.claude.com/), [GitHub Copilot CLI](https://github.com/features/copilot/cli), [VS Code](https://code.visualstudio.com/) Copilot, [Codex CLI](https://github.com/openai/codex), [opencode](https://opencode.ai/) and [pi](https://pi.dev/), on macOS, Linux and Windows. What each harness gets: [docs/compatibility.md](docs/compatibility.md).
+Works with [Claude Code](https://code.claude.com/), [GitHub Copilot CLI](https://github.com/features/copilot/cli), [VS Code](https://code.visualstudio.com/) Copilot, [Codex CLI](https://github.com/openai/codex), [opencode](https://opencode.ai/), [pi](https://pi.dev/) and [Antigravity](https://antigravity.google/), on macOS, Linux and Windows. What each harness gets: [docs/compatibility.md](docs/compatibility.md).
 
 **New here?** [Quickstart](docs/quickstart.md) (install, what you'll see, first task) · [Usage guide](docs/usage.md) (every skill, agent, command and setting, and how to call each).
 
@@ -37,17 +37,17 @@ Each plugin's README lists the skills, agents and hooks it ships.
 
 ## Compatibility
 
-| | Claude Code | Copilot CLI | VS Code | Codex | opencode | pi |
-|---|:-:|:-:|:-:|:-:|:-:|:-:|
-| Skills | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Agents | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Guardrails (`guard`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Denial log to Grafana (`guard`) | ✅ | ✅ | 🟡 | ✅ | ✅ | ✅ |
-| Confirm risky commands | ✅ | ✅ | ✅ | 🟡 plain forms; others denied | 🟡 plain forms; others denied | ✅ |
-| Status line (`hud`) | ✅ | ✅ | — | — | — | ✅ |
-| Reply rewrites: links, paths, commits, states, pass/fail, secrets (`hud`) | ✅ | — | — | — | — | 🟡 no colour |
-| Live HUD band and pane (`hud`) | ✅ | — | — | — | — | — |
-| Sounds and toasts (`sounds`) | ✅ | — | — | 🟡 | 🟡 | 🟡 |
+| | Claude Code | Copilot CLI | VS Code | Codex | opencode | pi | Antigravity |
+|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
+| Skills | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Agents | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Guardrails (`guard`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Denial log to Grafana (`guard`) | ✅ | ✅ | 🟡 | ✅ | ✅ | ✅ | ✅ |
+| Confirm risky commands | ✅ | ✅ | ✅ | 🟡 plain forms; others denied | 🟡 plain forms; others denied | ✅ | ✅ |
+| Status line (`hud`) | ✅ | ✅ | — | — | — | ✅ | — |
+| Reply rewrites: links, paths, commits, states, pass/fail, secrets (`hud`) | ✅ | — | — | — | — | 🟡 no colour | — |
+| Live HUD band and pane (`hud`) | ✅ | — | — | — | — | — | — |
+| Sounds and toasts (`sounds`) | ✅ | — | — | 🟡 | 🟡 | 🟡 | — |
 
 ✅ supported · 🟡 partial · — the harness has no way to do it. Runs on macOS, Linux and Windows. Details, reasons and open issues: [docs/compatibility.md](docs/compatibility.md).
 
@@ -63,6 +63,7 @@ Each plugin's README lists the skills, agents and hooks it ships.
 | Codex CLI | `codex plugin marketplace add giocaizzi/harness`, then `codex plugin add <plugin>@giocaizzi-harness`; agents: `make install HARNESS=codex` from a clone |
 | opencode | `make install HARNESS=opencode` from a clone |
 | pi | `pi install git:github.com/giocaizzi/harness` |
+| Antigravity | `make install HARNESS=antigravity` from a clone |
 
 The `hud` status line needs one more line in your settings: [docs/hud.md](docs/hud.md#install). Updating, verifying, trusting Codex hooks and running from a checkout: [docs/install.md](docs/install.md).
 
@@ -76,4 +77,5 @@ The `hud` status line needs one more line in your settings: [docs/hud.md](docs/h
 - Codex CLI — [plugins](https://learn.chatgpt.com/docs/plugins) · [hooks](https://learn.chatgpt.com/docs/hooks) · [subagents](https://learn.chatgpt.com/docs/agent-configuration/subagents)
 - opencode — [plugins](https://opencode.ai/docs/plugins/) · [skills](https://opencode.ai/docs/skills/) · [agents](https://opencode.ai/docs/agents/)
 - pi — [packages](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/packages.md) · [extensions](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/extensions.md)
+- Antigravity — [customizations](https://antigravity.google/)
 - Agent Skills — [specification](https://agentskills.io/specification)

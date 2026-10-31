@@ -529,3 +529,16 @@ test('lint: Codex apply_patch (`command`) is read; zsh scripts and temp files ar
   writeFileSync(scratch, 'echo $x\n')
   assert.equal(lintFile({ tool_name: 'Write', tool_input: { file_path: scratch } }, findings), null)
 })
+
+test('stop check: Antigravity hook receives { decision: "continue", reason } when blocked or passes cleanly', () => {
+  const res = spawnSync(process.execPath, [join(import.meta.dirname, 'stop.mjs'), '--harness=antigravity'], {
+    input: JSON.stringify({
+      conversationId: 'agy-stop-1',
+      workspacePaths: ['/tmp/nonexistent'],
+      terminationReason: 'NO_TOOL_CALL',
+    }),
+    encoding: 'utf8',
+  })
+  assert.equal(res.status, 0)
+  assert.equal(res.stdout, '')
+})

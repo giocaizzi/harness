@@ -162,6 +162,7 @@ Per harness ([compatibility.md](compatibility.md)):
 | Codex | tagged: its OTel resource uses the SDK's default detectors, which read `OTEL_RESOURCE_ATTRIBUTES` | tagged |
 | opencode | none of its own; the `guard` plugin's `api_request` is tagged | tagged |
 | pi | none of its own; the `guard` extension's `api_request` is tagged | tagged |
+| Antigravity | none of its own; the `guard`'s decisions are tagged | tagged |
 
 ## Config: `.factory/config.yaml`
 

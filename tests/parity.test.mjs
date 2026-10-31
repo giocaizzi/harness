@@ -38,7 +38,7 @@ test('the same skill name in two plugins is reported: opencode and pi flatten sk
   assert.match(gaps(dup, all(['ship', 'python-testing'], []))[0], /skill ship: in both dev-tools and api/)
 })
 
-const def = (over = {}) => ({ plugin: 'api', name: 'api-reviewer', claude: { model: 'opus', effort: 'medium' }, codex: { effort: 'medium' }, copilot: {}, opencode: {}, ...over })
+const def = (over = {}) => ({ plugin: 'api', name: 'api-reviewer', claude: { model: 'opus', effort: 'medium' }, codex: { effort: 'medium' }, copilot: {}, opencode: {}, antigravity: {}, ...over })
 
 test('this repo: every agent runs at one tier on every harness', () => {
   assert.deepEqual(tierGaps(tiers(inventory())), [])

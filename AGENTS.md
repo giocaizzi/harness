@@ -1,6 +1,6 @@
 # AGENTS.md — contributor guide
 
-This repository is a **cross-harness plugin marketplace** for AI coding assistants. It distributes a set of plugins (each plugin contains skills and optionally agents and hooks) for **Claude Code**, **GitHub Copilot CLI**, **VS Code Copilot** (agent plugins), **Codex CLI**, **opencode** and **pi**. What each harness gets and why: [docs/compatibility.md](docs/compatibility.md); install runbook: [docs/install.md](docs/install.md).
+This repository is a **cross-harness plugin marketplace** for AI coding assistants. It distributes a set of plugins (each plugin contains skills and optionally agents and hooks) for **Claude Code**, **GitHub Copilot CLI**, **VS Code Copilot** (agent plugins), **Codex CLI**, **opencode**, **pi** and **Antigravity**. What each harness gets and why: [docs/compatibility.md](docs/compatibility.md); install runbook: [docs/install.md](docs/install.md).
 
 Read this file before making changes. Then run `make help` to see the build/validate commands.
 
@@ -25,11 +25,12 @@ Empirically tested: if you put both `foo.md` and `foo.agent.md` in the same `age
 
 Everything is authored in place, in the plugin it ships with: skills, hooks, the Claude manifest and the Claude agent files. The build **generates only the per-harness artifacts** that diverge (Copilot, Codex and opencode agent files, the Copilot and Codex `plugin.json`, the Codex hooks file), and every generated file sits in a dot-folder: **every visible file under `plugins/<plugin>/` is authored.**
 
-The other three harnesses read the same sources differently (details in [docs/compatibility.md](docs/compatibility.md)):
+The other four harnesses read the same sources differently (details in [docs/compatibility.md](docs/compatibility.md)):
 
 - **Codex** resolves `.claude-plugin/marketplace.json` and the plugins' skills as-is, but reads `.codex-plugin/plugin.json` first, rejects a hooks file with `modules`, and takes agents only as TOML in `~/.codex/agents`. So the build generates `.codex-plugin/plugin.json` (pointing at `.generated/codex/hooks.json`), `.generated/codex/hooks.json` (plus a plugin's Codex-only `hooks/codex-only.json`, e.g. sounds' Stop hook), and `.generated/codex/<name>.toml`, which `scripts/install.mjs` copies.
 - **opencode** has no plugin bundles or marketplace: `scripts/install.mjs` copies skills and the generated `.generated/opencode/<name>.md` agents and writes plugin stubs that load `plugins/guard/hooks/opencode.mjs` and `plugins/sounds/hooks/opencode.mjs`, and lists hud's TUI plugin (`plugins/hud/hooks/opencode-tui.mjs`) in `tui.json`, merged into the user's file.
 - **pi** installs the whole repo as a package from the root `package.json` (`pi` key: skills and the extensions `guard` and `sounds` `hooks/pi.mjs`, `hud` `hooks/pi-entry.mjs` and `dev-tools/pi/subagent.mjs`, which runs the Claude-format agents as a `subagent` tool).
+- **Antigravity** reads `.antigravity-plugin/plugin.json` and standard `SKILL.md` skills; `scripts/install.mjs` copies skills and the generated `.generated/antigravity/<name>.md` agents into `~/.gemini/config/` and registers lifecycle hooks (`PreToolUse` on `run_command` with native `ask`/`deny` decisions, and `Stop` with `continue` decisions) into `hooks.json`.
 
 ---
 
@@ -56,11 +57,13 @@ The other three harnesses read the same sources differently (details in [docs/co
 │       ├── core/                      AUTHORED — pure rule engine the hooks import (guard plugin)
 │       ├── .github/plugin/plugin.json GENERATED — Copilot manifest: the Claude one + `agents: ["./.generated/copilot/"]`
 │       ├── .codex-plugin/plugin.json  GENERATED — Codex manifest: the Claude one + `hooks: ./.generated/codex/hooks.json`
+│       ├── .antigravity-plugin/plugin.json GENERATED — Antigravity manifest
 │       └── .generated/                GENERATED — never edit
 │           ├── copilot/<name>.agent.md   Copilot agents
 │           ├── codex/<name>.toml         Codex agents (scripts/install.mjs copies them)
 │           ├── codex/hooks.json          Codex hooks file
 │           ├── opencode/<name>.md        opencode subagents (scripts/install.mjs copies them)
+│           ├── antigravity/<name>.md     Antigravity agents (scripts/install.mjs copies them)
 │           └── factory/check-result.mjs  guard only: factory's result checker, for the stop hook's result gate
 │
 ├── scripts/
@@ -83,8 +86,8 @@ The other three harnesses read the same sources differently (details in [docs/co
 | `plugins/<plugin>/skills/<skill>/` | Authored | `SKILL.md` follows the [agentskills.io spec](https://agentskills.io/specification). |
 | `plugins/<plugin>/.claude-plugin/plugin.json` | Authored | Read by Claude. **No `skills` field** (Claude rejects it) and **no `agents` field** (build provides the Copilot override separately). |
 | `plugins/<plugin>/agents/<name>.md`, `<name>.yaml` | Authored | The Claude agent, and the other harnesses' overrides. |
-| `plugins/<plugin>/.github/plugin/plugin.json`, `.codex-plugin/plugin.json` | **Generated** | Copilot and Codex manifests. Never edit. |
-| `plugins/<plugin>/.generated/` | **Generated** | Copilot, Codex and opencode agents, Codex hooks file, guard's copy of factory's `check-result.mjs` (plugins install separately, so a hook never imports across plugin dirs). Never edit. |
+| `plugins/<plugin>/.github/plugin/plugin.json`, `.codex-plugin/plugin.json`, `.antigravity-plugin/plugin.json` | **Generated** | Copilot, Codex and Antigravity manifests. Never edit. |
+| `plugins/<plugin>/.generated/` | **Generated** | Copilot, Codex, opencode and Antigravity agents, Codex hooks file, guard's copy of factory's `check-result.mjs` (plugins install separately, so a hook never imports across plugin dirs). Never edit. |
 | `plugins/<plugin>/hooks/`, `core/` | Authored | Hooks: `hooks.json` for Claude, Copilot, VS Code; `opencode.mjs`, `pi.mjs` over `bridge.mjs` for the in-process harnesses. See [docs/guard.md](docs/guard.md). |
 | `package.json` | Authored | pi package: `pi.skills` and `pi.extensions`. |
 | `plugins/<plugin>/hooks/pi.mjs`, `plugins/dev-tools/pi/subagent.mjs` | Authored | pi extensions; tests beside them (`make test` globs `plugins/*/pi/*.test.mjs` too). |
@@ -102,7 +105,7 @@ The other three harnesses read the same sources differently (details in [docs/co
 | `make check` | `make lint` + `make test` (standard entrypoint, run by CI on Linux; `make lint` is an alias for `make validate`). The `.ps1` script tests skip off Windows: CI's `windows-scripts` job runs them ([CI](docs/compatibility.md#verify)). |
 | `make e2e` | Copilot CLI, Codex, opencode and pi against a scripted model in throwaway homes (skips a CLI that is missing; CI runs it on Linux, macOS and Windows). |
 | `make agent-review` | Weekly agent-telemetry review without an agent; in a session use the repo-local `/agent-review` skill (`.agents/skills/`, linked from `.claude/skills/`): [docs/agent-review.md](docs/agent-review.md). |
-| `make install HARNESS="codex opencode"` | Copy what Codex and opencode cannot take from the marketplace into their config dirs. |
+| `make install HARNESS="codex opencode antigravity"` | Copy what Codex, opencode and Antigravity cannot take from the marketplace into their config dirs. |
 | `make new-agent NAME=<name> PLUGIN=<plugin>` | Scaffold `plugins/<plugin>/agents/<name>.md` and `<name>.yaml`. |
 | `make new-skill PLUGIN=<plugin> NAME=<name>` | Scaffold `plugins/<plugin>/skills/<name>/SKILL.md`. |
 | `make clean` | Remove all generated files. |
@@ -147,6 +150,7 @@ Each agent is two files in `plugins/<plugin>/agents/`:
 plugins/<plugin>/.generated/copilot/<name>.agent.md   ← name, description + copilot:, body
 plugins/<plugin>/.generated/codex/<name>.toml         ← name, description + codex:, body as developer_instructions
 plugins/<plugin>/.generated/opencode/<name>.md        ← description, mode: subagent + opencode:, body
+plugins/<plugin>/.generated/antigravity/<name>.md     ← name, description + antigravity:, body
 plugins/<plugin>/.github/plugin/plugin.json           ← .claude-plugin/plugin.json + `"agents": ["./.generated/copilot/"]`
 ```
 
@@ -239,6 +243,7 @@ Full runbook: [docs/install.md](docs/install.md).
 | Codex CLI | `codex plugin marketplace add giocaizzi/harness` | `codex plugin add <plugin>@giocaizzi-harness`; agents: `make install HARNESS=codex` |
 | opencode | — | `make install HARNESS=opencode` from a clone |
 | pi | — | `pi install git:github.com/giocaizzi/harness` (the whole repo) |
+| Antigravity | — | `make install HARNESS=antigravity` from a clone |
 
 The repo-root `.claude-plugin/marketplace.json` is what both CLI harnesses fetch. Each plugin then exposes the right manifest to the right harness via `.claude-plugin/plugin.json` (Claude) and `.github/plugin/plugin.json` (Copilot).
 

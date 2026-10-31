@@ -285,11 +285,23 @@ async function makeCheck(input, run = spawnSync, { exec = run === spawnSync ? ru
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
   try {
     const input = JSON.parse(readFileSync(0, 'utf8') || '{}')
+    if (input.terminationReason !== undefined && !input.hook_event_name) input.hook_event_name = 'Stop'
+    if (input.conversationId && !input.session_id) input.session_id = input.conversationId
+    if (input.workspacePaths?.[0] && !input.cwd) input.cwd = input.workspacePaths[0]
     const events = []
     const out = await stopCheck(input, spawnSync, { report: (attrs) => events.push(attrs) })
     // Codex rejects a Stop output with keys it does not know: it gets the top-level decision and reason only.
     const codex = harnessName() === 'codex'
-    if (out) process.stdout.write(JSON.stringify(codex && out.decision ? { decision: out.decision, reason: out.reason } : out))
+    const antigravity = harnessName() === 'antigravity' || input.terminationReason !== undefined
+    if (out) {
+      if (antigravity) {
+        process.stdout.write(JSON.stringify(out.decision === 'block' ? { decision: 'continue', reason: out.reason } : {}))
+      } else if (codex && out.decision) {
+        process.stdout.write(JSON.stringify({ decision: out.decision, reason: out.reason }))
+      } else {
+        process.stdout.write(JSON.stringify(out))
+      }
+    }
     for (const event of events) await emit(process.env, 'guard.stop', recordAttrs({ ...event, cmd_class: 'stop', session_id: input.session_id }, input.cwd || process.cwd(), harnessName()))
   } catch {
     // unreadable payload: let the agent stop

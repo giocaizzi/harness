@@ -17,9 +17,9 @@ import { pluginDataDir } from './data.mjs'
 import { installedVersions, staleCheck } from './stale.mjs'
 import { appendDecision, commandHash, harnessName, recordAttrs } from './telemetry.mjs'
 
-// Claude Bash/PowerShell, Copilot bash/powershell, VS Code run_in_terminal. VS Code ignores matchers, so every
-// tool call reaches this script and anything else passes untouched.
-const SHELLS = new Set(['bash', 'powershell', 'run_in_terminal'])
+// Claude Bash/PowerShell, Copilot bash/powershell, VS Code run_in_terminal, Antigravity run_command.
+// VS Code ignores matchers, so every tool call reaches this script and anything else passes untouched.
+const SHELLS = new Set(['bash', 'powershell', 'run_in_terminal', 'run_command'])
 // Edit and write tools across harnesses (Claude, Copilot CLI, VS Code, opencode, pi), for the `files` skill hints.
 // VS Code's task tools run a command as well: `create_and_run_task` carries it (`task.command`, `task.args`),
 // `run_task` names a task of `.vscode/tasks.json` by label (`id`, `type: label` or the label). Field names from VS
@@ -43,13 +43,13 @@ export function taskCommand(tool, t = {}, cwd = '.') {
   }
 }
 
-// Read tools: Claude Code `Read`, Copilot CLI `view`, VS Code `read_file`, opencode and pi `read`.
-const READS = new Set(['read', 'view', 'read_file'])
+// Read tools: Claude Code `Read`, Copilot CLI `view`, VS Code `read_file`, opencode and pi `read`, Antigravity `read_file`/`view_file`.
+const READS = new Set(['read', 'view', 'read_file', 'view_file'])
 // Shell commands that only print a file.
 const READERS = new Set(['cat', 'head', 'tail', 'less', 'more', 'bat', 'sed', 'get-content', 'gc', 'type'])
 // Where installed or checked-out skills live: a plugin cache or install (Claude Code, Codex, Copilot CLI), user skill
-// dirs (Claude Code, opencode, `.agents`), pi's packages, and a checkout's `plugins/<name>/skills`.
-const SKILL_ROOT = /(?:[\\/]\.(?:claude|codex|copilot|pi)[\\/]|[\\/]\.config[\\/]opencode[\\/]|[\\/]\.agents[\\/]skills[\\/]|(?:^|[\\/])plugins[\\/](?:cache[\\/][\w.-]+[\\/])?[\w-]+[\\/](?:[\w.-]+[\\/])?skills[\\/])/
+// dirs (Claude Code, opencode, Antigravity, `.agents`), pi's packages, and a checkout's `plugins/<name>/skills`.
+const SKILL_ROOT = /(?:[\\/]\.(?:claude|codex|copilot|pi|gemini)[\\/]|[\\/]\.config[\\/]opencode[\\/]|[\\/]\.agents[\\/]skills[\\/]|(?:^|[\\/])plugins[\\/](?:cache[\\/][\w.-]+[\\/])?[\w-]+[\\/](?:[\w.-]+[\\/])?skills[\\/])/
 const bareSkill = (s) => String(s).split(':').pop()
 // The skills whose SKILL.md is among `paths`, under a skill root.
 const skillsRead = (paths) => paths.flatMap((p) => (SKILL_ROOT.test(p) ? [.../(?:^|[\\/])skills[\\/]([\w-]+)[\\/]SKILL\.md$/.exec(p)?.slice(1) ?? []] : []))
@@ -60,7 +60,7 @@ const readerArgs = (command) =>
     const reader = READERS.has(String(name ?? '').replace(/^.*[\\/]/, '').toLowerCase()) && !args.some((a) => /^(?:-i|-[a-zA-Z]*i\b|--in-place)/.test(a))
     return reader ? args : []
   })
-const EDITS = new Set(['edit', 'write', 'multiedit', 'create', 'create_file', 'replace_string_in_file', 'insert_edit_into_file'])
+const EDITS = new Set(['edit', 'write', 'multiedit', 'create', 'create_file', 'replace_string_in_file', 'insert_edit_into_file', 'edit_file', 'write_file'])
 const WEEK_MS = 7 * 24 * 3600 * 1000
 
 // This marketplace's skill names, from the plugins beside this one: `plugins/<p>/skills/<s>` in a checkout,
@@ -212,9 +212,16 @@ export const run = (argv, cwd, ms = 5000) =>
 // The host facts behind a host deny: what the caps were compared with.
 const hostAttrs = (host) => ({ load1: host.load1, cpu_percent: host.cpuPercent, free_gb: host.freeGb })
 
-const preToolUse = (decision, reason) => ({
-  stdout: JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: decision, permissionDecisionReason: reason } }),
-})
+const preToolUse = (decision, reason, harness) => {
+  if (harness === 'antigravity') {
+    return { stdout: JSON.stringify({ decision, ...(reason ? { reason } : {}) }) }
+  }
+  return {
+    stdout: JSON.stringify({
+      hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: decision, permissionDecisionReason: reason },
+    }),
+  }
+}
 // No decision: the harness's normal permission flow runs, the note reaches the agent next to the tool result.
 // `notice`: a line the user sees (`systemMessage`), for what only the user can act on.
 const note = (context, notice) => ({ stdout: JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', additionalContext: context }, ...(notice ? { systemMessage: notice } : {}) }) })
@@ -385,13 +392,13 @@ async function onShell(input, state, deps) {
     if (d.remind) fire(deps, 'guard.reminder', { rule: d.rule, cmd_class: cmdClass(d.rule, command), tool: String(input.tool_name ?? ''), session_id: input.session_id, tool_use_id: input.tool_use_id }, input.cwd)
     if (d.action === 'deny') {
       report('deny', d.split ? 'split' : undefined)
-      return preToolUse('deny', d.reason)
+      return preToolUse('deny', d.reason, deps.harness)
     }
     // Unattended run (GUARD_UNATTENDED=1): nobody can answer an ask, so it becomes a deny and the agent picks another way.
     if (d.action === 'ask' && unattended) {
       report('deny', 'unattended')
       const source = fromEnv ? '' : ' It was switched on by a command in this session; `export GUARD_UNATTENDED=0` turns it off.'
-      return preToolUse('deny', `${d.reason}\nUnattended run (GUARD_UNATTENDED): nobody can confirm this, so the command was not run. Pick another approach, or leave it for the user.${source}`)
+      return preToolUse('deny', `${d.reason}\nUnattended run (GUARD_UNATTENDED): nobody can confirm this, so the command was not run. Pick another approach, or leave it for the user.${source}`, deps.harness)
     }
     // Codex and opencode hooks cannot ask: the harness's own prompt rule asks for the plain forms (`deps.nativeAsk`),
     // anything else is denied and the user runs it.
@@ -401,48 +408,51 @@ async function onShell(input, state, deps) {
         return {}
       }
       report('deny', 'no-ask')
-      return preToolUse('deny', `${d.reason}\nThis harness cannot ask for confirmation for this form, so the command was not run: ask the user to run it.`)
+      return preToolUse('deny', `${d.reason}\nThis harness cannot ask for confirmation for this form, so the command was not run: ask the user to run it.`, deps.harness)
     }
     if (d.action === 'ask') {
       report('ask')
       const argv = previewCommand(d.rule, command, rules, facts.env)
-      return preToolUse('ask', argv ? withPreview(d.reason, await within(Promise.resolve(deps.run(argv, input.cwd)), deps.previewMs ?? PREVIEW_MS, '')) : d.reason)
+      return preToolUse('ask', argv ? withPreview(d.reason, await within(Promise.resolve(deps.run(argv, input.cwd)), deps.previewMs ?? PREVIEW_MS, '')) : d.reason, deps.harness)
     }
     if (set !== null) state.unattended = set
     // A plain read of non-secret files never waits on the harness's prompt (Claude Code, Copilot CLI, VS Code; Codex
     // and the in-process harnesses do not prompt for it), inside a project's work tree only.
     if (!deps.noAsk && pureRead(command) && inWorkTree(input.cwd, deps.env)) {
       allowed('read')
+      if (deps.harness === 'antigravity') {
+        return { stdout: JSON.stringify({ decision: 'allow', reason: 'guard: a plain read of non-secret files' }) }
+      }
       return { stdout: JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow', permissionDecisionReason: 'guard: a plain read of non-secret files', ...(d.context ? { additionalContext: d.context } : {}) } }) }
     }
     allowed()
-    return d.context ? note(d.context) : {}
+    return d.context ? (deps.harness === 'antigravity' ? {} : note(d.context)) : {}
   } catch (err) {
     // Fail open for reminders, closed for risky commands.
     if (isRisky(command, rules)) {
       appendDecision(deps.env, { decision: 'deny', rule: 'guard-error', cmd_hash: commandHash(command) })
       fire(deps, 'guard.decision', { rule: 'guard-error', action: 'deny', cmd_class: 'guard-error', tool: String(input.tool_name ?? ''), session_id: input.session_id, tool_use_id: input.tool_use_id, cmd_hash: commandHash(command) }, input.cwd)
     }
-    return isRisky(command, rules) ? preToolUse('deny', `The command guard failed, so this risky command was not run: ${err?.message ?? err}`) : {}
+    return isRisky(command, rules) ? preToolUse('deny', `The command guard failed, so this risky command was not run: ${err?.message ?? err}`, deps.harness) : {}
   }
 }
 
 async function onEdit(input, state, deps) {
   const t = input.tool_input ?? {}
   const reminded = new Set(state.reminded)
-  const d = evaluateEdit({ path: t.file_path ?? t.path ?? t.filePath, loadedSkills: new Set(state.loaded), state: { reminded }, rules })
+  const d = evaluateEdit({ path: t.file_path ?? t.path ?? t.filePath ?? t.Path, loadedSkills: new Set(state.loaded), state: { reminded }, rules })
   state.reminded = [...reminded]
   if (!d.remind) return {}
   fire(deps, 'guard.reminder', { rule: d.rule, cmd_class: 'hint', tool: String(input.tool_name ?? ''), session_id: input.session_id, tool_use_id: input.tool_use_id }, input.cwd)
   return note(d.context)
 }
 
-// A subagent spawn (Claude Code `Agent`/`Task`, Copilot CLI `task`, Codex `spawn_agent`, VS Code `runSubagent`) that
-// bypasses the typed agents: a hint, never a deny.
+// A subagent spawn (Claude Code `Agent`/`Task`, Copilot CLI `task`, Codex `spawn_agent`, VS Code `runSubagent`,
+// Antigravity `invoke_subagent`) that bypasses the typed agents: a hint, never a deny.
 function onSpawn(input, state, deps) {
   const t = input.tool_input ?? {}
   const reminded = new Set(state.reminded)
-  const d = evaluateRouting({ type: t.subagent_type ?? t.agent_type ?? t.agentName, model: t.model, effort: t.effort, tool: String(input.tool_name ?? '').toLowerCase(), state: { reminded }, rules })
+  const d = evaluateRouting({ type: t.subagent_type ?? t.agent_type ?? t.agentName ?? t.TypeName, model: t.model ?? t.Model, effort: t.effort, tool: String(input.tool_name ?? '').toLowerCase(), state: { reminded }, rules })
   state.reminded = [...reminded]
   if (!d.remind) return {}
   fire(deps, 'guard.reminder', { rule: d.rule, cmd_class: 'routing', tool: String(input.tool_name ?? ''), session_id: input.session_id, tool_use_id: input.tool_use_id }, input.cwd)
@@ -458,7 +468,7 @@ function onStale(input, state, deps, out) {
   state.startCwd ??= typeof input.cwd === 'string' ? input.cwd : undefined
   const s = staleCheck({ root: deps.pluginRoot, cwd: state.startCwd, loaded: state.plugins, reminded, harness: deps.harness })
   state.plugins = s.loaded
-  if (!s.context || decided) return out
+  if (!s.context || decided || deps.harness === 'antigravity') return out
   state.reminded.push(...s.remind.map((r) => `stale:${r}`))
   fire(deps, 'guard.reminder', { rule: 'stale-plugins', cmd_class: 'hint', tool: String(input.tool_name ?? ''), session_id: input.session_id, tool_use_id: input.tool_use_id }, input.cwd)
   const context = out.stdout ? JSON.parse(out.stdout).hookSpecificOutput?.additionalContext : null
@@ -480,6 +490,20 @@ export function inWorkTree(cwd, env = {}, platform = process.platform) {
 
 // One hook event in, { stdout?, stderr?, code? } out. `deps` is injected so tests run without a host.
 export async function handle(input, deps) {
+  if (input.toolCall) {
+    deps = { ...deps, harness: deps.harness ?? 'antigravity' }
+    input.session_id ??= input.conversationId
+    input.cwd ??= input.workspacePaths?.[0]
+    input.tool_name ??= input.toolCall.name
+    input.tool_input ??= {
+      command: input.toolCall.args?.CommandLine ?? input.toolCall.args?.command,
+      path: input.toolCall.args?.Path ?? input.toolCall.args?.path,
+      file_path: input.toolCall.args?.Path ?? input.toolCall.args?.file_path,
+      filePath: input.toolCall.args?.Path ?? input.toolCall.args?.filePath,
+      ...input.toolCall.args,
+    }
+    input.hook_event_name ??= 'PreToolUse'
+  }
   // A command hook's parent is the harness process (one per session run: a resume or restart is a new one).
   // A subagent keeps its own reminders (`agent_id`) and shares the session's skills: Claude Code and Codex send the
   // parent's `session_id`, Copilot CLI the subagent's own with `parent_agent_id` naming the parent session.
@@ -599,12 +623,34 @@ async function main() {
   if (!input || typeof input !== 'object' || Array.isArray(input)) return // no harness sends one; a throw would deny
   // argv[2] names the event when a harness leaves hook_event_name out.
   if (!input.hook_event_name && process.argv[2]) input.hook_event_name = process.argv[2]
+  if (input.toolCall && !input.hook_event_name) input.hook_event_name = 'PreToolUse'
   const dataDir = pluginDataDir()
   // Never exit non-zero: Copilot denies a preToolUse whose hook fails. The risky path fails closed inside onShell.
   // `--no-ask` comes from the Codex hooks file (.generated/codex/hooks.json), which build_agents.py generates.
   const noAsk = process.argv.includes('--no-ask')
+  const harness = process.argv.find((a) => a.startsWith('--harness='))?.slice(10) || (input.toolCall ? 'antigravity' : (noAsk ? 'codex' : harnessName()))
   // Codex (`--no-ask`) is the one harness without a file-read tool.
-  const out = await handle(input, { dataDir, harness: noAsk ? 'codex' : harnessName(), env: process.env, hostFacts, run, pythonManager, noAsk, readTool: !noAsk, nativeAsk: noAsk ? (command, rule) => codexAsks(process.env, input.transcript_path)?.(command, rule) ?? false : null, emit: (event, attrs, cwd) => new Promise((r) => setImmediate(r)).then(() => emit(process.env, event, recordAttrs(attrs, cwd, noAsk ? 'codex' : harnessName()))) }).catch(() => ({}))
+  const out = await handle(input, { dataDir, harness, env: process.env, hostFacts, run, pythonManager, noAsk, readTool: !noAsk, nativeAsk: noAsk ? (command, rule) => codexAsks(process.env, input.transcript_path)?.(command, rule) ?? false : null, emit: (event, attrs, cwd) => new Promise((r) => setImmediate(r)).then(() => emit(process.env, event, recordAttrs(attrs, cwd, harness))) }).catch(() => ({}))
+  if (harness === 'antigravity') {
+    let agOut = { decision: 'allow' }
+    if (out.stdout) {
+      try {
+        const parsed = JSON.parse(out.stdout)
+        const decision = parsed.decision || parsed.hookSpecificOutput?.permissionDecision
+        const reason = parsed.reason || parsed.hookSpecificOutput?.permissionDecisionReason
+        if (decision === 'deny' || decision === 'ask') {
+          agOut = { decision, ...(reason ? { reason } : {}) }
+        } else if (decision === 'allow') {
+          agOut = { decision: 'allow', ...(reason ? { reason } : {}) }
+        }
+      } catch {
+        agOut = { decision: 'allow' }
+      }
+    }
+    process.stdout.write(JSON.stringify(agOut))
+    if (out.stderr) process.stderr.write(out.stderr)
+    return
+  }
   if (out.stdout) process.stdout.write(out.stdout)
   if (out.stderr) process.stderr.write(out.stderr)
 }
