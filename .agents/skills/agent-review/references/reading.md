@@ -35,6 +35,7 @@
 
 | Figure | Act when |
 |---|---|
+| Repos left out as partial, queries failed, run queries truncated | Above 0: the figures cover fewer repos than were found; compare windows only with this in mind. Failed queries after retries point at a rate limit or a permission gap: rerun when the token has headroom or with a shorter `RANGE`. Truncated queries mean a repo runs over 1000 workflow runs a day: that volume is itself the finding (skipped-run noise, superseded runs). |
 | Runs per merged PR | PR runs per merged PR rise: pushes re-trigger full CI; batch fix-up commits before pushing, cancel superseded runs (concurrency with `cancel-in-progress` on PR workflows), and keep docs-only changes off the expensive jobs with job-level path filtering behind one aggregate check. Merge-group runs well above 1: the queue re-runs groups after ejects; read the eject rate. |
 | Run time p50 / p90 | Rises, or the repo is flagged for critical path: the longest job chain grew. Split the slow job, run independent jobs in parallel, cache dependencies, and move heavy suites to the merge group only. A p90 far above the p50 is a few slow runs: read the queue wait and the cancelled share. |
 | Queue-to-green p50 / p90 | Rises while run time does not: the time goes to runner queues and re-runs; read queue wait and re-run share. |
