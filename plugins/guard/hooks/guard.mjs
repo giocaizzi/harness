@@ -218,8 +218,6 @@ const preToolUse = (decision, reason, harness) => {
   }
   return {
     stdout: JSON.stringify({
-      decision,
-      reason,
       hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: decision, permissionDecisionReason: reason },
     }),
   }
@@ -493,6 +491,7 @@ export function inWorkTree(cwd, env = {}, platform = process.platform) {
 // One hook event in, { stdout?, stderr?, code? } out. `deps` is injected so tests run without a host.
 export async function handle(input, deps) {
   if (input.toolCall) {
+    deps = { ...deps, harness: deps.harness ?? 'antigravity' }
     input.session_id ??= input.conversationId
     input.cwd ??= input.workspacePaths?.[0]
     input.tool_name ??= input.toolCall.name
