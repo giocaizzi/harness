@@ -475,6 +475,10 @@ export function analyze(repos) {
     partial: all.length - rows.length,
     failedQueries: all.reduce((n, r) => n + r.failed, 0) + (repos.discoveryFailed || 0),
     discoveryFailed: repos.discoveryFailed || 0,
+    failedByKind: Object.entries(repos.reduce((k, r) => {
+      for (const [n, c] of Object.entries(r.failures || {})) k[n] = (k[n] || 0) + c
+      return k
+    }, repos.discoveryFailed ? { discovery: repos.discoveryFailed } : {})).sort(([a], [b]) => a.localeCompare(b)),
     truncated: all.reduce((n, r) => n + r.truncated, 0),
     prev: mergeStats(rows.map((r) => r.prev)),
     cur: mergeStats(rows.map((r) => r.cur)),
@@ -512,7 +516,7 @@ export function report(agg, range) {
     '|---|---|---|',
     `| Repos measured | ${agg.repos} | ${agg.repos} |`,
     `| Repos left out as partial (a query failed or hit the 1000-run cap) | - | ${agg.partial} |`,
-    `| Queries failed after retries | - | ${agg.failedQueries} |`,
+    `| Queries failed after retries | - | ${agg.failedQueries}${agg.failedByKind.length ? ` (${agg.failedByKind.map(([k, n]) => `${k} ${n}`).join(', ')})` : ''} |`,
     `| Run queries truncated at 1000 runs (one day over the cap) | - | ${agg.truncated} |`,
     row('Merged PRs (all authors, in the measured repos)', (s) => s.mergedPrs),
     row('PR runs per merged PR', (s) => one(s.prRunsPerPr)),

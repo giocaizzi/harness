@@ -264,7 +264,7 @@ test('a failed query continues and names no repo', async () => {
     assert.ok(isPartial(repos[0]))
     const agg = analyze(repos)
     assert.deepEqual([agg.repos, agg.partial, agg.failedQueries, agg.cur.completed], [0, 1, 9, 0])
-    assert.match(report(agg, '30d'), /\| Repos left out as partial[^\n]*\| - \| 1 \|\n\| Queries failed after retries \| - \| 9 \|/)
+    assert.match(report(agg, '30d'), /\| Repos left out as partial[^\n]*\| - \| 1 \|\n\| Queries failed after retries \| - \| 9 \(runs 9\) \|/)
     assert.match(repoTable(agg), /github\.com\/acme\/app \| unknown \| unknown[^\n]*partial: 9 failed, 0 truncated/)
   } finally {
     console.error = err
@@ -485,5 +485,5 @@ test('a failed repo-discovery query is counted in the report', async () => {
   const repos = await quiet(() => collect(failing, 30, NOW, 6, { tries: 1 }))
   const agg = analyze(repos)
   assert.deepEqual([repos.discoveryFailed, agg.failedQueries, agg.discoveryFailed], [1, 1, 1])
-  assert.match(report(agg, '30d'), /\| Queries failed after retries \| - \| 1 \|/)
+  assert.match(report(agg, '30d'), /\| Queries failed after retries \| - \| 1 \(discovery 1\) \|/)
 })
