@@ -837,3 +837,36 @@ test('SessionStart: one guard.session per session and process, with the plugin v
   assert.equal(events.length, 2, 'a resume is a new process')
   assert.deepEqual(await h(12, join(cache, 'missing', 'nothing')), {}, 'an unreadable plugin root never throws and prints nothing')
 })
+
+test('Antigravity payload: toolCall on run_command evaluates decisions and returns top-level decision and reason', async () => {
+  const h = setup()
+  const uv = repo({ 'uv.lock': '' })
+  const pipCall = {
+    conversationId: 'agy-s1',
+    cwd: uv,
+    workspacePaths: [uv],
+    toolCall: {
+      name: 'run_command',
+      args: { CommandLine: 'pip install requests' },
+    },
+  }
+  const deniedOut = await h(pipCall)
+  assert.ok(deniedOut.stdout)
+  const deniedJson = JSON.parse(deniedOut.stdout)
+  assert.equal(deniedJson.decision, 'deny')
+  assert.match(deniedJson.reason, /uses uv/)
+
+  const resetCall = {
+    conversationId: 'agy-s1',
+    workspacePaths: [uv],
+    toolCall: {
+      name: 'run_command',
+      args: { CommandLine: 'git reset --hard' },
+    },
+  }
+  const askOut = await h(resetCall)
+  assert.ok(askOut.stdout)
+  const askJson = JSON.parse(askOut.stdout)
+  assert.equal(askJson.decision, 'ask')
+  assert.match(askJson.reason, /git reset --hard/)
+})

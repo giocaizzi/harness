@@ -1,0 +1,19 @@
+{
+  "$schema": "https://antigravity.google/schemas/v1/plugin.json",
+  "name": "javascript",
+  "version": "1.5.2",
+  "description": "JavaScript, TypeScript, React and Next.js development",
+  "author": {
+    "name": "giocaizzi",
+    "url": "https://github.com/giocaizzi"
+  },
+  "repository": "https://github.com/giocaizzi/harness",
+  "license": "MIT",
+  "keywords": [
+    "javascript",
+    "typescript",
+    "react",
+    "nextjs",
+    "frontend"
+  ]
+}

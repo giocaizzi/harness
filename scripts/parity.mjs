@@ -11,7 +11,7 @@ import { plan } from './install.mjs'
 import { loadAgents } from '../plugins/dev-tools/pi/subagent.mjs'
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-export const HARNESSES = ['claude', 'copilot', 'codex', 'opencode', 'pi']
+export const HARNESSES = ['claude', 'copilot', 'codex', 'opencode', 'pi', 'antigravity']
 
 const json = (path) => JSON.parse(readFileSync(path, 'utf8'))
 const dirs = (dir) => (existsSync(dir) ? readdirSync(dir, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name) : [])
@@ -62,6 +62,13 @@ export function deliveries() {
   const subagent = (pi.extensions ?? []).some((e) => posix(relative(repo, resolve(repo, e))) === 'plugins/dev-tools/pi/subagent.mjs')
   out.pi = { skills: skillsOf(piPlugins), agents: subagent ? loadAgents(join(repo, 'plugins')).map((a) => a.name) : [] }
 
+  // antigravity: skills and agents from install.mjs plan
+  const agyItems = plan('antigravity').filter(([src]) => src).map(([, rel]) => posix(rel))
+  out.antigravity = {
+    skills: agyItems.filter((rel) => rel.startsWith('skills/')).map((rel) => rel.slice('skills/'.length)),
+    agents: agyItems.filter((rel) => rel.startsWith('agents/') && rel.endsWith('/agent.md')).map((rel) => rel.slice('agents/'.length, -'/agent.md'.length)),
+  }
+
   for (const h of Object.keys(out)) out[h] = { skills: new Set(out[h].skills), agents: new Set(out[h].agents) }
   return out
 }
@@ -95,6 +102,7 @@ export function tiers({ agents }) {
       codex: { model: field(join(dir, '.generated', 'codex', `${name}.toml`), 'model'), effort: field(join(dir, '.generated', 'codex', `${name}.toml`), 'model_reasoning_effort') },
       copilot: { model: field(join(dir, '.generated', 'copilot', `${name}.agent.md`), 'model') },
       opencode: { model: field(join(dir, '.generated', 'opencode', `${name}.md`), 'model') },
+      antigravity: { model: field(join(dir, '.generated', 'antigravity', `${name}.md`), 'model') },
     }
   })
 }
@@ -104,7 +112,7 @@ export function tiers({ agents }) {
 export function tierGaps(defs) {
   const found = []
   for (const d of defs) {
-    for (const h of ['codex', 'copilot', 'opencode']) if (d[h].model) found.push(`agent ${d.plugin}:${d.name}: ${h} pins model ${d[h].model}; leave it to the session so the tier matches Claude's ${d.claude.model ?? 'default'}`)
+    for (const h of ['codex', 'copilot', 'opencode', 'antigravity']) if (d[h].model) found.push(`agent ${d.plugin}:${d.name}: ${h} pins model ${d[h].model}; leave it to the session so the tier matches Claude's ${d.claude.model ?? 'default'}`)
     if (d.claude.effort !== d.codex.effort) found.push(`agent ${d.plugin}:${d.name}: effort ${d.claude.effort ?? 'unset'} in Claude but ${d.codex.effort ?? 'unset'} in Codex`)
   }
   return found

@@ -21,7 +21,7 @@ Pick the lightest channel that carries what the other side needs. The harness-ne
 
 Several sessions often work on one machine at once, in different repos or the same one. Stay aware of them:
 
-1. **Look before starting** work in a repo: list running sessions (Claude Code `ListAgents` or `/peers`), plus the harness-neutral signs: `git worktree list`, open PRs on the target branch, `heavy.sh --status` and `register-service.sh --list` (`host-hygiene`).
+1. **Look before starting** work in a repo: list running sessions (Claude Code `ListAgents` or `/peers`, Antigravity `manage_subagents` and recent transcripts under `~/.gemini/antigravity*/brain/<conversation-id>/.system_generated/logs/transcript.jsonl`), plus the harness-neutral signs: `git worktree list`, open PRs on the target branch, `heavy.sh --status` and `register-service.sh --list` (`host-hygiene`).
 2. **Ask before overlapping.** If another session works in the same repo or on the same branch, message it with what you plan to touch and agree who does what; otherwise pick separate files or wait.
 3. **Reply where it came from:** answer a cross-session message to its `from` address, first line self-contained. Hand back results (a PR link, a decision) the same way.
 4. **Wait for a peer without polling it:** to learn when a session goes idle, ask for one idle notice (`notify_when_idle`) instead of re-listing or "are you done?" messages. The notice says only that it is idle; read its results and verdicts from the durable channel ([Durable verdicts](#durable-verdicts)).
@@ -61,11 +61,11 @@ The durable channel is a PR or MR comment with a fixed marker (`Review round N â
 
 ## By harness
 
-| Channel | Claude Code | Copilot CLI | Codex | opencode | pi |
-|---|---|---|---|---|---|
-| Subagent brief and report | yes | yes | yes | yes (`task`) | yes (`subagent` tool) |
-| Fork, background agents | yes | not verified ([#107](https://github.com/giocaizzi/harness/issues/107)) | not verified | not verified | no |
-| Message agents in this session | yes (`SendMessage`) | yes (`list_agents`, `write_agent`) | not documented | no | no |
-| List and message other sessions | yes (`ListAgents`, `SendMessage`; same machine, or Remote Control) | no | through the shell: `codex agents`, `codex queue --thread` | through a known server: `opencode serve` HTTP API | no (RPC to a child process only) |
-| Docs, artifacts, artifact database | yes, when the Artifact or Claude Docs tools are loaded | no | no | no | no |
-| Files, worktrees, GitHub | yes | yes | yes | yes | yes |
+| Channel | Claude Code | Copilot CLI | Codex | opencode | pi | Antigravity |
+|---|---|---|---|---|---|---|
+| Subagent brief and report | yes | yes | yes | yes (`task`) | yes (`subagent` tool) | yes (`invoke_subagent`) |
+| Fork, background agents | yes | not verified ([#107](https://github.com/giocaizzi/harness/issues/107)) | not verified | not verified | no | yes (`invoke_subagent`, asynchronous by default) |
+| Message agents in this session | yes (`SendMessage`) | yes (`list_agents`, `write_agent`) | not documented | no | no | yes (`manage_subagents`, `send_message`) |
+| List and message other sessions | yes (`ListAgents`, `SendMessage`; same machine, or Remote Control) | no | through the shell: `codex agents`, `codex queue --thread` | through a known server: `opencode serve` HTTP API | no (RPC to a child process only) | yes: discover `conversationId` in `~/.gemini/antigravity*/brain/` and message via `send_message` |
+| Docs, artifacts, artifact database | yes, when the Artifact or Claude Docs tools are loaded | no | no | no | no | yes (`<appDataDir>/brain/<conversation-id>` markdown artifacts) |
+| Files, worktrees, GitHub | yes | yes | yes | yes | yes | yes (`Workspace: "branch"` or `"share"` on `invoke_subagent`) |

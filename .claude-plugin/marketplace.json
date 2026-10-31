@@ -5,8 +5,8 @@
     "url": "https://github.com/giocaizzi"
   },
   "metadata": {
-    "description": "Personal agent harness: skills, agents and guards for Claude Code, Copilot CLI, VS Code, Codex, opencode and pi",
-    "version": "3.5.0"
+    "description": "Personal agent harness: skills, agents and guards for Claude Code, Copilot CLI, VS Code, Codex, opencode, pi and Antigravity",
+    "version": "3.6.0"
   },
   "plugins": [
     {
@@ -65,7 +65,7 @@
       "name": "dev-tools",
       "source": "./plugins/dev-tools",
       "description": "General development tooling — git, GitHub, conventional commits, semantic versioning",
-      "version": "1.49.0",
+      "version": "1.50.0",
       "keywords": [
         "git",
         "github",
@@ -79,8 +79,8 @@
     {
       "name": "guard",
       "source": "./plugins/guard",
-      "description": "Agent guardrails for Claude Code, Copilot CLI, VS Code, Codex, opencode and pi: skill enforcer, title guard, pip deny, host guard, risky-command ask, make check on stop, post-edit lint, keep-awake; Claude-only usage throttle",
-      "version": "0.71.3",
+      "description": "Agent guardrails for Claude Code, Copilot CLI, VS Code, Codex, opencode, pi and Antigravity: skill enforcer, title guard, pip deny, host guard, risky-command ask, make check on stop, post-edit lint, keep-awake; Claude-only usage throttle",
+      "version": "0.72.0",
       "keywords": [
         "hooks",
         "guardrails",

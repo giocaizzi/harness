@@ -64,13 +64,24 @@ pi install git:github.com/giocaizzi/harness
 
 pi reads the repo's `package.json`: every plugin's skills and four extensions: the guard, a `subagent` tool that runs `scout`, `driver`, `reviewer`, `escalate`, `api-reviewer` and `verifier` in their own pi sessions, hud's footer and sounds' alerts. Update: `pi update --extensions`. Check: `pi list` shows the package; `/skill:ship` loads a skill; asking for a scout runs the `subagent` tool.
 
+## Antigravity
+
+```bash
+git clone https://github.com/giocaizzi/harness ~/.local/share/giocaizzi-harness
+make -C ~/.local/share/giocaizzi-harness install HARNESS=antigravity
+```
+
+That copies the skills to `~/.gemini/config/skills/`, the agents to `~/.gemini/config/agents/`, and registers the guard's `PreToolUse` hook (for `run_command` with native `ask`/`deny` decisions) and `Stop` hook into `~/.gemini/config/hooks.json` (`$GEMINI_CONFIG_DIR` moves all of them).
+
+Update: `git pull` in the checkout, then `make install HARNESS=antigravity` again. Check: `/agents` shows `scout`; running `pip install x` in a uv repo is denied with the guard's reason.
+
 ## From a checkout (development)
 
 ```bash
 claude --plugin-dir ./plugins/guard                      # Claude Code, one plugin
 copilot plugin marketplace add "$PWD"                    # Copilot CLI, then install <plugin>@giocaizzi-harness
 codex plugin marketplace add "$PWD"                      # Codex, then codex plugin add <plugin>@giocaizzi-harness
-make install                                             # Codex agents, opencode skills/agents/guard
+make install                                             # Codex agents, opencode skills/agents/guard, Antigravity
 pi install "$PWD"                                        # pi, loads the checkout in place
 ```
 

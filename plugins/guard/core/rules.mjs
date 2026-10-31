@@ -109,7 +109,7 @@ export const rules = {
   // allow them; `modelNeeds` is the effort a spawn's model is allowed only with (a sensitive review: Opus at `high`).
   // `untyped` are the generic agents (Codex `default`).
   "routing": {
-    "tools": ["agent", "task", "spawn_agent", "runsubagent"],
+    "tools": ["agent", "task", "spawn_agent", "runsubagent", "invoke_subagent"],
     "typed": ["dev-tools:scout", "dev-tools:worker", "dev-tools:driver", "dev-tools:reviewer", "dev-tools:escalate", "api:api-reviewer", "factory:verifier"],
     "aliases": { "dev-tools-worker": "dev-tools:worker" },
     "codexBuiltin": ["default", "worker", "explorer"],

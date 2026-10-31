@@ -21,6 +21,7 @@ A weak model's mistake in a summary shows up as a missing detail; in an edit it 
 | Codex | not stated in its docs: return the split | spawn values exist, but the agent file wins | no |
 | opencode | only with `subagent_depth` raised to 2 | not stated | no |
 | pi (this repo's `subagent` tool) | yes, three layers deep | no: the tool takes only the agent and the task | no |
+| Antigravity | yes (`invoke_subagent`) | `Model` on the spawn (`inherit`, `flash_lite`, `flash`, `pro`), no effort | yes: `Workspace: "branch"` or `"share"` on `invoke_subagent` |
 
 Where the driver cannot spawn, it returns the split (each unit's files, brief and checks) and the hub spawns the workers. Where a spawn cannot be raised, run a sensitive review in a session at the driver tier. Where workers share a checkout, the units must touch disjoint files.
 
@@ -49,6 +50,9 @@ opencode:
 
 pi:
 - This repo's `subagent` tool (`agent`, `task`) runs an agent from this plugin in its own `pi -p` session with the session's model and the agent's `effort` as its thinking level. The driver and escalate children get the tool again (they have no `tools` list), so a driver fans out; the tool refuses past three layers (`PI_SUBAGENT_DEPTH`). `/model` and `--thinking <level>` set model and effort for the session.
+
+Antigravity:
+- Custom agents are Markdown in `~/.gemini/config/agents/` (`make install HARNESS=antigravity`), invoked via `invoke_subagent` (`TypeName`, `Role`, `Prompt`, `Model`, `Workspace`). `Model` defaults to `inherit` (or `flash_lite`, `flash`, `pro`). `Workspace: "branch"` or `"share"` creates an isolated workspace for parallel workers. `manage_subagents` lists or kills active subagents; `send_message` (`Recipient`, `Message`) messages subagents and peer sessions by `conversationId` (discovered from `~/.gemini/antigravity*/brain/<conversation-id>/`).
 
 ## Verify before relying on the table
 
