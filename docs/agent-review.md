@@ -23,6 +23,10 @@ The by-plugin-version section (`sessionVersions`, `sessionCost`, `sessionSubagen
 
 A telemetry finding becomes an issue only with a reproduction (command text or a corpus row) and the guard version it was seen on.
 
+## PR graph
+
+`make pr-graph [RANGE=30d]` measures how consistently dependent PRs are stacked. It reads your own PRs through the `gh` GraphQL search on every authenticated host, across all owners, and prints aggregates only: the stacked share, open-together pairs already stacked, and should-have-been-stacked pairs (open together, sharing a file, not stacked), with the manifest-only ones split out. `node scripts/pr-graph.mjs --repos` adds a per-repo table for local reading; never paste it into a PR, issue or committed file. It needs no Loki and skips cleanly, printing one line, without `gh` authentication.
+
 ## Tracing hook_prompt spend
 
 `query_source="hook_prompt"` is a request a plugin makes on its own: a mod forking the session (`$.model.fork`) or a `type: prompt`/`agent` hook. It reads the whole conversation, so each one costs about a main turn on the session's model. The review's `hookPromptCost` query splits it by `plugin_name`. When the plugin is empty (Claude Code before 2.1.310):

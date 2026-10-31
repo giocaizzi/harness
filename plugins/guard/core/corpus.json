@@ -510,5 +510,8 @@
   ["env -- - tee .github/workflows/ci.yml < b", "deny:protected-path", "G33", "#282 review: a write behind env -- -", {"factory": "readable"}],
   ["env -i -- - A=1 GH api repos/o/r/issues/1/labels --input b.json", "deny:factory-approval", "G33", "#282 review: env -i -- - and an assignment", {"factory": "readable"}],
   ["time env -- - GH api repos/o/r/issues/1/labels --input b.json", "deny:factory-approval", "G33", "#282 review: env -- - behind time", {"factory": "readable"}],
-  ["env -- - bash -c 'rm -rf x'", "ask:rm", "G33", "#282 review: a shell payload behind env -- -"]
+  ["env -- - bash -c 'rm -rf x'", "ask:rm", "G33", "#282 review: a shell payload behind env -- -"],
+  ["gh pr create --fill", "allow:stack", "CTRL", "control: the head builds on an open PR but targets the default branch", {"stack": {"below": {"number": 7, "branch": "feat/a"}, "base": "main"}}],
+  ["gh pr create --base feat/a --fill", "allow", "CTRL", "control: already stacked, no facts", {"stack": {}}],
+  ["gh pr merge 12 --auto --squash", "allow:stack", "CTRL", "control: merging a PR that carries an open PR's commits", {"stack": {"below": {"number": 7, "branch": "feat/a"}, "base": "main"}}]
 ]

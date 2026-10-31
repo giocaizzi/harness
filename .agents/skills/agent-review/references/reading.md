@@ -22,6 +22,7 @@
 | Guard asks answered | `timeout` or `unavailable` is a large share of asks: the asks land while the user is away; look at which rule asks (decisions, `via`) before raising the timeout. A rule whose asks are nearly all `allow` is a false positive. |
 | Manual approvals | A tool approved often by hand is a candidate for an allow rule in the harness settings. |
 | Failing shell commands | A tool that is missing, a wrong flag, or reads done through the shell. |
+| PR graph | Should-have-been-stacked pairs are above 0 or rise, or the stacked share falls: dependent PRs were opened against the default branch instead of as a stack (`github-workflow`, the guard `stack` hint). Manifest-only pairs are parallel PRs bumping the same version, which the versioning rules handle, not stacking. |
 
 File each action as a GitHub issue, or fix it in a PR the same day.
 
