@@ -942,7 +942,7 @@ test('gate script: reads the config keys it needs from the template shape, and f
   assert.deepEqual(parseConfig('---\napprovers: [a]\n').approvers, ['a'], 'a leading document marker')
   const decision = evaluateCommand({ command: 'node /home/runner/.claude/plugins/cache/m/factory/1/skills/ticket-run/scripts/gate.mjs 12', state: { reminded: new Set(), loaded: new Set(), hinted: new Set() }, host: {}, factory: { approval: 'agent-ok' }, rules })
   assert.notEqual(decision.action, 'deny', 'the gate call passes the factory-run guard')
-  for (const bad of ['writers: [a]', 'approvers: []', 'approvers: a', 'approvers: [a]\napprovers_allow_bots: yes', 'approvers: [a]\nlabels: {approval: x}', 'approvers: [a]\nlabels:\n  approval:\n', 'approvers: [a]\nmarker: "unterminated', '- a', ...['identity: x', 'identity:\n  logins: x', 'identity:\n  mention: "@m"\n  - x', 'identity:\n  - x', 'identity:\n  logins:\n    - ""', 'identity:\n  logins: [a, ]', 'identity:\n  logins: [a', 'identity:\n  garbage'].map((b) => `approvers: [a]\n${b}`)]) assert.throws(() => parseConfig(bad), UsageError, bad)
+  for (const bad of ['writers: [a]', 'approvers: []', 'approvers: a', 'approvers: [a]\napprovers_allow_bots: yes', 'approvers: [a]\nlabels: {approval: x}', 'approvers: [a]\nlabels:\n  approval:\n', 'approvers: [a]\nmarker: "unterminated', '- a', ...['identity: x', 'identity:\n  logins: x', 'identity:\n  mention: "@m"\n  - x', 'identity:\n  - x', 'identity:\n  logins:\n    - ""', 'identity:\n  logins: [a, ]', 'identity:\n  logins: [a', 'identity:\n  garbage', 'identity:\n  logins: [a]\n  logins: [b]', 'identity:\n  mention: x\n  mention: y', 'identity:\n  other: 1\n  - x'].map((b) => `approvers: [a]\n${b}`)]) assert.throws(() => parseConfig(bad), UsageError, bad)
 })
 
 test('gate script: the approval and edit check agree with the documented filter on random dated histories, and fail closed on undated events', async () => {
@@ -1060,6 +1060,19 @@ test('gate script: a runtime approval pinned in the run\'s own claim, as comment
   assert.equal(other.verdict, 'stop')
   assert.equal(other.checks.approval_source, null)
   refused(run({ comments: [pin('example-owner', T, { login: 'other-writer' }), mention()] }), /^refuse: the claim that pins the approval is by `other-writer`, which is in neither/, 'auth')
+  // The factory's own logins never approve, and a pin cannot postdate its claim.
+  const botCfg = { ...config, approvers: [...config.approvers, 'example-bot[bot]'], approversAllowBots: true }
+  refused(run({ config: botCfg, comments: [pin('example-bot[bot]'), mention({ login: 'example-bot[bot]' })] }), /^refuse: approved by example-bot\[bot\] is the factory's own login/)
+  const ownerCfg = { ...config, approvers: [...config.approvers, 'example-owner'] }
+  refused(run({ config: ownerCfg, login: 'example-owner', comments: [pin('example-owner', T, { login: 'example-owner' }), mention()] }), /^refuse: approved by example-owner is the factory's own login/)
+  const after = '2026-10-21T11:00:01Z'
+  refused(run({ comments: [pin('example-owner', after), mention({ created_at: after, updated_at: after })] }), /^refuse: approved at is after the claim was posted/)
+  refused(run({ comments: [pin('schedule:nightly', after)] }), /^refuse: approved at is after the claim was posted/)
+  const claimAt = '2026-10-21T11:00:00Z'
+  assert.equal(run({ comments: [pin('example-owner', claimAt), mention({ created_at: claimAt, updated_at: claimAt })] }).verdict, 'go', 'a pin at the claim time goes')
+  const late = [ev('unlabeled', 'agent-ok', 'example-owner', '2026-10-21T11:30:00Z'), claimLabel]
+  assert.notEqual(run({ timeline: late, comments: [pin('example-owner', after), mention({ created_at: after, updated_at: after })] }).verdict, 'go')
+  refused(run({ comments: [{ ...pin(), created_at: undefined }, mention()] }), /^refuse: the claim's creation time could not be read/)
   // A schedule pin.
   const sched = run({ comments: [pin('schedule:nightly')] })
   assert.equal(sched.verdict, 'go')

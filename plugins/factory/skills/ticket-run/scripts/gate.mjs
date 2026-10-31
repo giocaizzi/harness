@@ -117,11 +117,14 @@ const identityBlock = (e) => {
   const logins = []
   let mention = null
   let key = null
+  const seen = new Set()
   for (const l of e.block) {
     const kv = /^(\s+)([A-Za-z_]\w*):\s*(.*)$/.exec(l)
     if (kv && kv[1].length === indent) {
       key = kv[2]
       const value = kv[3].trim()
+      if ((key === 'logins' || key === 'mention') && seen.has(key)) throw bad(`repeats ${key}`)
+      seen.add(key)
       if (key === 'logins') {
         if (value.startsWith('[')) {
           if (!value.endsWith(']')) throw bad('has a logins list the gate cannot read')
@@ -133,7 +136,7 @@ const identityBlock = (e) => {
     }
     const item = /^(\s+)-\s+(.+)$/.exec(l)
     if (item && key === 'logins' && item[1].length >= indent) logins.push(scalar(item[2], 'identity.logins'))
-    else if (key && key !== 'logins' && key !== 'mention' && (item || /^\s*/.exec(l)[0].length > indent)) continue
+    else if (key && key !== 'logins' && key !== 'mention' && (item ? item[1].length > indent : /^\s*/.exec(l)[0].length > indent)) continue
     else throw bad('is a mapping the gate cannot read')
   }
   if (logins.some((x) => !x)) throw bad('has an empty login')
@@ -239,7 +242,12 @@ export const judge = ({ config, env, host, login, issue, timeline, edit, comment
       const seen = fieldLines(body).map(([k]) => k)
       if (seen.filter((k) => k === 'approved by').length > 1 || seen.filter((k) => k === 'approved at').length > 1) return 'refuse: the claim repeats approved by or approved at'
       if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(at)) return 'refuse: approved at is not a UTC time'
+      const created = trusted.find((c) => c.id === own.id).created_at
+      const utc = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/
+      if (typeof created !== 'string' || !utc.test(created)) return "refuse: the claim's creation time could not be read"
+      if (at > created) return 'refuse: approved at is after the claim was posted'
       let source
+      if (!by.startsWith('schedule:') && (inList(config.identity.logins, by) || (login && lc(by) === lc(login)))) return `refuse: approved by ${by} is the factory's own login`
       if (by.startsWith('schedule:')) {
         if (!by.slice(9).trim()) return 'refuse: a schedule pin names no schedule'
         source = 'schedule'
