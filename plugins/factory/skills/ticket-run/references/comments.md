@@ -42,7 +42,7 @@ A command that names the approval label stays one plain `gh` read, filtered with
   gh api "repos/{owner}/{repo}/issues/N/comments" --paginate --jq '<M> as $m | .[] | (.body | split("\n") | map(rtrimstr("\r"))) as $l | select((.body | startswith($m)) and $l[1] == "<!-- factory:claim -->" and any($l[]; . == "run id: " + $ENV.FACTORY_RUN_ID)) | .user.login'
   ```
   Name a login only when the first read printed it and exactly one line of the second is that login, case ignored in both. Then stop with "the runtime's claim is by `<login>`, which is not in `writers`: check it is the runtime's login, then add `<login>` to `writers` in `.factory/config.yaml`", giving the login exactly as printed (`[bot]` included). Otherwise (a refusal, `none`, no match, or two claims by that login) name no one and stop with "no trusted claim carries this run's id (`FACTORY_RUN_ID`); if the runtime posts under its own login, add that login to `writers` in `.factory/config.yaml`". Both stops record `failed` with `reason_code: auth` ([done.md](done.md#record)). Someone with triage access who is not a writer can still get named, by re-applying the claim label and posting one copied claim; that is why the stop asks the owner to check the login. Either way the claims stay untrusted: no claim, plan or log, never edited, never claimed over, and the claim label is not yours to touch.
-- **Claim:** add the claim label, then post `factory:claim` with the host name and run id. When `FACTORY_RUN_ID` is set, the runtime already did both: edit its claim comment (the newest trusted one with that run id) instead of posting a second, and use that id as the run id. Otherwise the run id is the one [done.md](done.md#record) gives for `run_id` (the launcher's `FACTORY_ATTENDED_RUN_ID` for this ticket, else the session id). Release it (remove the label) when the run ends, whatever the end state.
+- **Claim:** add the claim label, then post `factory:claim` with the host name and run id. When `FACTORY_RUN_ID` is set, the runtime already did both: edit its claim comment (the newest trusted one with that run id) instead of posting a second, and use that id as the run id. Otherwise the run id is the one [done.md](done.md#record) gives for `run_id` (the launcher's `FACTORY_ATTENDED_RUN_ID` for this ticket, else the session id). Release it (remove the label) when the run ends, whatever the end state; in a run a runtime started, the runtime releases it.
 
 ## Takeover
 
@@ -90,7 +90,7 @@ Each comment is the marker line, a kind tag line, then the fields as short label
 | `<!-- factory:question Q<n> -->` | per question; `n` counts up across the ticket | the question; whether it blocks shipping; context with `path:line`; options `A) B) …`; recommendation and why; done so far (what is pushed). |
 | `<!-- factory:log -->` | once; edited in place | the decision log table: `#`, item, found at, test, decision, where ([fold-in-test.md](fold-in-test.md#decision-log)). |
 | `<!-- factory:verdict <round> -->` | on the PR, per verifier round | the verifier's verdict file, verbatim: first line `Head: <sha>`, then verdict, findings, what ran. |
-| `<!-- factory:result <end_state> -->` | end of every run | end state; reason; PR; evidence links; follow-ups. |
+| `<!-- factory:result <end_state> -->` | end of every run (in a runtime run, `result.json` only) | end state; reason; PR; evidence links; follow-ups. |
 | `<!-- factory:notify <kind> -->` | never by the skill: a runtime's @-mention of the approvers | skip it when reading; it carries the marker, so it is never an answer. |
 
 **Dev mode.** When `FACTORY_DEV=1` is set, end every comment you post with a last field line `mode: dev`, so dev output never passes as prod.
@@ -107,7 +107,7 @@ gh api -X PATCH "repos/{owner}/{repo}/issues/comments/<id>" -F body=@<file>
 
 ## Questions and parking
 
-A question parks the ticket: post it, `gh issue edit N --add-label needs-owner`, set the board status to blocked (config `board`, [below](#board-status)), release the claim, record the result as `parked`, and stop. In a session, tell the person the question is on the ticket; the answer goes there, so the record stays whole.
+A question parks the ticket: post it, `gh issue edit N --add-label needs-owner`, set the board status to blocked (config `board`, [below](#board-status)), release the claim, record the result as `parked`, and stop. In a run a runtime started (`FACTORY_RUN_ID` set), post the question, set the board status to blocked when `board` is configured (the board is not a label, so the run sets it) and record the result, and leave the labels alone: the runtime applies `needs-owner` or `needs-grooming` and releases the claim from `result.json` ([done.md](done.md#record), Runtime runs). In a session, tell the person the question is on the ticket; the answer goes there, so the record stays whole.
 
 The third question on a ticket means it is under-specified: post it, then `gh issue edit N --add-label needs-grooming` instead of `needs-owner`. Leave the approval label alone: adding or removing it is the owner's, and in a runtime run the guard denies any command that names it. `needs-grooming` alone keeps the ticket out of every run (see the gate).
 
@@ -119,7 +119,7 @@ The open question is the newest trusted `factory:question` comment. The answer i
 gh api "repos/{owner}/{repo}/issues/N/comments" --paginate --jq '<A> as $a | <M> as $m | .[] | select(((.user.login | ascii_downcase) as $u | $a | map(ascii_downcase) | index($u)) and (.body | startswith($m) | not)) | {id, login: .user.login, created_at, html_url}'
 ```
 
-With no answer, the ticket stays parked: say so and stop. With one, claim the ticket again, remove `needs-owner`, set the board back to in progress, log the decision (answers may also widen or narrow the scope), and continue.
+With no answer, the ticket stays parked: say so and stop. With one, claim the ticket again, remove `needs-owner` (in a runtime run the runtime does both), set the board back to in progress, log the decision (answers may also widen or narrow the scope), and continue.
 
 ## Board status
 
