@@ -224,6 +224,8 @@ async function codexOnly(h, env, root) {
   return failures
 }
 
+const TRACEPARENT = '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01'
+
 async function check(name) {
   const h = HARNESSES[name]
   const root = mkdtempSync(join(tmpdir(), `harness-e2e-${name}-`))
@@ -241,8 +243,14 @@ async function check(name) {
       ['cd . && rm -rf ~/harness-e2e-does-not-exist', /cannot ask|Risky command/],
     ]) {
       const m = await mock(command, root)
-      const out = h.run(env, cwd, m.port)
+      // The pip deny also proves the decision record carries GUARD_TRACEPARENT through the harness's hook environment.
+      const events = join(root, 'events.jsonl')
+      const out = h.run(command.startsWith('pip') ? { ...env, FACTORY_EVENTS_FILE: events, GUARD_TRACEPARENT: TRACEPARENT } : env, cwd, m.port)
       m.stop()
+      if (command.startsWith('pip')) {
+        const line = existsSync(events) ? readFileSync(events, 'utf8').trim().split(/\r?\n/)[0] : ''
+        if (!line.includes('"trace_id":"4bf92f3577b34da6a3ce929d0e0e4736","span_id":"00f067aa0ba902b7"')) failures.push(`trace context: the decision line ${JSON.stringify(line)} carries no trace_id and span_id`)
+      }
       const entries = m.entries()
       const result = entries.map((e) => e.result).find((r) => r !== null) ?? ''
       // opencode ends the turn on a rejected ask; its `run` output names the request.

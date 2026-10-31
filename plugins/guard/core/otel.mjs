@@ -52,11 +52,23 @@ export function repoSlug(url) {
   return segs.length === 2 && segs.every((x) => SLUG_SEGMENT.test(x ?? '')) ? segs.join('/') : null
 }
 
+// The trace context a runtime gives the run in GUARD_TRACEPARENT, a W3C traceparent
+// (`00-<32 hex trace id>-<16 hex span id>-<2 hex flags>`, lowercase): { traceId, spanId }, or null when it is absent,
+// malformed, of another version or names an all-zero id. Only that variable (harnesses strip TRACEPARENT and OTEL_*
+// from hooks); the guard never derives one or starts spans of its own.
+const TRACEPARENT = /^00-([0-9a-f]{32})-([0-9a-f]{16})-[0-9a-f]{2}$/
+export function traceContext(env) {
+  const m = TRACEPARENT.exec(String(env?.GUARD_TRACEPARENT ?? '').trim())
+  if (!m || /^0+$/.test(m[1]) || /^0+$/.test(m[2])) return null
+  return { traceId: m[1], spanId: m[2] }
+}
+
 const attr = (key, value) => ({ key, value: { stringValue: String(value) } })
 
 // `config` is the raw env values: { endpoint, headers, resource }. `service` other than guard is a harness the
-// guard reports for (opencode, pi: no native telemetry), so it owns service.name and service.namespace.
-export function logRequest({ endpoint, headers, resource }, event, attrs, now = Date.now(), service = 'guard') {
+// guard reports for (opencode, pi: no native telemetry), so it owns service.name and service.namespace. `trace`, from
+// traceContext, sets the record's traceId and spanId.
+export function logRequest({ endpoint, headers, resource }, event, attrs, now = Date.now(), service = 'guard', trace = null) {
   if (!endpoint) return null
   const res = service === 'guard' ? { 'service.name': 'guard', ...parsePairs(resource) } : { ...parsePairs(resource), 'service.name': service, 'service.namespace': service }
   return {
@@ -72,6 +84,7 @@ export function logRequest({ endpoint, headers, resource }, event, attrs, now = 
               logRecords: [
                 {
                   timeUnixNano: String(BigInt(now) * 1_000_000n),
+                  ...(trace ? { traceId: trace.traceId, spanId: trace.spanId } : {}),
                   severityText: 'INFO',
                   body: { stringValue: event },
                   attributes: [attr('event.name', event), ...Object.entries(attrs).filter(([, v]) => v != null).map(([k, v]) => attr(k, v))],
@@ -89,7 +102,7 @@ export async function emit(env, event, attrs, fetchFn = fetch, service = 'guard'
   try {
     if (otelOff(env)) return
     const v = (k) => env[k] || env[`GUARD_${k}`]
-    const req = logRequest({ endpoint: v('OTEL_EXPORTER_OTLP_ENDPOINT'), headers: v('OTEL_EXPORTER_OTLP_HEADERS'), resource: v('OTEL_RESOURCE_ATTRIBUTES') }, event, attrs, Date.now(), service)
+    const req = logRequest({ endpoint: v('OTEL_EXPORTER_OTLP_ENDPOINT'), headers: v('OTEL_EXPORTER_OTLP_HEADERS'), resource: v('OTEL_RESOURCE_ATTRIBUTES') }, event, attrs, Date.now(), service, event === 'guard.decision' ? traceContext(env) : null)
     if (req) await fetchFn(req.url, { method: 'POST', headers: req.headers, body: req.body, signal: AbortSignal.timeout(TIMEOUT_MS) })
   } catch {
     // collector unreachable or slow: the decision stands

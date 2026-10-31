@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto'
 import { appendFileSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { otelEnabled, repoSlug } from '../core/otel.mjs'
+import { otelEnabled, repoSlug, traceContext } from '../core/otel.mjs'
 
 export { repoSlug }
 
@@ -81,11 +81,13 @@ export const commandHash = (command) => createHash('sha256').update(String(comma
 
 // One JSON line per decision to $FACTORY_EVENTS_FILE, when a factory runtime sets it: the runtime's guard deny-rate
 // breaker reads it. Only the hash of the command, never its text; a failed write is dropped and the decision stands.
+// A well-formed GUARD_TRACEPARENT adds `trace_id` and `span_id`, the same ids as the OTLP record's.
 export function appendDecision(env, { decision, rule, cmd_hash }, now = new Date(), append = appendFileSync) {
   const file = env?.FACTORY_EVENTS_FILE
   if (!file) return
   try {
-    append(file, `${JSON.stringify({ ts: now.toISOString(), decision, rule, cmd_hash })}\n`)
+    const trace = traceContext(env)
+    append(file, `${JSON.stringify({ ts: now.toISOString(), decision, rule, cmd_hash, ...(trace ? { trace_id: trace.traceId, span_id: trace.spanId } : {}) })}\n`)
   } catch {
     // unwritable path: telemetry never blocks a decision
   }
