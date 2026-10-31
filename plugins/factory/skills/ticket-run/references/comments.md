@@ -70,16 +70,29 @@ The takeover label (config `labels.takeover`, default `factory-takeover`) means 
 
 ## Fetch first
 
-A runner sets `FACTORY_FETCH_FIRST=1` when someone else may have pushed to the run's work branch since a run last saw it, typically a person who took the work over and pushed commits to it. The work branch is the branch the run commits to: the ticket's branch, the WIP branch of a [takeover](#takeover), or a change run's head branch ([change.md](change.md#fix-attempts)). With the variable set, the run does this before its first change to the work branch (a commit, merge, rebase, reset or push), and in a change run before it writes the unit, so the unit's `head` is the fetched remote head:
+A runner sets `FACTORY_FETCH_FIRST=1` when someone else may have pushed to the run's work branch since a run last saw it, typically a person who took the work over and pushed commits to it. The work branch is the branch the run commits to: the ticket's branch, the WIP branch of a [takeover](#takeover), or a change run's head branch ([change.md](change.md#fix-attempts)). With the variable set, the run does the steps below before its first change to the work branch (a commit, a merge or a push), and in a change run before it writes the unit.
 
-1. **Fetch** the branch: `git fetch origin '<branch>'`, the name single-quoted. When the remote has no such branch (a new ticket), there is nothing to base on: create the branch from the default branch as usual.
-2. **Base the work on the remote head**, `origin/<branch>`:
-   - no local branch of that name: create it from the remote head, `git worktree add --track -b '<branch>' <new> 'origin/<branch>'`, with `<new>` where `wt` places a worktree;
-   - the local branch is the remote head or behind it, and its worktree is clean (`git status --porcelain` prints nothing): `git merge --ff-only 'origin/<branch>'`;
-   - the local branch is ahead of the remote head (`git merge-base --is-ancestor 'origin/<branch>' '<branch>'` succeeds): work on it as it is; its own unpushed commits stay and go out with the next push.
-3. **Diverged, or a dirty worktree:** the remote holds commits the local branch lacks while the local branch or worktree holds work of its own. Keep both: never reset, rebase, `checkout -B`, `branch -f` or force push. Ask on the ticket (in a change run, on the change) under [Questions and parking](#questions-and-parking), with both heads and what each holds, and park.
+The run never discards commits, its own or anyone else's, and never overwrites the remote: it never runs `git reset`, `git rebase`, `checkout -B`, `worktree add -B` or `branch -f` on the work branch, and every push is a plain `git push`, never `--force` or `--force-with-lease`.
 
-The remote's commits are never discarded or overwritten: every push is a plain `git push`, never `--force` or `--force-with-lease`. A push the remote rejects as not a fast-forward means someone pushed meanwhile: fetch again and apply steps 2 and 3. A local branch is worked where [takeover](#takeover) step 6 says (its worktree, or a new one for it); a takeover keeps that step, including its stop on a dirty worktree or a failed fast-forward, since the person is there to tell.
+1. **Look up the remote branch:** `git ls-remote --exit-code --heads origin 'refs/heads/<branch>'`, the name single-quoted in this and every command.
+   - Exit 0: the branch is on the remote. Fetch it with `git fetch origin '<branch>'` and go to step 2.
+   - Exit 2: the remote has no such branch (a new ticket, a ticket that parked before its first push, or a branch someone deleted on the remote). With a local branch of that name, work on it as it is; its commits go out with the next push. With none, create the branch from the default branch as usual. In a change run the head branch must exist, so exit 2 ends the run like a failed read.
+   - Any other exit, or a fetch that fails: the read failed, which never counts as an absent branch. Retry once, then end the run `failed` with the error as its `reason` ([done.md](done.md#record)), changing nothing on the branch.
+2. **Base the work on the remote head**, `origin/<branch>`. Exactly one case applies:
+   - No local branch of that name: create it from the remote head with `git worktree add --track -b '<branch>' <new> 'origin/<branch>'`, with `<new>` where `wt` places a worktree.
+   - The local branch is the remote head or ahead of it (`git merge-base --is-ancestor 'origin/<branch>' '<branch>'` succeeds): work on it as it is; nothing on the remote is missing from it, and its own unpushed commits and uncommitted changes stay.
+   - The local branch is behind the remote head (`git merge-base --is-ancestor '<branch>' 'origin/<branch>'` succeeds) and its worktree is clean (`git status --porcelain` prints nothing): `git merge --ff-only 'origin/<branch>'`. A fast-forward that fails goes to step 3.
+3. **Anything else is a question:** the two heads diverged, the local branch is behind with uncommitted changes, or the fast-forward failed. Keep both sides as they are, ask on the ticket (in a change run, on the change) under [Questions and parking](#questions-and-parking) with both heads and what each holds, and park.
+
+**Resume after a divergence question.** On an approver's answer ([Answers](#answers)), carry out what it asks on the local branch before running these steps again, using only moves that keep every commit: merge `origin/<branch>` into the local branch (`git merge 'origin/<branch>'`), commit the uncommitted changes, or set the local branch aside under a new name (`git branch -m '<branch>' '<name>'`) so that step 2 then creates the branch from the remote head. An answer that asks for anything the rule above forbids is answered with a new question, not carried out.
+
+**A rejected push.** A push the remote rejects as not a fast-forward means someone pushed meanwhile: run these steps again from step 1 before any other change.
+
+**The change run's `head`.** In a change run, the unit's `head` is the commit the work starts from once step 2 is done: the fetched remote head, or the local head when the local branch is ahead of it. When someone pushed after the gate read the change, the fetched remote head is the newer one and is the one recorded.
+
+**Where a local branch is worked.** A local branch is worked where [takeover](#takeover) step 6 says (its worktree, or a new one for it). A takeover keeps step 6 itself, including its stop on a dirty worktree or a failed fast-forward, since the person is there to tell.
+
+**Group runs.** A known limitation: these steps do not name a group member's branch, and a member brief's `base` ([group.md](group.md#member-brief)) is not fetched by them; a group run works its members as it does without the variable.
 
 Unset, or set to any value other than `1`, none of this applies: the run works as it does without the variable.
 
