@@ -1,8 +1,8 @@
 // Checks a group run's run file and member handoffs (references/group.md): the run file a runtime hands the run, the member
 // brief the run writes and the member result the member hands back, and turns them into the member's entry of result.json's `tasks`.
 // Usage `node check-handoff.mjs run [<run.json>]` (reads FACTORY_RUN_FILE without a file), `node check-handoff.mjs brief <brief.json>`
-// or `node check-handoff.mjs result <brief.json> <result.json>` (checks the brief too); `memberTask(ticket, brief, result, runId)` also parks a brief for another ticket or run: exit 0 valid, 1 invalid or unreadable
-// (one line per error), 2 usage.
+// or `node check-handoff.mjs result <brief.json> <result.json>` (checks the brief too): exit 0 valid, 1 invalid or unreadable
+// (one line per error), 2 usage. `memberTask(ticket, brief, result, runId)` also parks a brief for another ticket or run.
 // Imports Node built-ins and ./check-result.mjs only.
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
