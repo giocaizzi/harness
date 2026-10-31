@@ -2,7 +2,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -28,7 +28,7 @@ const UNIT_EXPECTED = {
   'unit-invalid-duplicate-source.json': /appears twice/,
   'unit-invalid-issue-is-change.json': /must not include the change/,
   'unit-invalid-line-without-path.json': /line: needs a path/,
-  'unit-invalid-check-failed-foreign-head.json': /^head_author: a check_failed unit needs the factory or approver login that wrote or pushed head, or an approver's answer as a comment item$/,
+  'unit-invalid-check-failed-foreign-head.json': /^head_pusher: a check_failed unit needs the factory or approver login that pushed head, or an approver's answer as a comment item$/,
 }
 const RESULT_EXPECTED = {
   'result-invalid-cap-without-change.json': /fix_attempts needs change/,
@@ -97,12 +97,12 @@ const UNIT_MUTATIONS = [
   ['check_failed without a check item', 'unit-valid-check-failed.json', (u) => { u.trigger = 'check_failed'; u.items = [{ source: 'https://github.com/acme/app/pull/14#issuecomment-9', kind: 'comment', author: 'a', role: 'approver', path: null, line: null, text: 'x' }] }, /a check_failed unit needs at least one check item/],
   ['trigger not in enum', 'unit-valid-changes-requested.json', (u) => { u.trigger = 'push' }, /trigger: must be one of/, false],
   ['version 1', 'unit-valid-changes-requested.json', (u) => { u.version = 1 }, /version: must be 2/],
-  ['head_author missing', 'unit-valid-check-failed.json', (u) => { delete u.head_author }, /head_author: missing/],
-  ['head_author on another trigger', 'unit-valid-changes-requested.json', (u) => { u.head_author = 'owner-a' }, /head_author: must be null unless trigger is check_failed/],
-  ['head_author empty', 'unit-valid-check-failed.json', (u) => { u.head_author = '' }, /head_author: must be a login or null/],
-  ['head_author not a string', 'unit-valid-check-failed.json', (u) => { u.head_author = 7 }, /head_author: must be a login or null/],
-  ['foreign head allowed by a reviewer comment', 'unit-valid-check-failed-answered.json', (u) => { u.items[1].role = 'reviewer' }, /head_author: a check_failed unit needs/],
-  ['foreign head allowed by an approver review, not an answer', 'unit-valid-check-failed-answered.json', (u) => { u.items[1].kind = 'review' }, /head_author: a check_failed unit needs/],
+  ['head_pusher missing', 'unit-valid-check-failed.json', (u) => { delete u.head_pusher }, /head_pusher: missing/],
+  ['head_pusher on another trigger', 'unit-valid-changes-requested.json', (u) => { u.head_pusher = 'owner-a' }, /head_pusher: must be null unless trigger is check_failed/],
+  ['head_pusher empty', 'unit-valid-check-failed.json', (u) => { u.head_pusher = '' }, /head_pusher: must be a login or null/],
+  ['head_pusher not a string', 'unit-valid-check-failed.json', (u) => { u.head_pusher = 7 }, /head_pusher: must be a login or null/],
+  ['foreign head allowed by a reviewer comment', 'unit-valid-check-failed-answered.json', (u) => { u.items[1].role = 'reviewer' }, /head_pusher: a check_failed unit needs/],
+  ['foreign head allowed by an approver review, not an answer', 'unit-valid-check-failed-answered.json', (u) => { u.items[1].kind = 'review' }, /head_pusher: a check_failed unit needs/],
   ['issues include the change ignoring case', 'unit-valid-changes-requested.json', (u) => { u.issues = ['ACME/APP#14'] }, /must not include the change/],
   ['issues duplicated ignoring case', 'unit-valid-changes-requested.json', (u) => { u.issues = ['acme/app#12', 'ACME/APP#12'] }, /issues: must be a non-empty array of unique/],
   ['comment item with path and line', 'unit-valid-changes-requested.json', (u) => { Object.assign(u.items[2], { path: 'x.js', line: 3 }) }, /path and line must be null unless kind is review_comment/],
@@ -145,8 +145,32 @@ test('unit: item text is capped at 4000 characters, items at 50', async () => {
   assert.match(unitErrors({ ...unit, items: items(MAX_ITEMS + 1) })[0], /items: must be an array of 1 to 50/)
 })
 
+// A scratch repo whose default branch (origin/HEAD) commits `committed` as .factory/config.yaml (none when null), and
+// whose checkout then holds `local` instead, as a change branch could.
+const capRepo = (committed, local) => {
+  const dir = mkdtempSync(join(tmpdir(), 'cap-'))
+  const g = (...a) => assert.equal(spawnSync('git', ['-c', 'user.email=a@example.test', '-c', 'user.name=a', ...a], { cwd: dir }).status, 0, a.join(' '))
+  g('init', '-q')
+  if (committed !== null) {
+    mkdirSync(join(dir, '.factory'))
+    writeFileSync(join(dir, '.factory', 'config.yaml'), committed)
+    g('add', '.factory/config.yaml')
+  }
+  g('commit', '-q', '--allow-empty', '-m', 'init')
+  g('update-ref', 'refs/remotes/origin/main', 'HEAD')
+  g('symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main')
+  if (local !== undefined) {
+    mkdirSync(join(dir, '.factory'), { recursive: true })
+    writeFileSync(join(dir, '.factory', 'config.yaml'), local)
+    g('checkout', '-q', '-b', 'factory/12-change')
+    g('commit', '-q', '-am', 'raise the cap')
+  }
+  return { dir, done: () => rmSync(dir, { recursive: true, force: true }) }
+}
+
 test('check-change: the CLI exits 0 valid, 1 invalid or missing, 2 without an argument', () => {
-  const run = (...a) => spawnSync(process.execPath, [CHECK_CHANGE, ...a], { encoding: 'utf8', env: cleanEnv() })
+  const repo = capRepo(null)
+  const run = (...a) => spawnSync(process.execPath, [CHECK_CHANGE, ...a], { cwd: repo.dir, encoding: 'utf8', env: cleanEnv() })
   assert.equal(run(join(FIXTURES, 'unit-valid-changes-requested.json')).status, 0)
   const bad = run(join(FIXTURES, 'unit-invalid-extra-key.json'))
   assert.equal(bad.status, 1)
@@ -157,6 +181,43 @@ test('check-change: the CLI exits 0 valid, 1 invalid or missing, 2 without an ar
   const run2 = run()
   assert.equal(run2.status, 2)
   assert.match(run2.stderr, /usage:/)
+  repo.done()
+})
+
+test('check-change: max_attempts is the cap committed on the default branch, never the checkout copy', async () => {
+  const { parseCap, committedCap, capErrors, DEFAULT_MAX_ATTEMPTS } = await changeMod()
+  assert.equal(DEFAULT_MAX_ATTEMPTS, 3)
+  assert.equal(parseCap('version: 1\n'), 3)
+  assert.equal(parseCap('change_requests:\n  max_attempts: 2 # fewer\nlabels:\n  approval: agent-ok\n'), 2)
+  assert.equal(parseCap('change_requests:\n  # none\nlabels:\n  max_attempts: 9\n'), 3)
+  for (const bad of ['change_requests: {max_attempts: 9}\n', 'change_requests:\n  max_attempts: "9"\n', 'change_requests:\n  max_attempts: 0\n', 'change_requests:\n  max_attempts: lots\n']) assert.throws(() => parseCap(bad), bad)
+  // origin/HEAD unset or the file unreadable: the check fails, never a cap the run picks.
+  assert.throws(() => committedCap(() => { throw Object.assign(new Error('git failed'), { stderr: 'fatal: ambiguous argument' }) }))
+  assert.throws(() => committedCap((a) => (a[0] === 'rev-parse' ? 'origin/HEAD\n' : '')))
+  assert.deepEqual(capErrors({ max_attempts: 3 }, 3), [])
+  assert.match(capErrors({ max_attempts: 9 }, 3)[0], /max_attempts: 9 is not the cap committed on the default branch, 3/)
+  const unit = join(FIXTURES, 'unit-valid-changes-requested.json')
+  const cli = (dir) => spawnSync(process.execPath, [CHECK_CHANGE, unit], { cwd: dir, encoding: 'utf8', env: cleanEnv() })
+  // The change branch raises the cap to 9 and the unit claims 9: refused; the default branch's 3 is the cap.
+  const raised = capRepo('change_requests:\n  max_attempts: 3\n', 'change_requests:\n  max_attempts: 9\n')
+  const nine = join(raised.dir, 'unit-9.json')
+  writeFileSync(nine, JSON.stringify({ ...fixture('unit-valid-changes-requested.json'), max_attempts: 9 }))
+  const refused = spawnSync(process.execPath, [CHECK_CHANGE, nine], { cwd: raised.dir, encoding: 'utf8', env: cleanEnv() })
+  assert.equal(refused.status, 1)
+  assert.match(refused.stderr, /max_attempts: 9 is not the cap committed on the default branch, 3/)
+  assert.equal(cli(raised.dir).status, 0, cli(raised.dir).stderr)
+  raised.done()
+  // A committed cap of 2 binds a unit that claims the default 3.
+  const lower = capRepo('change_requests:\n  max_attempts: 2\n')
+  assert.match(cli(lower.dir).stderr, /max_attempts: 3 is not the cap committed on the default branch, 2/)
+  lower.done()
+  // No origin/HEAD: fails closed with how to fix it.
+  const bare = mkdtempSync(join(tmpdir(), 'cap-none-'))
+  spawnSync('git', ['init', '-q', bare])
+  const none = cli(bare)
+  assert.equal(none.status, 1)
+  assert.match(none.stderr, /max_attempts: cannot read the cap committed on the default branch .*git remote set-head origin --auto/)
+  rmSync(bare, { recursive: true, force: true })
 })
 
 test('write-result: a change object lands right after pr; fix_attempts without change is refused', () => {

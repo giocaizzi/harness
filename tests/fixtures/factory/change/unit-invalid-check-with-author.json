@@ -9,7 +9,7 @@
   ],
   "branch": "factory/12-add-export",
   "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-  "head_author": "acme-factory[bot]",
+  "head_pusher": "acme-factory[bot]",
   "trigger": "check_failed",
   "attempt": 1,
   "max_attempts": 3,
