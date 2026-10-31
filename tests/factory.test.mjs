@@ -388,12 +388,20 @@ test('routing.md: the policy table, the security-path list (in subagent-orchestr
   assert.match(text, /records each deviation with a reason/)
 })
 
-test('verifier: the definition grants exactly one write, its verdict file, as the last step', () => {
+test('verifier: writes nothing, returns its verdict as text the run writes; briefs carry the command-form rule', () => {
   const text = read('plugins/factory/agents/verifier.md')
-  assert.match(text, /never edit the repo/)
-  assert.match(text, /write it to `\.factory\/runs\/<n>\/verdict-<round>\.md`/)
-  assert.match(text, /that is your last step/)
+  assert.match(text, /never write a file, edit the repo, push, or post on GitHub/)
+  assert.match(text, /Your verdict is your final message, returned as text: the caller writes it to the verdict path/)
+  assert.match(text, /Return the whole report as your final message/)
+  assert.doesNotMatch(text, /write it to `\.factory|Write the whole report/)
   assert.match(text, /`Head: <full SHA/)
+  assert.match(text, /One plain command per shell call[^\n]*no `cd` or `echo` chains/)
+  assert.match(read('plugins/factory/skills/ticket-run/references/done.md'), /Write that message verbatim to the verdict path yourself/)
+  const routing = read('plugins/factory/skills/ticket-run/references/routing.md').split('## Waiting and briefs')[1].split('\n## ')[0]
+  assert.match(routing, /Never end the turn to wait/)
+  assert.match(routing, /Never rely on a subagent's shell write/)
+  assert.match(routing, /Each brief carries this rule[^\n]*no `cd` or `echo` chains/)
+  for (const f of ['copilot/verifier.agent.md', 'codex/verifier.toml', 'opencode/verifier.md']) assert.match(read(`plugins/factory/.generated/${f}`), /returned as text/, f)
 })
 
 // Input trust: only approvers and writers instruct a run.
