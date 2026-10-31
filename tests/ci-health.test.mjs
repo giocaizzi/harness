@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { windows, windowOf, dateChunks, percentile, duration, windowStats, mergeStats, flags, auditWorkflows, analyze, report, repoTable, collect, countFlakes, sampleWaits, MIN_RUNS, GROWTH, main } from '../scripts/ci-health.mjs'
+import { windows, windowOf, dateChunks, percentile, duration, windowStats, mergeStats, flags, auditWorkflows, analyze, report, repoTable, collect, countFlakes, sampleWaits, MIN_RUNS, GROWTH, main, limited } from '../scripts/ci-health.mjs'
 
 const NOW = Date.parse('2026-10-30T12:00:00Z')
 const iso = (d, t = '00:00:00') => `2026-10-${d}T${t}Z`
@@ -197,13 +197,13 @@ function fakeRunner(over = {}) {
     calls.push(args)
     if (args[0] === 'auth') return hostsJson
     if (args[1] === 'graphql') {
+      if (field(args, 'query').includes('issueCount')) return JSON.stringify({ data: { search: { issueCount: field(args, 'q').includes('2026-10-01..') ? 4 : 2 } } })
       const first = field(args, 'q').endsWith('2026-09-01..2026-09-07') && !field(args, 'cursor')
       const second = field(args, 'cursor') === 'c1'
       return JSON.stringify({ data: { search: { pageInfo: { hasNextPage: first, endCursor: 'c1' }, nodes: first || second ? [repoNode, repoNode] : [] } } })
     }
     const path = args[args.indexOf('GET') + 1]
     if (over[path]) return over[path](args)
-    if (path === 'search/issues') return JSON.stringify({ total_count: field(args, 'q').includes('2026-10-01..') ? 4 : 2 })
     if (path === 'repos/acme/app/actions/runs') {
       const [from] = field(args, 'created').split('..')
       const page = Number(field(args, 'page'))
@@ -227,7 +227,7 @@ test('collect pages, chunks and dedupes repos, runs and windows', async () => {
   assert.equal(repos.length, 1)
   const r = repos[0]
   assert.equal(r.key, 'github.com/acme/app')
-  assert.equal(calls.filter((c) => c[1] === 'graphql').length, 9 + 1)
+  assert.equal(calls.filter((c) => c[1] === 'graphql').length, 9 + 1 + 2)
   assert.ok(calls.filter((c) => c[0] === 'api').every((c) => c.includes('github.com') && c.includes('--hostname')))
   assert.equal(r.cur.runs.length, 101)
   assert.deepEqual(r.prev.runs.map((x) => x.id), [5000, 5001, 5002])
@@ -263,7 +263,45 @@ test('a failed query continues and names no repo', async () => {
   } finally {
     console.error = err
   }
-  assert.ok(seen.length && seen.every((m) => m === 'CI health: a query failed; continuing'))
+  assert.ok(seen.includes('CI health: a query failed; continuing'))
+  assert.ok(seen.includes('CI health: 1/1 repos measured'))
+  assert.ok(seen.every((m) => !m.includes('acme')))
+})
+
+test('limited keeps at most n gh calls in flight, and collect goes through it', async () => {
+  let active = 0
+  let peak = 0
+  const slow = async (a) => {
+    active++
+    peak = Math.max(peak, active)
+    await new Promise((r) => setTimeout(r, 2))
+    active--
+    return a
+  }
+  const run = limited(slow, 3)
+  assert.deepEqual(await Promise.all([1, 2, 3, 4, 5, 6, 7].map((n) => run(n))), [1, 2, 3, 4, 5, 6, 7])
+  assert.equal(peak, 3)
+  const { runner } = fakeRunner()
+  let inFlight = 0
+  let top = 0
+  const tracked = async (a) => {
+    inFlight++
+    top = Math.max(top, inFlight)
+    await new Promise((r) => setTimeout(r, 1))
+    try {
+      return await runner(a)
+    } finally {
+      inFlight--
+    }
+  }
+  const err = console.error
+  console.error = () => {}
+  try {
+    await collect(tracked, 30, NOW, 2)
+  } finally {
+    console.error = err
+  }
+  assert.ok(top <= 2 && top > 1, `peak ${top}`)
 })
 
 test('skips with no auth', async () => {

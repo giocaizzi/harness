@@ -158,7 +158,7 @@ export function report(agg, range) {
     ['Median open-to-merge', fmtDuration(agg.openToMergeP50)],
     ['Stacked share (base is not the default branch)', `${pct(agg.stacked, agg.prs)} (${agg.stacked})`],
     ['Open-together pairs already stacked', agg.stackedPairs],
-    ['Should-have-been-stacked pairs, hot files dropped (shared file touched by under 20% of the repo\'s PRs)', agg.refinedPairs],
+    ['Should-have-been-stacked pairs, hot files dropped (share a file that is not hot)', agg.refinedPairs],
     ['Hot files dropped (touched by more than 20% of a repo\'s PRs, at least 3)', agg.hotFiles],
     ['Should-have-been-stacked pairs, any shared file (secondary)', agg.overlapPairs],
     ['of which overlap only on version manifests', agg.manifestOnly],

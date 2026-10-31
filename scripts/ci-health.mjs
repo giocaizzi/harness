@@ -12,6 +12,8 @@ const READING = 'How to read each figure: .agents/skills/agent-review/references
 export const MIN_RUNS = 5
 export const GROWTH = 1.2
 const JOB_SAMPLE = 30
+// gh calls in flight at once: well under GitHub's secondary rate limits (100 concurrent, 900 REST points a minute).
+export const CONCURRENCY = 6
 const PR_EVENTS = new Set(['pull_request', 'pull_request_target'])
 const SAMPLE_EVENTS = new Set([...PR_EVENTS, 'merge_group'])
 const BAD = new Set(['failure', 'timed_out'])
@@ -37,6 +39,25 @@ export function dateChunks(from, to) {
   const end = Date.parse(to)
   for (let s = Date.parse(from); s <= end; s += 7 * DAY) out.push([day(s), day(Math.min(s + 6 * DAY, end))])
   return out
+}
+
+// Wraps a runner so at most n calls run at once; the rest wait in order.
+export function limited(runner, n) {
+  let active = 0
+  const queue = []
+  const next = () => {
+    if (active >= n || !queue.length) return
+    active++
+    const { args, resolve, reject } = queue.shift()
+    runner(args).then(resolve, reject).finally(() => {
+      active--
+      next()
+    })
+  }
+  return (args) => new Promise((resolve, reject) => {
+    queue.push({ args, resolve, reject })
+    next()
+  })
 }
 
 const gh = (host, path, ...fields) => ['api', '--hostname', host, '-X', 'GET', path, ...fields.flatMap((f) => ['-f', f])]
@@ -76,7 +97,9 @@ export async function fetchRuns(runner, host, repo, from, to) {
   }
 }
 
-const mergedCount = async (runner, host, repo, from, to) => JSON.parse(await runner(gh(host, 'search/issues', `q=repo:${repo} is:pr is:merged merged:${from}..${to}`, 'per_page=1'))).total_count
+// Merged PRs by every author, through GraphQL search: the REST search API allows only 30 requests a minute.
+const COUNT = 'query($q:String!){search(query:$q,type:ISSUE,first:1){issueCount}}'
+const mergedCount = async (runner, host, repo, from, to) => JSON.parse(await runner(['api', 'graphql', '--hostname', host, '-f', `q=repo:${repo} is:pr is:merged merged:${from}..${to}`, '-f', `query=${COUNT}`])).data.search.issueCount
 
 const isDone = (r) => r.status === 'completed'
 const countable = (r) => isDone(r) && r.conclusion !== 'skipped'
@@ -85,22 +108,16 @@ const countable = (r) => isDone(r) && r.conclusion !== 'skipped'
 export async function sampleWaits(runner, host, repo, runs) {
   const picked = runs.filter((r) => isDone(r) && SAMPLE_EVENTS.has(r.event)).sort((a, b) => b.created_at.localeCompare(a.created_at)).slice(0, JOB_SAMPLE)
   const waits = []
-  for (const r of picked) {
-    const j = await attempt(async () => JSON.parse(await runner(gh(host, `repos/${repo}/actions/runs/${r.id}/jobs`, 'per_page=100'))))
-    for (const job of j?.jobs || []) if (job.started_at && job.created_at && job.conclusion !== 'skipped') waits.push(Date.parse(job.started_at) - Date.parse(job.created_at))
-  }
+  const pages = await Promise.all(picked.map((r) => attempt(async () => JSON.parse(await runner(gh(host, `repos/${repo}/actions/runs/${r.id}/jobs`, 'per_page=100'))))))
+  for (const j of pages) for (const job of j?.jobs || []) if (job.started_at && job.created_at && job.conclusion !== 'skipped') waits.push(Date.parse(job.started_at) - Date.parse(job.created_at))
   return waits
 }
 
 // Flake proxy: a run that passed on a re-run whose previous attempt (same head SHA) failed.
 export async function countFlakes(runner, host, repo, runs) {
-  let n = 0
-  for (const r of runs) {
-    if (!(isDone(r) && r.run_attempt > 1 && r.conclusion === 'success')) continue
-    const a = await attempt(async () => JSON.parse(await runner(gh(host, `repos/${repo}/actions/runs/${r.id}/attempts/${r.run_attempt - 1}`))))
-    if (a?.conclusion === 'failure') n++
-  }
-  return n
+  const reruns = runs.filter((r) => isDone(r) && r.run_attempt > 1 && r.conclusion === 'success')
+  const prior = await Promise.all(reruns.map((r) => attempt(async () => JSON.parse(await runner(gh(host, `repos/${repo}/actions/runs/${r.id}/attempts/${r.run_attempt - 1}`))))))
+  return prior.filter((a) => a?.conclusion === 'failure').length
 }
 
 export async function fetchWorkflows(runner, host, repo) {
@@ -110,13 +127,9 @@ export async function fetchWorkflows(runner, host, repo) {
   } catch {
     return [] // no workflows directory
   }
-  const files = []
-  for (const f of Array.isArray(list) ? list : []) {
-    if (f.type !== 'file' || !WORKFLOW_FILE.test(f.name)) continue
-    const c = await attempt(async () => JSON.parse(await runner(gh(host, `repos/${repo}/contents/${f.path}`))))
-    if (c?.content) files.push({ path: f.path, text: Buffer.from(c.content, 'base64').toString('utf8') })
-  }
-  return files
+  const wanted = (Array.isArray(list) ? list : []).filter((f) => f.type === 'file' && WORKFLOW_FILE.test(f.name))
+  const got = await Promise.all(wanted.map((f) => attempt(async () => JSON.parse(await runner(gh(host, `repos/${repo}/contents/${f.path}`))))))
+  return wanted.map((f, i) => got[i]?.content && { path: f.path, text: Buffer.from(got[i].content, 'base64').toString('utf8') }).filter(Boolean)
 }
 
 export async function hasMergeQueue(runner, host, repo, branch) {
@@ -129,35 +142,38 @@ export async function hasMergeQueue(runner, host, repo, branch) {
   }
 }
 
-export async function collect(runner, days, now = Date.now()) {
+async function measure(runner, host, name, branch, w) {
+  const raw = new Map()
+  const chunks = await Promise.all(dateChunks(w.prevFrom, w.curTo).map(([from, to]) => attempt(() => fetchRuns(runner, host, name, from, to))))
+  for (const list of chunks) for (const r of list || []) raw.set(r.id, r)
+  const byWin = { prev: [], cur: [] }
+  for (const r of raw.values()) byWin[windowOf(r.created_at.slice(0, 10), w)]?.push(r)
+  const win = async (runs, from, to) => {
+    const [mergedPrs, waits, flakes] = await Promise.all([attempt(() => mergedCount(runner, host, name, from, to)), sampleWaits(runner, host, name, runs), countFlakes(runner, host, name, runs)])
+    return { runs, mergedPrs: mergedPrs ?? 0, waits, flakes }
+  }
+  const [prev, cur, files, hasQueue] = await Promise.all([win(byWin.prev, w.prevFrom, w.prevTo), win(byWin.cur, w.curFrom, w.curTo), fetchWorkflows(runner, host, name), hasMergeQueue(runner, host, name, branch)])
+  return { key: `${host}/${name}`, prev, cur, files, hasQueue }
+}
+
+// Repos are measured concurrently through one limited runner; progress goes to stderr, without repo names.
+export async function collect(runner, days, now = Date.now(), concurrency = CONCURRENCY) {
   const hs = await hosts(runner)
   if (!hs.length) return null
   const w = windows(days, now)
+  const run = limited(runner, concurrency)
   const out = []
   for (const host of hs) {
     const found = new Map()
-    for (const [from, to] of dateChunks(w.prevFrom, w.curTo)) {
-      const list = await attempt(() => fetchRepos(runner, host, from, to))
-      for (const r of list || []) found.set(r.nameWithOwner, r.defaultBranchRef?.name)
-    }
-    for (const [name, branch] of found) {
-      const raw = new Map()
-      for (const [from, to] of dateChunks(w.prevFrom, w.curTo)) {
-        const list = await attempt(() => fetchRuns(runner, host, name, from, to))
-        for (const r of list || []) raw.set(r.id, r)
-      }
-      const byWin = { prev: [], cur: [] }
-      for (const r of raw.values()) byWin[windowOf(r.created_at.slice(0, 10), w)]?.push(r)
-      const rec = { key: `${host}/${name}`, prev: null, cur: null }
-      for (const [k, from, to] of [['prev', w.prevFrom, w.prevTo], ['cur', w.curFrom, w.curTo]]) {
-        const runs = byWin[k]
-        const mergedPrs = (await attempt(() => mergedCount(runner, host, name, from, to))) ?? 0
-        rec[k] = { runs, mergedPrs, waits: await sampleWaits(runner, host, name, runs), flakes: await countFlakes(runner, host, name, runs) }
-      }
-      rec.files = await fetchWorkflows(runner, host, name)
-      rec.hasQueue = await hasMergeQueue(runner, host, name, branch)
-      out.push(rec)
-    }
+    const lists = await Promise.all(dateChunks(w.prevFrom, w.curTo).map(([from, to]) => attempt(() => fetchRepos(run, host, from, to))))
+    for (const list of lists) for (const r of list || []) found.set(r.nameWithOwner, r.defaultBranchRef?.name)
+    let done = 0
+    console.error(`CI health: measuring ${found.size} repos on a host`)
+    out.push(...(await Promise.all([...found].map(async ([name, branch]) => {
+      const rec = await measure(run, host, name, branch, w)
+      console.error(`CI health: ${++done}/${found.size} repos measured`)
+      return rec
+    }))))
   }
   return out
 }
