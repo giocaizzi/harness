@@ -3,5 +3,5 @@
   "compilerOptions": {
     "noEmit": false
   },
-  "exclude": ["node_modules", "src/typecheck-sentinel.mts"]
+  "exclude": ["node_modules"]
 }
