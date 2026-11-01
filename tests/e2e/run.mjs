@@ -6,377 +6,566 @@
 // command is not run, and that a skill invoked with an argument gets it. A harness whose CLI is missing
 // is skipped (failed with E2E_REQUIRE=1). Several harnesses run at once, one child `run.mjs <name>` each (own temp
 // home, mock port and log), and print one block each, in order. Usage: node tests/e2e/run.mjs [harness...]
-import { spawn, spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
-import { inventory } from '../../scripts/parity.mjs'
-
-const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
-const MOCK = join(REPO, 'tests', 'e2e', 'mock-llm.mjs')
+import { spawn, spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync, } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { inventory } from "../../scripts/parity.mjs";
+const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+const MOCK = join(REPO, "tests", "e2e", "mock-llm.mjs");
 // npm installs each CLI as a .cmd shim on Windows, which only runs through cmd.exe and its quoting. Run the
 // package's own entry point instead: a .js bin under node, a native one directly. Elsewhere, the name on PATH.
-const PACKAGES = { copilot: '@github/copilot', codex: '@openai/codex', opencode: 'opencode-ai', pi: '@earendil-works/pi-coding-agent' }
+const PACKAGES = {
+    copilot: "@github/copilot",
+    codex: "@openai/codex",
+    opencode: "opencode-ai",
+    pi: "@earendil-works/pi-coding-agent",
+};
 // `npm root -g` once: it is a shell and an npm start per call, and every harness command resolves through cli().
-let npmRoot
+let npmRoot;
 function cli(name) {
-  if (process.platform !== 'win32' || !PACKAGES[name]) return [name]
-  npmRoot ??= spawnSync('npm', ['root', '-g'], { encoding: 'utf8', shell: true }).stdout.trim()
-  const root = npmRoot
-  const pkg = join(root, PACKAGES[name])
-  if (!existsSync(join(pkg, 'package.json'))) return [name]
-  const bin = JSON.parse(readFileSync(join(pkg, 'package.json'), 'utf8')).bin
-  const file = join(pkg, typeof bin === 'string' ? bin : bin[name])
-  return file.endsWith('.js') ? [process.execPath, file] : [file]
+    if (process.platform !== "win32" || !PACKAGES[name])
+        return [name];
+    npmRoot ??= spawnSync("npm", ["root", "-g"], {
+        encoding: "utf8",
+        shell: true,
+    }).stdout.trim();
+    const root = npmRoot;
+    const pkg = join(root, PACKAGES[name]);
+    if (!existsSync(join(pkg, "package.json")))
+        return [name];
+    const pkgJson = JSON.parse(readFileSync(join(pkg, "package.json"), "utf8"));
+    const bin = pkgJson.bin;
+    if (!bin)
+        return [name];
+    const binPath = typeof bin === "string" ? bin : bin[name];
+    if (!binPath)
+        return [name];
+    const file = join(pkg, binPath);
+    return file.endsWith(".js") ? [process.execPath, file] : [file];
 }
-
 function sh(cmd, args, opts = {}) {
-  const [exe, ...pre] = cmd === process.execPath ? [cmd] : cli(cmd)
-  const r = spawnSync(exe, [...pre, ...args], { encoding: 'utf8', timeout: 180_000, ...opts })
-  if (r.status !== 0 && !opts.allowFail) throw new Error(`${cmd} ${args.join(' ')} failed (${r.status}):\n${r.stdout}\n${r.stderr}`)
-  return r
+    const [exe = "", ...pre] = cmd === process.execPath ? [cmd] : cli(cmd);
+    const r = spawnSync(exe, [...pre, ...args], {
+        encoding: "utf8",
+        timeout: 180_000,
+        ...opts,
+    });
+    if (r.status !== 0 && !opts.allowFail) {
+        throw new Error(`${cmd} ${args.join(" ")} failed (${String(r.status)}):\n${r.stdout}\n${r.stderr}`);
+    }
+    return { status: r.status, stdout: r.stdout, stderr: r.stderr };
 }
 // The runs must not reach the real collector: guard decisions from scripted sessions polluted the agent-ops data.
-const BASE_ENV = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(GUARD_)?OTEL_/.test(k)))
-const has = (cmd) => sh(cmd, ['--version'], { allowFail: true }).status === 0
-
+const BASE_ENV = {};
+for (const [k, v] of Object.entries(process.env)) {
+    if (!/^(GUARD_)?OTEL_/.test(k) && v !== undefined) {
+        BASE_ENV[k] = v;
+    }
+}
+const has = (cmd) => sh(cmd, ["--version"], { allowFail: true }).status === 0;
 // Every running mock, stopped when this process exits however a check ended (a throw between mock() and stop()
 // included). A mock also ends by itself when this process dies: MOCK_STDIN_LIFELINE makes it exit once its stdin
 // (a pipe this process holds) closes, so none outlives a killed run.
-const mocks = new Set()
-process.on('exit', () => mocks.forEach((child) => child.kill()))
-
+const mocks = new Set();
+process.on("exit", () => {
+    mocks.forEach((child) => {
+        child.kill();
+    });
+});
 // Start the mock on a free port with a scripted command; resolves to { port, log, stop }.
 async function mock(command, root, extraEnv = {}) {
-  const log = join(root, 'mock.jsonl')
-  const entries = () => (existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l)) : [])
-  // Wait for the mock to listen: a fixed sleep raced slow Windows runners, whose harnesses then found no server.
-  // A taken port, or no `ready` within 20 s, retries on another port; a crash prints its error to the CI log.
-  for (let attempt = 0; attempt < 5; attempt++) {
-    const port = 40_000 + Math.floor(Math.random() * 20_000)
-    // stderr piped, not inherited: an inherited one would hold a parallel run's output pipe open after this child ends.
-    const child = spawn(process.execPath, [MOCK, String(port)], { env: { ...BASE_ENV, MOCK_COMMAND: command, MOCK_LOG: log, MOCK_STDIN_LIFELINE: '1', ...extraEnv }, stdio: ['pipe', 'pipe', 'pipe'] })
-    child.stderr.pipe(process.stderr)
-    const ready = await new Promise((resolve) => {
-      const timer = setTimeout(() => resolve(false), 20_000)
-      child.stdout.on('data', (d) => String(d).includes('ready') && (clearTimeout(timer), resolve(true)))
-      child.on('exit', () => (clearTimeout(timer), resolve(false)))
-    })
-    if (ready) {
-      mocks.add(child)
-      return { port, entries, stop: () => (mocks.delete(child), child.kill()) }
+    const log = join(root, "mock.jsonl");
+    const entries = () => existsSync(log)
+        ? readFileSync(log, "utf8")
+            .trim()
+            .split("\n")
+            .filter(Boolean)
+            .map((l) => JSON.parse(l))
+        : [];
+    // Wait for the mock to listen: a fixed sleep raced slow Windows runners, whose harnesses then found no server.
+    // A taken port, or no `ready` within 20 s, retries on another port; a crash prints its error to the CI log.
+    for (let attempt = 0; attempt < 5; attempt++) {
+        const port = 40_000 + Math.floor(Math.random() * 20_000);
+        // stderr piped, not inherited: an inherited one would hold a parallel run's output pipe open after this child ends.
+        const child = spawn(process.execPath, [MOCK, String(port)], {
+            env: {
+                ...BASE_ENV,
+                MOCK_COMMAND: command,
+                MOCK_LOG: log,
+                MOCK_STDIN_LIFELINE: "1",
+                ...extraEnv,
+            },
+            stdio: ["pipe", "pipe", "pipe"],
+        });
+        child.stderr.pipe(process.stderr);
+        const ready = await new Promise((resolve) => {
+            const timer = setTimeout(() => {
+                resolve(false);
+            }, 20_000);
+            child.stdout.on("data", (d) => {
+                if (d.toString("utf8").includes("ready")) {
+                    clearTimeout(timer);
+                    resolve(true);
+                }
+            });
+            child.on("exit", () => {
+                clearTimeout(timer);
+                resolve(false);
+            });
+        });
+        if (ready) {
+            mocks.add(child);
+            return {
+                port,
+                entries,
+                stop: () => {
+                    mocks.delete(child);
+                    child.kill();
+                },
+            };
+        }
+        child.kill();
     }
-    child.kill()
-  }
-  throw new Error('mock LLM did not start')
+    throw new Error("mock LLM did not start");
 }
-
-const piModels = (env, port) =>
-  writeFileSync(join(env.PI_CODING_AGENT_DIR, 'models.json'), JSON.stringify({ providers: { mock: { baseUrl: `http://127.0.0.1:${port}/v1`, api: 'openai-completions', apiKey: 'mock', models: [{ id: 'mock' }] } } }))
-
+const piModels = (env, port) => {
+    writeFileSync(join(env.PI_CODING_AGENT_DIR ?? "", "models.json"), JSON.stringify({
+        providers: {
+            mock: {
+                baseUrl: `http://127.0.0.1:${String(port)}/v1`,
+                api: "openai-completions",
+                apiKey: "mock",
+                models: [{ id: "mock" }],
+            },
+        },
+    }));
+};
 const project = (root) => {
-  const dir = join(root, 'proj')
-  mkdirSync(dir, { recursive: true })
-  writeFileSync(join(dir, 'uv.lock'), '')
-  return dir
-}
-
+    const dir = join(root, "proj");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "uv.lock"), "");
+    return dir;
+};
 // Per harness: install into `home`, then run one prompt against the mock in `cwd`.
 const HARNESSES = {
-  copilot: {
-    install(home) {
-      const env = { ...BASE_ENV, COPILOT_HOME: home }
-      sh('copilot', ['plugin', 'marketplace', 'add', REPO], { env })
-      const market = JSON.parse(readFileSync(join(REPO, '.claude-plugin', 'marketplace.json'), 'utf8'))
-      for (const { name } of market.plugins) sh('copilot', ['plugin', 'install', `${name}@giocaizzi-harness`], { env })
-      return env
+    copilot: {
+        install(home) {
+            const env = { ...BASE_ENV, COPILOT_HOME: home };
+            sh("copilot", ["plugin", "marketplace", "add", REPO], { env });
+            const market = JSON.parse(readFileSync(join(REPO, ".claude-plugin", "marketplace.json"), "utf8"));
+            for (const { name } of market.plugins)
+                sh("copilot", ["plugin", "install", `${name}@giocaizzi-harness`], {
+                    env,
+                });
+            return env;
+        },
+        run(env, cwd, port, prompt = ["run the command"]) {
+            const offline = {
+                COPILOT_OFFLINE: "true",
+                COPILOT_PROVIDER_BASE_URL: `http://127.0.0.1:${String(port)}/v1`,
+                COPILOT_PROVIDER_API_KEY: "mock",
+            };
+            return sh("copilot", [
+                "-p",
+                prompt.join(" "),
+                "--model",
+                "mock",
+                "--allow-all-tools",
+                "--no-auto-update",
+            ], { env: { ...env, ...offline }, cwd, input: "", allowFail: true });
+        },
     },
-    // Offline against the mock: no login, no update check, no telemetry.
-    run(env, cwd, port, prompt = ['run the command']) {
-      const offline = { COPILOT_OFFLINE: 'true', COPILOT_PROVIDER_BASE_URL: `http://127.0.0.1:${port}/v1`, COPILOT_PROVIDER_API_KEY: 'mock' }
-      return sh('copilot', ['-p', prompt.join(' '), '--model', 'mock', '--allow-all-tools', '--no-auto-update'], { env: { ...env, ...offline }, cwd, input: '', allowFail: true })
+    codex: {
+        install(home) {
+            const env = { ...BASE_ENV, CODEX_HOME: home };
+            sh("codex", ["plugin", "marketplace", "add", REPO], { env });
+            const market = JSON.parse(readFileSync(join(REPO, ".claude-plugin", "marketplace.json"), "utf8"));
+            for (const { name } of market.plugins)
+                sh("codex", ["plugin", "add", `${name}@giocaizzi-harness`], { env });
+            sh(process.execPath, [join(REPO, "scripts", "install.mjs"), "codex"], {
+                env,
+            });
+            return env;
+        },
+        run(env, cwd, port, prompt = ["run the command"]) {
+            const provider = `model_providers.mock={name="mock",base_url="http://127.0.0.1:${String(port)}/v1",wire_api="responses"}`;
+            return sh("codex", [
+                "exec",
+                "--skip-git-repo-check",
+                "--dangerously-bypass-hook-trust",
+                "-s",
+                "read-only",
+                "-c",
+                "model_provider=mock",
+                "-c",
+                "model=mock",
+                "-c",
+                provider,
+                ...prompt,
+            ], { env, cwd, input: "", allowFail: true });
+        },
     },
-  },
-  codex: {
-    install(home) {
-      const env = { ...BASE_ENV, CODEX_HOME: home }
-      sh('codex', ['plugin', 'marketplace', 'add', REPO], { env })
-      const market = JSON.parse(readFileSync(join(REPO, '.claude-plugin', 'marketplace.json'), 'utf8'))
-      for (const { name } of market.plugins) sh('codex', ['plugin', 'add', `${name}@giocaizzi-harness`], { env })
-      sh(process.execPath, [join(REPO, 'scripts', 'install.mjs'), 'codex'], { env })
-      return env
+    opencode: {
+        install(home) {
+            const env = {
+                ...BASE_ENV,
+                XDG_CONFIG_HOME: join(home, "config"),
+                XDG_DATA_HOME: join(home, "data"),
+                XDG_STATE_HOME: join(home, "state"),
+                OPENCODE_DISABLE_CLAUDE_CODE: "1",
+            };
+            sh(process.execPath, [join(REPO, "scripts", "install.mjs"), "opencode"], {
+                env,
+            });
+            return env;
+        },
+        run(env, cwd, port, prompt = ["run the command"]) {
+            const config = {
+                $schema: "https://opencode.ai/config.json",
+                model: "mock/mock",
+                permission: { bash: "allow", edit: "allow" },
+                provider: {
+                    mock: {
+                        npm: "@ai-sdk/openai-compatible",
+                        name: "mock",
+                        options: {
+                            baseURL: `http://127.0.0.1:${String(port)}/v1`,
+                            apiKey: "mock",
+                        },
+                        models: { mock: { name: "mock" } },
+                    },
+                },
+            };
+            const configHome = env.XDG_CONFIG_HOME ?? "";
+            writeFileSync(join(configHome, "opencode", "opencode.json"), JSON.stringify(config));
+            return sh("opencode", ["run", ...prompt], {
+                env: { ...env, PWD: cwd },
+                cwd,
+                input: "",
+                allowFail: true,
+            });
+        },
     },
-    run(env, cwd, port, prompt = ['run the command']) {
-      const provider = `model_providers.mock={name="mock",base_url="http://127.0.0.1:${port}/v1",wire_api="responses"}`
-      return sh('codex', ['exec', '--skip-git-repo-check', '--dangerously-bypass-hook-trust', '-s', 'read-only', '-c', 'model_provider=mock', '-c', 'model=mock', '-c', provider, ...prompt], { env, cwd, input: '', allowFail: true })
+    pi: {
+        install(home) {
+            const env = { ...BASE_ENV, PI_CODING_AGENT_DIR: home, PI_OFFLINE: "1" };
+            sh("pi", ["install", REPO], { env });
+            return env;
+        },
+        run(env, cwd, port, prompt = ["run the command"]) {
+            piModels(env, port);
+            return sh("pi", ["-p", "--no-session", "--model", "mock/mock", ...prompt], { env: { ...env, PWD: cwd }, cwd, input: "", allowFail: true });
+        },
+        rpc(env, cwd, port, prompt = "run the command") {
+            piModels(env, port);
+            const [exe = "", ...pre] = cli("pi");
+            return new Promise((resolve) => {
+                const child = spawn(exe, [...pre, "--mode", "rpc", "--no-session", "--model", "mock/mock"], { env: { ...env, PWD: cwd }, cwd, windowsHide: true });
+                let stdout = "";
+                let stderr = "";
+                const timer = setTimeout(() => {
+                    child.kill();
+                }, 180_000);
+                child.stdout?.on("data", (d) => {
+                    stdout += d.toString("utf8");
+                    if (stdout.includes('"type":"agent_end"'))
+                        child.stdin?.end();
+                });
+                child.stderr?.on("data", (d) => {
+                    stderr += d.toString("utf8");
+                });
+                child.on("close", () => {
+                    clearTimeout(timer);
+                    resolve({ stdout, stderr });
+                });
+                child.stdin?.write(`${JSON.stringify({ type: "prompt", message: prompt })}\n`);
+            });
+        },
     },
-  },
-  opencode: {
-    install(home) {
-      const env = { ...BASE_ENV, XDG_CONFIG_HOME: join(home, 'config'), XDG_DATA_HOME: join(home, 'data'), XDG_STATE_HOME: join(home, 'state'), OPENCODE_DISABLE_CLAUDE_CODE: '1' }
-      sh(process.execPath, [join(REPO, 'scripts', 'install.mjs'), 'opencode'], { env })
-      return env
-    },
-    run(env, cwd, port, prompt = ['run the command']) {
-      const config = {
-        $schema: 'https://opencode.ai/config.json',
-        model: 'mock/mock',
-        permission: { bash: 'allow', edit: 'allow' },
-        provider: { mock: { npm: '@ai-sdk/openai-compatible', name: 'mock', options: { baseURL: `http://127.0.0.1:${port}/v1`, apiKey: 'mock' }, models: { mock: { name: 'mock' } } } },
-      }
-      writeFileSync(join(env.XDG_CONFIG_HOME, 'opencode', 'opencode.json'), JSON.stringify(config))
-      return sh('opencode', ['run', ...prompt], { env: { ...env, PWD: cwd }, cwd, input: '', allowFail: true })
-    },
-  },
-  pi: {
-    install(home) {
-      const env = { ...BASE_ENV, PI_CODING_AGENT_DIR: home, PI_OFFLINE: '1' }
-      sh('pi', ['install', REPO], { env })
-      return env
-    },
-    run(env, cwd, port, prompt = ['run the command']) {
-      piModels(env, port)
-      return sh('pi', ['-p', '--no-session', '--model', 'mock/mock', ...prompt], { env: { ...env, PWD: cwd }, cwd, input: '', allowFail: true })
-    },
-    // RPC mode, for what only a UI shows (an extension's `setStatus` arrives as an event): one prompt, stdin held
-    // open until the run ends, since pi exits on its end.
-    rpc(env, cwd, port, prompt = 'run the command') {
-      piModels(env, port)
-      const [exe, ...pre] = cli('pi')
-      return new Promise((resolve) => {
-        const child = spawn(exe, [...pre, '--mode', 'rpc', '--no-session', '--model', 'mock/mock'], { env: { ...env, PWD: cwd }, cwd, windowsHide: true })
-        let stdout = ''
-        let stderr = ''
-        const timer = setTimeout(() => child.kill(), 180_000)
-        child.stdout.on('data', (d) => {
-          stdout += d
-          if (stdout.includes('"type":"agent_end"')) child.stdin.end()
-        })
-        child.stderr.on('data', (d) => (stderr += d))
-        child.on('close', () => (clearTimeout(timer), resolve({ stdout, stderr })))
-        child.stdin.write(`${JSON.stringify({ type: 'prompt', message: prompt })}\n`)
-      })
-    },
-  },
-}
-
-// What each harness must show. `skill`/`agent`: how its prompt lists one (Copilot `<name>skill</name>` and
-// `- **plugin:agent**: …`, Codex `- plugin:skill: …` and `name: {`, opencode and pi `<name>skill</name>` and
-// `- name: …`; pi lists the agents in the dev-tools `subagent` tool). `asked`: the harness's own prompt for a plain
-// risky command, which a non-interactive run rejects (Copilot's hook ask, which it cannot put to anyone, Codex's
-// prompt rules, opencode's bash ask entries, pi's confirm dialog without a UI). `invoke`: the
-// prompt argv that runs a skill with an argument (Codex needs the plugin prefix: a bare `$wt` loads nothing), and
-// `invokeMock` the mock's env for it (Copilot loads the skill only through its `skill` tool);
-// `substitutes`: whether the harness replaces `$ARGUMENTS` in the skill body (pi and Codex append the text instead).
+};
 const EXPECT = {
-  copilot: { invoke: (skill, arg) => [`use the ${skill} skill for ${arg}`], invokeMock: { MOCK_SKILL: 'wt' }, substitutes: false, skill: (s) => `<name>${s.name}</name>`, agent: (a) => `- **${a.plugin}:${a.name}**: `, asked: /unable to ask user for confirmation/ },
-  codex: { invoke: (skill, arg) => [`$dev-tools:${skill} ${arg}`], substitutes: false, skill: (s) => `- ${s.plugin}:${s.name}: `, agent: (a) => `${codexName(a)}: {`, asked: /approval required by policy/ },
-  opencode: { invoke: (skill, arg) => ['--command', skill, arg], substitutes: true, skill: (s) => `<name>${s.name}</name>`, agent: (a) => `- ${a.name}: `, asked: /permission requested: bash \(git reset --hard/ },
-  pi: { invoke: (skill, arg) => [`/skill:${skill} ${arg}`], substitutes: false, skill: (s) => `<name>${s.name}</name>`, agent: (a) => `- ${a.name}: `, asked: /Risky command/ },
-}
-const { skills: SKILLS, agents: AGENTS } = inventory()
-// The name a Codex agent registers under: its TOML `name`, which `<name>.yaml` may rename (dev-tools `worker`
-// would replace Codex's built-in role).
+    copilot: {
+        invoke: (skill, arg) => [`use the ${skill} skill for ${arg}`],
+        invokeMock: { MOCK_SKILL: "wt" },
+        substitutes: false,
+        skill: (s) => `<name>${s.name}</name>`,
+        agent: (a) => `- **${a.plugin}:${a.name}**: `,
+        asked: /unable to ask user for confirmation/,
+    },
+    codex: {
+        invoke: (skill, arg) => [`$dev-tools:${skill} ${arg}`],
+        substitutes: false,
+        skill: (s) => `- ${s.plugin}:${s.name}: `,
+        agent: (a) => `${codexName(a)}: {`,
+        asked: /approval required by policy/,
+    },
+    opencode: {
+        invoke: (skill, arg) => ["--command", skill, arg],
+        substitutes: true,
+        skill: (s) => `<name>${s.name}</name>`,
+        agent: (a) => `- ${a.name}: `,
+        asked: /permission requested: bash \(git reset --hard/,
+    },
+    pi: {
+        invoke: (skill, arg) => [`/skill:${skill} ${arg}`],
+        substitutes: false,
+        skill: (s) => `<name>${s.name}</name>`,
+        agent: (a) => `- ${a.name}: `,
+        asked: /Risky command/,
+    },
+};
+const { skills: SKILLS, agents: AGENTS } = inventory();
 function codexName({ plugin, name }) {
-  return /^name\s*=\s*"([^"]+)"/m.exec(readFileSync(join(REPO, 'plugins', plugin, '.generated', 'codex', `${name}.toml`), 'utf8'))?.[1] ?? name
+    return (/^name\s*=\s*"([^"]+)"/m.exec(readFileSync(join(REPO, "plugins", plugin, ".generated", "codex", `${name}.toml`), "utf8"))?.[1] ?? name);
 }
-const ARG = 'e2e-arg-4242'
-// A line of the wt skill's body, so the probe knows the skill itself (not just its listing) reached the model.
-const WT_BODY = 'There is no fixed cap on worktrees or agents'
-
-// Codex hook outputs only a live run can confirm: a failing stop check's block reaches the model (Codex rejects a
-// Stop output with keys it does not know), and a PreToolUse hint reaches it as context, on a shell call and a spawn.
+const ARG = "e2e-arg-4242";
+const WT_BODY = "There is no fixed cap on worktrees or agents";
 async function codexOnly(h, env, root) {
-  const failures = []
-  const seen = async (command, cwd, runEnv, text, mockEnv) => {
-    const m = await mock(command, root, mockEnv)
-    const out = h.run(runEnv, cwd, m.port)
-    m.stop()
-    const ok = m.entries().some((e) => e.prompt.includes(text))
-    rmSync(join(root, 'mock.jsonl'), { force: true })
-    return ok ? null : `${out.stdout?.slice(-600)}\n${out.stderr?.slice(-600)}`
-  }
-  const dir = join(root, 'stopproj')
-  mkdirSync(dir, { recursive: true })
-  writeFileSync(join(dir, 'Makefile'), 'check:\n\t@echo e2e-check-failed; exit 1\n')
-  // `force`: a macOS CI runner sits above the guard's load cap (30-43), which would defer the check instead of blocking.
-  const stop = await seen('echo hi', dir, { ...env, GUARD_STOP_CHECK: 'force' }, 'e2e-check-failed')
-  if (stop) failures.push(`stop: the failed check did not reach the model\n${stop}`)
-  // Through the heavy wrapper (the guard's documented bypass): on a loaded CI runner the host deny would otherwise
-  // block the bare `pytest` before the hint is sent.
-  const hint = await seen('scripts/heavy.sh pytest -q', project(root), env, 'Skill hint (')
-  if (hint) failures.push(`hint: the pytest skill hint did not reach the model\n${hint}`)
-  // Codex runs PreToolUse on spawn_agent too, so the routing hint reaches the model there.
-  const routing = await seen('echo hi', project(root), env, 'Routing hint: an untyped `default` spawn', { MOCK_SPAWN: JSON.stringify({ agent_type: 'default', message: 'look around' }) })
-  if (routing) failures.push(`routing: the spawn_agent routing hint did not reach the model\n${routing}`)
-  // A newer guard lands in the plugin cache while the session runs: the stale-plugin note reaches the model, which
-  // tells the user (`codex exec` prints no PreToolUse `systemMessage`). A newer version dir present at start is the one
-  // Codex loads.
-  const update = join(env.CODEX_HOME, 'plugins', 'cache', 'giocaizzi-harness', 'guard', '999.0.0')
-  const m = await mock('echo hi', root, { MOCK_PLUGIN_UPDATE: update })
-  const out = h.run(env, project(root), m.port)
-  m.stop()
-  const told = m.entries().some((e) => e.prompt.includes('Harness plugins updated (guard'))
-  rmSync(join(root, 'mock.jsonl'), { force: true })
-  rmSync(update, { recursive: true, force: true })
-  if (!told) failures.push(`stale: the stale-plugin note did not reach the model\n${out.stdout?.slice(-600)}\n${out.stderr?.slice(-600)}`)
-  return failures
+    const failures = [];
+    const seen = async (command, cwd, runEnv, text, mockEnv) => {
+        const m = await mock(command, root, mockEnv);
+        const out = h.run(runEnv, cwd, m.port);
+        m.stop();
+        const ok = m.entries().some((e) => e.prompt.includes(text));
+        rmSync(join(root, "mock.jsonl"), { force: true });
+        return ok ? null : `${out.stdout.slice(-600)}\n${out.stderr.slice(-600)}`;
+    };
+    const dir = join(root, "stopproj");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "Makefile"), "check:\n\t@echo e2e-check-failed; exit 1\n");
+    const stop = await seen("echo hi", dir, { ...env, GUARD_STOP_CHECK: "force" }, "e2e-check-failed");
+    if (stop)
+        failures.push(`stop: the failed check did not reach the model\n${stop}`);
+    const hint = await seen("scripts/heavy.sh pytest -q", project(root), env, "Skill hint (");
+    if (hint)
+        failures.push(`hint: the pytest skill hint did not reach the model\n${hint}`);
+    const routing = await seen("echo hi", project(root), env, "Routing hint: an untyped `default` spawn", {
+        MOCK_SPAWN: JSON.stringify({
+            agent_type: "default",
+            message: "look around",
+        }),
+    });
+    if (routing)
+        failures.push(`routing: the spawn_agent routing hint did not reach the model\n${routing}`);
+    const codexHome = env.CODEX_HOME ?? "";
+    const update = join(codexHome, "plugins", "cache", "giocaizzi-harness", "guard", "999.0.0");
+    const m = await mock("echo hi", root, { MOCK_PLUGIN_UPDATE: update });
+    const out = h.run(env, project(root), m.port);
+    m.stop();
+    const told = m
+        .entries()
+        .some((e) => e.prompt.includes("Harness plugins updated (guard"));
+    rmSync(join(root, "mock.jsonl"), { force: true });
+    rmSync(update, { recursive: true, force: true });
+    if (!told)
+        failures.push(`stale: the stale-plugin note did not reach the model\n${out.stdout.slice(-600)}\n${out.stderr.slice(-600)}`);
+    return failures;
 }
-
-const TRACEPARENT = '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01'
-
+const TRACEPARENT = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
 async function check(name) {
-  const h = HARNESSES[name]
-  const root = mkdtempSync(join(tmpdir(), `harness-e2e-${name}-`))
-  const failures = []
-  try {
-    mkdirSync(join(root, 'home'), { recursive: true })
-    const env = h.install(join(root, 'home'))
-    const cwd = project(root)
-    for (const [command, expect] of [
-      ['pip install requests', /uses uv/],
-      // Harmless: every harness runs in the throwaway project, which is no git repo (opencode takes its directory
-      // from PWD, not the spawn cwd, so run() sets PWD for it and pi), and a wrongly allowed run changes nothing.
-      ['git reset --hard', EXPECT[name].asked],
-      // A form the harness's prompt rules do not cover: the guard denies it (pi still confirms).
-      ['cd . && rm -rf ~/harness-e2e-does-not-exist', /cannot ask|Risky command/],
-    ]) {
-      const m = await mock(command, root)
-      // The pip deny also proves the decision record carries GUARD_TRACEPARENT through the harness's hook environment.
-      const events = join(root, 'events.jsonl')
-      const out = h.run(command.startsWith('pip') ? { ...env, FACTORY_EVENTS_FILE: events, GUARD_TRACEPARENT: TRACEPARENT } : env, cwd, m.port)
-      m.stop()
-      if (command.startsWith('pip')) {
-        const line = existsSync(events) ? readFileSync(events, 'utf8').trim().split(/\r?\n/)[0] : ''
-        if (!line.includes('"trace_id":"4bf92f3577b34da6a3ce929d0e0e4736","span_id":"00f067aa0ba902b7"')) failures.push(`trace context: the decision line ${JSON.stringify(line)} carries no trace_id and span_id`)
-      }
-      const entries = m.entries()
-      const result = entries.map((e) => e.result).find((r) => r !== null) ?? ''
-      // opencode ends the turn on a rejected ask; its `run` output names the request.
-      const seen = expect === EXPECT[name].asked ? `${result}\n${out.stdout}\n${out.stderr}` : result
-      if (!expect.test(seen)) failures.push(`${command}: tool result ${JSON.stringify(result.slice(0, 200))} does not match ${expect}\n${out.stdout?.slice(-600)}\n${out.stderr?.slice(-600)}`)
-      if (command.startsWith('pip')) {
-        const prompt = entries.map((e) => e.prompt).join('\n')
-        const missing = [...SKILLS.filter((s) => !prompt.includes(EXPECT[name].skill(s))).map((s) => `skill ${s.name}`), ...AGENTS.filter((a) => !prompt.includes(EXPECT[name].agent(a))).map((a) => `agent ${a.name}`)]
-        if (missing.length) failures.push(`not in the model prompt: ${missing.join(', ')}`)
-      }
-      rmSync(join(root, 'mock.jsonl'), { force: true })
-    }
-    // A skill invoked with an argument: its body and the argument both reach the model, and `$ARGUMENTS` is
-    // substituted only where `substitutes` says so (the skills name the argument in words for the others).
-    {
-      const m = await mock('echo hello', root, EXPECT[name].invokeMock)
-      const out = h.run(env, cwd, m.port, EXPECT[name].invoke('wt', ARG))
-      m.stop()
-      const prompt = m.entries().map((e) => e.prompt).join('\n')
-      const seen = { body: prompt.includes(WT_BODY), arg: prompt.includes(ARG), literal: prompt.includes('$ARGUMENTS') }
-      if (!seen.body || !seen.arg || seen.literal === EXPECT[name].substitutes) failures.push(`skill argument: ${JSON.stringify(seen)}\n${out.stdout?.slice(-600)}\n${out.stderr?.slice(-600)}`)
-      // An allowed call with nothing updated: no stale-plugin note.
-      if (prompt.includes('Harness plugins updated')) failures.push(`stale: a note without an update\n${prompt.slice(prompt.indexOf('Harness plugins updated'), prompt.indexOf('Harness plugins updated') + 200)}`)
-      rmSync(join(root, 'mock.jsonl'), { force: true })
-    }
-    // The guard's factory result gate: a runtime's run in a git repo with no result.json is held at its stop, and the
-    // gate's reason reaches the model (a blocked stop on Copilot CLI and Codex, a new message on pi). Not on opencode:
-    // `opencode run` exits once the session goes idle, before the re-prompt is answered (adapters.test.mjs covers it).
-    if (name !== 'opencode') {
-      const dir = join(root, 'gateproj')
-      mkdirSync(dir, { recursive: true })
-      sh('git', ['init', '-q', dir])
-      const m = await mock('echo hi', root)
-      const out = h.run({ ...env, FACTORY_RUN_ID: `e2e-${name}`, FACTORY_TICKET: 'acme/app#12' }, dir, m.port)
-      m.stop()
-      if (!m.entries().some((e) => e.prompt.includes('Factory result gate (block 1 of 2)'))) failures.push(`result gate: the block did not reach the model\n${out.stdout?.slice(-600)}\n${out.stderr?.slice(-600)}`)
-      rmSync(join(root, 'mock.jsonl'), { force: true })
-    }
-    // sounds' Stop hook ran from the installed plugin: it keeps the session's alert levels in the plugin data dir.
-    if (name === 'codex' && !readdirSync(join(root, 'home'), { recursive: true }).some((f) => /sounds-codex-.*\.json$/.test(f))) failures.push('sounds: the Stop hook left no state')
-    if (name === 'codex') failures.push(...(await codexOnly(h, env, root)))
-    if (name === 'opencode') {
-      // hud's TUI plugin is listed in tui.json and exists; `task` runs scout as a child session, whose events the
-      // plugin draws (opencode-agents.mjs; `opencode run` has no TUI, so the drawing itself is not checked here).
-      const tui = JSON.parse(readFileSync(join(env.XDG_CONFIG_HOME, 'opencode', 'tui.json'), 'utf8'))
-      const plugin = (tui.plugin ?? []).find((p) => String(p).endsWith('/plugins/hud/hooks/opencode-tui.mjs'))
-      if (!plugin || !existsSync(new URL(plugin))) failures.push(`hud: tui.json lists no TUI plugin: ${JSON.stringify(tui)}`)
-      const m = await mock('echo from-scout', root, { MOCK_SUBAGENT: '1' })
-      const out = h.run(env, cwd, m.port)
-      m.stop()
-      const results = m.entries().map((e) => e.result ?? '')
-      if (!results.some((r) => r.includes('from-scout')) || !results.some((r) => /<task id="ses_/.test(r)))
-        failures.push(`task: results ${JSON.stringify(results).slice(0, 300)}\n${out.stdout?.slice(-600)}\n${out.stderr?.slice(-600)}`)
-      rmSync(join(root, 'mock.jsonl'), { force: true })
-    }
-    if (name === 'pi') {
-      // The subagent tool: the parent delegates to scout, whose own session runs the command and answers "done";
-      // meanwhile hud's footer names the running subagent and its model.
-      const m = await mock('echo from-scout', root, { MOCK_SUBAGENT: '1' })
-      const out = await h.rpc(env, cwd, m.port)
-      m.stop()
-      const results = m.entries().map((e) => e.result ?? '')
-      if (!results.some((r) => r.includes('from-scout')) || !results.includes('done'))
-        failures.push(`subagent: results ${JSON.stringify(results).slice(0, 300)}\n${out.stdout?.slice(-600)}\n${out.stderr?.slice(-600)}`)
-      const footer = out.stdout.split('\n').filter((l) => l.includes('"statusKey":"hud"')).map((l) => JSON.parse(l).statusText)
-      if (!footer.some((t) => t.includes('scout · mock'))) failures.push(`hud: no footer with the running subagent: ${JSON.stringify(footer).slice(0, 300)}\n${out.stderr?.slice(-600)}`)
-    }
-  } catch (err) {
-    failures.push(String(err?.message ?? err))
-  } finally {
-    // A harness's background work (Codex's plugin clone) can still be writing here: retry, and never let cleanup fail the run.
+    const h = HARNESSES[name];
+    const exp = EXPECT[name];
+    if (!h || !exp)
+        throw new Error(`Unknown harness: ${name}`);
+    const root = mkdtempSync(join(tmpdir(), `harness-e2e-${name}-`));
+    const failures = [];
     try {
-      rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 })
-    } catch {
-      // a leftover temp dir is harmless
-    }
-  }
-  return failures
-}
-
-const wanted = process.argv.slice(2).length ? process.argv.slice(2) : Object.keys(HARNESSES)
-
-// One child per harness, all at once: their output is buffered and printed as one block each, in the order asked,
-// as soon as that harness and the ones before it are done. A child is done when it exits (its pipes get 2 s to drain):
-// waiting for them to close would hang on any process that kept one. A child that ends without a result line, killed
-// or crashed, gets one.
-async function parallel(names) {
-  const runs = names.map(
-    (name) =>
-      new Promise((resolve) => {
-        const child = spawn(process.execPath, [fileURLToPath(import.meta.url), name], { env: process.env, windowsHide: true })
-        let out = ''
-        let ended = null
-        const done = () => {
-          if (!ended) return
-          const result = ended.code === 0 || out.includes(`✗ ${name}`) ? '' : `✗ ${name}: the run ended ${ended.signal ? `on ${ended.signal}` : `with exit code ${ended.code}`} without a result\n`
-          resolve({ code: ended.code, out: out + result })
+        mkdirSync(join(root, "home"), { recursive: true });
+        const env = h.install(join(root, "home"));
+        const cwd = project(root);
+        for (const [command, expect] of [
+            ["pip install requests", /uses uv/],
+            ["git reset --hard", exp.asked],
+            [
+                "cd . && rm -rf ~/harness-e2e-does-not-exist",
+                /cannot ask|Risky command/,
+            ],
+        ]) {
+            const m = await mock(command, root);
+            const events = join(root, "events.jsonl");
+            const out = h.run(command.startsWith("pip")
+                ? {
+                    ...env,
+                    FACTORY_EVENTS_FILE: events,
+                    GUARD_TRACEPARENT: TRACEPARENT,
+                }
+                : env, cwd, m.port);
+            m.stop();
+            if (command.startsWith("pip")) {
+                const line = existsSync(events)
+                    ? (readFileSync(events, "utf8").trim().split(/\r?\n/)[0] ?? "")
+                    : "";
+                if (!line.includes('"trace_id":"4bf92f3577b34da6a3ce929d0e0e4736","span_id":"00f067aa0ba902b7"'))
+                    failures.push(`trace context: the decision line ${JSON.stringify(line)} carries no trace_id and span_id`);
+            }
+            const entries = m.entries();
+            const result = entries.map((e) => e.result).find((r) => r !== null) ?? "";
+            const seen = expect === exp.asked
+                ? `${result}\n${out.stdout}\n${out.stderr}`
+                : result;
+            if (!expect.test(seen))
+                failures.push(`${command}: tool result ${JSON.stringify(result.slice(0, 200))} does not match ${String(expect)}\n${out.stdout.slice(-600)}\n${out.stderr.slice(-600)}`);
+            if (command.startsWith("pip")) {
+                const prompt = entries.map((e) => e.prompt).join("\n");
+                const missing = [
+                    ...SKILLS.filter((s) => !prompt.includes(exp.skill(s))).map((s) => `skill ${s.name}`),
+                    ...AGENTS.filter((a) => !prompt.includes(exp.agent(a))).map((a) => `agent ${a.name}`),
+                ];
+                if (missing.length)
+                    failures.push(`not in the model prompt: ${missing.join(", ")}`);
+            }
+            rmSync(join(root, "mock.jsonl"), { force: true });
         }
-        child.stdout.on('data', (d) => (out += d))
-        child.stderr.on('data', (d) => (out += d))
-        child.on('error', (err) => ((ended = { code: 1, signal: null }), (out += `✗ ${name}: ${err.message}\n`), done()))
-        child.on('exit', (code, signal) => ((ended = { code, signal }), setTimeout(done, 2000)))
-        child.on('close', done)
-      }),
-  )
-  let failed = false
-  for (const run of runs) {
-    const { code, out } = await run
-    process.stdout.write(out)
-    failed ||= code !== 0
-  }
-  return failed
+        {
+            const m = await mock("echo hello", root, exp.invokeMock);
+            const out = h.run(env, cwd, m.port, exp.invoke("wt", ARG));
+            m.stop();
+            const prompt = m
+                .entries()
+                .map((e) => e.prompt)
+                .join("\n");
+            const seen = {
+                body: prompt.includes(WT_BODY),
+                arg: prompt.includes(ARG),
+                literal: prompt.includes("$ARGUMENTS"),
+            };
+            if (!seen.body || !seen.arg || seen.literal === exp.substitutes)
+                failures.push(`skill argument: ${JSON.stringify(seen)}\n${out.stdout.slice(-600)}\n${out.stderr.slice(-600)}`);
+            if (prompt.includes("Harness plugins updated"))
+                failures.push(`stale: a note without an update\n${prompt.slice(prompt.indexOf("Harness plugins updated"), prompt.indexOf("Harness plugins updated") + 200)}`);
+            rmSync(join(root, "mock.jsonl"), { force: true });
+        }
+        if (name !== "opencode") {
+            const dir = join(root, "gateproj");
+            mkdirSync(dir, { recursive: true });
+            sh("git", ["init", "-q", dir]);
+            const m = await mock("echo hi", root);
+            const out = h.run({
+                ...env,
+                FACTORY_RUN_ID: `e2e-${name}`,
+                FACTORY_TICKET: "acme/app#12",
+            }, dir, m.port);
+            m.stop();
+            if (!m
+                .entries()
+                .some((e) => e.prompt.includes("Factory result gate (block 1 of 2)")))
+                failures.push(`result gate: the block did not reach the model\n${out.stdout.slice(-600)}\n${out.stderr.slice(-600)}`);
+            rmSync(join(root, "mock.jsonl"), { force: true });
+        }
+        if (name === "codex" &&
+            !readdirSync(join(root, "home"), { recursive: true }).some((f) => /sounds-codex-.*\.json$/.test(String(f))))
+            failures.push("sounds: the Stop hook left no state");
+        if (name === "codex")
+            failures.push(...(await codexOnly(h, env, root)));
+        if (name === "opencode") {
+            const configHome = env.XDG_CONFIG_HOME ?? "";
+            const tui = JSON.parse(readFileSync(join(configHome, "opencode", "tui.json"), "utf8"));
+            const plugin = (tui.plugin ?? []).find((p) => p.endsWith("/plugins/hud/hooks/opencode-tui.mjs"));
+            if (!plugin || !existsSync(new URL(plugin)))
+                failures.push(`hud: tui.json lists no TUI plugin: ${JSON.stringify(tui)}`);
+            const m = await mock("echo from-scout", root, { MOCK_SUBAGENT: "1" });
+            const out = h.run(env, cwd, m.port);
+            m.stop();
+            const results = m.entries().map((e) => e.result ?? "");
+            if (!results.some((r) => r.includes("from-scout")) ||
+                !results.some((r) => r.includes('<task id="ses_'))) {
+                failures.push(`task: results ${JSON.stringify(results).slice(0, 300)}\n${out.stdout.slice(-600)}\n${out.stderr.slice(-600)}`);
+            }
+            rmSync(join(root, "mock.jsonl"), { force: true });
+        }
+        if (name === "pi" && h.rpc) {
+            const m = await mock("echo from-scout", root, { MOCK_SUBAGENT: "1" });
+            const out = await h.rpc(env, cwd, m.port);
+            m.stop();
+            const results = m.entries().map((e) => e.result ?? "");
+            if (!results.some((r) => r.includes("from-scout")) ||
+                !results.includes("done")) {
+                failures.push(`subagent: results ${JSON.stringify(results).slice(0, 300)}\n${out.stdout.slice(-600)}\n${out.stderr.slice(-600)}`);
+            }
+            const footer = out.stdout
+                .split("\n")
+                .filter((l) => l.includes('"statusKey":"hud"'))
+                .map((l) => JSON.parse(l).statusText);
+            if (!footer.some((t) => t.includes("scout · mock")))
+                failures.push(`hud: no footer with the running subagent: ${JSON.stringify(footer).slice(0, 300)}\n${out.stderr.slice(-600)}`);
+        }
+    }
+    catch (err) {
+        failures.push(String(err.message ?? err));
+    }
+    finally {
+        try {
+            rmSync(root, {
+                recursive: true,
+                force: true,
+                maxRetries: 5,
+                retryDelay: 500,
+            });
+        }
+        catch {
+            // a leftover temp dir is harmless
+        }
+    }
+    return failures;
 }
-
+const wanted = process.argv.slice(2).length
+    ? process.argv.slice(2)
+    : Object.keys(HARNESSES);
+async function parallel(names) {
+    const runs = names.map((name) => new Promise((resolve) => {
+        const child = spawn(process.execPath, [fileURLToPath(import.meta.url), name], { env: process.env, windowsHide: true });
+        let out = "";
+        let ended = null;
+        const done = () => {
+            if (!ended)
+                return;
+            const result = ended.code === 0 || out.includes(`✗ ${name}`)
+                ? ""
+                : `✗ ${name}: the run ended ${ended.signal ? `on ${ended.signal}` : `with exit code ${String(ended.code)}`} without a result\n`;
+            resolve({ code: ended.code, out: out + result });
+        };
+        child.stdout.on("data", (d) => {
+            out += d.toString("utf8");
+        });
+        child.stderr.on("data", (d) => {
+            out += d.toString("utf8");
+        });
+        child.on("error", (err) => {
+            ended = { code: 1, signal: null };
+            out += `✗ ${name}: ${err.message}\n`;
+            done();
+        });
+        child.on("exit", (code, signal) => {
+            ended = { code, signal };
+            setTimeout(done, 2000);
+        });
+        child.on("close", done);
+    }));
+    let failed = false;
+    for (const run of runs) {
+        const { code, out } = await run;
+        process.stdout.write(out);
+        failed = failed || code !== 0;
+    }
+    return failed;
+}
 async function single(name) {
-  if (!has(name)) {
-    // CI sets E2E_REQUIRE=1: there a missing CLI is a failed install, not a skip.
-    console.log(`${process.env.E2E_REQUIRE ? '✗' : '-'} ${name}: CLI not installed`)
-    return Boolean(process.env.E2E_REQUIRE)
-  }
-  const failures = await check(name)
-  console.log(failures.length ? `✗ ${name}\n  ${failures.join('\n  ')}` : `✓ ${name}`)
-  return failures.length > 0
+    if (!has(name)) {
+        console.log(`${process.env.E2E_REQUIRE ? "✗" : "-"} ${name}: CLI not installed`);
+        return Boolean(process.env.E2E_REQUIRE);
+    }
+    const failures = await check(name);
+    console.log(failures.length ? `✗ ${name}\n  ${failures.join("\n  ")}` : `✓ ${name}`);
+    return failures.length > 0;
 }
-
-// The parent only waits on its children, so it ends by itself once its buffered output is written; a harness run
-// can leave a handle open (a background clone), so a single run exits explicitly.
-if (wanted.length > 1) process.exitCode = (await parallel(wanted)) ? 1 : 0
-else process.exit((await single(wanted[0])) ? 1 : 0)
+if (wanted.length > 1) {
+    process.exitCode = (await parallel(wanted)) ? 1 : 0;
+}
+else {
+    const target = wanted[0];
+    if (target) {
+        process.exit((await single(target)) ? 1 : 0);
+    }
+}

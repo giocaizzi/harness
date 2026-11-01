@@ -3,6 +3,7 @@
 // owners, every authenticated host). A repo with a failed or truncated query is counted as partial, never read as zeros. Aggregates only; --repos adds a per-repo table for local reading. Runbook: docs/agent-review.md.
 import { fileURLToPath } from "node:url";
 import { parseRange, ghRunner, hosts, type GhRunner } from "./pr-graph.mjs";
+export type { GhRunner };
 
 const DAY = 86400000;
 const SKIPPED =
@@ -470,7 +471,7 @@ export async function sampleWaits(
   host: string,
   repo: string,
   runs: WorkflowRunRecord[],
-  tally: Record<string, number>,
+  tally: Record<string, number> = {},
 ): Promise<number[]> {
   const picked = runs
     .filter((r) => isDone(r) && SAMPLE_EVENTS.has(r.event))
@@ -511,7 +512,7 @@ export async function countFlakes(
   host: string,
   repo: string,
   runs: WorkflowRunRecord[],
-  tally: Record<string, number>,
+  tally: Record<string, number> = {},
 ): Promise<number> {
   const reruns = runs.filter(
     (r) => isDone(r) && r.run_attempt > 1 && r.conclusion === "success",
@@ -1057,7 +1058,7 @@ export interface WorkflowAudit {
 
 export function auditWorkflows(
   files: WorkflowFile[],
-  hasQueue: boolean,
+  hasQueue = false,
 ): WorkflowAudit {
   const a: WorkflowAudit = {
     workflows: files.length,

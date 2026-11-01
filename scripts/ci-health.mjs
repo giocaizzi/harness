@@ -300,7 +300,7 @@ const mergedCount = async (runner, host, repo, from, to) => {
 };
 const isDone = (r) => r.status === "completed";
 // Queue wait of sampled jobs: the most recent completed PR / merge-group runs, started_at - created_at per non-skipped job.
-export async function sampleWaits(runner, host, repo, runs, tally) {
+export async function sampleWaits(runner, host, repo, runs, tally = {}) {
     const picked = runs
         .filter((r) => isDone(r) && SAMPLE_EVENTS.has(r.event))
         .sort((a, b) => b.created_at.localeCompare(a.created_at))
@@ -320,7 +320,7 @@ export async function sampleWaits(runner, host, repo, runs, tally) {
     return waits;
 }
 // Flake proxy: a run that passed on a re-run whose previous attempt (same head SHA) failed.
-export async function countFlakes(runner, host, repo, runs, tally) {
+export async function countFlakes(runner, host, repo, runs, tally = {}) {
     const reruns = runs.filter((r) => isDone(r) && r.run_attempt > 1 && r.conclusion === "success");
     const prior = await Promise.all(reruns.map((r) => attempt(async () => {
         const raw = await runner(gh(host, `repos/${repo}/actions/runs/${String(r.id)}/attempts/${String(r.run_attempt - 1)}`));
@@ -661,7 +661,7 @@ function jobsOf(lines) {
         };
     });
 }
-export function auditWorkflows(files, hasQueue) {
+export function auditWorkflows(files, hasQueue = false) {
     const a = {
         workflows: files.length,
         concurrency: 0,

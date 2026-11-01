@@ -1,331 +1,677 @@
 // A change run's unit brief and result: the checkers, their fixtures, and agreement with references/change.md.
-import { test } from 'node:test'
-import assert from 'node:assert/strict'
-import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
-import { fileURLToPath, pathToFileURL } from 'node:url'
-import { gitEnv, originRepo } from './factory-git-lib.mjs'
-
-const repo = join(dirname(fileURLToPath(import.meta.url)), '..')
-const read = (rel) => readFileSync(join(repo, rel), 'utf8')
-const SCRIPTS = join(repo, 'plugins/factory/skills/ticket-run/scripts')
-const FIXTURES = join(repo, 'tests/fixtures/factory/change')
-const CHECK_CHANGE = join(SCRIPTS, 'check-change.mjs')
-const WRITE = join(SCRIPTS, 'write-result.mjs')
-const changeMod = () => import(pathToFileURL(CHECK_CHANGE).href)
-const resultMod = () => import(pathToFileURL(join(SCRIPTS, 'check-result.mjs')).href)
-const fixture = (name) => JSON.parse(readFileSync(join(FIXTURES, name), 'utf8'))
-const fixtures = (prefix) => readdirSync(FIXTURES).filter((f) => f.startsWith(prefix) && f.endsWith('.json')).sort()
-const cleanEnv = (env = {}) => ({ ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('FACTORY_'))), ...env })
-
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync, } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { gitEnv, originRepo } from "./factory-git-lib.mjs";
+const repo = join(dirname(fileURLToPath(import.meta.url)), "..");
+const read = (rel) => readFileSync(join(repo, rel), "utf8");
+const SCRIPTS = join(repo, "plugins/factory/skills/ticket-run/scripts");
+const FIXTURES = join(repo, "tests/fixtures/factory/change");
+const CHECK_CHANGE = join(SCRIPTS, "check-change.mjs");
+const WRITE = join(SCRIPTS, "write-result.mjs");
+const changeMod = async () => (await import(pathToFileURL(CHECK_CHANGE).href));
+const resultMod = async () => (await import(pathToFileURL(join(SCRIPTS, "check-result.mjs")).href));
+const fixture = (name) => JSON.parse(readFileSync(join(FIXTURES, name), "utf8"));
+const fixtures = (prefix) => readdirSync(FIXTURES)
+    .filter((f) => f.startsWith(prefix) && f.endsWith(".json"))
+    .sort();
+const cleanEnv = (env = {}) => {
+    const res = {};
+    for (const [k, v] of Object.entries(process.env)) {
+        if (!k.startsWith("FACTORY_") && v !== undefined)
+            res[k] = v;
+    }
+    return { ...res, ...env };
+};
 const UNIT_EXPECTED = {
-  'unit-invalid-no-approver-item.json': /at least one approver item/,
-  'unit-invalid-check-with-author.json': /author: must be null for a check/,
-  'unit-invalid-attempt-over-cap.json': /attempt: must be an integer from 1 to max_attempts/,
-  'unit-invalid-pr-mismatch.json': /pr: .* is not the change/,
-  'unit-invalid-extra-key.json': /unknown key/,
-  'unit-invalid-duplicate-source.json': /appears twice/,
-  'unit-invalid-issue-is-change.json': /must not include the change/,
-  'unit-invalid-line-without-path.json': /line: needs a path/,
-  'unit-invalid-check-failed-foreign-head.json': /^head_pusher: a check_failed unit needs the factory or approver login that pushed head, or an approver's answer as a comment item$/,
-}
+    "unit-invalid-no-approver-item.json": /at least one approver item/,
+    "unit-invalid-check-with-author.json": /author: must be null for a check/,
+    "unit-invalid-attempt-over-cap.json": /attempt: must be an integer from 1 to max_attempts/,
+    "unit-invalid-pr-mismatch.json": /pr: .* is not the change/,
+    "unit-invalid-extra-key.json": /unknown key/,
+    "unit-invalid-duplicate-source.json": /appears twice/,
+    "unit-invalid-issue-is-change.json": /must not include the change/,
+    "unit-invalid-line-without-path.json": /line: needs a path/,
+    "unit-invalid-check-failed-foreign-head.json": /^head_pusher: a check_failed unit needs the factory or approver login that pushed head, or an approver's answer as a comment item$/,
+};
 const RESULT_EXPECTED = {
-  'result-invalid-cap-without-change.json': /fix_attempts needs change/,
-  'result-invalid-done-not-pushed.json': /done needs a pushed commit/,
-  'result-invalid-attempt-over-cap.json': /is over max_attempts/,
-  'result-invalid-pr-mismatch.json': /pr must be the change's URL/,
-  'result-invalid-issue-is-change.json': /must not include the change/,
-  'result-invalid-bad-trigger.json': /trigger: must be one of/,
-  'result-invalid-cap-not-parked.json': /fix_attempts needs end_state parked/,
-}
-
-test('unit fixtures: valid ones pass, each invalid one fails with its expected error', async () => {
-  const { unitErrors } = await changeMod()
-  const valid = fixtures('unit-valid-')
-  assert.equal(valid.length, 4)
-  for (const f of valid) assert.deepEqual(unitErrors(fixture(f)), [], f)
-  const invalid = fixtures('unit-invalid-')
-  assert.deepEqual(invalid, Object.keys(UNIT_EXPECTED).sort())
-  for (const f of invalid) {
-    const errors = unitErrors(fixture(f))
-    assert.ok(errors.length > 0, f)
-    assert.ok(errors.some((e) => UNIT_EXPECTED[f].test(e)), `${f}: ${errors.join(' | ')}`)
-  }
-  for (const bad of [null, 5, [], 'x']) assert.match(unitErrors(bad)[0], /must be a JSON object/)
-})
-
-test('result fixtures: valid ones pass resultErrors, each invalid one fails with its expected error', async () => {
-  const { resultErrors } = await resultMod()
-  const valid = fixtures('result-valid-')
-  assert.equal(valid.length, 4)
-  for (const f of valid) assert.deepEqual(resultErrors(fixture(f), {}), [], f)
-  const invalid = fixtures('result-invalid-')
-  assert.deepEqual(invalid, Object.keys(RESULT_EXPECTED).sort())
-  for (const f of invalid) {
-    const errors = resultErrors(fixture(f), {})
-    assert.ok(errors.some((e) => RESULT_EXPECTED[f].test(e)), `${f}: ${errors.join(' | ')}`)
-  }
-})
-
-const clone = (v) => structuredClone(v)
-const H40 = 'c'.repeat(40)
-// [name, base fixture, mutate(deep copy), expected error; alone: false when the mutation also trips a neighbouring rule]
+    "result-invalid-cap-without-change.json": /fix_attempts needs change/,
+    "result-invalid-done-not-pushed.json": /done needs a pushed commit/,
+    "result-invalid-attempt-over-cap.json": /is over max_attempts/,
+    "result-invalid-pr-mismatch.json": /pr must be the change's URL/,
+    "result-invalid-issue-is-change.json": /must not include the change/,
+    "result-invalid-bad-trigger.json": /trigger: must be one of/,
+    "result-invalid-cap-not-parked.json": /fix_attempts needs end_state parked/,
+};
+void test("unit fixtures: valid ones pass, each invalid one fails with its expected error", async () => {
+    const { unitErrors } = await changeMod();
+    const valid = fixtures("unit-valid-");
+    assert.equal(valid.length, 4);
+    for (const f of valid)
+        assert.deepEqual(unitErrors(fixture(f)), [], f);
+    const invalid = fixtures("unit-invalid-");
+    assert.deepEqual(invalid, Object.keys(UNIT_EXPECTED).sort());
+    for (const f of invalid) {
+        const errors = unitErrors(fixture(f));
+        assert.ok(errors.length > 0, f);
+        const expected = UNIT_EXPECTED[f];
+        assert.ok(expected !== undefined);
+        assert.ok(errors.some((e) => expected.test(e)), `${f}: ${errors.join(" | ")}`);
+    }
+    for (const bad of [null, 5, [], "x"]) {
+        assert.match(unitErrors(bad)[0] ?? "", /must be a JSON object/);
+    }
+});
+void test("result fixtures: valid ones pass resultErrors, each invalid one fails with its expected error", async () => {
+    const { resultErrors } = await resultMod();
+    const valid = fixtures("result-valid-");
+    assert.equal(valid.length, 4);
+    for (const f of valid)
+        assert.deepEqual(resultErrors(fixture(f), {}), [], f);
+    const invalid = fixtures("result-invalid-");
+    assert.deepEqual(invalid, Object.keys(RESULT_EXPECTED).sort());
+    for (const f of invalid) {
+        const errors = resultErrors(fixture(f), {});
+        const expected = RESULT_EXPECTED[f];
+        assert.ok(expected !== undefined);
+        assert.ok(errors.some((e) => expected.test(e)), `${f}: ${errors.join(" | ")}`);
+    }
+});
+const clone = (v) => structuredClone(v);
+const H40 = "c".repeat(40);
 const RESULT_MUTATIONS = [
-  ['fix_attempts attempt != max + 1', 'result-valid-fix-parked-cap.json', (r) => { r.change.attempt = 3 }, /must be max_attempts \+ 1/],
-  ['fix_attempts with pushed', 'result-valid-fix-parked-cap.json', (r) => { r.change.pushed = H40 }, /must be null for fix_attempts/],
-  ['done with pushed === head', 'result-valid-fix-done.json', (r) => { r.change.pushed = r.change.head }, /needs a pushed commit different from head/],
-  ['head not 40-hex', 'result-valid-fix-done.json', (r) => { r.change.head = 'abc123' }, /change\.head: must be 40 lowercase hex/],
-  ['pushed uppercase', 'result-valid-fix-done.json', (r) => { r.change.pushed = 'B'.repeat(40) }, /change\.pushed: must be 40 lowercase hex or null/],
-  ['pushed short', 'result-valid-fix-done.json', (r) => { r.change.pushed = 'b1b1' }, /change\.pushed: must be 40 lowercase hex or null/],
-  ['tasks key present', 'result-valid-fix-done.json', (r) => { r.tasks = [] }, /a change run has no tasks/, false],
-  ['51 sources', 'result-valid-fix-done.json', (r) => { r.change.sources = Array.from({ length: 51 }, (_, i) => `https://github.com/acme/app/pull/14#issuecomment-${i}`) }, /change\.sources: must be 1 to 50/],
-  ['pr is the ticket but change missing', 'result-valid-fix-done.json', (r) => { delete r.change }, /pr is the ticket itself/],
-  ['pr is the ticket but change null', 'result-valid-fix-done.json', (r) => { r.change = null }, /pr is the ticket itself/],
-  ['gate and plan but change missing', 'result-valid-gate-stop.json', (r) => { r.phases.push({ name: 'plan', started_at: null, ended_at: null }) }, /pr is the ticket itself/],
-  ['gate alone but done, change missing', 'result-valid-gate-stop.json', (r) => { Object.assign(r, { end_state: 'done', reason: '', reason_code: null }) }, /pr is the ticket itself/],
-  ['issues include the ticket ignoring case', 'result-valid-fix-done.json', (r) => { r.change.issues = ['ACME/APP#14'] }, /must not include the change/],
-  ['issues duplicated ignoring case', 'result-valid-fix-done.json', (r) => { r.change.issues = ['acme/app#12', 'ACME/APP#12'] }, /change\.issues: must be a non-empty array of unique/],
-]
+    [
+        "fix_attempts attempt != max + 1",
+        "result-valid-fix-parked-cap.json",
+        (r) => {
+            if (r.change)
+                r.change.attempt = 3;
+        },
+        /must be max_attempts \+ 1/,
+    ],
+    [
+        "fix_attempts with pushed",
+        "result-valid-fix-parked-cap.json",
+        (r) => {
+            if (r.change)
+                r.change.pushed = H40;
+        },
+        /must be null for fix_attempts/,
+    ],
+    [
+        "done with pushed === head",
+        "result-valid-fix-done.json",
+        (r) => {
+            if (r.change)
+                r.change.pushed = r.change.head;
+        },
+        /needs a pushed commit different from head/,
+    ],
+    [
+        "head not 40-hex",
+        "result-valid-fix-done.json",
+        (r) => {
+            if (r.change)
+                r.change.head = "abc123";
+        },
+        /change\.head: must be 40 lowercase hex/,
+    ],
+    [
+        "pushed uppercase",
+        "result-valid-fix-done.json",
+        (r) => {
+            if (r.change)
+                r.change.pushed = "B".repeat(40);
+        },
+        /change\.pushed: must be 40 lowercase hex or null/,
+    ],
+    [
+        "pushed short",
+        "result-valid-fix-done.json",
+        (r) => {
+            if (r.change)
+                r.change.pushed = "b1b1";
+        },
+        /change\.pushed: must be 40 lowercase hex or null/,
+    ],
+    [
+        "tasks key present",
+        "result-valid-fix-done.json",
+        (r) => {
+            r.tasks = [];
+        },
+        /a change run has no tasks/,
+        false,
+    ],
+    [
+        "51 sources",
+        "result-valid-fix-done.json",
+        (r) => {
+            if (r.change)
+                r.change.sources = Array.from({ length: 51 }, (_, i) => `https://github.com/acme/app/pull/14#issuecomment-${String(i)}`);
+        },
+        /change\.sources: must be 1 to 50/,
+    ],
+    [
+        "pr is the ticket but change missing",
+        "result-valid-fix-done.json",
+        (r) => {
+            delete r.change;
+        },
+        /pr is the ticket itself/,
+    ],
+    [
+        "pr is the ticket but change null",
+        "result-valid-fix-done.json",
+        (r) => {
+            r.change = null;
+        },
+        /pr is the ticket itself/,
+    ],
+    [
+        "gate and plan but change missing",
+        "result-valid-gate-stop.json",
+        (r) => {
+            r.phases?.push({ name: "plan", started_at: null, ended_at: null });
+        },
+        /pr is the ticket itself/,
+    ],
+    [
+        "gate alone but done, change missing",
+        "result-valid-gate-stop.json",
+        (r) => {
+            Object.assign(r, { end_state: "done", reason: "", reason_code: null });
+        },
+        /pr is the ticket itself/,
+    ],
+    [
+        "issues include the ticket ignoring case",
+        "result-valid-fix-done.json",
+        (r) => {
+            if (r.change)
+                r.change.issues = ["ACME/APP#14"];
+        },
+        /must not include the change/,
+    ],
+    [
+        "issues duplicated ignoring case",
+        "result-valid-fix-done.json",
+        (r) => {
+            if (r.change)
+                r.change.issues = ["acme/app#12", "ACME/APP#12"];
+        },
+        /change\.issues: must be a non-empty array of unique/,
+    ],
+];
 const UNIT_MUTATIONS = [
-  ['branch with ..', 'unit-valid-changes-requested.json', (u) => { u.branch = 'a..b' }, /branch: must be one plain ref name/],
-  ['branch starting with -', 'unit-valid-changes-requested.json', (u) => { u.branch = '-x' }, /branch: must be one plain ref name/],
-  ['head not 40-hex', 'unit-valid-changes-requested.json', (u) => { u.head = 'AAAA' }, /head: must be 40 lowercase hex/],
-  ['kind not in enum', 'unit-valid-mention.json', (u) => { u.items[0].kind = 'reaction' }, /kind: must be one of/, false],
-  ['role not in enum', 'unit-valid-mention.json', (u) => { u.items[0].role = 'owner' }, /role: must be one of/, false],
-  ['source http://', 'unit-valid-mention.json', (u) => { u.items[0].source = 'http://github.com/acme/app/pull/14#issuecomment-1' }, /source: must be an https:\/\/ URL/],
-  ['check_failed without a check item', 'unit-valid-check-failed.json', (u) => { u.trigger = 'check_failed'; u.items = [{ source: 'https://github.com/acme/app/pull/14#issuecomment-9', kind: 'comment', author: 'a', role: 'approver', path: null, line: null, text: 'x' }] }, /a check_failed unit needs at least one check item/],
-  ['trigger not in enum', 'unit-valid-changes-requested.json', (u) => { u.trigger = 'push' }, /trigger: must be one of/, false],
-  ['version 1', 'unit-valid-changes-requested.json', (u) => { u.version = 1 }, /version: must be 2/],
-  ['head_pusher missing', 'unit-valid-check-failed.json', (u) => { delete u.head_pusher }, /head_pusher: missing/],
-  ['head_pusher on another trigger', 'unit-valid-changes-requested.json', (u) => { u.head_pusher = 'owner-a' }, /head_pusher: must be null unless trigger is check_failed/],
-  ['head_pusher empty', 'unit-valid-check-failed.json', (u) => { u.head_pusher = '' }, /head_pusher: must be a login or null/],
-  ['head_pusher not a string', 'unit-valid-check-failed.json', (u) => { u.head_pusher = 7 }, /head_pusher: must be a login or null/],
-  ['foreign head allowed by a reviewer comment', 'unit-valid-check-failed-answered.json', (u) => { u.items[1].role = 'reviewer' }, /head_pusher: a check_failed unit needs/],
-  ['foreign head allowed by an approver review, not an answer', 'unit-valid-check-failed-answered.json', (u) => { u.items[1].kind = 'review' }, /head_pusher: a check_failed unit needs/],
-  ['issues include the change ignoring case', 'unit-valid-changes-requested.json', (u) => { u.issues = ['ACME/APP#14'] }, /must not include the change/],
-  ['issues duplicated ignoring case', 'unit-valid-changes-requested.json', (u) => { u.issues = ['acme/app#12', 'ACME/APP#12'] }, /issues: must be a non-empty array of unique/],
-  ['comment item with path and line', 'unit-valid-changes-requested.json', (u) => { Object.assign(u.items[2], { path: 'x.js', line: 3 }) }, /path and line must be null unless kind is review_comment/],
-  ['review item with path', 'unit-valid-changes-requested.json', (u) => { u.items[0].path = 'x.js' }, /path and line must be null unless kind is review_comment/],
-]
-
-test('result mutations: each broken rule fails with its own error, the base fixtures stay valid', async () => {
-  const { resultErrors } = await resultMod()
-  for (const base of new Set(RESULT_MUTATIONS.map((m) => m[1]))) assert.deepEqual(resultErrors(fixture(base), {}), [], base)
-  assert.deepEqual(resultErrors(fixture('result-valid-issue-run.json'), {}), [])
-  for (const [name, base, mutate, want, alone = true] of RESULT_MUTATIONS) {
-    const result = clone(fixture(base))
-    mutate(result)
-    const errors = resultErrors(result, {})
-    assert.ok(errors.some((e) => want.test(e)), `${name}: ${errors.join(' | ')}`)
-    if (alone) assert.equal(errors.length, 1, `${name}: ${errors.join(' | ')}`)
-  }
-})
-
-test('unit mutations: each broken rule fails with its own error, the base fixtures stay valid', async () => {
-  const { unitErrors } = await changeMod()
-  for (const base of new Set(UNIT_MUTATIONS.map((m) => m[1]))) assert.deepEqual(unitErrors(fixture(base)), [], base)
-  for (const [name, base, mutate, want, alone = true] of UNIT_MUTATIONS) {
-    const unit = clone(fixture(base))
-    mutate(unit)
-    const errors = unitErrors(unit)
-    assert.ok(errors.some((e) => want.test(e)), `${name}: ${errors.join(' | ')}`)
-    if (alone) assert.equal(errors.length, 1, `${name}: ${errors.join(' | ')}`)
-  }
-})
-
-test('unit: item text is capped at 4000 characters, items at 50', async () => {
-  const { unitErrors, MAX_TEXT, MAX_ITEMS } = await changeMod()
-  const unit = fixture('unit-valid-mention.json')
-  const item = unit.items[0]
-  assert.deepEqual(unitErrors({ ...unit, items: [{ ...item, text: 'x'.repeat(MAX_TEXT) }] }), [])
-  assert.match(unitErrors({ ...unit, items: [{ ...item, text: 'x'.repeat(MAX_TEXT + 1) }] })[0], /at most 4000/)
-  const items = (n) => Array.from({ length: n }, (_, i) => ({ ...item, source: `${item.source}-${i}` }))
-  assert.deepEqual(unitErrors({ ...unit, items: items(MAX_ITEMS) }), [])
-  assert.match(unitErrors({ ...unit, items: items(MAX_ITEMS + 1) })[0], /items: must be an array of 1 to 50/)
-})
-
+    [
+        "branch with ..",
+        "unit-valid-changes-requested.json",
+        (u) => {
+            u.branch = "a..b";
+        },
+        /branch: must be one plain ref name/,
+    ],
+    [
+        "branch starting with -",
+        "unit-valid-changes-requested.json",
+        (u) => {
+            u.branch = "-x";
+        },
+        /branch: must be one plain ref name/,
+    ],
+    [
+        "head not 40-hex",
+        "unit-valid-changes-requested.json",
+        (u) => {
+            u.head = "AAAA";
+        },
+        /head: must be 40 lowercase hex/,
+    ],
+    [
+        "kind not in enum",
+        "unit-valid-mention.json",
+        (u) => {
+            if (u.items?.[0])
+                u.items[0].kind = "reaction";
+        },
+        /kind: must be one of/,
+        false,
+    ],
+    [
+        "role not in enum",
+        "unit-valid-mention.json",
+        (u) => {
+            if (u.items?.[0])
+                u.items[0].role = "owner";
+        },
+        /role: must be one of/,
+        false,
+    ],
+    [
+        "source http://",
+        "unit-valid-mention.json",
+        (u) => {
+            if (u.items?.[0])
+                u.items[0].source = "http://github.com/acme/app/pull/14#issuecomment-1";
+        },
+        /source: must be an https:\/\/ URL/,
+    ],
+    [
+        "check_failed without a check item",
+        "unit-valid-check-failed.json",
+        (u) => {
+            u.trigger = "check_failed";
+            u.items = [
+                {
+                    source: "https://github.com/acme/app/pull/14#issuecomment-9",
+                    kind: "comment",
+                    author: "a",
+                    role: "approver",
+                    path: null,
+                    line: null,
+                    text: "x",
+                },
+            ];
+        },
+        /a check_failed unit needs at least one check item/,
+    ],
+    [
+        "trigger not in enum",
+        "unit-valid-changes-requested.json",
+        (u) => {
+            u.trigger = "push";
+        },
+        /trigger: must be one of/,
+        false,
+    ],
+    [
+        "version 1",
+        "unit-valid-changes-requested.json",
+        (u) => {
+            u.version = 1;
+        },
+        /version: must be 2/,
+    ],
+    [
+        "head_pusher missing",
+        "unit-valid-check-failed.json",
+        (u) => {
+            delete u.head_pusher;
+        },
+        /head_pusher: missing/,
+    ],
+    [
+        "head_pusher on another trigger",
+        "unit-valid-changes-requested.json",
+        (u) => {
+            u.head_pusher = "owner-a";
+        },
+        /head_pusher: must be null unless trigger is check_failed/,
+    ],
+    [
+        "head_pusher empty",
+        "unit-valid-check-failed.json",
+        (u) => {
+            u.head_pusher = "";
+        },
+        /head_pusher: must be a login or null/,
+    ],
+    [
+        "head_pusher not a string",
+        "unit-valid-check-failed.json",
+        (u) => {
+            u.head_pusher = 7;
+        },
+        /head_pusher: must be a login or null/,
+    ],
+    [
+        "foreign head allowed by a reviewer comment",
+        "unit-valid-check-failed-answered.json",
+        (u) => {
+            if (u.items?.[1])
+                u.items[1].role = "reviewer";
+        },
+        /head_pusher: a check_failed unit needs/,
+    ],
+    [
+        "foreign head allowed by an approver review, not an answer",
+        "unit-valid-check-failed-answered.json",
+        (u) => {
+            if (u.items?.[1])
+                u.items[1].kind = "review";
+        },
+        /head_pusher: a check_failed unit needs/,
+    ],
+    [
+        "issues include the change ignoring case",
+        "unit-valid-changes-requested.json",
+        (u) => {
+            u.issues = ["ACME/APP#14"];
+        },
+        /must not include the change/,
+    ],
+    [
+        "issues duplicated ignoring case",
+        "unit-valid-changes-requested.json",
+        (u) => {
+            u.issues = ["acme/app#12", "ACME/APP#12"];
+        },
+        /issues: must be a non-empty array of unique/,
+    ],
+    [
+        "comment item with path and line",
+        "unit-valid-changes-requested.json",
+        (u) => {
+            if (u.items?.[2])
+                Object.assign(u.items[2], { path: "x.js", line: 3 });
+        },
+        /path and line must be null unless kind is review_comment/,
+    ],
+    [
+        "review item with path",
+        "unit-valid-changes-requested.json",
+        (u) => {
+            if (u.items?.[0])
+                u.items[0].path = "x.js";
+        },
+        /path and line must be null unless kind is review_comment/,
+    ],
+];
+void test("result mutations: each broken rule fails with its own error, the base fixtures stay valid", async () => {
+    const { resultErrors } = await resultMod();
+    for (const base of new Set(RESULT_MUTATIONS.map((m) => m[1]))) {
+        assert.deepEqual(resultErrors(fixture(base), {}), [], base);
+    }
+    assert.deepEqual(resultErrors(fixture("result-valid-issue-run.json"), {}), []);
+    for (const [name, base, mutate, want, alone = true] of RESULT_MUTATIONS) {
+        const result = clone(fixture(base));
+        mutate(result);
+        const errors = resultErrors(result, {});
+        assert.ok(errors.some((e) => want.test(e)), `${name}: ${errors.join(" | ")}`);
+        if (alone)
+            assert.equal(errors.length, 1, `${name}: ${errors.join(" | ")}`);
+    }
+});
+void test("unit mutations: each broken rule fails with its own error, the base fixtures stay valid", async () => {
+    const { unitErrors } = await changeMod();
+    for (const base of new Set(UNIT_MUTATIONS.map((m) => m[1]))) {
+        assert.deepEqual(unitErrors(fixture(base)), [], base);
+    }
+    for (const [name, base, mutate, want, alone = true] of UNIT_MUTATIONS) {
+        const unit = clone(fixture(base));
+        mutate(unit);
+        const errors = unitErrors(unit);
+        assert.ok(errors.some((e) => want.test(e)), `${name}: ${errors.join(" | ")}`);
+        if (alone)
+            assert.equal(errors.length, 1, `${name}: ${errors.join(" | ")}`);
+    }
+});
+void test("unit: item text is capped at 4000 characters, items at 50", async () => {
+    const { unitErrors, MAX_TEXT, MAX_ITEMS } = await changeMod();
+    const unit = fixture("unit-valid-mention.json");
+    const item = unit.items?.[0];
+    assert.ok(item);
+    assert.deepEqual(unitErrors({ ...unit, items: [{ ...item, text: "x".repeat(MAX_TEXT) }] }), []);
+    assert.match(unitErrors({
+        ...unit,
+        items: [{ ...item, text: "x".repeat(MAX_TEXT + 1) }],
+    })[0] ?? "", /at most 4000/);
+    const items = (n) => Array.from({ length: n }, (_, i) => ({
+        ...item,
+        source: `${item.source ?? ""}-${String(i)}`,
+    }));
+    assert.deepEqual(unitErrors({ ...unit, items: items(MAX_ITEMS) }), []);
+    assert.match(unitErrors({ ...unit, items: items(MAX_ITEMS + 1) })[0] ?? "", /items: must be an array of 1 to 50/);
+});
 // The config a change run's default branch commits: the fixtures' approver and factory login, and a cap.
-const cfg = (max = 3, approvers = ['owner-login']) => `version: 1
+const cfg = (max = 3, approvers = ["owner-login"]) => `version: 1
 approvers:
-${approvers.map((a) => `  - ${a}`).join('\n')}
+${approvers.map((a) => `  - ${a}`).join("\n")}
 identity:
   logins:
     - acme-factory[bot]
   mention: "@acme-factory"
 change_requests:
-  max_attempts: ${max}
-`
-
-test('check-change: the CLI exits 0 valid, 1 invalid or missing, 2 without an argument', () => {
-  const repo = originRepo(cfg())
-  const run = (...a) => spawnSync(process.execPath, [CHECK_CHANGE, ...a], { cwd: repo.work, encoding: 'utf8', env: gitEnv() })
-  for (const f of fixtures('unit-valid-')) assert.equal(run(join(FIXTURES, f)).status, 0, `${f}: ${run(join(FIXTURES, f)).stderr}`)
-  const bad = run(join(FIXTURES, 'unit-invalid-extra-key.json'))
-  assert.equal(bad.status, 1)
-  assert.match(bad.stderr, /unknown key/)
-  const missing = run(join(FIXTURES, 'none.json'))
-  assert.equal(missing.status, 1)
-  assert.match(missing.stderr, /none\.json: no such file/)
-  const run2 = run()
-  assert.equal(run2.status, 2)
-  assert.match(run2.stderr, /usage:/)
-  repo.done()
-})
-
-const unitFile = (dir, over = {}, base = 'unit-valid-changes-requested.json') => {
-  const f = join(dir, `unit-${Object.keys(over).join('-') || 'base'}-${Math.random().toString(36).slice(2)}.json`)
-  writeFileSync(f, JSON.stringify({ ...fixture(base), ...over }))
-  return f
-}
-const cliIn = (cwd, file) => spawnSync(process.execPath, [CHECK_CHANGE, file], { cwd, encoding: 'utf8', env: gitEnv() })
-
-test('check-change: max_attempts is the cap committed on the default branch, never the checkout copy', async () => {
-  const { parseCap, committedCap, capErrors, DEFAULT_MAX_ATTEMPTS } = await changeMod()
-  assert.equal(DEFAULT_MAX_ATTEMPTS, 3)
-  assert.equal(parseCap('version: 1\n'), 3)
-  assert.equal(parseCap('change_requests:\n  max_attempts: 2 # fewer\nlabels:\n  approval: agent-ok\n'), 2)
-  assert.equal(parseCap('change_requests:\n  # none\nlabels:\n  max_attempts: 9\n'), 3)
-  for (const bad of ['change_requests: {max_attempts: 9}\n', 'change_requests:\n  max_attempts: "9"\n', 'change_requests:\n  max_attempts: 0\n', 'change_requests:\n  max_attempts: lots\n']) assert.throws(() => parseCap(bad), bad)
-  // A remote that names no default branch, or a git that fails: the check fails, never a cap the run picks.
-  assert.throws(() => committedCap(() => { throw Object.assign(new Error('git failed'), { stderr: 'fatal: no origin' }) }))
-  assert.throws(() => committedCap(() => ''), /named no default branch/)
-  assert.throws(() => committedCap((a) => (a[0] === 'ls-remote' ? `${'a'.repeat(40)}\tHEAD\n` : '')), /named no default branch/)
-  assert.deepEqual(capErrors({ max_attempts: 3 }, 3), [])
-  assert.match(capErrors({ max_attempts: 9 }, 3)[0], /max_attempts: 9 is not the cap committed on the default branch, 3/)
-  const cli = (r, max) => cliIn(r.work, unitFile(r.dir, { max_attempts: max }))
-  const r = originRepo(cfg(3))
-  try {
-    // The change branch raises the cap to 9 and the unit claims 9: refused; the default branch's 3 is the cap.
-    r.git('checkout', '-q', '-b', 'factory/12-change')
-    r.put(cfg(9), 'raise the cap')
-    const raised = r.git('rev-parse', 'HEAD:.factory/config.yaml')
-    const committed = r.git('rev-parse', 'origin/main:.factory/config.yaml')
-    assert.equal(cli(r, 3).status, 0, cli(r, 3).stderr)
-    const refused = cli(r, 9)
-    assert.equal(refused.status, 1)
-    assert.match(refused.stderr, /max_attempts: 9 is not the cap committed on the default branch, 3/)
-    // Local refs and replace objects cannot redirect it: origin/HEAD, origin/main and the committed blob all point at
-    // the raised config, and the cap is still the remote default branch's 3.
-    r.git('update-ref', 'refs/remotes/origin/evil', 'HEAD')
-    r.git('symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/evil')
-    r.git('update-ref', 'refs/remotes/origin/main', 'HEAD')
-    r.git('replace', committed, raised)
-    assert.match(r.git('show', 'origin/main:.factory/config.yaml'), /max_attempts: 9/)
-    assert.match(cli(r, 9).stderr, /max_attempts: 9 is not the cap committed on the default branch, 3/)
-    assert.equal(cli(r, 3).status, 0)
-    // A cap lowered on the default branch since the last fetch: the check fails closed until the fetch.
-    const other = join(r.dir, 'other')
-    spawnSync('git', ['clone', '-q', r.origin, other], { env: gitEnv() })
-    writeFileSync(join(other, '.factory', 'config.yaml'), cfg(2))
-    for (const a of [['commit', '-qam', 'lower'], ['push', '-q', 'origin', 'main']]) assert.equal(spawnSync('git', a, { cwd: other, env: gitEnv() }).status, 0)
-    const stale = cli(r, 3)
-    assert.equal(stale.status, 1)
-    assert.match(stale.stderr, /config: cannot read \.factory\/config\.yaml committed on the default branch .*is not fetched: run git fetch origin main/)
-    r.git('fetch', '-q', 'origin')
-    assert.match(cli(r, 3).stderr, /max_attempts: 3 is not the cap committed on the default branch, 2/)
-    assert.equal(cli(r, 2).status, 0)
-    // From a subdirectory the same file is read: the committed 2 binds, never a fallback to the default 3.
-    mkdirSync(join(r.work, 'sub', 'deeper'), { recursive: true })
-    const fromSub = cliIn(join(r.work, 'sub', 'deeper'), unitFile(r.dir, { max_attempts: 3 }))
-    assert.match(fromSub.stderr, /max_attempts: 3 is not the cap committed on the default branch, 2/)
-  } finally {
-    r.done()
-  }
-  // No config on the default branch, or no origin at all: fails closed (the roles need the committed config).
-  const none = originRepo(null)
-  assert.match(cli(none, 3).stderr, /config: cannot read \.factory\/config\.yaml committed on the default branch \(no \.factory\/config\.yaml there\)/)
-  none.done()
-  const bare = mkdtempSync(join(tmpdir(), 'cap-none-'))
-  spawnSync('git', ['init', '-q', bare], { env: gitEnv() })
-  const out = cliIn(bare, unitFile(bare, { max_attempts: 3 }))
-  assert.equal(out.status, 1)
-  assert.match(out.stderr, /config: cannot read \.factory\/config\.yaml committed on the default branch .*git fetch origin/)
-  rmSync(bare, { recursive: true, force: true })
-})
-
-test("check-change: approver items and head_pusher are judged by the default branch's config, never the change branch's", async () => {
-  const { roleErrors } = await changeMod()
-  const { parseConfig } = await import(pathToFileURL(join(SCRIPTS, 'gate.mjs')).href)
-  const config = parseConfig(cfg())
-  assert.deepEqual(config.identityLogins, ['acme-factory[bot]'])
-  for (const f of fixtures('unit-valid-')) assert.deepEqual(roleErrors(fixture(f), config), [], f)
-  const cr = fixture('unit-valid-changes-requested.json')
-  const cf = fixture('unit-valid-check-failed.json')
-  const as = (author, role = 'approver') => ({ ...cr, items: cr.items.map((it, i) => (i === 0 ? { ...it, author, role } : it)) })
-  assert.match(roleErrors(as('mallory'), config)[0], /items\[0\]\.author: "mallory" is not an approver in the default branch's config/)
-  assert.deepEqual(roleErrors(as('OWNER-LOGIN'), config), [], 'logins compare ignoring case')
-  assert.match(roleErrors(as('acme-factory[bot]', 'reviewer'), config)[0], /is a factory login .*no item is the factory's own/)
-  assert.match(roleErrors({ ...cf, head_pusher: 'mallory' }, config)[0], /head_pusher: "mallory" is neither an approver nor in identity\.logins/)
-  assert.deepEqual(roleErrors({ ...cf, head_pusher: 'owner-login' }, config), [])
-  // A [bot] approver counts only with approvers_allow_bots.
-  const bots = (allow) => parseConfig(`${cfg(3, ['owner-login', 'helper[bot]'])}approvers_allow_bots: ${allow}\n`)
-  assert.match(roleErrors(as('helper[bot]'), bots(false))[0], /is not an approver/)
-  assert.deepEqual(roleErrors(as('helper[bot]'), bots(true)), [])
-  // identity.logins inline or absent.
-  assert.deepEqual(parseConfig('approvers:\n  - a\nidentity:\n  logins: [x, "y[bot]"]\n').identityLogins, ['x', 'y[bot]'])
-  assert.deepEqual(parseConfig('approvers:\n  - a\n').identityLogins, [])
-  assert.throws(() => parseConfig('approvers:\n  - a\nidentity:\n  logins: x\n'), /identity\.logins must be a list/)
-  // A change branch that adds mallory as an approver: the CLI still refuses mallory's items and pushes.
-  const r = originRepo(cfg())
-  try {
-    r.git('checkout', '-q', '-b', 'factory/12-change')
-    r.put(cfg(3, ['owner-login', 'mallory']), 'add an approver')
-    const item = cliIn(r.work, unitFile(r.dir, { items: as('mallory').items }))
-    assert.equal(item.status, 1)
-    assert.match(item.stderr, /items\[0\]\.author: "mallory" is not an approver/)
-    const pushed = cliIn(r.work, unitFile(r.dir, { head_pusher: 'mallory' }, 'unit-valid-check-failed.json'))
-    assert.equal(pushed.status, 1)
-    assert.match(pushed.stderr, /head_pusher: "mallory" is neither an approver/)
-    assert.equal(cliIn(r.work, unitFile(r.dir, {}, 'unit-valid-check-failed.json')).status, 0)
-  } finally {
-    r.done()
-  }
-})
-
-test('gate.mjs: git never waits on a credential prompt', async () => {
-  const { gitEnv: gateGitEnv } = await import(pathToFileURL(join(SCRIPTS, 'gate.mjs')).href)
-  assert.equal(gateGitEnv({ GIT_TERMINAL_PROMPT: '1' }).GIT_TERMINAL_PROMPT, '0')
-  assert.equal(gateGitEnv({}).GIT_TERMINAL_PROMPT, '0')
-})
-
-test('write-result: a change object lands right after pr; fix_attempts without change is refused', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'write-change-'))
-  const main = join(dir, 'main')
-  spawnSync('git', ['init', '-q', main])
-  assert.equal(spawnSync('git', ['-c', 'user.email=a@example.test', '-c', 'user.name=a', 'commit', '-q', '--allow-empty', '-m', 'init'], { cwd: main }).status, 0)
-  const { change, ticket, run_id, schema, host, finished_at, ...judgment } = fixture('result-valid-fix-done.json')
-  void [ticket, run_id, schema, host, finished_at]
-  const env = { FACTORY_TICKET: 'acme/app#14', FACTORY_RUN_ID: 'rt-14-1' }
-  const write = (input) => spawnSync(process.execPath, [WRITE, '-'], { cwd: main, env: cleanEnv(env), encoding: 'utf8', input: JSON.stringify(input) })
-  const file = join(main, '.factory', 'runs', '14', 'result.json')
-  const out = write({ ...judgment, change })
-  assert.equal(out.status, 0, out.stderr)
-  const keys = Object.keys(JSON.parse(readFileSync(file, 'utf8')))
-  assert.equal(keys[keys.indexOf('pr') + 1], 'change')
-  rmSync(file)
-  const refused = write({ ...judgment, end_state: 'parked', reason: 'cap', reason_code: 'fix_attempts' })
-  assert.equal(refused.status, 1)
-  assert.match(refused.stderr, /fix_attempts needs change/)
-  assert.equal(existsSync(file), false)
-  rmSync(dir, { recursive: true, force: true })
-})
-
-test('change.md agrees with the checkers: unit keys, item keys, triggers; the scripts import only node: modules and check-result', async () => {
-  const { UNIT_KEYS, ITEM_KEYS } = await changeMod()
-  const { CHANGE_TRIGGERS } = await resultMod()
-  const doc = read('plugins/factory/skills/ticket-run/references/change.md')
-  const section = doc.split('## Unit brief')[1].split('\n## ')[0]
-  const [unitTable, itemTable] = section.split('Each item:')
-  const keys = (text) => text.split('\n').filter((l) => l.startsWith('| `')).flatMap((l) => [...l.split('|')[1].matchAll(/`([a-z_]+)`/g)].map((m) => m[1]))
-  assert.deepEqual(keys(unitTable), UNIT_KEYS)
-  assert.deepEqual(keys(itemTable), ITEM_KEYS)
-  const triggers = doc.split('## Triggers')[1].split('\n## ')[0]
-  assert.deepEqual([...triggers.matchAll(/^- \*\*`([a-z_]+)`:\*\*/gm)].map((m) => m[1]), CHANGE_TRIGGERS)
-  for (const f of ['check-change.mjs', 'check-result.mjs']) {
-    const imports = [...read(`plugins/factory/skills/ticket-run/scripts/${f}`).matchAll(/^\s*import\b[^'"]*['"]([^'"]+)['"]/gm)].map((m) => m[1])
-    assert.ok(imports.length > 0)
-    for (const m of imports) assert.ok(m.startsWith('node:') || m === './check-result.mjs' || (f === 'check-change.mjs' && m === './gate.mjs'), `${f} imports ${m}`)
-  }
-})
+  max_attempts: ${String(max)}
+`;
+void test("check-change: the CLI exits 0 valid, 1 invalid or missing, 2 without an argument", () => {
+    const repo = originRepo(cfg());
+    const run = (...a) => spawnSync(process.execPath, [CHECK_CHANGE, ...a], {
+        cwd: repo.work,
+        encoding: "utf8",
+        env: gitEnv(),
+    });
+    for (const f of fixtures("unit-valid-")) {
+        assert.equal(run(join(FIXTURES, f)).status, 0, `${f}: ${run(join(FIXTURES, f)).stderr}`);
+    }
+    const bad = run(join(FIXTURES, "unit-invalid-extra-key.json"));
+    assert.equal(bad.status, 1);
+    assert.match(bad.stderr, /unknown key/);
+    const missing = run(join(FIXTURES, "none.json"));
+    assert.equal(missing.status, 1);
+    assert.match(missing.stderr, /none\.json: no such file/);
+    const run2 = run();
+    assert.equal(run2.status, 2);
+    assert.match(run2.stderr, /usage:/);
+    repo.done();
+});
+const unitFile = (dir, over = {}, base = "unit-valid-changes-requested.json") => {
+    const f = join(dir, `unit-${Object.keys(over).join("-") || "base"}-${Math.random().toString(36).slice(2)}.json`);
+    writeFileSync(f, JSON.stringify({ ...fixture(base), ...over }));
+    return f;
+};
+const cliIn = (cwd, file) => spawnSync(process.execPath, [CHECK_CHANGE, file], {
+    cwd,
+    encoding: "utf8",
+    env: gitEnv(),
+});
+void test("check-change: max_attempts is the cap committed on the default branch, never the checkout copy", async () => {
+    const { parseCap, committedCap, capErrors, DEFAULT_MAX_ATTEMPTS } = await changeMod();
+    assert.equal(DEFAULT_MAX_ATTEMPTS, 3);
+    assert.equal(parseCap("version: 1\n"), 3);
+    assert.equal(parseCap("change_requests:\n  max_attempts: 2 # fewer\nlabels:\n  approval: agent-ok\n"), 2);
+    assert.equal(parseCap("change_requests:\n  # none\nlabels:\n  max_attempts: 9\n"), 3);
+    for (const bad of [
+        "change_requests: {max_attempts: 9}\n",
+        'change_requests:\n  max_attempts: "9"\n',
+        "change_requests:\n  max_attempts: 0\n",
+        "change_requests:\n  max_attempts: lots\n",
+    ]) {
+        assert.throws(() => parseCap(bad), bad);
+    }
+    // A remote that names no default branch, or a git that fails: the check fails, never a cap the run picks.
+    assert.throws(() => committedCap(() => {
+        throw Object.assign(new Error("git failed"), {
+            stderr: "fatal: no origin",
+        });
+    }));
+    assert.throws(() => committedCap(() => ""), /named no default branch/);
+    assert.throws(() => committedCap((...a) => a[0] === "ls-remote" ? `${"a".repeat(40)}\tHEAD\n` : ""), /named no default branch/);
+    assert.deepEqual(capErrors({ max_attempts: 3 }, 3), []);
+    assert.match(capErrors({ max_attempts: 9 }, 3)[0] ?? "", /max_attempts: 9 is not the cap committed on the default branch, 3/);
+    const cli = (r, max) => cliIn(r.work, unitFile(r.dir, { max_attempts: max }));
+    const r = originRepo(cfg(3));
+    try {
+        // The change branch raises the cap to 9 and the unit claims 9: refused; the default branch's 3 is the cap.
+        r.git("checkout", "-q", "-b", "factory/12-change");
+        r.put(cfg(9), "raise the cap");
+        const raised = r.git("rev-parse", "HEAD:.factory/config.yaml");
+        const committed = r.git("rev-parse", "origin/main:.factory/config.yaml");
+        assert.equal(cli(r, 3).status, 0, cli(r, 3).stderr);
+        const refused = cli(r, 9);
+        assert.equal(refused.status, 1);
+        assert.match(refused.stderr, /max_attempts: 9 is not the cap committed on the default branch, 3/);
+        // Local refs and replace objects cannot redirect it: origin/HEAD, origin/main and the committed blob all point at
+        // the raised config, and the cap is still the remote default branch's 3.
+        r.git("update-ref", "refs/remotes/origin/evil", "HEAD");
+        r.git("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/evil");
+        r.git("update-ref", "refs/remotes/origin/main", "HEAD");
+        r.git("replace", committed, raised);
+        assert.match(r.git("show", "origin/main:.factory/config.yaml"), /max_attempts: 9/);
+        assert.match(cli(r, 9).stderr, /max_attempts: 9 is not the cap committed on the default branch, 3/);
+        assert.equal(cli(r, 3).status, 0);
+        // A cap lowered on the default branch since the last fetch: the check fails closed until the fetch.
+        const other = join(r.dir, "other");
+        spawnSync("git", ["clone", "-q", r.origin, other], { env: gitEnv() });
+        writeFileSync(join(other, ".factory", "config.yaml"), cfg(2));
+        for (const a of [
+            ["commit", "-qam", "lower"],
+            ["push", "-q", "origin", "main"],
+        ]) {
+            assert.equal(spawnSync("git", a, { cwd: other, env: gitEnv() }).status, 0);
+        }
+        const stale = cli(r, 3);
+        assert.equal(stale.status, 1);
+        assert.match(stale.stderr, /config: cannot read \.factory\/config\.yaml committed on the default branch .*is not fetched: run git fetch origin main/);
+        r.git("fetch", "-q", "origin");
+        assert.match(cli(r, 3).stderr, /max_attempts: 3 is not the cap committed on the default branch, 2/);
+        assert.equal(cli(r, 2).status, 0);
+        // From a subdirectory the same file is read: the committed 2 binds, never a fallback to the default 3.
+        mkdirSync(join(r.work, "sub", "deeper"), { recursive: true });
+        const fromSub = cliIn(join(r.work, "sub", "deeper"), unitFile(r.dir, { max_attempts: 3 }));
+        assert.match(fromSub.stderr, /max_attempts: 3 is not the cap committed on the default branch, 2/);
+    }
+    finally {
+        r.done();
+    }
+    // No config on the default branch, or no origin at all: fails closed (the roles need the committed config).
+    const none = originRepo(null);
+    assert.match(cli(none, 3).stderr, /config: cannot read \.factory\/config\.yaml committed on the default branch \(no \.factory\/config\.yaml there\)/);
+    none.done();
+    const bare = mkdtempSync(join(tmpdir(), "cap-none-"));
+    spawnSync("git", ["init", "-q", bare], { env: gitEnv() });
+    const out = cliIn(bare, unitFile(bare, { max_attempts: 3 }));
+    assert.equal(out.status, 1);
+    assert.match(out.stderr, /config: cannot read \.factory\/config\.yaml committed on the default branch .*git fetch origin/);
+    rmSync(bare, { recursive: true, force: true });
+});
+void test("check-change: approver items and head_pusher are judged by the default branch's config, never the change branch's", async () => {
+    const { roleErrors } = await changeMod();
+    const { parseConfig } = (await import(pathToFileURL(join(SCRIPTS, "gate.mjs")).href));
+    const config = parseConfig(cfg());
+    assert.deepEqual(config.identityLogins, ["acme-factory[bot]"]);
+    for (const f of fixtures("unit-valid-"))
+        assert.deepEqual(roleErrors(fixture(f), config), [], f);
+    const cr = fixture("unit-valid-changes-requested.json");
+    const cf = fixture("unit-valid-check-failed.json");
+    const as = (author, role = "approver") => ({
+        ...cr,
+        items: cr.items?.map((it, i) => (i === 0 ? { ...it, author, role } : it)),
+    });
+    assert.match(roleErrors(as("mallory"), config)[0] ?? "", /items\[0\]\.author: "mallory" is not an approver in the default branch's config/);
+    assert.deepEqual(roleErrors(as("OWNER-LOGIN"), config), [], "logins compare ignoring case");
+    assert.match(roleErrors(as("acme-factory[bot]", "reviewer"), config)[0] ?? "", /is a factory login .*no item is the factory's own/);
+    assert.match(roleErrors({ ...cf, head_pusher: "mallory" }, config)[0] ?? "", /head_pusher: "mallory" is neither an approver nor in identity\.logins/);
+    assert.deepEqual(roleErrors({ ...cf, head_pusher: "owner-login" }, config), []);
+    // A [bot] approver counts only with approvers_allow_bots.
+    const bots = (allow) => parseConfig(`${cfg(3, ["owner-login", "helper[bot]"])}approvers_allow_bots: ${String(allow)}\n`);
+    assert.match(roleErrors(as("helper[bot]"), bots(false))[0] ?? "", /is not an approver/);
+    assert.deepEqual(roleErrors(as("helper[bot]"), bots(true)), []);
+    // identity.logins inline or absent.
+    assert.deepEqual(parseConfig('approvers:\n  - a\nidentity:\n  logins: [x, "y[bot]"]\n')
+        .identityLogins, ["x", "y[bot]"]);
+    assert.deepEqual(parseConfig("approvers:\n  - a\n").identityLogins, []);
+    assert.throws(() => parseConfig("approvers:\n  - a\nidentity:\n  logins: x\n"), /identity\.logins must be a list/);
+    // A change branch that adds mallory as an approver: the CLI still refuses mallory's items and pushes.
+    const r = originRepo(cfg());
+    try {
+        r.git("checkout", "-q", "-b", "factory/12-change");
+        r.put(cfg(3, ["owner-login", "mallory"]), "add an approver");
+        const item = cliIn(r.work, unitFile(r.dir, { items: as("mallory").items }));
+        assert.equal(item.status, 1);
+        assert.match(item.stderr, /items\[0\]\.author: "mallory" is not an approver/);
+        const pushed = cliIn(r.work, unitFile(r.dir, { head_pusher: "mallory" }, "unit-valid-check-failed.json"));
+        assert.equal(pushed.status, 1);
+        assert.match(pushed.stderr, /head_pusher: "mallory" is neither an approver/);
+        assert.equal(cliIn(r.work, unitFile(r.dir, {}, "unit-valid-check-failed.json")).status, 0);
+    }
+    finally {
+        r.done();
+    }
+});
+void test("gate.mjs: git never waits on a credential prompt", async () => {
+    const { gitEnv: gateGitEnv } = (await import(pathToFileURL(join(SCRIPTS, "gate.mjs")).href));
+    assert.equal(gateGitEnv({ GIT_TERMINAL_PROMPT: "1" }).GIT_TERMINAL_PROMPT, "0");
+    assert.equal(gateGitEnv({}).GIT_TERMINAL_PROMPT, "0");
+});
+void test("write-result: a change object lands right after pr; fix_attempts without change is refused", () => {
+    const dir = mkdtempSync(join(tmpdir(), "write-change-"));
+    const main = join(dir, "main");
+    spawnSync("git", ["init", "-q", main]);
+    assert.equal(spawnSync("git", [
+        "-c",
+        "user.email=a@example.test",
+        "-c",
+        "user.name=a",
+        "commit",
+        "-q",
+        "--allow-empty",
+        "-m",
+        "init",
+    ], { cwd: main }).status, 0);
+    const raw = fixture("result-valid-fix-done.json");
+    const { change } = raw;
+    const omitKeys = new Set([
+        "change",
+        "ticket",
+        "run_id",
+        "schema",
+        "host",
+        "finished_at",
+    ]);
+    const judgment = Object.fromEntries(Object.entries(raw).filter(([k]) => !omitKeys.has(k)));
+    const env = { FACTORY_TICKET: "acme/app#14", FACTORY_RUN_ID: "rt-14-1" };
+    const write = (input) => spawnSync(process.execPath, [WRITE, "-"], {
+        cwd: main,
+        env: cleanEnv(env),
+        encoding: "utf8",
+        input: JSON.stringify(input),
+    });
+    const file = join(main, ".factory", "runs", "14", "result.json");
+    const out = write({ ...judgment, change });
+    assert.equal(out.status, 0, out.stderr);
+    const keys = Object.keys(JSON.parse(readFileSync(file, "utf8")));
+    assert.equal(keys[keys.indexOf("pr") + 1], "change");
+    rmSync(file);
+    const refused = write({
+        ...judgment,
+        end_state: "parked",
+        reason: "cap",
+        reason_code: "fix_attempts",
+    });
+    assert.equal(refused.status, 1);
+    assert.match(refused.stderr, /fix_attempts needs change/);
+    assert.equal(existsSync(file), false);
+    rmSync(dir, { recursive: true, force: true });
+});
+void test("change.md agrees with the checkers: unit keys, item keys, triggers; the scripts import only node: modules and check-result", async () => {
+    const { UNIT_KEYS, ITEM_KEYS } = await changeMod();
+    const { CHANGE_TRIGGERS } = await resultMod();
+    const doc = read("plugins/factory/skills/ticket-run/references/change.md");
+    const section = doc.split("## Unit brief")[1]?.split("\n## ")[0] ?? "";
+    const [unitTable = "", itemTable = ""] = section.split("Each item:");
+    const keys = (text) => text
+        .split("\n")
+        .filter((l) => l.startsWith("| `"))
+        .flatMap((l) => [...(l.split("|")[1] ?? "").matchAll(/`([a-z_]+)`/g)].map((m) => m[1] ?? ""));
+    assert.deepEqual(keys(unitTable), UNIT_KEYS);
+    assert.deepEqual(keys(itemTable), ITEM_KEYS);
+    const triggers = doc.split("## Triggers")[1]?.split("\n## ")[0] ?? "";
+    assert.deepEqual([...triggers.matchAll(/^- \*\*`([a-z_]+)`:\*\*/gm)].map((m) => m[1] ?? ""), CHANGE_TRIGGERS);
+    for (const f of ["check-change.mjs", "check-result.mjs"]) {
+        const imports = [
+            ...read(`plugins/factory/skills/ticket-run/scripts/${f}`).matchAll(/^\s*import\b[^'"]*['"]([^'"]+)['"]/gm),
+        ].map((m) => m[1] ?? "");
+        assert.ok(imports.length > 0);
+        for (const m of imports) {
+            assert.ok(m.startsWith("node:") ||
+                m === "./check-result.mjs" ||
+                (f === "check-change.mjs" && m === "./gate.mjs"), `${f} imports ${m}`);
+        }
+    }
+});
