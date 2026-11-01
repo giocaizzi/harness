@@ -1,6 +1,6 @@
 {
   "name": "hud",
-  "version": "0.11.0",
+  "version": "0.11.1",
   "description": "Heads-up display for Claude Code and Copilot CLI: token-weather band with PR, git and limit forecasts, turn footer, tool rows, spinner, /weather, /subagents and /ctx panes (Claude mod), a two-line status line for both CLIs, and reply rewrites (links, paths, commits, states, pass/fail, secrets, URLs, times) in Claude Code and pi",
   "author": {
     "name": "giocaizzi",
@@ -48,7 +48,7 @@
     "replyUrls": {
       "type": "string",
       "title": "Reply: short URLs",
-      "description": "Long URLs drawn as owner/repo#12, group/proj!4, repo@sha, repo › path:line or host and short path; the link stays. on: glyph and colour as set above; off; no-glyph; no-colour; plain (neither).",
+      "description": "Long URLs drawn as owner/repo#12, group/proj!4, repo@sha, repo \u203a path:line or host and short path; the link stays. on: glyph and colour as set above; off; no-glyph; no-colour; plain (neither).",
       "required": false,
       "default": "on",
       "options": [
@@ -90,7 +90,7 @@
     "replyPaths": {
       "type": "string",
       "title": "Reply: short paths",
-      "description": "Absolute paths drawn as <repo> › path, <repo>[worktree] › path or ~/path; only paths that exist. on: glyph and colour as set above; off; no-glyph; no-colour; plain (neither).",
+      "description": "Absolute paths drawn as <repo> \u203a path, <repo>[worktree] \u203a path or ~/path; only paths that exist. on: glyph and colour as set above; off; no-glyph; no-colour; plain (neither).",
       "required": false,
       "default": "on",
       "options": [
@@ -146,7 +146,7 @@
     "replyStatus": {
       "type": "string",
       "title": "Reply: pass/fail",
-      "description": "pass, ok, ✓ green; fail, error, ✗ red; skipped, pending dim, in table cells, list items and name: status lines; counts after a table or list. on: glyph and colour as set above; off; no-glyph; no-colour; plain (neither).",
+      "description": "pass, ok, \u2713 green; fail, error, \u2717 red; skipped, pending dim, in table cells, list items and name: status lines; counts after a table or list. on: glyph and colour as set above; off; no-glyph; no-colour; plain (neither).",
       "required": false,
       "default": "on",
       "options": [

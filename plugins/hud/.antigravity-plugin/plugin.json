@@ -1,7 +1,7 @@
 {
   "$schema": "https://antigravity.google/schemas/v1/plugin.json",
   "name": "hud",
-  "version": "0.11.0",
+  "version": "0.11.1",
   "description": "Heads-up display for Claude Code and Copilot CLI: token-weather band with PR, git and limit forecasts, turn footer, tool rows, spinner, /weather, /subagents and /ctx panes (Claude mod), a two-line status line for both CLIs, and reply rewrites (links, paths, commits, states, pass/fail, secrets, URLs, times) in Claude Code and pi",
   "author": {
     "name": "giocaizzi",
