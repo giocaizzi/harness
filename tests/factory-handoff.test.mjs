@@ -218,7 +218,7 @@ test('handoff: the CLI checks a run file from its argument or from FACTORY_RUN_F
 })
 
 test('handoff: check-handoff.mjs imports only node: modules and ./check-result.mjs', () => {
-  const imports = [...readFileSync(script, 'utf8').matchAll(/^import .* from '([^']+)'/gm)].map((m) => m[1])
+  const imports = [...readFileSync(script, 'utf8').matchAll(/^import .* from ['"]([^'"]+)['"]/gm)].map((m) => m[1])
   assert.ok(imports.length > 0)
   for (const spec of imports) assert.ok(spec.startsWith('node:') || spec === './check-result.mjs', spec)
 })

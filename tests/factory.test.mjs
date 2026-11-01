@@ -373,7 +373,7 @@ test('attended telemetry: the contract, ticket-run and the parity matrix agree o
   assert.match(read("plugins/factory/skills/ticket-run/references/comments.md"), /Otherwise the run id is the one \[done\.md\]\(done\.md#record\) gives for `run_id`/)
   const row = read('docs/compatibility.md').split('\n').find((l) => l.startsWith('| `factory` attended telemetry tags'))
   assert.ok(row, 'docs/compatibility.md has the parity row')
-  assert.equal(row.split(' | ').length, 7, 'one cell per harness')
+  assert.equal(row.split(' | ').length, 8, 'one cell per harness')
 })
 
 test('result.json mode: only dev or absent passes validation', async () => {
