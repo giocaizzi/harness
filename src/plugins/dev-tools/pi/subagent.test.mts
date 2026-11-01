@@ -25,7 +25,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  if (inheritedParentSession === undefined) delete process.env.GUARD_PARENT_SESSION;
+  if (inheritedParentSession === undefined)
+    delete process.env.GUARD_PARENT_SESSION;
   else process.env.GUARD_PARENT_SESSION = inheritedParentSession;
   if (inheritedAgentId === undefined) delete process.env.GUARD_AGENT_ID;
   else process.env.GUARD_AGENT_ID = inheritedAgentId;
