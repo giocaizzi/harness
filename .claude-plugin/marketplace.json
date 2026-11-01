@@ -65,7 +65,7 @@
       "name": "dev-tools",
       "source": "./plugins/dev-tools",
       "description": "General development tooling — git, GitHub, conventional commits, semantic versioning",
-      "version": "1.50.1",
+      "version": "1.50.2",
       "keywords": [
         "git",
         "github",
@@ -106,7 +106,7 @@
       "name": "sounds",
       "source": "./plugins/sounds",
       "description": "Toasts, configurable sounds and system notifications for Claude Code: usage limits, context, prompt-cache expiry, every way a turn ends, questions and permission prompts waiting and PR checks finishing (Claude mod)",
-      "version": "0.6.2",
+      "version": "0.6.3",
       "keywords": [
         "sounds",
         "notifications",
