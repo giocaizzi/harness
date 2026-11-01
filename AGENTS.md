@@ -23,7 +23,7 @@ VS Code Copilot (agent plugins) detects a plugin with `.claude-plugin/plugin.jso
 
 Empirically tested: if you put both `foo.md` and `foo.agent.md` in the same `agents/` directory, Claude double-loads and the second one wins. So the two harnesses' agent files **must live in different directories**, and each harness must read a `plugin.json` that points to its directory.
 
-Everything is authored in place, in the plugin it ships with: skills, hooks, the Claude manifest and the Claude agent files. The build **generates only the per-harness artifacts** that diverge (Copilot, Codex and opencode agent files, the Copilot and Codex `plugin.json`, the Codex hooks file), and every generated file sits in a dot-folder: **every visible file under `plugins/<plugin>/` is authored.**
+Skills, manifests and agents are authored in the plugin they ship with. Migrated Node modules are authored as `src/**/*.mts`; `make build` emits their tracked `.mjs` files at the matching runtime paths outside `src/`, including `eslint.config.mjs`. Edit the TypeScript source, never its emitted output. Unmigrated modules and external-host JavaScript wrappers remain authored in place. Per-harness artifacts live in dot-folders and are generated too.
 
 The other four harnesses read the same sources differently (details in [docs/compatibility.md](docs/compatibility.md)):
 
@@ -41,7 +41,8 @@ The other four harnesses read the same sources differently (details in [docs/com
 ├── .claude-plugin/
 │   └── marketplace.json          ← ONE marketplace; both harnesses read here (Copilot uses .claude-plugin/ as a fallback for the marketplace)
 │
-├── plugins/                      ← PUBLISHED PLUGINS: visible files are authored, dot-folders (but .claude-plugin/) generated
+├── src/                          ← AUTHORED TypeScript; mirrors emitted runtime paths
+├── plugins/                      ← PUBLISHED PLUGINS: authored assets and emitted .mjs runtime files
 │   └── <plugin>/
 │       ├── .claude-plugin/
 │       │   └── plugin.json            AUTHORED — Claude reads this. MUST NOT contain `skills` or `agents` fields.
@@ -53,8 +54,8 @@ The other four harnesses read the same sources differently (details in [docs/com
 │       ├── agents/                    AUTHORED
 │       │   ├── <name>.md              Claude Code agent (Claude, VS Code and pi read it as-is)
 │       │   └── <name>.yaml            optional `copilot:`, `codex:`, `opencode:` overrides
-│       ├── hooks/                     AUTHORED — hooks.json (+ codex-only.json) + Node hook scripts
-│       ├── core/                      AUTHORED — pure rule engine the hooks import (guard plugin)
+│       ├── hooks/                     hooks.json (+ codex-only.json), authored scripts or emitted .mjs
+│       ├── core/                      pure rule engine; authored scripts or emitted .mjs
 │       ├── .github/plugin/plugin.json GENERATED — Copilot manifest: the Claude one + `agents: ["./.generated/copilot/"]`
 │       ├── .codex-plugin/plugin.json  GENERATED — Codex manifest: the Claude one + `hooks: ./.generated/codex/hooks.json`
 │       ├── .antigravity-plugin/plugin.json GENERATED — Antigravity manifest
@@ -88,9 +89,10 @@ The other four harnesses read the same sources differently (details in [docs/com
 | `plugins/<plugin>/agents/<name>.md`, `<name>.yaml` | Authored | The Claude agent, and the other harnesses' overrides. |
 | `plugins/<plugin>/.github/plugin/plugin.json`, `.codex-plugin/plugin.json`, `.antigravity-plugin/plugin.json` | **Generated** | Copilot, Codex and Antigravity manifests. Never edit. |
 | `plugins/<plugin>/.generated/` | **Generated** | Copilot, Codex, opencode and Antigravity agents, Codex hooks file, guard's copy of factory's `check-result.mjs` (plugins install separately, so a hook never imports across plugin dirs). Never edit. |
-| `plugins/<plugin>/hooks/`, `core/` | Authored | Hooks: `hooks.json` for Claude, Copilot, VS Code; `opencode.mjs`, `pi.mjs` over `bridge.mjs` for the in-process harnesses. See [docs/guard.md](docs/guard.md). |
+| `src/**/*.mts` | Authored | TypeScript sources; matching emitted `.mjs` paths outside `src/` are tracked and generated. `make validate` checks their synchronization without writing them. |
+| `plugins/<plugin>/hooks/`, `core/` | Mixed | JSON and unmigrated scripts are authored; `.mjs` files with matching `src/` sources are generated. External-host JavaScript wrappers remain authored. See [docs/guard.md](docs/guard.md). |
 | `package.json` | Authored | pi package: `pi.skills` and `pi.extensions`. |
-| `plugins/<plugin>/hooks/pi.mjs`, `plugins/dev-tools/pi/subagent.mjs` | Authored | pi extensions; tests beside them (`make test` globs `plugins/*/pi/*.test.mjs` too). |
+| `plugins/<plugin>/hooks/pi.mjs`, `plugins/dev-tools/pi/subagent.mjs` | Authored until migrated | pi extensions; edit matching `src/` sources once migrated. Tests live beside runtime files (`make test` globs `plugins/*/pi/*.test.mjs` too). |
 | `.claude-plugin/marketplace.json` | Authored | One entry per plugin; versions must match per-plugin `plugin.json`. |
 
 ---

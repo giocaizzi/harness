@@ -11,8 +11,8 @@
     "build:typescript": "tsc --project tsconfig.build.json",
     "typecheck": "tsc --project tsconfig.json",
     "lint:typescript": "eslint src --ext .mts --max-warnings=0",
-    "format": "prettier --write 'src/**/*.mts' package.json tsconfig.json tsconfig.build.json .prettierrc.json",
-    "format:check": "prettier --check 'src/**/*.mts' package.json tsconfig.json tsconfig.build.json .prettierrc.json",
+    "format": "prettier --write \"src/**/*.mts\" package.json tsconfig.json tsconfig.build.json .prettierrc.json",
+    "format:check": "prettier --check \"src/**/*.mts\" package.json tsconfig.json tsconfig.build.json .prettierrc.json",
     "knip": "knip"
   },
   "pi": {

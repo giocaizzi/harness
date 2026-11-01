@@ -137,6 +137,8 @@ Where each harness reads MCP servers, for the `repo-standard` rule (repo servers
 
 ## Verify
 
+Run `npm ci` after checkout or a tooling lockfile change to install the pinned TypeScript, lint and formatting tools. Edit migrated modules in `src/**/*.mts`, then run `make build` to refresh their tracked `.mjs` runtime files. `make validate` compiles into a temporary directory and rejects missing or stale runtime output, including `eslint.config.mjs`, without changing the checkout.
+
 ```bash
 make check   # validate (incl. `claude plugin validate` and the parity check) + TypeScript lint/typecheck + node tests + `claude plugin test`
 make e2e     # Copilot CLI, Codex, opencode and pi against a scripted model (tests/e2e), each in a throwaway home with OTEL_* and GUARD_OTEL_* unset

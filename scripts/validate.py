@@ -28,6 +28,7 @@ Checks:
      the repo's own packaging, each agent at one tier (delegates to scripts/parity.mjs).
  11. Skills are self-contained: no skill file (.md or script) points at this repo's docs/ (a `../docs`
      path, or a relative `docs/<path>` that is a file here), since an installed skill ships without them.
+ 12. TypeScript compilation succeeds and every emitted runtime file matches its tracked output.
 """
 
 from __future__ import annotations
@@ -37,6 +38,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import tomllib
 from pathlib import Path
 
@@ -398,8 +400,44 @@ def check_parity(r: Reporter) -> None:
         r.ok(result.stdout.strip())
 
 
+def check_typescript_sync(r: Reporter) -> None:
+    """Compile into a temporary directory and compare every emitted runtime file."""
+    r.section("TypeScript sources <-> emitted runtime files")
+    compiler = REPO_ROOT / "node_modules" / "typescript" / "bin" / "tsc"
+    if not compiler.is_file() or shutil.which("node") is None:
+        r.fail("TypeScript compiler or Node.js missing - run `npm ci` before validation")
+        return
+
+    with tempfile.TemporaryDirectory(prefix="harness-typescript-") as temporary:
+        output = Path(temporary)
+        result = subprocess.run(
+            ["node", str(compiler), "--project", "tsconfig.build.json", "--outDir", str(output)],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        if result.returncode != 0:
+            r.fail(f"TypeScript compilation failed:\n{result.stdout}{result.stderr}")
+            return
+        emitted = sorted(output.rglob("*.mjs"))
+        for path in emitted:
+            relative = path.relative_to(output)
+            runtime = REPO_ROOT / relative
+            if not runtime.is_file():
+                r.fail(f"{relative}: missing TypeScript output - run `make build`")
+            elif path.read_bytes() != runtime.read_bytes():
+                r.fail(f"{relative}: stale TypeScript output - run `make build`")
+            else:
+                r.ok(str(relative))
+        if not emitted:
+            r.fail("TypeScript compilation emitted no runtime files")
+
+
 def main() -> None:
     r = Reporter()
+    check_typescript_sync(r)
     check_native_validator(r)
     check_repo_specific_manifests(r)
     check_marketplace(r)
