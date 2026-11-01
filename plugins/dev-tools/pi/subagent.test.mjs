@@ -1,6 +1,22 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { afterEach, beforeEach, test } from "node:test";
 import subagentExtension, { childEnv, loadAgents, MAX_DEPTH, piArgs, } from "./subagent.mjs";
+const inheritedParentSession = process.env.GUARD_PARENT_SESSION;
+const inheritedAgentId = process.env.GUARD_AGENT_ID;
+beforeEach(() => {
+    delete process.env.GUARD_PARENT_SESSION;
+    delete process.env.GUARD_AGENT_ID;
+});
+afterEach(() => {
+    if (inheritedParentSession === undefined)
+        delete process.env.GUARD_PARENT_SESSION;
+    else
+        process.env.GUARD_PARENT_SESSION = inheritedParentSession;
+    if (inheritedAgentId === undefined)
+        delete process.env.GUARD_AGENT_ID;
+    else
+        process.env.GUARD_AGENT_ID = inheritedAgentId;
+});
 const captureTool = (deps) => {
     let registered;
     subagentExtension({

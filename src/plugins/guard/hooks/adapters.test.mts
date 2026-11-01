@@ -5,13 +5,29 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { test } from "node:test";
+import { afterEach, beforeEach, test } from "node:test";
 
 import { GuardPlugin } from "./opencode.mjs";
 import type { OpencodeClient } from "./opencode.mjs";
 import guardExtension from "./pi.mjs";
 import type { PiApp, PiContext } from "./pi.mjs";
 import type { GuardDeps } from "./types.mjs";
+
+const inheritedParentSession = process.env.GUARD_PARENT_SESSION;
+const inheritedAgentId = process.env.GUARD_AGENT_ID;
+
+beforeEach(() => {
+  delete process.env.GUARD_PARENT_SESSION;
+  delete process.env.GUARD_AGENT_ID;
+});
+
+afterEach(() => {
+  if (inheritedParentSession === undefined)
+    delete process.env.GUARD_PARENT_SESSION;
+  else process.env.GUARD_PARENT_SESSION = inheritedParentSession;
+  if (inheritedAgentId === undefined) delete process.env.GUARD_AGENT_ID;
+  else process.env.GUARD_AGENT_ID = inheritedAgentId;
+});
 
 delete process.env.GUARD_STOP_CHECK;
 delete process.env.GUARD_UNATTENDED;
