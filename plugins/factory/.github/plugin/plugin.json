@@ -1,6 +1,6 @@
 {
   "name": "factory",
-  "version": "0.27.0",
+  "version": "0.27.1",
   "description": "Attended ticket runs on a GitHub issue board: owner-approved tickets worked end to end, scope decided by a fold-in test and logged on the ticket, questions asked on the ticket, a result contract per run",
   "author": {
     "name": "giocaizzi",

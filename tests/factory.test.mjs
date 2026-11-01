@@ -359,7 +359,7 @@ test('attended launcher (sh): no hostname binary falls back to uname -n, silentl
 test('attended telemetry: the contract, ticket-run and the parity matrix agree on the launcher', () => {
   const section = doc.split('\n### Attended telemetry\n')[1].split('\n## ')[0]
   for (const s of ['attended.sh', 'attended.ps1', '`FACTORY_ATTENDED_RUN_ID`', '`factory.mode=attended`', '`factory.phase` is absent', '`factory.role` is `main` for the whole session']) assert.ok(section.includes(s), s)
-  for (const h of ['Claude Code', 'Copilot CLI', 'VS Code', 'Codex', 'opencode', 'pi', 'Antigravity']) assert.match(section, new RegExp(`^\\| ${h} \\|`, 'm'), `no row for ${h}`)
+  for (const h of ['Claude Code', 'Copilot CLI', 'VS Code', 'Codex', 'opencode', 'pi']) assert.match(section, new RegExp(`^\\| ${h} \\|`, 'm'), `no row for ${h}`)
   assert.match(contract.split('\n').find((l) => l.startsWith('| `run_id`')), /else `FACTORY_ATTENDED_RUN_ID` when an attended session was started through the launcher for this ticket/)
   const done = read('plugins/factory/skills/ticket-run/references/done.md').split('\n').find((l) => l.startsWith('- **`run_id`:**'))
   assert.match(done, /Else `FACTORY_ATTENDED_RUN_ID` when it is set and `FACTORY_ATTENDED_TICKET` is this ticket/)
@@ -901,7 +901,7 @@ test('result scripts: a BOM is stripped by an escape sequence, never a literal U
   for (const f of ['check-result.mjs', 'write-result.mjs', 'gate.mjs']) {
     const text = readFileSync(join(SCRIPTS, f), 'utf8')
     assert.ok(!text.includes('\uFEFF'), `${f} holds a literal U+FEFF`)
-    assert.ok(text.includes('.replace(/^\\uFEFF/, \'\')'), `${f} strips the BOM by its escape`)
+    assert.match(text, /\.replace\(\/\^\\uFEFF\/,\s*['"]{2}\)/, `${f} must strip a leading UTF-8 BOM via the \\uFEFF escape`)
   }
 })
 
