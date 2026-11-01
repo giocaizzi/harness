@@ -147,6 +147,10 @@ export default function subagentExtension(pi, deps = {}) {
             if (depthOf() >= MAX_DEPTH) {
                 throw new Error(`Subagents nest at most ${String(MAX_DEPTH)} deep; return the split to your caller instead of spawning ${agent.name}`);
             }
+            if (depthOf() > 0 &&
+                (params.agent === "driver" || params.agent === "escalate")) {
+                throw new Error(`A subagent cannot spawn another ${params.agent}: you are already running at the judgement tier. Plan or investigate directly, then fan edits out to workers.`);
+            }
             const dir = mkdtempSync(join(tmpdir(), "pi-subagent-"));
             try {
                 const file = join(dir, `${agent.name}.md`);

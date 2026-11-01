@@ -187,3 +187,25 @@ void test("nesting is counted in the child and refused past MAX_DEPTH, so a driv
             process.env.PI_SUBAGENT_DEPTH = saved;
     }
 });
+void test("a subagent cannot spawn another driver or escalate (#recursion)", async () => {
+    const agents = [
+        { name: "driver", description: "d", tools: null, prompt: "p" },
+        { name: "escalate", description: "e", tools: null, prompt: "p" },
+    ];
+    const tool = captureTool({
+        loadAgents: () => agents,
+        run: () => Promise.resolve({ code: 0, out: "ok", err: "" }),
+    });
+    const saved = process.env.PI_SUBAGENT_DEPTH;
+    try {
+        process.env.PI_SUBAGENT_DEPTH = "1";
+        await assert.rejects(tool.execute("id", { agent: "driver", task: "x" }, undefined, undefined, {}), /A subagent cannot spawn another driver/);
+        await assert.rejects(tool.execute("id", { agent: "escalate", task: "x" }, undefined, undefined, {}), /A subagent cannot spawn another escalate/);
+    }
+    finally {
+        if (saved === undefined)
+            delete process.env.PI_SUBAGENT_DEPTH;
+        else
+            process.env.PI_SUBAGENT_DEPTH = saved;
+    }
+});
