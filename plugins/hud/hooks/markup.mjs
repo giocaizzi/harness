@@ -170,70 +170,49 @@ function wrap(rs, width) {
     }
     return resultLines;
 }
-function table(rawLines, el, columns) {
-    const rs = rawLines.map(cells).filter((r) => r !== null);
-    const seps = split(rawLines.find((l) => SEPARATOR.test(l) && l.includes("-")) ?? "");
-    const aligns = seps.map(alignOf);
-    const n = Math.max(0, ...rs.map((r) => r.length));
-    const runs = rs.map((r, rowIdx) => Array.from({ length: n }, (_, c) => spans(r[c] ?? "", rowIdx === 0 ? { bold: true } : {})));
-    const w = Array.from({ length: n }, (_, c) => Math.max(1, ...runs.map((r) => {
-        const colRuns = r[c] ?? [];
-        return colRuns.reduce((sum, x) => sum + cellWidth(x.text), 0);
-    })));
-    if (columns && columns > 0) {
-        const fixed = 3 * n + 1;
-        const room = Math.max(n * 4, columns - fixed);
-        const wide = w.map((x, i) => [x, i]).sort((a, b) => b[0] - a[0]);
-        let total = w.reduce((a, b) => a + b, 0);
-        for (const [, i] of wide) {
-            if (total <= room)
-                break;
-            const cur = w[i] ?? 0;
-            const cut = Math.min(cur - 4, total - room);
-            if (cut > 0) {
-                w[i] = cur - cut;
-                total -= cut;
-            }
-        }
-        if (total > room) {
-            const share = Math.max(2, Math.floor(room / n));
-            w.fill(share);
-        }
+function table(lines, el, room) {
+    const rows = lines.map(cells);
+    const sep = lines.find((_l, i) => rows[i] === null);
+    const body = rows.filter((r) => r !== null);
+    const n = Math.max(0, ...body.map((r) => r.length));
+    const aligns = sep ? split(sep).map(alignOf) : [];
+    const content = rows.map((r, i) => r
+        ? Array.from({ length: n }, (_, c) => spans(r[c] ?? "", i === 0 && rows[1] === null ? { bold: true } : {}))
+        : null);
+    const natural = (rs) => rs.reduce((width, run) => width + cellWidth(run.text), 0);
+    const longest = (rs) => Math.max(1, ...rs.flatMap((run) => run.text.split(/\s+/).map(cellWidth)));
+    const validContent = content.filter((r) => r !== null);
+    const w = Array.from({ length: n }, (_, c) => Math.max(1, ...validContent.map((r) => natural(r[c] ?? []))));
+    const floor = w.map((x, c) => Math.min(x, Math.max(3, Math.min(12, Math.max(...validContent.map((r) => longest(r[c] ?? [])))))));
+    const avail = room ? room - (3 * n + 1) : Infinity;
+    while (w.reduce((a, b) => a + b, 0) > avail) {
+        const c = w.reduce((best, x, i) => x > (floor[i] ?? 0) && (best < 0 || x > (w[best] ?? 0)) ? i : best, -1);
+        if (c < 0)
+            break;
+        const curW = w[c];
+        if (curW !== undefined)
+            w[c] = curW - 1;
     }
     const dim = (s) => el.Text({ dimColor: true, children: [s] });
-    const rule = (left, mid, right) => el.Box({
-        flexDirection: "row",
-        children: [
-            dim(left),
-            ...w.flatMap((cw, c) => [
-                dim("─".repeat(cw + 2)),
-                dim(c < n - 1 ? mid : right),
-            ]),
-        ],
-    });
+    const rule = (l, m, right) => dim(l + w.map((x) => "─".repeat(x + 2)).join(m) + right);
     const out = [rule("┌", "┬", "┐")];
-    for (let i = 0; i < runs.length; i++) {
-        const r = runs[i];
-        if (!r)
-            continue;
-        if (i === 1) {
+    for (const r of content) {
+        if (!r) {
             out.push(rule("├", "┼", "┤"));
+            continue;
         }
-        const wrapped = r.map((colRuns, c) => wrap(colRuns, w[c] ?? 1));
+        const wrapped = r.map((rs, c) => wrap(rs, w[c] ?? 1));
         const height = Math.max(...wrapped.map((l) => l.length));
         for (let k = 0; k < height; k++) {
             const kids = [dim("│ ")];
             wrapped.forEach((ls, c) => {
-                const lineRuns = ls[k] ?? [];
+                const line = ls[k] ?? [];
                 kids.push(el.Box({
                     width: w[c],
                     flexShrink: 0,
                     justifyContent: ALIGN[aligns[c] ?? "left"],
                     children: [
-                        el.Text({
-                            wrap: "truncate-end",
-                            children: draw(lineRuns, el),
-                        }),
+                        el.Text({ wrap: "truncate-end", children: draw(line, el) }),
                     ],
                 }));
                 kids.push(dim(c < n - 1 ? " │ " : " │"));
