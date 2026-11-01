@@ -187,7 +187,10 @@ export async function emit(
 ): Promise<void> {
   try {
     if (!env || otelOff(env)) return;
-    const v = (k: string): string | undefined => env[k] ?? env[`GUARD_${k}`];
+    const v = (k: string): string | undefined => {
+      const val = env[k];
+      return val !== undefined && val !== "" ? val : env[`GUARD_${k}`];
+    };
     const req = logRequest(
       {
         endpoint: v("OTEL_EXPORTER_OTLP_ENDPOINT"),
