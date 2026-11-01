@@ -5,6 +5,8 @@
 CLAUDE.local.md
 .github/copilot/settings.local.json
 .opencode/node_modules/
+.node_modules/
+node_modules/
 .opencode/plans/
 .pi/npm/
 .pi/git/

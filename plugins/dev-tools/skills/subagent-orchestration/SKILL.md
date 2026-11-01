@@ -43,7 +43,7 @@ A workflow skill that defines its own gate, question channel, round cap or model
 A wait ends on every terminal outcome, never on success alone: a loop until a PR merges never returns once a required check fails. Wait on a PR with `land`'s `wait-pr` script. Inside a teammate, wait in the foreground ([collaboration.md](references/collaboration.md#durable-verdicts)).
 
 - **The deadline lives inside the command** (`wait-pr --timeout`, or a loop that counts its polls): the command exiting is what wakes the session. In an interactive Claude Code session the Bash tool's timeout is ignored for a background command; a Monitor wakes the session when its `timeout_ms` expires (at most 30 min).
-- Where a background exit is not known to wake the session (not checked in Copilot CLI, Codex, opencode or pi), also set that harness's own timer when it has one.
+- Where a background exit is not known to wake the session (not checked in Copilot CLI, Codex, opencode or pi), also set that harness's own timer when it has one. After one bounded silent wait, inspect the spoke status and the named process or worktree before waiting again; report a missing or terminal spoke instead of passively waiting.
 - After a network or host drop, check each PR and session before resuming: [references/network-drop.md](references/network-drop.md).
 
 ## Gotchas
@@ -57,4 +57,4 @@ A wait ends on every terminal outcome, never on success alone: a loop until a PR
 - With agent teams off, a named spawn stays an ordinary subagent, tracked in telemetry. With agent teams on, a spawn from the main session that has a `name` starts as a teammate instead: its requests carry no agent id or name, so its spend is unattributed, and it runs in the main checkout whatever its definition's `isolation` says. Keep agent teams off, and name a spawn only when you will message it, which an attended `driver` always gets.
 - In Codex, opencode and pi an agent's model pin does nothing: it runs on the session's model.
 - Escalating is a spawn, never `/model` on the hub: a switch re-pays the prompt cache for the whole conversation.
-- A typed agent that is missing (its plugin not installed) or fails: stop and say so. A general-purpose substitute runs on whatever model it inherits.
+- A typed agent that is missing (its plugin not installed): stop and say so. A capacity, rate-limit or tool-dispatch failure is different: when the scope is already approved, report it, retry or reassign that unit once, then surface it if capacity is still unavailable. Do not replace it with a general-purpose agent, which inherits an uncontrolled model.

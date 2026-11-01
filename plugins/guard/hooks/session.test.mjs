@@ -440,25 +440,42 @@ const withData = async (fn) => {
   }
 }
 
-test('stop: a docs-only change skips make check; a code change, a mixed one or none runs it', () =>
+test('stop: a clean first turn and docs-only change skip make check; a code or mixed change runs it', () =>
   withData(async () => {
     const r = docsRepo()
-    await r.stop() // clean tree, no green run yet: an empty change set runs it, as before
-    assert.equal(r.checks.length, 1)
+    await r.stop()
+    assert.equal(r.checks.length, 0, 'clean tree: skipped')
     r.write('README.md', '# changed\n')
     r.write('docs/guide.md', 'new\n') // untracked
     r.write('docs/a.png', 'x')
     await r.stop()
-    assert.equal(r.checks.length, 1, 'docs only: skipped')
+    assert.equal(r.checks.length, 0, 'docs only: skipped')
     r.write('src/a.py', 'a = 2\n')
     await r.stop()
-    assert.equal(r.checks.length, 2, 'mixed: runs')
+    assert.equal(r.checks.length, 1, 'mixed: runs')
+  }))
+
+test('stop: GUARD_STOP_CHECK=force runs make check on a clean tree', () =>
+  withData(async () => {
+    const r = docsRepo()
+    process.env.GUARD_STOP_CHECK = 'force'
+    try {
+      await r.stop()
+    } finally {
+      delete process.env.GUARD_STOP_CHECK
+    }
+    assert.equal(r.checks.length, 1)
   }))
 
 test('stop: a code commit since the last green run is not hidden by a docs-only working tree', () =>
   withData(async () => {
     const r = docsRepo()
-    await r.stop()
+    process.env.GUARD_STOP_CHECK = 'force'
+    try {
+      await r.stop()
+    } finally {
+      delete process.env.GUARD_STOP_CHECK
+    }
     r.write('src/a.py', 'a = 3\n')
     r.git('commit', '-qam', 'code')
     r.write('README.md', '# after\n')
