@@ -569,7 +569,7 @@ function check_workspace_mcp(r) {
         return;
     }
     if (result.status !== 0) {
-        const combined = String(result.stdout ?? "") + String(result.stderr ?? "");
+        const combined = result.stdout + result.stderr;
         for (const line of combined.split(/\r?\n/)) {
             if (line.trim().length > 0) {
                 r.fail(line);
