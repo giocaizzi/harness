@@ -556,10 +556,18 @@ function check_build_sync(r) {
 }
 function check_workspace_mcp(r) {
     r.section("Workspace MCP source -> Codex, pi, and Antigravity");
-    const result = spawnSync(process.execPath, [join(REPO_ROOT, "scripts", "sync-mcp.mjs"), "--check"], {
+    const result = spawnSync("chezmoi-agents", ["mcp", "sync", "-check"], {
         cwd: REPO_ROOT,
         encoding: "utf-8",
     });
+    if (result.error) {
+        if (result.error.code === "ENOENT") {
+            r.ok("chezmoi-agents not found, skipped");
+            return;
+        }
+        r.fail(`chezmoi-agents invocation failed: ${result.error.message}`);
+        return;
+    }
     if (result.status !== 0) {
         const combined = result.stdout + result.stderr;
         for (const line of combined.split(/\r?\n/)) {
