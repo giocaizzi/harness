@@ -16,7 +16,7 @@ import { commandWords, units } from "../core/shell.mjs";
 import { pluginDataDir } from "./data.mjs";
 import { isEditTool, isReadTool, isShellTool, isTaskTool, } from "./harnesses.mjs";
 import { installedVersions, staleCheck } from "./stale.mjs";
-import { appendDecision, commandHash, emitAntigravityUsage, harnessName, recordAttrs, } from "./telemetry.mjs";
+import { appendDecision, commandHash, harnessName, recordAttrs, } from "./telemetry.mjs";
 const quoteArg = (a) => /^[\w./@%+=:,~-]+$/.test(a) ? a : `'${a.replace(/'/g, "'\\''")}'`;
 const taskLine = (task) => {
     if (!task || typeof task.command !== "string")
@@ -779,16 +779,6 @@ export async function handle(input, deps) {
     const state = {
         ...store.load(),
     };
-    if (deps.harness === "antigravity" &&
-        (input.transcriptPath ||
-            input.transcript_path)) {
-        const tPath = input.transcriptPath ??
-            input.transcript_path;
-        const newStep = await emitAntigravityUsage(tPath, input.conversationId ?? input.session_id, input.modelName, state.lastTranscriptStep, deps.env);
-        if (newStep !== undefined && newStep !== state.lastTranscriptStep) {
-            state.lastTranscriptStep = newStep;
-        }
-    }
     const loadedBefore = [...state.loaded];
     const event = input.hook_event_name;
     let out = {};

@@ -245,6 +245,7 @@ export async function emitAntigravityUsage(
 
   let maxStep = lastStep ?? -1;
   const lines = content.split("\n");
+  const promises: Promise<void>[] = [];
   for (const line of lines) {
     if (!line.trim()) continue;
     try {
@@ -263,22 +264,27 @@ export async function emitAntigravityUsage(
             outTok,
             cacheReadTok,
           );
-          await emitRecord("api_request", {
-            "session.id": conversationId,
-            model,
-            provider: "google",
-            input_tokens: inTok,
-            output_tokens: outTok,
-            cache_read_tokens: cacheReadTok,
-            cache_creation_tokens: 0,
-            reasoning_tokens: 0,
-            cost_usd: costUsd,
-          });
+          promises.push(
+            emitRecord("api_request", {
+              "session.id": conversationId,
+              model,
+              provider: "google",
+              input_tokens: inTok,
+              output_tokens: outTok,
+              cache_read_tokens: cacheReadTok,
+              cache_creation_tokens: 0,
+              reasoning_tokens: 0,
+              cost_usd: costUsd,
+            }).catch(() => undefined),
+          );
         }
       }
     } catch {
       // skip unparseable lines
     }
+  }
+  if (promises.length > 0) {
+    await Promise.all(promises);
   }
   return maxStep;
 }

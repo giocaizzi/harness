@@ -71,7 +71,6 @@ import { installedVersions, staleCheck } from "./stale.mjs";
 import {
   appendDecision,
   commandHash,
-  emitAntigravityUsage,
   harnessName,
   recordAttrs,
 } from "./telemetry.mjs";
@@ -1177,26 +1176,6 @@ export async function handle(
   const state: StoredSessionState = {
     ...store.load(),
   };
-
-  if (
-    deps.harness === "antigravity" &&
-    (input.transcriptPath ||
-      (input as { transcript_path?: string }).transcript_path)
-  ) {
-    const tPath =
-      input.transcriptPath ??
-      (input as { transcript_path?: string }).transcript_path;
-    const newStep = await emitAntigravityUsage(
-      tPath,
-      input.conversationId ?? input.session_id,
-      input.modelName,
-      state.lastTranscriptStep,
-      deps.env,
-    );
-    if (newStep !== undefined && newStep !== state.lastTranscriptStep) {
-      state.lastTranscriptStep = newStep;
-    }
-  }
 
   const loadedBefore = [...state.loaded];
   const event = input.hook_event_name;
