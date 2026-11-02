@@ -12,12 +12,14 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
+import { registerAskQuestionTool } from "./ask-question.mjs";
 import { MAX_DEPTH, PLUGINS, THINKING, TOOLS } from "./constants.mjs";
 import type {
   AgentArgsInput,
   AgentDefinition,
   ChildIds,
   PiHost,
+  PiToolDefinition,
   RunResult,
   SubagentDependencies,
 } from "./types.mjs";
@@ -161,10 +163,11 @@ export default function subagentExtension(
   pi: PiHost,
   deps: SubagentDependencies = {},
 ): void {
+  registerAskQuestionTool(pi);
   const agents = (deps.loadAgents ?? loadAgents)();
   if (!agents.length) return;
   const list = agents.map((a) => `- ${a.name}: ${a.description}`).join("\n");
-  pi.registerTool({
+  const tool: PiToolDefinition = {
     name: "subagent",
     label: "Subagent",
     description: `Run a task in a separate pi session as one of these agents, and get its final answer:\n${list}`,
@@ -242,5 +245,6 @@ export default function subagentExtension(
         rmSync(dir, { recursive: true, force: true });
       }
     },
-  });
+  };
+  pi.registerTool(tool);
 }

@@ -39,7 +39,9 @@ const captureTool = (
   subagentExtension(
     {
       registerTool: (t) => {
-        registered = t;
+        if (t.name === "subagent") {
+          registered = t as PiToolDefinition;
+        }
       },
     },
     deps,

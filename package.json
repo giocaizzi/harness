@@ -3,7 +3,7 @@
   "version": "3.6.1",
   "private": true,
   "packageManager": "npm@11.19.1",
-  "description": "pi package: the giocaizzi-harness skills, the guard, a subagent tool for the plugins' agents, and hud's footer and sounds' alerts. Install with `pi install git:github.com/giocaizzi/harness`.",
+  "description": "pi package: the giocaizzi-harness skills, the guard, ask_question and subagent tools for the plugins' agents, and hud's footer and sounds' alerts. Install with `pi install git:github.com/giocaizzi/harness`.",
   "keywords": [
     "pi-package"
   ],

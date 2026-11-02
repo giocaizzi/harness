@@ -21,7 +21,9 @@ const captureTool = (deps) => {
     let registered;
     subagentExtension({
         registerTool: (t) => {
-            registered = t;
+            if (t.name === "subagent") {
+                registered = t;
+            }
         },
     }, deps);
     assert.ok(registered);

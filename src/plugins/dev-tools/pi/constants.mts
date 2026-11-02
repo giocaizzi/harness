@@ -28,6 +28,7 @@ export const TOOLS: Readonly<Record<string, readonly string[]>> = {
   edit: ["edit"],
   multiedit: ["edit"],
   write: ["write"],
+  askuserquestion: ["ask_question"],
 };
 
 export const MAX_DEPTH = 3;

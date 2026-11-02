@@ -5,6 +5,7 @@ import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync, } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
+import { registerAskQuestionTool } from "./ask-question.mjs";
 import { MAX_DEPTH, PLUGINS, THINKING, TOOLS } from "./constants.mjs";
 export { MAX_DEPTH } from "./constants.mjs";
 /** Load the Claude-format agents every plugin ships (`agents/*.md`). */
@@ -116,11 +117,12 @@ function run(argv, cwd, signal, ids) {
 }
 /** Register the `subagent` tool on a pi extension host. */
 export default function subagentExtension(pi, deps = {}) {
+    registerAskQuestionTool(pi);
     const agents = (deps.loadAgents ?? loadAgents)();
     if (!agents.length)
         return;
     const list = agents.map((a) => `- ${a.name}: ${a.description}`).join("\n");
-    pi.registerTool({
+    const tool = {
         name: "subagent",
         label: "Subagent",
         description: `Run a task in a separate pi session as one of these agents, and get its final answer:\n${list}`,
@@ -183,5 +185,6 @@ export default function subagentExtension(pi, deps = {}) {
                 rmSync(dir, { recursive: true, force: true });
             }
         },
-    });
+    };
+    pi.registerTool(tool);
 }

@@ -48,7 +48,11 @@ export interface PiContext {
   hasUI?: boolean;
   sessionManager?: { getSessionId?: () => string };
   ui: {
-    confirm: (title: string, message?: string) => Promise<boolean>;
+    confirm: (
+      title: string,
+      message?: string,
+      options?: { signal?: AbortSignal; timeout?: number },
+    ) => Promise<boolean | undefined>;
     notify: (message: string, level?: string) => void;
   };
 }
@@ -122,19 +126,48 @@ export default function guardExtension(pi: PiApp, deps?: GuardDeps): void {
           reason: `${d.reason ?? ""}\nNo UI to confirm this (print or JSON mode), so the command was not run: ask the user to run it.`,
         };
       }
+      const rawTimeout = process.env.GUARD_ASK_TIMEOUT_MS;
+      const askTimeoutMs =
+        rawTimeout !== undefined && !Number.isNaN(Number(rawTimeout))
+          ? Number(rawTimeout)
+          : 60_000;
       const started = Date.now();
-      const ok = await ctx.ui.confirm("Run this risky command?", d.reason);
-      await guard.askResult({
-        ...ask,
-        result: ok ? "allow" : "deny",
-        waitMs: Date.now() - started,
-      });
+      const ok = await ctx.ui.confirm(
+        "Run this risky command?",
+        d.reason,
+        askTimeoutMs > 0 ? { timeout: askTimeoutMs } : undefined,
+      );
+      const waitMs = Date.now() - started;
+      if (
+        ok === undefined ||
+        (!ok && askTimeoutMs > 0 && waitMs >= askTimeoutMs)
+      ) {
+        await guard.askResult({
+          ...ask,
+          result: "timeout",
+          waitMs,
+        });
+        return {
+          block: true,
+          reason: `No answer: nobody confirmed this command within ${String(askTimeoutMs / 1000)}s. Carry on without it, or leave it for the user.\n${d.reason ?? ""}`,
+        };
+      }
       if (!ok) {
+        await guard.askResult({
+          ...ask,
+          result: "deny",
+          waitMs,
+        });
         return {
           block: true,
           reason: `The user denied this command. Do not retry it or a respelling of it; ask the user what they want instead.\n${d.reason ?? ""}`,
         };
       }
+      await guard.askResult({
+        ...ask,
+        result: "allow",
+        waitMs,
+      });
     }
     if (d.context) notes.set(event.toolCallId, d.context);
     if (d.notice && ctx.hasUI) {

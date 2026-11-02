@@ -44,6 +44,7 @@ Each plugin's README lists the skills, agents and hooks it ships.
 | Guardrails (`guard`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Denial log to Grafana (`guard`) | ✅ | ✅ | 🟡 | ✅ | ✅ | ✅ | ✅ |
 | Confirm risky commands | ✅ | ✅ | ✅ | 🟡 plain forms; others denied | 🟡 plain forms; others denied | ✅ | ✅ |
+| Non-stalling prompt timeout (`guard`) | ✅ 60s timeout | — | — | — | — | ✅ 60s timeout | — |
 | Status line (`hud`) | ✅ | ✅ | — | — | — | ✅ | — |
 | Reply rewrites: links, paths, commits, states, pass/fail, secrets (`hud`) | ✅ | — | — | — | — | 🟡 no colour | — |
 | Live HUD band and pane (`hud`) | ✅ | — | — | — | — | — | — |
