@@ -16,7 +16,7 @@ import { commandWords, units } from "../core/shell.mjs";
 import { pluginDataDir } from "./data.mjs";
 import { isEditTool, isReadTool, isShellTool, isTaskTool, } from "./harnesses.mjs";
 import { installedVersions, staleCheck } from "./stale.mjs";
-import { appendDecision, commandHash, harnessName, recordAttrs, } from "./telemetry.mjs";
+import { appendDecision, commandHash, emitAntigravityUsage, harnessName, recordAttrs, } from "./telemetry.mjs";
 const quoteArg = (a) => /^[\w./@%+=:,~-]+$/.test(a) ? a : `'${a.replace(/'/g, "'\\''")}'`;
 const taskLine = (task) => {
     if (!task || typeof task.command !== "string")
@@ -124,11 +124,14 @@ export function sessionStore(dir = pluginDataDir(), sessionId, agentId, processI
     return {
         load() {
             seen = {
-                reminded: [],
+                announced: undefined,
+                cwd: undefined,
+                lastTranscriptStep: undefined,
                 loaded: [],
-                unattended: undefined,
                 plugins: {},
                 processes: new Set(),
+                reminded: [],
+                unattended: undefined,
             };
             if (!file) {
                 return { reminded: [], loaded: [], plugins: {} };
@@ -160,6 +163,9 @@ export function sessionStore(dir = pluginDataDir(), sessionId, agentId, processI
                 if (typeof fact.unattended === "boolean") {
                     seen.unattended = fact.unattended;
                 }
+                if (typeof fact.lastTranscriptStep === "number") {
+                    seen.lastTranscriptStep = fact.lastTranscriptStep;
+                }
                 if (typeof fact.cwd === "string" &&
                     (fact.process != null ? String(fact.process) : "") === proc) {
                     seen.cwd ??= fact.cwd;
@@ -183,6 +189,7 @@ export function sessionStore(dir = pluginDataDir(), sessionId, agentId, processI
                 plugins: { ...seen.plugins },
                 startCwd: seen.cwd,
                 announced: seen.announced,
+                lastTranscriptStep: seen.lastTranscriptStep,
             };
         },
         save(state) {
@@ -201,6 +208,10 @@ export function sessionStore(dir = pluginDataDir(), sessionId, agentId, processI
                 ...(typeof state.unattended === "boolean" &&
                     state.unattended !== seen.unattended
                     ? [JSON.stringify({ unattended: state.unattended })]
+                    : []),
+                ...(typeof state.lastTranscriptStep === "number" &&
+                    state.lastTranscriptStep !== seen.lastTranscriptStep
+                    ? [JSON.stringify({ lastTranscriptStep: state.lastTranscriptStep })]
                     : []),
                 ...(seen.processes.has(processId != null ? String(processId) : "") ||
                     seen.processes.size < MAX_PROCESSES
@@ -768,6 +779,16 @@ export async function handle(input, deps) {
     const state = {
         ...store.load(),
     };
+    if (deps.harness === "antigravity" &&
+        (input.transcriptPath ||
+            input.transcript_path)) {
+        const tPath = input.transcriptPath ??
+            input.transcript_path;
+        const newStep = await emitAntigravityUsage(tPath, input.conversationId ?? input.session_id, input.modelName, state.lastTranscriptStep, deps.env);
+        if (newStep !== undefined && newStep !== state.lastTranscriptStep) {
+            state.lastTranscriptStep = newStep;
+        }
+    }
     const loadedBefore = [...state.loaded];
     const event = input.hook_event_name;
     let out = {};

@@ -1,8 +1,13 @@
 import assert from "node:assert/strict";
+import { appendFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 
 import {
   commandHash,
+  emitAntigravityUsage,
+  estimateGeminiCost,
   failedTarget,
   guardVersion,
   harnessName,
@@ -128,4 +133,129 @@ void test("failedTarget: the innermost make target that failed", () => {
 void test("commandHash: whitespace does not change it, the command text never shows", () => {
   assert.equal(commandHash("rm  -rf   x"), commandHash(" rm -rf x "));
   assert.match(commandHash("rm -rf x"), /^[0-9a-f]{12}$/);
+});
+
+void test("estimateGeminiCost: calculates pro, flash, flash-lite and auto pricing", () => {
+  // Pro: 1M in = $1.25, 1M out = $5.00, 1M cache = $0.3125
+  assert.equal(
+    estimateGeminiCost("gemini-2.5-pro", 1_000_000, 1_000_000, 1_000_000),
+    6.5625,
+  );
+  assert.equal(estimateGeminiCost("gemini-1.5-pro", 10_000, 1_000, 0), 0.0175);
+  // Flash: 1M in = $0.15, 1M out = $0.60, 1M cache = $0.0375
+  assert.equal(
+    estimateGeminiCost("gemini-2.5-flash", 1_000_000, 1_000_000, 1_000_000),
+    0.7875,
+  );
+  // Flash-lite: 1M in = $0.075, 1M out = $0.30
+  assert.equal(
+    estimateGeminiCost("gemini-2.5-flash-lite", 1_000_000, 1_000_000, 0),
+    0.375,
+  );
+  // Auto / fallback defaults to pro
+  assert.equal(estimateGeminiCost("auto", 10_000, 1_000, 0), 0.0175);
+  assert.equal(estimateGeminiCost(undefined, 0, 0, 0), 0);
+});
+
+void test("emitAntigravityUsage: parses transcript.jsonl, emits api_request and advances step", async () => {
+  const dir = tmpdir();
+  const transcript = join(
+    dir,
+    `transcript-test-${Date.now().toString()}.jsonl`,
+  );
+  const lines = [
+    JSON.stringify({
+      step_index: 0,
+      source: "USER_EXPLICIT",
+      type: "USER_INPUT",
+      content: "hello",
+    }),
+    JSON.stringify({
+      step_index: 1,
+      source: "MODEL",
+      type: "PLANNER_RESPONSE",
+      input_tokens: 1000,
+      output_tokens: 200,
+      cache_read_tokens: 100,
+    }),
+    JSON.stringify({
+      step_index: 2,
+      source: "MODEL",
+      type: "PLANNER_RESPONSE",
+      input_tokens: 2000,
+      output_tokens: 400,
+      cache_read_tokens: 0,
+    }),
+  ];
+  writeFileSync(transcript, lines.join("\n") + "\n");
+
+  const emitted: Record<string, unknown>[] = [];
+  const emitFn = (
+    event: string,
+    attrs: Record<string, unknown>,
+  ): Promise<void> => {
+    emitted.push({ event, ...attrs });
+    return Promise.resolve();
+  };
+
+  // First run: from beginning
+  const step1 = await emitAntigravityUsage(
+    transcript,
+    "session-123",
+    "gemini-2.5-flash",
+    undefined,
+    {},
+    emitFn,
+  );
+  assert.equal(step1, 2);
+  assert.equal(emitted.length, 2);
+  const first = emitted[0];
+  assert.ok(first);
+  assert.equal(first.event, "api_request");
+  assert.equal(first["session.id"], "session-123");
+  assert.equal(first.model, "gemini-2.5-flash");
+  assert.equal(first.provider, "google");
+  assert.equal(first.input_tokens, 1000);
+  assert.equal(first.output_tokens, 200);
+  assert.equal(first.cache_read_tokens, 100);
+
+  // Second run with lastStep=2: nothing new emitted
+  emitted.length = 0;
+  const step2 = await emitAntigravityUsage(
+    transcript,
+    "session-123",
+    "gemini-2.5-flash",
+    2,
+    {},
+    emitFn,
+  );
+  assert.equal(step2, 2);
+  assert.equal(emitted.length, 0);
+
+  // Append step 3
+  appendFileSync(
+    transcript,
+    JSON.stringify({
+      step_index: 3,
+      source: "MODEL",
+      type: "PLANNER_RESPONSE",
+      input_tokens: 500,
+      output_tokens: 50,
+    }) + "\n",
+  );
+  const step3 = await emitAntigravityUsage(
+    transcript,
+    "session-123",
+    "gemini-2.5-flash",
+    2,
+    {},
+    emitFn,
+  );
+  assert.equal(step3, 3);
+  assert.equal(emitted.length, 1);
+  const third = emitted[0];
+  assert.ok(third);
+  assert.equal(third.input_tokens, 500);
+
+  rmSync(transcript, { force: true });
 });
