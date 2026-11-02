@@ -120,7 +120,7 @@ export interface GuardPreToolResult {
 export interface GuardAskResultParams {
   command?: string;
   cwd?: string;
-  result: "allow" | "deny" | "unavailable";
+  result: "allow" | "deny" | "unavailable" | "timeout";
   sessionId?: string;
   tool?: string;
   via?: string;

@@ -687,6 +687,78 @@ void test("pi: every ask outcome is logged as guard.ask_result with its class; n
         ["guard.ask_result", "unavailable", "no-ui", "files"],
     ]);
 });
+void test("pi: ask confirms pass timeout option and handle timeout vs deny vs allow", async () => {
+    const { handlers, api } = fakePi();
+    const events = [];
+    guardExtension(api, {
+        ...deps(),
+        emit: async (event, attrs) => {
+            await Promise.resolve();
+            events.push([event, attrs.result, attrs.waitMs !== undefined]);
+        },
+    });
+    const cwd = dir();
+    let capturedOpts;
+    const makeCtx = (confirmFn) => ({
+        cwd,
+        hasUI: true,
+        ui: {
+            confirm: async (title, msg, opts) => {
+                capturedOpts = opts;
+                return confirmFn(title, msg, opts);
+            },
+            notify: () => {
+                /* noop */
+            },
+        },
+        sessionManager: { getSessionId: () => "s" },
+    });
+    const call = async (c) => {
+        const fn = handlers.tool_call;
+        return (await fn?.({ toolName: "bash", toolCallId: "t", input: { command: "rm -rf ~/x" } }, c));
+    };
+    // 1. By default, passes { timeout: 60000 }
+    // When confirm returns undefined (timeout), records "timeout" and returns block with "No answer"
+    capturedOpts = undefined;
+    const timeoutRes = await call(makeCtx(async () => {
+        await Promise.resolve();
+        return undefined;
+    }));
+    assert.deepEqual(capturedOpts, { timeout: 60000 });
+    assert.equal(timeoutRes?.block, true);
+    assert.match(timeoutRes.reason ?? "", /No answer: nobody confirmed this command within 60s/);
+    // 2. When confirm returns false (explicit deny), records "deny" and returns block with "user denied"
+    const denyRes = await call(makeCtx(async () => {
+        await Promise.resolve();
+        return false;
+    }));
+    assert.equal(denyRes?.block, true);
+    assert.match(denyRes.reason ?? "", /The user denied this command/);
+    // 3. When confirm returns true (allow), records "allow" and does not block
+    const allowRes = await call(makeCtx(async () => {
+        await Promise.resolve();
+        return true;
+    }));
+    assert.equal(allowRes, undefined);
+    // 4. GUARD_ASK_TIMEOUT_MS=0 passes undefined for timeout
+    const oldEnv = process.env.GUARD_ASK_TIMEOUT_MS;
+    try {
+        process.env.GUARD_ASK_TIMEOUT_MS = "0";
+        capturedOpts = undefined;
+        await call(makeCtx(async () => {
+            await Promise.resolve();
+            return true;
+        }));
+        assert.equal(capturedOpts, undefined);
+    }
+    finally {
+        if (oldEnv === undefined)
+            delete process.env.GUARD_ASK_TIMEOUT_MS;
+        else
+            process.env.GUARD_ASK_TIMEOUT_MS = oldEnv;
+    }
+    assert.deepEqual(events.filter(([e]) => e === "guard.ask_result").map(([, res]) => res), ["timeout", "deny", "allow", "allow"]);
+});
 void test("pi: a failing make check on settle is sent back once, an aborted run is left alone", async () => {
     const { handlers, sent, api } = fakePi();
     guardExtension(api, deps());
