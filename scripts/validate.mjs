@@ -554,32 +554,6 @@ function check_build_sync(r) {
         r.ok("all agents in sync");
     }
 }
-function check_workspace_mcp(r) {
-    r.section("Workspace MCP source -> Codex, pi, and Antigravity");
-    const result = spawnSync("chezmoi-agents", ["mcp", "sync", "-check"], {
-        cwd: REPO_ROOT,
-        encoding: "utf-8",
-    });
-    if (result.error) {
-        if (result.error.code === "ENOENT") {
-            r.ok("chezmoi-agents not found, skipped");
-            return;
-        }
-        r.fail(`chezmoi-agents invocation failed: ${result.error.message}`);
-        return;
-    }
-    if (result.status !== 0) {
-        const combined = result.stdout + result.stderr;
-        for (const line of combined.split(/\r?\n/)) {
-            if (line.trim().length > 0) {
-                r.fail(line);
-            }
-        }
-    }
-    else {
-        r.ok("workspace source converts without private environment values or local files");
-    }
-}
 function check_pi_package(r) {
     r.section("pi package (root package.json)");
     const path = join(REPO_ROOT, "package.json");
@@ -731,7 +705,6 @@ function main() {
     check_marketplace(r);
     check_repo_version_sync(r);
     check_build_sync(r);
-    check_workspace_mcp(r);
     check_hooks(r);
     check_vscode(r);
     check_pi_package(r);

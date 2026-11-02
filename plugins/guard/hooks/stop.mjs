@@ -441,6 +441,10 @@ function readInput() {
 }
 const entryArg = process.argv[1];
 if (entryArg && import.meta.url === pathToFileURL(entryArg).href) {
+    const flagHarness = process.argv
+        .find((a) => a.startsWith("--harness="))
+        ?.slice(10);
+    const activeHarness = flagHarness ?? detectHarnessName();
     try {
         const raw = await readInput();
         const input = JSON.parse(raw || "{}");
@@ -458,7 +462,6 @@ if (entryArg && import.meta.url === pathToFileURL(entryArg).href) {
         const out = await stopCheck(input, spawnSync, {
             report: (attrs) => events.push(attrs),
         });
-        const activeHarness = detectHarnessName();
         const isAntigravity = activeHarness === "antigravity" || input.terminationReason !== undefined;
         if (isAntigravity &&
             (input.transcriptPath ||
@@ -490,8 +493,17 @@ if (entryArg && import.meta.url === pathToFileURL(entryArg).href) {
         for (const event of events) {
             await emit(process.env, "guard.stop", recordAttrs({ ...event, cmd_class: "stop", session_id: input.session_id }, input.cwd ?? process.cwd(), harnessName()));
         }
+        if (isAntigravity) {
+            process.exit(0);
+        }
     }
     catch {
         // unreadable payload: let the agent stop
+        if (activeHarness === "antigravity") {
+            process.exit(0);
+        }
+    }
+    if (activeHarness === "antigravity") {
+        process.exit(0);
     }
 }
