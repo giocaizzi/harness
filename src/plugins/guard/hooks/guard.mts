@@ -71,6 +71,7 @@ import { installedVersions, staleCheck } from "./stale.mjs";
 import {
   appendDecision,
   commandHash,
+  emitAntigravityUsage,
   harnessName,
   recordAttrs,
 } from "./telemetry.mjs";
@@ -216,6 +217,7 @@ const MAX_PROCESSES = 4;
 
 export interface StoredSessionState {
   announced?: boolean;
+  lastTranscriptStep?: number;
   loaded: string[];
   plugins: PluginVersionMap;
   reminded: string[];
@@ -233,6 +235,7 @@ interface RawSessionFact {
   agent?: string;
   announced?: boolean;
   cwd?: string;
+  lastTranscriptStep?: number;
   loaded?: string;
   plugin?: string;
   process?: number | string;
@@ -254,6 +257,7 @@ export function sessionStore(
   let seen: {
     announced?: boolean;
     cwd?: string;
+    lastTranscriptStep?: number;
     loaded: string[];
     plugins: PluginVersionMap;
     processes: Set<string>;
@@ -264,11 +268,14 @@ export function sessionStore(
   return {
     load(): StoredSessionState {
       seen = {
-        reminded: [],
+        announced: undefined,
+        cwd: undefined,
+        lastTranscriptStep: undefined,
         loaded: [],
-        unattended: undefined,
         plugins: {},
         processes: new Set(),
+        reminded: [],
+        unattended: undefined,
       };
       if (!file) {
         return { reminded: [], loaded: [], plugins: {} };
@@ -299,6 +306,9 @@ export function sessionStore(
         if (typeof fact.unattended === "boolean") {
           seen.unattended = fact.unattended;
         }
+        if (typeof fact.lastTranscriptStep === "number") {
+          seen.lastTranscriptStep = fact.lastTranscriptStep;
+        }
         if (
           typeof fact.cwd === "string" &&
           (fact.process != null ? String(fact.process) : "") === proc
@@ -328,6 +338,7 @@ export function sessionStore(
         plugins: { ...seen.plugins },
         startCwd: seen.cwd,
         announced: seen.announced,
+        lastTranscriptStep: seen.lastTranscriptStep,
       };
     },
 
@@ -346,6 +357,10 @@ export function sessionStore(
         ...(typeof state.unattended === "boolean" &&
         state.unattended !== seen.unattended
           ? [JSON.stringify({ unattended: state.unattended })]
+          : []),
+        ...(typeof state.lastTranscriptStep === "number" &&
+        state.lastTranscriptStep !== seen.lastTranscriptStep
+          ? [JSON.stringify({ lastTranscriptStep: state.lastTranscriptStep })]
           : []),
         ...(seen.processes.has(processId != null ? String(processId) : "") ||
         seen.processes.size < MAX_PROCESSES
@@ -1121,9 +1136,11 @@ interface ToolCallShape {
 
 export interface ExtendedHookInput extends HookInput {
   conversationId?: string;
+  modelName?: string;
   parent_agent_id?: string;
   permission_mode?: string;
   toolCall?: ToolCallShape;
+  transcriptPath?: string;
   workspacePaths?: readonly string[];
 }
 
@@ -1160,6 +1177,27 @@ export async function handle(
   const state: StoredSessionState = {
     ...store.load(),
   };
+
+  if (
+    deps.harness === "antigravity" &&
+    (input.transcriptPath ||
+      (input as { transcript_path?: string }).transcript_path)
+  ) {
+    const tPath =
+      input.transcriptPath ??
+      (input as { transcript_path?: string }).transcript_path;
+    const newStep = await emitAntigravityUsage(
+      tPath,
+      input.conversationId ?? input.session_id,
+      input.modelName,
+      state.lastTranscriptStep,
+      deps.env,
+    );
+    if (newStep !== undefined && newStep !== state.lastTranscriptStep) {
+      state.lastTranscriptStep = newStep;
+    }
+  }
+
   const loadedBefore = [...state.loaded];
   const event = input.hook_event_name;
   let out: HandleResult = {};

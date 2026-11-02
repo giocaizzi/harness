@@ -23,8 +23,15 @@ import { docsOnly } from "../core/docsonly.mjs";
 import { emit } from "../core/otel.mjs";
 import { rules } from "../core/rules.mjs";
 import { pluginDataDir } from "./data.mjs";
+import { sessionStore } from "./guard.mjs";
 import { detectHarnessName } from "./harnesses.mjs";
-import { failedTarget, harnessName, recordAttrs, scrub } from "./telemetry.mjs";
+import {
+  emitAntigravityUsage,
+  failedTarget,
+  harnessName,
+  recordAttrs,
+  scrub,
+} from "./telemetry.mjs";
 import type { HookInput, HookSpecificOutput, StopDecision } from "./types.mjs";
 
 const DEFAULT_TIMEOUT_MS = 300_000;
@@ -545,8 +552,10 @@ interface AntigravityStopInput {
   conversationId?: string;
   cwd?: string;
   hook_event_name?: string;
+  modelName?: string;
   session_id?: string;
   terminationReason?: unknown;
+  transcriptPath?: string;
   workspacePaths?: readonly string[];
 }
 
@@ -574,6 +583,30 @@ if (entryArg && import.meta.url === pathToFileURL(entryArg).href) {
     const activeHarness = detectHarnessName();
     const isAntigravity =
       activeHarness === "antigravity" || input.terminationReason !== undefined;
+
+    if (
+      isAntigravity &&
+      (input.transcriptPath ||
+        (input as { transcript_path?: string }).transcript_path)
+    ) {
+      const tPath =
+        input.transcriptPath ??
+        (input as { transcript_path?: string }).transcript_path;
+      const dataDir = pluginDataDir();
+      const store = sessionStore(dataDir, input.session_id);
+      const state = store.load();
+      const newStep = await emitAntigravityUsage(
+        tPath,
+        input.conversationId ?? input.session_id,
+        input.modelName,
+        state.lastTranscriptStep,
+        process.env,
+      );
+      if (newStep !== undefined && newStep !== state.lastTranscriptStep) {
+        state.lastTranscriptStep = newStep;
+        store.save(state);
+      }
+    }
 
     if (out) {
       if (isAntigravity) {

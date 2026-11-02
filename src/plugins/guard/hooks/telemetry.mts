@@ -7,7 +7,7 @@ import { appendFileSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { otelEnabled, repoSlug, traceContext } from "../core/otel.mjs";
+import { emit, otelEnabled, repoSlug, traceContext } from "../core/otel.mjs";
 import { detectHarnessName } from "./harnesses.mjs";
 
 export { repoSlug };
@@ -169,4 +169,116 @@ export function appendDecision(
   } catch {
     // unwritable path: telemetry never blocks a decision
   }
+}
+
+/**
+ * Estimate USD cost for a Gemini model call based on official pricing per million tokens.
+ * Pro: $1.25 / M in, $5.00 / M out, $0.3125 / M cache read.
+ * Flash: $0.15 / M in, $0.60 / M out, $0.0375 / M cache read.
+ * Flash-Lite: $0.075 / M in, $0.30 / M out, $0.01875 / M cache read.
+ */
+export function estimateGeminiCost(
+  model?: string,
+  inputTokens = 0,
+  outputTokens = 0,
+  cacheReadTokens = 0,
+): number {
+  const m = (model ?? "").toLowerCase();
+  let inRate = 1.25 / 1_000_000;
+  let outRate = 5.0 / 1_000_000;
+  let cacheRate = 0.3125 / 1_000_000;
+
+  if (m.includes("flash-lite")) {
+    inRate = 0.075 / 1_000_000;
+    outRate = 0.3 / 1_000_000;
+    cacheRate = 0.01875 / 1_000_000;
+  } else if (m.includes("flash")) {
+    inRate = 0.15 / 1_000_000;
+    outRate = 0.6 / 1_000_000;
+    cacheRate = 0.0375 / 1_000_000;
+  }
+
+  const cost =
+    Math.max(0, inputTokens) * inRate +
+    Math.max(0, outputTokens) * outRate +
+    Math.max(0, cacheReadTokens) * cacheRate;
+  return Number(cost.toFixed(6));
+}
+
+export interface AntigravityTranscriptStep {
+  cache_read_tokens?: number;
+  input_tokens?: number;
+  output_tokens?: number;
+  step_index?: number;
+  type?: string;
+}
+
+export type EmitReportFn = (
+  event: string,
+  attrs: Record<string, unknown>,
+  service?: string,
+) => Promise<void>;
+
+/**
+ * Scan Antigravity's transcript.jsonl for new PLANNER_RESPONSE turns and emit api_request to OTel.
+ * Returns the highest step_index seen, or lastStep if unchanged or unreadable.
+ */
+export async function emitAntigravityUsage(
+  transcriptPath: string | undefined,
+  conversationId: string | undefined,
+  modelName: string | undefined,
+  lastStep: number | undefined,
+  env: NodeJS.ProcessEnv | undefined = process.env,
+  emitFn?: EmitReportFn,
+): Promise<number | undefined> {
+  if (!transcriptPath || !conversationId) return lastStep;
+  let content = "";
+  try {
+    content = readFileSync(transcriptPath, "utf8");
+  } catch {
+    return lastStep;
+  }
+  if (!content) return lastStep;
+
+  const emitRecord =
+    emitFn ?? ((event, attrs) => emit(env, event, attrs, fetch, "antigravity"));
+
+  let maxStep = lastStep ?? -1;
+  const lines = content.split("\n");
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    try {
+      const step = JSON.parse(line) as AntigravityTranscriptStep;
+      const idx = step.step_index;
+      if (typeof idx === "number" && idx > (lastStep ?? -1)) {
+        if (idx > maxStep) maxStep = idx;
+        if (step.type === "PLANNER_RESPONSE") {
+          const inTok = Number(step.input_tokens) || 0;
+          const outTok = Number(step.output_tokens) || 0;
+          const cacheReadTok = Number(step.cache_read_tokens) || 0;
+          const model = modelName ?? "auto";
+          const costUsd = estimateGeminiCost(
+            model,
+            inTok,
+            outTok,
+            cacheReadTok,
+          );
+          await emitRecord("api_request", {
+            "session.id": conversationId,
+            model,
+            provider: "google",
+            input_tokens: inTok,
+            output_tokens: outTok,
+            cache_read_tokens: cacheReadTok,
+            cache_creation_tokens: 0,
+            reasoning_tokens: 0,
+            cost_usd: costUsd,
+          });
+        }
+      }
+    } catch {
+      // skip unparseable lines
+    }
+  }
+  return maxStep;
 }
