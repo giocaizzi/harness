@@ -43,25 +43,41 @@ export interface SubagentParams {
   task: string;
 }
 
+export interface PiUISelectOptions {
+  signal?: AbortSignal;
+  timeout?: number;
+}
+
+export interface PiUIInputOptions {
+  signal?: AbortSignal;
+  timeout?: number;
+}
+
+export interface PiUIContext {
+  input?: (
+    title: string,
+    placeholder?: string,
+    opts?: PiUIInputOptions,
+  ) => Promise<string | undefined | null>;
+  select?: (
+    title: string,
+    options: string[],
+    opts?: PiUISelectOptions,
+  ) => Promise<string | undefined | null>;
+}
+
+export interface AskQuestionContext {
+  hasUI?: boolean;
+  ui?: PiUIContext;
+}
+
+export interface AskQuestionParams {
+  options?: string[];
+  question: string;
+}
+
 export interface PiToolDefinition {
-  name: string;
-  label: string;
   description: string;
-  parameters: {
-    type: "object";
-    properties: {
-      agent: {
-        type: "string";
-        enum: string[];
-        description: string;
-      };
-      task: {
-        type: "string";
-        description: string;
-      };
-    };
-    required: string[];
-  };
   execute: (
     id: string,
     params: SubagentParams,
@@ -69,10 +85,45 @@ export interface PiToolDefinition {
     onUpdate?: (update: SubagentUpdate) => void,
     ctx?: SubagentContext,
   ) => Promise<SubagentUpdate>;
+  label: string;
+  name: string;
+  parameters: {
+    properties: {
+      agent: {
+        description: string;
+        enum: string[];
+        type: "string";
+      };
+      task: {
+        description: string;
+        type: "string";
+      };
+    };
+    required: string[];
+    type: "object";
+  };
+}
+
+export interface AskQuestionToolDefinition {
+  description: string;
+  execute: (
+    id: string,
+    params: AskQuestionParams,
+    signal?: AbortSignal,
+    onUpdate?: (update: SubagentUpdate) => void,
+    ctx?: AskQuestionContext,
+  ) => Promise<SubagentUpdate>;
+  label: string;
+  name: string;
+  parameters: {
+    properties: Record<string, unknown>;
+    required?: string[];
+    type: "object";
+  };
 }
 
 export interface PiHost {
-  registerTool: (tool: PiToolDefinition) => void;
+  registerTool: (tool: PiToolDefinition | AskQuestionToolDefinition) => void;
 }
 
 export type RunSubagent = (

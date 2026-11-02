@@ -21,5 +21,6 @@ export const TOOLS = {
     edit: ["edit"],
     multiedit: ["edit"],
     write: ["write"],
+    askuserquestion: ["ask_question"],
 };
 export const MAX_DEPTH = 3;
