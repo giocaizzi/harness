@@ -559,10 +559,44 @@ interface AntigravityStopInput {
   workspacePaths?: readonly string[];
 }
 
+function readInput(): Promise<string> {
+  return new Promise((resolve) => {
+    if (process.stdin.isTTY) {
+      resolve("");
+      return;
+    }
+    let buf = "";
+    let doneCalled = false;
+    const done = (): void => {
+      if (!doneCalled) {
+        doneCalled = true;
+        clearTimeout(timer);
+        process.stdin.pause();
+        process.stdin.destroy();
+        resolve(buf);
+      }
+    };
+    let timer = setTimeout(done, 200);
+    process.stdin.setEncoding("utf8");
+    process.stdin.on("data", (chunk: string) => {
+      buf += chunk;
+      try {
+        JSON.parse(buf);
+        done();
+      } catch {
+        clearTimeout(timer);
+        timer = setTimeout(done, 50);
+      }
+    });
+    process.stdin.on("end", done);
+    process.stdin.on("error", done);
+  });
+}
+
 const entryArg = process.argv[1];
 if (entryArg && import.meta.url === pathToFileURL(entryArg).href) {
   try {
-    const raw = readFileSync(0, "utf8");
+    const raw = await readInput();
     const input = JSON.parse(raw || "{}") as AntigravityStopInput;
     if (input.terminationReason !== undefined && !input.hook_event_name) {
       input.hook_event_name = "Stop";
