@@ -1,6 +1,6 @@
 {
   "name": "giocaizzi-harness",
-  "version": "0.0.0",
+  "version": "3.6.1",
   "private": true,
   "packageManager": "npm@11.19.1",
   "description": "pi package: the giocaizzi-harness skills, the guard, a subagent tool for the plugins' agents, and hud's footer and sounds' alerts. Install with `pi install git:github.com/giocaizzi/harness`.",
@@ -32,6 +32,7 @@
     "knip": "6.44.1",
     "prettier": "3.9.10",
     "typescript": "6.0.3",
-    "typescript-eslint": "8.72.1"
+    "typescript-eslint": "8.72.1",
+    "yaml": "2.9.1"
   }
 }
