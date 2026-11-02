@@ -957,6 +957,7 @@ function readInput() {
                 doneCalled = true;
                 clearTimeout(timer);
                 process.stdin.pause();
+                process.stdin.destroy();
                 resolve(buf);
             }
         };

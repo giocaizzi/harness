@@ -1408,6 +1408,7 @@ function readInput(): Promise<string> {
         doneCalled = true;
         clearTimeout(timer);
         process.stdin.pause();
+        process.stdin.destroy();
         resolve(buf);
       }
     };
