@@ -979,18 +979,36 @@ function readInput() {
     });
 }
 async function main() {
+    const flagHarness = process.argv
+        .find((a) => a.startsWith("--harness="))
+        ?.slice(10);
+    const isAgy = flagHarness === "antigravity";
     const raw = await readInput();
-    if (!raw.trim())
+    if (!raw.trim()) {
+        if (isAgy) {
+            process.stdout.write(JSON.stringify({ decision: "allow" }));
+            process.exit(0);
+        }
         return;
+    }
     let parsed;
     try {
         parsed = JSON.parse(raw);
     }
     catch {
+        if (isAgy) {
+            process.stdout.write(JSON.stringify({ decision: "allow" }));
+            process.exit(0);
+        }
         return;
     }
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        if (isAgy) {
+            process.stdout.write(JSON.stringify({ decision: "allow" }));
+            process.exit(0);
+        }
         return;
+    }
     const input = parsed;
     if (!input.hook_event_name && process.argv[2]) {
         input.hook_event_name = process.argv[2];
@@ -1000,9 +1018,6 @@ async function main() {
     }
     const dataDir = pluginDataDir();
     const noAsk = process.argv.includes("--no-ask");
-    const flagHarness = process.argv
-        .find((a) => a.startsWith("--harness="))
-        ?.slice(10);
     const harness = flagHarness ??
         (input.toolCall ? "antigravity" : noAsk ? "codex" : harnessName());
     const out = await handle(input, {
@@ -1040,7 +1055,7 @@ async function main() {
         process.stdout.write(JSON.stringify(agOut));
         if (out.stderr)
             process.stderr.write(out.stderr);
-        return;
+        process.exit(0);
     }
     if (out.stdout)
         process.stdout.write(out.stdout);
