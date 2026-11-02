@@ -655,14 +655,10 @@ function check_build_sync(r: Reporter): void {
 
 function check_workspace_mcp(r: Reporter): void {
   r.section("Workspace MCP source -> Codex, pi, and Antigravity");
-  const result = spawnSync(
-    process.execPath,
-    [join(REPO_ROOT, "scripts", "sync-mcp.mjs"), "--check"],
-    {
-      cwd: REPO_ROOT,
-      encoding: "utf-8",
-    },
-  );
+  const result = spawnSync("chezmoi-agents", ["mcp", "sync", "-check"], {
+    cwd: REPO_ROOT,
+    encoding: "utf-8",
+  });
   if (result.status !== 0) {
     const combined = result.stdout + result.stderr;
     for (const line of combined.split(/\r?\n/)) {

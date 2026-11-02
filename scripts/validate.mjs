@@ -556,7 +556,7 @@ function check_build_sync(r) {
 }
 function check_workspace_mcp(r) {
     r.section("Workspace MCP source -> Codex, pi, and Antigravity");
-    const result = spawnSync(process.execPath, [join(REPO_ROOT, "scripts", "sync-mcp.mjs"), "--check"], {
+    const result = spawnSync("chezmoi-agents", ["mcp", "sync", "-check"], {
         cwd: REPO_ROOT,
         encoding: "utf-8",
     });
