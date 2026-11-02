@@ -347,7 +347,7 @@ def check_build_sync(r: Reporter) -> None:
 
 
 def check_workspace_mcp(r: Reporter) -> None:
-    r.section("Workspace MCP source -> Codex and pi")
+    r.section("Workspace MCP source -> Codex, pi, and Antigravity")
     result = subprocess.run(
         ["node", str(REPO_ROOT / "scripts" / "sync-mcp.mjs"), "--check"],
         capture_output=True,

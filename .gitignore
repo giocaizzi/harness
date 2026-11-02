@@ -17,3 +17,4 @@ plugins/*/evals/results/
 # Locally rendered workspace MCP endpoints (source: .mcp.json)
 /.codex/config.toml
 /.pi/mcp.json
+/mcp_config.json
