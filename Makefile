@@ -11,10 +11,10 @@ test-mcp: ## Test workspace MCP conversion without connecting to servers.
 
 build: ## Compile TypeScript, then generate plugins/*/.generated and plugin manifests.
 	@npm run build:typescript
-	@uv run python scripts/build_agents.py
+	@node scripts/build_agents.mjs
 
 validate: ## Run all repo invariant checks (build sync, manifests, skills, marketplace, README).
-	@uv run python scripts/validate.py
+	@node scripts/validate.mjs
 
 check: lint typecheck test ## Standard entrypoint: lint + typecheck + test.
 

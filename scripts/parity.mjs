@@ -3,7 +3,7 @@
 // packaging, not just exist on disk. Each harness's delivery is read from what it actually consumes: the marketplace
 // and per-harness plugin manifests (Claude Code, Copilot CLI, Codex), scripts/install.mjs's plan (Codex agents,
 // opencode) and package.json's `pi` key plus the subagent tool's loader (pi). VS Code reads the Claude format, so the
-// Claude delivery covers it (validate.py checks its format rules). Usage: node scripts/parity.mjs
+// Claude delivery covers it (validate.mjs checks its format rules). Usage: node scripts/parity.mjs
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
