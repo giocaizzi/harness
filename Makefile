@@ -4,10 +4,10 @@ help: ## Show this help.
 	@awk 'BEGIN {FS = ":.*##"; printf "Usage: make \033[36m<target>\033[0m\n\nTargets:\n"} /^[a-zA-Z0-9_-]+:.*?##/ { printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
 
 mcp: ## Generate ignored Codex, pi and Antigravity workspace MCP files from .mcp.json.
-	@node scripts/sync-mcp.mjs
+	@chezmoi-agents mcp sync
 
 test-mcp: ## Test workspace MCP conversion without connecting to servers.
-	@node --test tests/mcp.test.mjs
+	@chezmoi-agents mcp sync -check
 
 build: ## Compile TypeScript, then generate plugins/*/.generated and plugin manifests.
 	@npm run build:typescript

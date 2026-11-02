@@ -1,12 +1,12 @@
 # Sync workspace MCP
 
 **When:** setting up this checkout for Codex, pi or Antigravity, or after changing its `.mcp.json`.
-**Preconditions:** Node.js 22+, `make`, and a shell whose existing credential-manager setup injects the non-secret hostname identifier `MCP_CONNECTOR_ACCOUNT`. Do not put credentials in the source or environment substitutions.
+**Preconditions:** `chezmoi-agents` (v0.3.0+), `make`, and a shell whose existing credential-manager setup injects the non-secret hostname identifier `MCP_CONNECTOR_ACCOUNT`. Do not put credentials in the source or environment substitutions.
 
 ## Steps
 
-1. Edit only `.mcp.json`. The converter supports HTTP entries with `type: "http"` and `url`; other fields, transports, URL userinfo, query strings, fragments, and variable names are rejected.
-2. Run `make mcp` from this checkout. It writes `.codex/config.toml`, `.pi/mcp.json` and `mcp_config.json` with restricted permissions. All three files are ignored by Git because their URLs contain the local account identifier. A missing identifier fails with its variable name, without printing its value.
+1. Edit only `.mcp.json` or run `chezmoi-agents mcp add`. The converter supports HTTP entries with `type: "http"` and `url`, as well as stdio entries with `command`, `args`, and `env`; other transports, URL userinfo, query strings, fragments, and variable names are rejected.
+2. Run `make mcp` from this checkout (delegated to `chezmoi-agents mcp sync`). It writes `.codex/config.toml`, `.pi/mcp.json` and `mcp_config.json` with restricted permissions (mode `0600`). All three files are ignored by Git because their URLs contain the local account identifier. A missing identifier fails with its variable name, without printing its value.
 3. If a native file already exists without the generator's ownership marker, preserve it outside these destinations before generating. All destinations are checked before any is written. Generated files are fully owned by the converter; rerunning it replaces their contents, including removed servers.
 4. Start a new Codex session in this checkout; in pi, start here or use `/reload` after generation; in Antigravity, start an `agy` session in this directory. Grant the client's project trust when prompted. Sign in to the server through the client's MCP interface if requested.
 

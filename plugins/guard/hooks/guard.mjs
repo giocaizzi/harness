@@ -944,8 +944,41 @@ export function codexAsks(env, transcriptPath) {
         return null;
     }
 }
+function readInput() {
+    return new Promise((resolve) => {
+        if (process.stdin.isTTY) {
+            resolve("");
+            return;
+        }
+        let buf = "";
+        let doneCalled = false;
+        const done = () => {
+            if (!doneCalled) {
+                doneCalled = true;
+                clearTimeout(timer);
+                process.stdin.pause();
+                resolve(buf);
+            }
+        };
+        let timer = setTimeout(done, 200);
+        process.stdin.setEncoding("utf8");
+        process.stdin.on("data", (chunk) => {
+            buf += chunk;
+            try {
+                JSON.parse(buf);
+                done();
+            }
+            catch {
+                clearTimeout(timer);
+                timer = setTimeout(done, 50);
+            }
+        });
+        process.stdin.on("end", done);
+        process.stdin.on("error", done);
+    });
+}
 async function main() {
-    const raw = readFileSync(0, "utf8");
+    const raw = await readInput();
     if (!raw.trim())
         return;
     let parsed;
