@@ -560,8 +560,16 @@ function check_workspace_mcp(r) {
         cwd: REPO_ROOT,
         encoding: "utf-8",
     });
+    if (result.error) {
+        if (result.error.code === "ENOENT") {
+            r.ok("chezmoi-agents not found, skipped");
+            return;
+        }
+        r.fail(`chezmoi-agents invocation failed: ${result.error.message}`);
+        return;
+    }
     if (result.status !== 0) {
-        const combined = result.stdout + result.stderr;
+        const combined = String(result.stdout ?? "") + String(result.stderr ?? "");
         for (const line of combined.split(/\r?\n/)) {
             if (line.trim().length > 0) {
                 r.fail(line);
