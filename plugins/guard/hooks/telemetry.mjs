@@ -155,6 +155,7 @@ export async function emitAntigravityUsage(transcriptPath, conversationId, model
     const emitRecord = emitFn ?? ((event, attrs) => emit(env, event, attrs, fetch, "antigravity"));
     let maxStep = lastStep ?? -1;
     const lines = content.split("\n");
+    const promises = [];
     for (const line of lines) {
         if (!line.trim())
             continue;
@@ -170,7 +171,7 @@ export async function emitAntigravityUsage(transcriptPath, conversationId, model
                     const cacheReadTok = Number(step.cache_read_tokens) || 0;
                     const model = modelName ?? "auto";
                     const costUsd = estimateGeminiCost(model, inTok, outTok, cacheReadTok);
-                    await emitRecord("api_request", {
+                    promises.push(emitRecord("api_request", {
                         "session.id": conversationId,
                         model,
                         provider: "google",
@@ -180,13 +181,16 @@ export async function emitAntigravityUsage(transcriptPath, conversationId, model
                         cache_creation_tokens: 0,
                         reasoning_tokens: 0,
                         cost_usd: costUsd,
-                    });
+                    }).catch(() => undefined));
                 }
             }
         }
         catch {
             // skip unparseable lines
         }
+    }
+    if (promises.length > 0) {
+        await Promise.all(promises);
     }
     return maxStep;
 }
