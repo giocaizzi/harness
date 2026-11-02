@@ -346,6 +346,22 @@ def check_build_sync(r: Reporter) -> None:
         r.ok("all agents in sync")
 
 
+def check_workspace_mcp(r: Reporter) -> None:
+    r.section("Workspace MCP source -> Codex, pi, and Antigravity")
+    result = subprocess.run(
+        ["node", str(REPO_ROOT / "scripts" / "sync-mcp.mjs"), "--check"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    if result.returncode != 0:
+        for line in (result.stdout + result.stderr).splitlines():
+            r.fail(line)
+    else:
+        r.ok("workspace source converts without private environment values or local files")
+
+
 def check_pi_package(r: Reporter) -> None:
     r.section("pi package (root package.json)")
     path = REPO_ROOT / "package.json"
@@ -443,6 +459,7 @@ def main() -> None:
     check_marketplace(r)
     check_repo_version_sync(r)
     check_build_sync(r)
+    check_workspace_mcp(r)
     check_hooks(r)
     check_vscode(r)
     check_pi_package(r)

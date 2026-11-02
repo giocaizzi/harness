@@ -13,3 +13,8 @@ node_modules/
 
 # `claude plugin eval` output: regenerated on every run
 plugins/*/evals/results/
+
+# Locally rendered workspace MCP endpoints (source: .mcp.json)
+/.codex/config.toml
+/.pi/mcp.json
+/mcp_config.json

@@ -1,7 +1,13 @@
-.PHONY: help check lint typecheck format format-check test e2e install build validate new-agent new-skill clean agent-review pr-graph ci-health eval
+.PHONY: help check lint typecheck format format-check test e2e install build validate new-agent new-skill clean agent-review pr-graph ci-health eval mcp test-mcp
 
 help: ## Show this help.
 	@awk 'BEGIN {FS = ":.*##"; printf "Usage: make \033[36m<target>\033[0m\n\nTargets:\n"} /^[a-zA-Z0-9_-]+:.*?##/ { printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
+
+mcp: ## Generate ignored Codex, pi and Antigravity workspace MCP files from .mcp.json.
+	@node scripts/sync-mcp.mjs
+
+test-mcp: ## Test workspace MCP conversion without connecting to servers.
+	@node --test tests/mcp.test.mjs
 
 build: ## Compile TypeScript, then generate plugins/*/.generated and plugin manifests.
 	@npm run build:typescript

@@ -103,6 +103,8 @@ The other four harnesses read the same sources differently (details in [docs/com
 |---|---|
 | `make help` | List all targets. |
 | `make build` | Compile TypeScript to the tracked `.mjs` runtime paths, then generate `plugins/*/.generated/` and the Copilot and Codex `plugin.json`. |
+| `make mcp` | Generate ignored Codex, pi and Antigravity workspace MCP files from `.mcp.json`; [runbook](docs/RUNBOOKS/sync-workspace-mcp.md). |
+| `make test-mcp` | Test workspace MCP conversion without connecting to servers. |
 | `make validate` | Build sync + plugin manifest hygiene + SKILL.md spec + marketplace ↔ disk + README ↔ disk + harness parity (`scripts/parity.mjs`: every skill and agent reaches every harness). |
 | `make typecheck` | Type-check authored TypeScript without emitting runtime files. |
 | `make check` | `make lint` + `make typecheck` + `make test` (standard entrypoint, run by CI on Linux). The `.ps1` script tests skip off Windows: CI's `windows-scripts` job runs them ([CI](docs/compatibility.md#verify)). |
