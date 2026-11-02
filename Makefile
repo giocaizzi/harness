@@ -1,21 +1,31 @@
-.PHONY: mcp test-mcp help check lint test e2e install build validate new-agent new-skill clean agent-review pr-graph ci-health eval
+.PHONY: help check lint typecheck format format-check test e2e install build validate new-agent new-skill clean agent-review pr-graph ci-health eval mcp test-mcp
 
 help: ## Show this help.
 	@awk 'BEGIN {FS = ":.*##"; printf "Usage: make \033[36m<target>\033[0m\n\nTargets:\n"} /^[a-zA-Z0-9_-]+:.*?##/ { printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
 
-mcp: ## Generate ignored Codex and pi workspace MCP files from .mcp.json.
+mcp: ## Generate ignored Codex, pi and Antigravity workspace MCP files from .mcp.json.
 	@node scripts/sync-mcp.mjs
 
 test-mcp: ## Test workspace MCP conversion without connecting to servers.
 	@node --test tests/mcp.test.mjs
 
-build: ## Generate plugins/*/.generated (Copilot, Codex, opencode) and the Copilot and Codex manifests.
+build: ## Compile TypeScript, then generate plugins/*/.generated and plugin manifests.
+	@npm run build:typescript
 	@uv run python scripts/build_agents.py
 
 validate: ## Run all repo invariant checks (build sync, manifests, skills, marketplace, README).
 	@uv run python scripts/validate.py
 
-check: lint test ## Standard entrypoint: lint + test.
+check: lint typecheck test ## Standard entrypoint: lint + typecheck + test.
+
+typecheck: ## Type-check the TypeScript sources without emitting runtime files.
+	@npm run typecheck
+
+format: ## Format TypeScript source and TypeScript tooling configuration.
+	@npm run format
+
+format-check: ## Check TypeScript source and TypeScript tooling formatting.
+	@npm run format:check
 
 # cmd.exe recipes only when make runs them through cmd; with sh on PATH (Git for Windows) the POSIX ones work.
 WIN_CMD := $(if $(filter Windows_NT,$(OS)),$(if $(filter sh sh.exe bash bash.exe,$(notdir $(SHELL))),,1))
@@ -23,6 +33,8 @@ WIN_CMD := $(if $(filter Windows_NT,$(OS)),$(if $(filter sh sh.exe bash bash.exe
 SH := $(wildcard plugins/*/skills/*/scripts/*.sh tests/*.sh)
 
 lint: validate ## Repo invariant checks, plus shellcheck and PSScriptAnalyzer when installed.
+	@npm run lint:typescript
+	@npm run format:check
 ifneq ($(WIN_CMD),)
 	@where shellcheck >nul 2>nul & if errorlevel 1 (echo shellcheck not found, skipped) else (shellcheck --exclude=SC1017,SC1091,SC1103,SC2183 $(SH))
 	@where pwsh >nul 2>nul & if errorlevel 1 (echo pwsh or PSScriptAnalyzer not found, skipped) else (pwsh -NoProfile -Command "$$r = Get-Module -ListAvailable PSScriptAnalyzer; if ($$null -eq $$r) { Write-Output 'PSScriptAnalyzer not found, skipped'; exit 0 }; $$result = Invoke-ScriptAnalyzer -Path . -Recurse; $$result; exit $$result.Count")
@@ -70,8 +82,8 @@ pr-graph: ## PR graph: PR size and pace, stacked share and should-have-been-stac
 ci-health: ## CI health: run counts, run time, queue, re-runs, flakes and a workflow audit, this window vs the one before (docs/agent-review.md).  Usage: make ci-health [RANGE=30d]
 	@node scripts/ci-health.mjs --range $(or $(RANGE),30d)
 
-install: ## Install what Codex and opencode cannot take from the marketplace.  Usage: make install HARNESS="codex opencode"
-	@node scripts/install.mjs $(or $(HARNESS),codex opencode)
+install: ## Install what Codex, opencode and Antigravity cannot take from the marketplace.  Usage: make install HARNESS="codex opencode antigravity"
+	@node scripts/install.mjs $(or $(HARNESS),codex opencode antigravity)
 
 new-agent: ## Scaffold plugins/<PLUGIN>/agents/<NAME>.md and .yaml.  Usage: make new-agent NAME=<name> PLUGIN=<plugin>
 	@scripts/new-agent.sh "$(NAME)" "$(PLUGIN)"
@@ -81,5 +93,5 @@ new-skill: ## Scaffold plugins/<PLUGIN>/skills/<NAME>/SKILL.md.  Usage: make new
 
 clean: ## Remove all generated files (plugins/*/.generated, per-harness manifests).
 	@rm -rf plugins/*/.generated
-	@find plugins -type f \( -path '*/.github/plugin/plugin.json' -o -path '*/.codex-plugin/plugin.json' \) -delete
+	@find plugins -type f \( -path '*/.github/plugin/plugin.json' -o -path '*/.codex-plugin/plugin.json' -o -path '*/.antigravity-plugin/plugin.json' \) -delete
 	@echo "Removed generated files."

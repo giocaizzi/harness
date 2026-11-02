@@ -3,12 +3,13 @@
 
 Agents are authored in place, as the Claude Code file, with an optional sidecar for the other harnesses:
   plugins/<plugin>/agents/<name>.md      Claude Code agent: frontmatter + system prompt (authored)
-  plugins/<plugin>/agents/<name>.yaml    optional `copilot:`, `codex:`, `opencode:` override mappings (authored)
+  plugins/<plugin>/agents/<name>.yaml    optional `copilot:`, `codex:`, `opencode:`, `antigravity:` override mappings (authored)
 
 Claude Code and VS Code read agents/*.md as-is. From each one the script writes:
   plugins/<plugin>/.generated/copilot/<name>.agent.md   Copilot CLI agent: name, description + copilot overrides
   plugins/<plugin>/.generated/codex/<name>.toml         Codex custom agent, installed by scripts/install.mjs
   plugins/<plugin>/.generated/opencode/<name>.md        opencode subagent, installed by scripts/install.mjs
+  plugins/<plugin>/.generated/antigravity/<name>.md     Antigravity agent, installed by scripts/install.mjs
 
 The other harnesses get only `name`/`description` from the Claude file: its `tools`, `effort` and `model` are
 Claude values (a `model` names a Claude tier), so they inherit the session's unless their override sets one.
@@ -45,7 +46,7 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PLUGINS_ROOT = REPO_ROOT / "plugins"
 GENERATED = ".generated"
-HARNESS_KEYS = ("copilot", "codex", "opencode")
+HARNESS_KEYS = ("copilot", "codex", "opencode", "antigravity")
 
 
 # --------------------------------------------------------------------------- agents
@@ -113,18 +114,20 @@ def _build_agent(path: Path, *, check: bool) -> bool:
     if unknown := set(overrides) - set(HARNESS_KEYS):
         print(f"ERROR: {rel.with_suffix('.yaml')}: unknown keys {sorted(unknown)}; expected {', '.join(HARNESS_KEYS)}", file=sys.stderr)
         return False
-    copilot_overrides, codex_overrides, opencode_overrides = (overrides.get(k) or {} for k in HARNESS_KEYS)
+    copilot_overrides, codex_overrides, opencode_overrides, antigravity_overrides = (overrides.get(k) or {} for k in HARNESS_KEYS)
 
     base = {"name": name, "description": claude["description"]}
     copilot_fm = {**base, **copilot_overrides}
     codex = {**base, **codex_overrides, "developer_instructions": body.strip() + "\n"}
     opencode_fm = {"description": claude["description"], "mode": "subagent", **opencode_overrides}
+    antigravity_fm = {**base, **antigravity_overrides}
 
     out = path.parent.parent / GENERATED
     targets = {
         out / "copilot" / f"{name}.agent.md": _render(copilot_fm, body),
         out / "codex" / f"{name}.toml": _render_toml(codex),
         out / "opencode" / f"{name}.md": _render(opencode_fm, body),
+        out / "antigravity" / f"{name}.md": _render(antigravity_fm, body),
     }
     return all([_sync(p, content, check=check) for p, content in targets.items()])
 
@@ -185,6 +188,21 @@ def _build_copilot_manifest(plugin_dir: Path, *, check: bool) -> bool:
     return _sync(copilot_manifest, json.dumps(copilot_data, indent=2) + "\n", check=check)
 
 
+def _build_antigravity_manifest(plugin_dir: Path, *, check: bool) -> bool:
+    claude_manifest = plugin_dir / ".claude-plugin" / "plugin.json"
+    antigravity_manifest = plugin_dir / ".antigravity-plugin" / "plugin.json"
+    if not claude_manifest.exists():
+        print(f"ERROR: {claude_manifest.relative_to(REPO_ROOT)}: missing (cannot derive Antigravity manifest)", file=sys.stderr)
+        return False
+
+    data = json.loads(claude_manifest.read_text(encoding="utf-8"))
+    antigravity_data = {
+        "$schema": "https://antigravity.google/schemas/v1/plugin.json",
+        **data,
+    }
+    return _sync(antigravity_manifest, json.dumps(antigravity_data, indent=2) + "\n", check=check)
+
+
 # --------------------------------------------------------------------------- cross-plugin copies
 
 # (source, copy), relative to plugins/.
@@ -224,6 +242,9 @@ def main() -> None:
 
     print(f"{verb} {len(plugins)} Codex manifest(s)")
     ok_manifests = all(_build_codex(p, check=args.check) for p in plugins) and ok_manifests
+
+    print(f"{verb} {len(plugins)} Antigravity manifest(s)")
+    ok_manifests = all(_build_antigravity_manifest(p, check=args.check) for p in plugins) and ok_manifests
 
     print(f"{verb} {len(COPIES)} cross-plugin copy(ies)")
     ok_manifests = _build_copies(check=args.check) and ok_manifests

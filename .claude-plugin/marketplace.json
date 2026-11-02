@@ -5,8 +5,8 @@
     "url": "https://github.com/giocaizzi"
   },
   "metadata": {
-    "description": "Personal agent harness: skills, agents and guards for Claude Code, Copilot CLI, VS Code, Codex, opencode and pi",
-    "version": "3.5.0"
+    "description": "Personal agent harness: skills, agents and guards for Claude Code, Copilot CLI, VS Code, Codex, opencode, pi and Antigravity",
+    "version": "3.6.1"
   },
   "plugins": [
     {
@@ -64,8 +64,8 @@
     {
       "name": "dev-tools",
       "source": "./plugins/dev-tools",
-      "description": "General development tooling — git, GitHub, conventional commits, semantic versioning",
-      "version": "1.49.0",
+      "description": "General development tooling \u2014 git, GitHub, conventional commits, semantic versioning",
+      "version": "1.50.3",
       "keywords": [
         "git",
         "github",
@@ -79,8 +79,8 @@
     {
       "name": "guard",
       "source": "./plugins/guard",
-      "description": "Agent guardrails for Claude Code, Copilot CLI, VS Code, Codex, opencode and pi: skill enforcer, title guard, pip deny, host guard, risky-command ask, make check on stop, post-edit lint, keep-awake; Claude-only usage throttle",
-      "version": "0.71.3",
+      "description": "Agent guardrails for Claude Code, Copilot CLI, VS Code, Codex, opencode, pi and Antigravity: skill enforcer, title guard, pip deny, host guard, risky-command ask, make check on stop, post-edit lint, keep-awake; Claude-only usage throttle",
+      "version": "0.72.3",
       "keywords": [
         "hooks",
         "guardrails",
@@ -93,7 +93,7 @@
       "name": "hud",
       "source": "./plugins/hud",
       "description": "Heads-up display for Claude Code and Copilot CLI: token-weather band with PR, git and limit forecasts, turn footer, tool rows, spinner, /weather, /subagents and /ctx panes (Claude mod), a two-line status line for both CLIs, and reply rewrites (links, paths, commits, states, pass/fail, secrets, URLs, times) in Claude Code and pi",
-      "version": "0.11.0",
+      "version": "0.11.1",
       "keywords": [
         "statusline",
         "ui",
@@ -106,7 +106,7 @@
       "name": "sounds",
       "source": "./plugins/sounds",
       "description": "Toasts, configurable sounds and system notifications for Claude Code: usage limits, context, prompt-cache expiry, every way a turn ends, questions and permission prompts waiting and PR checks finishing (Claude mod)",
-      "version": "0.6.1",
+      "version": "0.6.3",
       "keywords": [
         "sounds",
         "notifications",
@@ -118,7 +118,7 @@
       "name": "factory",
       "source": "./plugins/factory",
       "description": "Attended ticket runs on a GitHub issue board: owner-approved tickets worked end to end, scope logged on the ticket, questions on the ticket, a result contract per run",
-      "version": "0.27.0",
+      "version": "0.27.1",
       "keywords": [
         "github-issues",
         "workflow",

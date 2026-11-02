@@ -1,6 +1,6 @@
 # `guard` plugin
 
-Agent guardrails as hooks: one rule engine that runs under Claude Code, GitHub Copilot CLI, VS Code Copilot and Codex as command hooks (`hooks/hooks.json`, `.generated/codex/hooks.json`) and under opencode and pi as in-process plugins (`hooks/opencode.mjs`, `hooks/pi.mjs`), on macOS, Linux and Windows. Per-harness differences: [docs/compatibility.md](../../docs/compatibility.md). No skills or agents. Architecture and the install/verify runbook: [docs/guard.md](../../docs/guard.md). The UI moved to [`hud`](../hud/README.md) and toasts and sounds to [`sounds`](../sounds/README.md).
+Agent guardrails as hooks: one rule engine that runs under Claude Code, GitHub Copilot CLI, VS Code Copilot, Codex and Antigravity as command hooks (`hooks/hooks.json`, `.generated/codex/hooks.json`, Antigravity `hooks.json`) and under opencode and pi as in-process plugins (`hooks/opencode.mjs`, `hooks/pi.mjs`), on macOS, Linux and Windows. Per-harness differences: [docs/compatibility.md](../../docs/compatibility.md). No skills or agents. Architecture and the install/verify runbook: [docs/guard.md](../../docs/guard.md). The UI moved to [`hud`](../hud/README.md) and toasts and sounds to [`sounds`](../sounds/README.md).
 
 ## Hooks
 
@@ -18,7 +18,7 @@ Agent guardrails as hooks: one rule engine that runs under Claude Code, GitHub C
 | `usage-throttle` | mod `agent.spawn` | Claude | At 90% of the worst plan window, a new subagent starts with a toast (`GUARD_THROTTLE=warn`, the default), asks (`ask`), is refused (`deny`) or is not checked (`off`). Copilot exposes no rate-limit windows. |
 | `ask-timeout` | mod `tool.check` | Claude (pi, opencode: [#100](https://github.com/giocaizzi/harness/issues/100); others cannot: [#101](https://github.com/giocaizzi/harness/issues/101)) | Puts each permission ask that would reach the person in an Allow/Deny dialog and parks it after 60 seconds without an answer (`GUARD_ASK_TIMEOUT_MS`; `0` turns it off), telling the agent "no answer, carry on or park it", never "the user denied". Logs each outcome as `guard.ask_result`. Auto mode's own asks stay with its classifier; `dontAsk` stays with the engine. |
 | `decision-log` | PreToolUse (shell), mod `agent.spawn` | all (throttle: Claude) | Sends each deny, ask and throttled spawn as an OTLP log record to the collector in `OTEL_EXPORTER_OTLP_ENDPOINT` (or its `GUARD_` copy, since Claude Code and Copilot strip `OTEL_*` from hooks); nothing without it. A well-formed `GUARD_TRACEPARENT` puts its trace and span ids on each decision record. See [docs/guard.md](../../docs/guard.md#grafana). |
-| `routing-hint` | PreToolUse (subagent spawns: `Agent`, `Task`, `task`, `spawn_agent`, `runSubagent`) | Claude, Copilot CLI, VS Code, Codex (opencode, pi: no case can occur) | Once per session per case, a hint (never a deny) when a spawn bypasses the typed agents: the built-in Plan agent, an untyped spawn on an Opus, Fable, GPT Sol or Astra model or with no model, or a typed agent spawned with a `model` or `effort` the skill does not allow. |
+| `routing-hint` | PreToolUse (subagent spawns: `Agent`, `Task`, `task`, `spawn_agent`, `runSubagent`, `invoke_subagent`) | Claude, Copilot CLI, VS Code, Codex, Antigravity (opencode, pi: no case can occur) | Once per session per case, a hint (never a deny) when a spawn bypasses the typed agents: the built-in Plan agent, an untyped spawn on an Opus, Fable, GPT Sol or Astra model or with no model, or a typed agent spawned with a `model` or `effort` the skill does not allow. |
 | `stale-plugins` | PreToolUse (every tool the guard sees) | all | Once per session and newer version, tells the user (and the agent) that this marketplace's plugins were updated since the session loaded them, with the harness's reload command, which only the user can run. |
 | `skill-tracker` | PreToolUse (Skill, a read of `SKILL.md`), UserPromptSubmit (`/skill`, `/skill:name`, `$skill`) | all | Records loaded skills and typed slash commands for the skill enforcer. |
 
@@ -28,6 +28,7 @@ Agent guardrails as hooks: one rule engine that runs under Claude Code, GitHub C
 /plugin install guard@giocaizzi-harness          # Claude Code
 copilot plugin install guard@giocaizzi-harness   # Copilot CLI
 codex plugin add guard@giocaizzi-harness         # Codex, then trust its hooks in /hooks
+make install HARNESS=antigravity                 # Antigravity
 make install HARNESS=codex                       # Codex prompt rules for risky commands, from a clone
 make install HARNESS=opencode                    # opencode, from a clone
 pi install git:github.com/giocaizzi/harness      # pi

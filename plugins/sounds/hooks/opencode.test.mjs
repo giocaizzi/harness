@@ -1,52 +1,110 @@
-import { test } from 'node:test'
-import assert from 'node:assert/strict'
-import * as mod from './opencode.mjs'
-
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import * as mod from "./opencode.mjs";
 const client = (toasts) => ({
-  config: { providers: async () => ({ data: { providers: [{ id: 'p', models: { m: { id: 'm', limit: { context: 1000 } } } }] } }) },
-  tui: { showToast: async ({ body }) => toasts.push(body.message) },
-})
+    config: {
+        providers: () => Promise.resolve({
+            data: {
+                providers: [
+                    {
+                        id: "p",
+                        models: { m: { id: "m", limit: { context: 1000 } } },
+                    },
+                ],
+            },
+        }),
+    },
+    tui: {
+        showToast: ({ body }) => {
+            toasts.push(body.message);
+            return Promise.resolve();
+        },
+    },
+});
 const assistant = (sessionID, total) => ({
-  type: 'message.updated',
-  properties: { info: { role: 'assistant', sessionID, providerID: 'p', modelID: 'm', tokens: { input: total, output: 0, reasoning: 0, cache: { read: 0, write: 0 } } } },
-})
-
-test('the module exports only the plugin: opencode calls every exported function', () => {
-  assert.deepEqual(Object.keys(mod), ['SoundsPlugin'])
-})
-
-test('idle plays done and toasts the context alert; an error plays error; a subagent ticks', async () => {
-  const played = []
-  const toasts = []
-  let t = 0
-  let rang = 0
-  const hooks = await mod.SoundsPlugin({ client: client(toasts) }, { play: (c) => played.push(c), bell: () => rang++, now: () => t })
-  await hooks['chat.message']({ sessionID: 's' })
-  await hooks.event({ event: assistant('s', 910) })
-  t = 5000
-  await hooks.event({ event: { type: 'session.idle', properties: { sessionID: 's' } } })
-  assert.deepEqual(played, ['done', 'alert'])
-  assert.deepEqual(toasts, ['Context 91%: compact now'])
-
-  played.length = 0
-  await hooks['chat.message']({ sessionID: 's' })
-  await hooks.event({ event: { type: 'session.error', properties: { sessionID: 's', error: { name: 'APIError' } } } })
-  await hooks.event({ event: { type: 'session.idle', properties: { sessionID: 's' } } })
-  assert.deepEqual(played, ['error'])
-
-  played.length = 0
-  await hooks.event({ event: { type: 'session.created', properties: { info: { id: 'c', parentID: 's' } } } })
-  await hooks.event({ event: { type: 'session.idle', properties: { sessionID: 'c' } } })
-  assert.deepEqual(played, ['tick'])
-  assert.equal(rang, 2, 'the two main turns ring, the subagent does not')
-})
-
-test('a permission prompt or a question plays chime and rings the bell', async () => {
-  const played = []
-  let rang = 0
-  const hooks = await mod.SoundsPlugin({ client: client([]) }, { play: (c) => played.push(c), bell: () => rang++ })
-  await hooks.event({ event: { type: 'permission.asked', properties: { sessionID: 's' } } })
-  await hooks.event({ event: { type: 'question.asked', properties: { sessionID: 's' } } })
-  assert.deepEqual(played, ['chime', 'chime'])
-  assert.equal(rang, 2)
-})
+    type: "message.updated",
+    properties: {
+        info: {
+            role: "assistant",
+            sessionID,
+            providerID: "p",
+            modelID: "m",
+            tokens: {
+                input: total,
+                output: 0,
+                reasoning: 0,
+                cache: { read: 0, write: 0 },
+            },
+        },
+    },
+});
+void test("the module exports only the plugin: opencode calls every exported function", () => {
+    assert.deepEqual(Object.keys(mod), ["SoundsPlugin"]);
+});
+void test("idle plays done and toasts the context alert; an error plays error; a subagent ticks", async () => {
+    const played = [];
+    const toasts = [];
+    let t = 0;
+    let rang = 0;
+    const hooks = await mod.SoundsPlugin({ client: client(toasts) }, {
+        play: (clip) => {
+            played.push(clip);
+        },
+        bell: () => {
+            rang++;
+        },
+        now: () => t,
+    });
+    await hooks["chat.message"]({ sessionID: "s" });
+    await hooks.event({ event: assistant("s", 910) });
+    t = 5000;
+    await hooks.event({
+        event: { type: "session.idle", properties: { sessionID: "s" } },
+    });
+    assert.deepEqual(played, ["done", "alert"]);
+    assert.deepEqual(toasts, ["Context 91%: compact now"]);
+    played.length = 0;
+    await hooks["chat.message"]({ sessionID: "s" });
+    await hooks.event({
+        event: {
+            type: "session.error",
+            properties: { sessionID: "s", error: { name: "APIError" } },
+        },
+    });
+    await hooks.event({
+        event: { type: "session.idle", properties: { sessionID: "s" } },
+    });
+    assert.deepEqual(played, ["error"]);
+    played.length = 0;
+    await hooks.event({
+        event: {
+            type: "session.created",
+            properties: { info: { id: "c", parentID: "s" } },
+        },
+    });
+    await hooks.event({
+        event: { type: "session.idle", properties: { sessionID: "c" } },
+    });
+    assert.deepEqual(played, ["tick"]);
+    assert.equal(rang, 2, "the two main turns ring, the subagent does not");
+});
+void test("a permission prompt or a question plays chime and rings the bell", async () => {
+    const played = [];
+    let rang = 0;
+    const hooks = await mod.SoundsPlugin({ client: client([]) }, {
+        play: (clip) => {
+            played.push(clip);
+        },
+        bell: () => {
+            rang++;
+        },
+    });
+    await hooks.event({
+        event: { type: "permission.asked", properties: { sessionID: "s" } },
+    });
+    await hooks.event({
+        event: { type: "question.asked", properties: { sessionID: "s" } },
+    });
+    assert.deepEqual(played, ["chime", "chime"]);
+    assert.equal(rang, 2);
+});

@@ -24,10 +24,11 @@ Checks:
      VS Code maps, and hook commands use no `${CLAUDE_PLUGIN_DATA}` token (VS Code
      expands only `${CLAUDE_PLUGIN_ROOT}`).
   9. pi reads the repo-root package.json: its `pi` key loads every plugin's skills and the guard extension.
- 10. Parity: every skill and agent reaches Claude Code, Copilot CLI, Codex, opencode and pi through
+ 10. Parity: every skill and agent reaches Claude Code, Copilot CLI, Codex, opencode, pi and Antigravity through
      the repo's own packaging, each agent at one tier (delegates to scripts/parity.mjs).
  11. Skills are self-contained: no skill file (.md or script) points at this repo's docs/ (a `../docs`
      path, or a relative `docs/<path>` that is a file here), since an installed skill ships without them.
+ 12. TypeScript compilation succeeds and every emitted runtime file matches its tracked output.
 """
 
 from __future__ import annotations
@@ -37,6 +38,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import tomllib
 from pathlib import Path
 
@@ -140,7 +142,20 @@ def check_repo_specific_manifests(r: Reporter) -> None:
             r.fail(f"{crel}: version drift vs .claude-plugin/plugin.json ({cdata.get('version')!r} vs {data.get('version')!r}) - run `make build`")
         if cdata.get("agents") != ["./.generated/copilot/"]:
             r.fail(f"{crel}: must contain `\"agents\": [\"./.generated/copilot/\"]` so Copilot CLI scans .generated/copilot/ (got {cdata.get('agents')!r})")
-        r.ok(f"{plugin_dir.name} (Claude + Copilot manifests)")
+
+        antigravity_manifest = plugin_dir / ".antigravity-plugin" / "plugin.json"
+        arel = antigravity_manifest.relative_to(REPO_ROOT)
+        if not antigravity_manifest.exists():
+            r.fail(f"{arel}: missing - Antigravity needs this manifest (run `make build`)")
+            continue
+        try:
+            adata = _load_json(antigravity_manifest)
+        except json.JSONDecodeError as e:
+            r.fail(f"{arel}: invalid JSON: {e}")
+            continue
+        if adata.get("version") != data.get("version"):
+            r.fail(f"{arel}: version drift vs .claude-plugin/plugin.json ({adata.get('version')!r} vs {data.get('version')!r}) - run `make build`")
+        r.ok(f"{plugin_dir.name} (Claude + Copilot + Antigravity manifests)")
 
 
 def check_marketplace(r: Reporter) -> None:
@@ -401,8 +416,44 @@ def check_parity(r: Reporter) -> None:
         r.ok(result.stdout.strip())
 
 
+def check_typescript_sync(r: Reporter) -> None:
+    """Compile into a temporary directory and compare every emitted runtime file."""
+    r.section("TypeScript sources <-> emitted runtime files")
+    compiler = REPO_ROOT / "node_modules" / "typescript" / "bin" / "tsc"
+    if not compiler.is_file() or shutil.which("node") is None:
+        r.fail("TypeScript compiler or Node.js missing - run `npm ci` before validation")
+        return
+
+    with tempfile.TemporaryDirectory(prefix="harness-typescript-") as temporary:
+        output = Path(temporary)
+        result = subprocess.run(
+            ["node", str(compiler), "--project", "tsconfig.build.json", "--outDir", str(output)],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        if result.returncode != 0:
+            r.fail(f"TypeScript compilation failed:\n{result.stdout}{result.stderr}")
+            return
+        emitted = sorted(output.rglob("*.mjs"))
+        for path in emitted:
+            relative = path.relative_to(output)
+            runtime = REPO_ROOT / relative
+            if not runtime.is_file():
+                r.fail(f"{relative}: missing TypeScript output - run `make build`")
+            elif path.read_bytes() != runtime.read_bytes():
+                r.fail(f"{relative}: stale TypeScript output - run `make build`")
+            else:
+                r.ok(str(relative))
+        if not emitted:
+            r.fail("TypeScript compilation emitted no runtime files")
+
+
 def main() -> None:
     r = Reporter()
+    check_typescript_sync(r)
     check_native_validator(r)
     check_repo_specific_manifests(r)
     check_marketplace(r)
