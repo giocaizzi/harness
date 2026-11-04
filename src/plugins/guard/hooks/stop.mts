@@ -370,7 +370,18 @@ export function gateFailClosed(
       ? `Factory result gate: could not check the result for run ${run.runId} (${shown}); FACTORY_RESULT_CHECKER is set, so the stop stays blocked.`
       : `Factory result gate: could not check the result for run ${run.runId} (${shown}); a runtime run never fails open, so the stop stays blocked.`;
   } catch {
-    return null;
+    // the gate's own failure must not open a runtime run
+    try {
+      const guarded =
+        ((env.FACTORY_RUN_ID ?? "").trim() ||
+          env.FACTORY_RESULT_CHECKER !== undefined) &&
+        env.GUARD_RESULT_GATE !== "off";
+      return guarded
+        ? "Factory result gate: could not check the result for this run (internal error); the stop stays blocked."
+        : null;
+    } catch {
+      return null;
+    }
   }
 }
 
@@ -378,20 +389,26 @@ export function gateFailClosed(
 const blockFile = (runId: string): string =>
   join(pluginDataDir(), "result-gate", `${sha(runId).slice(0, 16)}.txt`);
 
-// The count so far. Absent: 0. Anything but a small regular file of digits (the agent can plant a FIFO, a directory
-// or garbage here) counts as the cap reached.
+// The count so far: only a regular, single-link file of at most 64 bytes holding 1-9 digits, opened without following
+// a symlink, counts. Everything else (missing, empty, garbage, a FIFO, a directory, a symlink, a hardlink, an
+// unreadable path) is 0, so the write below replaces it and the block is counted.
 function blockCount(runId: string): number {
   try {
-    const text = readRegularFile(
+    const c = constants as { O_NONBLOCK?: number; O_NOFOLLOW?: number };
+    const fd = openSync(
       blockFile(runId),
-      COUNTER_MAX_BYTES,
-      "too large",
-    ).trim();
-    return /^\d{1,9}$/.test(text) ? Number(text) : RESULT_GATE_MAX;
-  } catch (e: unknown) {
-    const code = (e as { code?: string }).code;
-    // ENOTDIR: a file where the counter's directory should be, so nothing is counted there (the write then fails)
-    return code === "ENOENT" || code === "ENOTDIR" ? 0 : RESULT_GATE_MAX;
+      constants.O_RDONLY | (c.O_NONBLOCK ?? 0) | (c.O_NOFOLLOW ?? 0),
+    );
+    try {
+      const st = fstatSync(fd);
+      if (!st.isFile() || st.nlink > 1 || st.size > COUNTER_MAX_BYTES) return 0;
+      const text = readFileSync(fd, "utf8").trim();
+      return /^\d{1,9}$/.test(text) ? Number(text) : 0;
+    } finally {
+      closeSync(fd);
+    }
+  } catch {
+    return 0;
   }
 }
 
@@ -779,6 +796,38 @@ if (entryArg && import.meta.url === pathToFileURL(entryArg).href) {
       process.stdout.write(JSON.stringify(out));
     }
   };
+  // A crash outside the try below (an uncaught exception or rejection) answers like an internal error: a block when
+  // the gate never fails open, nothing otherwise, and always exit 0.
+  let crashed = false;
+  const failClosedOnCrash = (): void => {
+    if (crashed) process.exit(0);
+    crashed = true;
+    try {
+      const reason = gateFailClosed(process.env, input, "internal error");
+      if (reason) {
+        writeOut({
+          decision: "block",
+          reason,
+          hookSpecificOutput: {
+            hookEventName: "Stop",
+            decision: "block",
+            reason,
+          },
+        });
+      }
+    } catch {
+      // never exit non-zero by accident
+    }
+    try {
+      process.stdout.write("", () => {
+        process.exit(0);
+      });
+    } catch {
+      process.exit(0);
+    }
+  };
+  process.on("uncaughtException", failClosedOnCrash);
+  process.on("unhandledRejection", failClosedOnCrash);
   try {
     const raw = await readInput();
     input = plainInput(JSON.parse(raw || "{}"));

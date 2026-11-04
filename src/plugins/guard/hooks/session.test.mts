@@ -6,11 +6,14 @@ import {
 } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
+  chmodSync,
   existsSync,
+  linkSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -18,7 +21,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, test } from "node:test";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { harnessPid, keepAwake, keeperArgv } from "./awake.mjs";
 import { lintFile } from "./lint.mjs";
@@ -757,17 +760,18 @@ void test("result gate: a counter set to 2 releases an unset runtime run (the un
   }
 });
 
-void test("result gate: a malformed or oversized counter counts as the cap reached", async () => {
+void test("result gate: a malformed, empty or oversized counter counts as 0, so the block is counted", async () => {
   try {
     for (const text of ["x", "-1", "1e3", "1".repeat(70), "", "1\n2"]) {
       const cwd = plantCounter((f) => {
         writeFileSync(f, text);
       });
-      assert.equal(
-        await resultGate({ cwd }, undefined, RUNTIME),
-        null,
+      assert.match(
+        (await resultGate({ cwd }, undefined, RUNTIME)) ?? "",
+        /block 1 of 2/,
         JSON.stringify(text),
       );
+      assert.equal(readFileSync(counterPath(), "utf8"), "1");
     }
     const cwd = plantCounter((f) => {
       writeFileSync(f, " 1\n");
@@ -782,40 +786,128 @@ void test("result gate: a malformed or oversized counter counts as the cap reach
 });
 
 void test(
-  "result gate: a FIFO at the counter path is read without hanging, as the cap reached",
+  "result gate: a FIFO at the counter path is read without hanging, replaced by a regular file and counted",
   posix,
   async () => {
     try {
       const cwd = plantCounter(mkfifo);
       const started = Date.now();
-      assert.equal(await resultGate({ cwd }, undefined, RUNTIME), null);
+      assert.match(
+        (await resultGate({ cwd }, undefined, RUNTIME)) ?? "",
+        /block 1 of 2/,
+      );
       assert.ok(Date.now() - started < 5000);
+      assert.ok(lstatSync(counterPath()).isFile());
+      assert.equal(readFileSync(counterPath(), "utf8"), "1");
     } finally {
       delete process.env.CLAUDE_PLUGIN_DATA;
     }
   },
 );
 
-void test("result gate: a directory at the counter path counts as the cap reached", async () => {
+void test(
+  "result gate: a symlink at the counter path is not followed: replaced, counted, its target untouched",
+  posix,
+  async () => {
+    try {
+      const target = join(tmp(), "target.txt");
+      writeFileSync(target, "9");
+      for (const to of [target, "/dev/null"]) {
+        const cwd = plantCounter((f) => {
+          symlinkSync(to, f);
+        });
+        assert.match(
+          (await resultGate({ cwd }, undefined, RUNTIME)) ?? "",
+          /block 1 of 2/,
+        );
+        assert.ok(lstatSync(counterPath()).isFile());
+        assert.equal(readFileSync(counterPath(), "utf8"), "1");
+      }
+      assert.equal(readFileSync(target, "utf8"), "9");
+    } finally {
+      delete process.env.CLAUDE_PLUGIN_DATA;
+    }
+  },
+);
+
+void test("result gate: a hardlink at the counter path is replaced and counted, the other link untouched", async () => {
   try {
+    const other = join(tmp(), "other.txt");
+    writeFileSync(other, "9");
     const cwd = plantCounter((f) => {
-      mkdirSync(f);
+      linkSync(other, f);
     });
-    assert.equal(await resultGate({ cwd }, undefined, RUNTIME), null);
+    assert.match(
+      (await resultGate({ cwd }, undefined, RUNTIME)) ?? "",
+      /block 1 of 2/,
+    );
+    assert.equal(readFileSync(other, "utf8"), "9");
+    assert.equal(readFileSync(counterPath(), "utf8"), "1");
+    assert.equal(lstatSync(counterPath()).nlink, 1);
   } finally {
     delete process.env.CLAUDE_PLUGIN_DATA;
   }
 });
 
-void test("result gate: strict mode stays blocked whatever sits at the counter path, and replaces a FIFO or symlink", async () => {
+void test("result gate: a directory at the counter path fails the write: a runtime run blocks closed, an attended one goes", async () => {
   try {
-    for (const text of ["2", "garbage", "9".repeat(70)]) {
+    const cwd = plantCounter((f) => {
+      mkdirSync(f);
+    });
+    const out = (await resultGate({ cwd }, undefined, RUNTIME)) ?? "";
+    assert.match(out, RUNTIME_BLOCK);
+    assert.doesNotMatch(out, /block \d of 2/);
+    assert.deepEqual(
+      readdirSync(dirname(counterPath())).filter((n) => n.endsWith(".tmp")),
+      [],
+    );
+    assert.equal(await resultGate({ cwd }, undefined, ATTENDED), null);
+  } finally {
+    delete process.env.CLAUDE_PLUGIN_DATA;
+  }
+});
+
+void test(
+  "result gate: an unwritable counter directory blocks a runtime run closed",
+  {
+    skip:
+      process.platform === "win32" ||
+      (process.getuid?.() ?? 1) === 0 ||
+      undefined,
+  },
+  async () => {
+    try {
+      const cwd = plantCounter(() => {
+        // the directory exists; only its mode changes
+      });
+      chmodSync(dirname(counterPath()), 0);
+      try {
+        assert.match(
+          (await resultGate({ cwd }, undefined, RUNTIME)) ?? "",
+          RUNTIME_BLOCK,
+        );
+      } finally {
+        chmodSync(dirname(counterPath()), 0o700);
+      }
+    } finally {
+      delete process.env.CLAUDE_PLUGIN_DATA;
+    }
+  },
+);
+
+void test("result gate: strict mode is never capped whatever sits at the counter path, and replaces a FIFO or symlink", async () => {
+  try {
+    for (const [text, n] of [
+      ["2", 3],
+      ["garbage", 1],
+      ["9".repeat(70), 1],
+    ] as const) {
       const cwd = plantCounter((f) => {
         writeFileSync(f, text);
       });
       assert.match(
         (await resultGate({ cwd }, undefined, strictEnv(""))) ?? "",
-        /block 3; FACTORY_RESULT_CHECKER is set/,
+        new RegExp(`block ${String(n)}; FACTORY_RESULT_CHECKER is set`),
         text,
       );
     }
@@ -823,10 +915,10 @@ void test("result gate: strict mode stays blocked whatever sits at the counter p
       const cwd = plantCounter(mkfifo);
       assert.match(
         (await resultGate({ cwd }, undefined, strictEnv(""))) ?? "",
-        /block 3; FACTORY_RESULT_CHECKER is set/,
+        /block 1; FACTORY_RESULT_CHECKER is set/,
       );
       assert.ok(lstatSync(counterPath()).isFile());
-      assert.equal(readFileSync(counterPath(), "utf8"), "3");
+      assert.equal(readFileSync(counterPath(), "utf8"), "1");
 
       const target = join(tmp(), "target.txt");
       writeFileSync(target, "untouched");
@@ -835,7 +927,7 @@ void test("result gate: strict mode stays blocked whatever sits at the counter p
       });
       assert.match(
         (await resultGate({ cwd: linked }, undefined, strictEnv(""))) ?? "",
-        /block 3; FACTORY_RESULT_CHECKER is set/,
+        /block 1; FACTORY_RESULT_CHECKER is set/,
       );
       assert.ok(lstatSync(counterPath()).isFile());
       assert.equal(readFileSync(target, "utf8"), "untouched");
@@ -843,6 +935,76 @@ void test("result gate: strict mode stays blocked whatever sits at the counter p
   } finally {
     delete process.env.CLAUDE_PLUGIN_DATA;
   }
+});
+
+void test("result gate: a failure in the gate's own failure path still blocks a runtime run", () => {
+  const flaky = (extra: Record<string, string>): NodeJS.ProcessEnv => {
+    let reads = 0;
+    const env: NodeJS.ProcessEnv = { ...extra };
+    Object.defineProperty(env, "GUARD_RESULT_GATE", {
+      enumerable: true,
+      get() {
+        reads += 1;
+        if (reads === 1) throw new Error("boom");
+        return undefined;
+      },
+    });
+    return env;
+  };
+  assert.equal(
+    gateFailClosed(flaky(RUNTIME), { cwd: "x" }, "why"),
+    "Factory result gate: could not check the result for this run (internal error); the stop stays blocked.",
+  );
+  assert.match(
+    gateFailClosed(flaky({ FACTORY_RESULT_CHECKER: "" }), {}, "why") ?? "",
+    /internal error/,
+  );
+  assert.equal(gateFailClosed(flaky(ATTENDED), {}, "why"), null);
+  assert.equal(
+    gateFailClosed({ ...RUNTIME, GUARD_RESULT_GATE: "off" }, {}, "why"),
+    null,
+  );
+});
+
+void test("result gate: the stop hook CLI blocks a runtime run on an uncaught exception and exits 0, an attended one stays silent", () => {
+  const dir = tmp();
+  const preload = join(dir, "crash.mjs");
+  writeFileSync(
+    preload,
+    'setTimeout(() => { throw new Error("boom"); }, 0);\n',
+  );
+  const cwd = gateRepo();
+  delete process.env.CLAUDE_PLUGIN_DATA;
+  const payload = JSON.stringify({ cwd, hook_event_name: "Stop" });
+  const run = (env: Record<string, string>) =>
+    spawnSync(
+      process.execPath,
+      ["--import", pathToFileURL(preload).href, STOP_HOOK],
+      {
+        input: payload,
+        encoding: "utf8",
+        env: {
+          ...Object.fromEntries(
+            Object.entries(process.env).filter(
+              ([k]) => !k.startsWith("FACTORY_") && !k.startsWith("GUARD_"),
+            ),
+          ),
+          GUARD_STOP_CHECK: "off",
+          GUARD_OTEL: "off",
+          FACTORY_EVENTS_FILE: "",
+          CLAUDE_PLUGIN_DATA: tmp(),
+          ...env,
+        },
+      },
+    );
+  const runtime = run(RUNTIME);
+  assert.equal(runtime.status, 0, runtime.stderr);
+  const out = JSON.parse(runtime.stdout) as Record<string, unknown>;
+  assert.equal(out.decision, "block");
+  assert.match(String(out.reason), /^Factory result gate: could not check/);
+  const attended = run(ATTENDED);
+  assert.equal(attended.status, 0, attended.stderr);
+  assert.equal(attended.stdout, "");
 });
 
 void test("result gate: a counter that cannot be written blocks a runtime run and lets an attended one go", async () => {
