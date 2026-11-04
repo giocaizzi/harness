@@ -3,7 +3,7 @@ import { appendFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { commandHash, emitAntigravityUsage, estimateGeminiCost, failedTarget, guardVersion, harnessName, recordAttrs, repoName, repoSlug, scrub, } from "./telemetry.mjs";
+import { appendDecision, commandHash, emitAntigravityUsage, estimateGeminiCost, failedTarget, guardVersion, harnessName, recordAttrs, repoName, repoSlug, scrub, } from "./telemetry.mjs";
 void test("harnessName: the --harness flag wins, then the data dir each harness sets", () => {
     assert.equal(harnessName(["node", "stop.mjs", "--harness=codex"], {
         CLAUDE_PLUGIN_DATA: "/d",
@@ -168,4 +168,32 @@ void test("emitAntigravityUsage: parses transcript.jsonl, emits api_request and 
     assert.ok(third);
     assert.equal(third.input_tokens, 500);
     rmSync(transcript, { force: true });
+});
+void test("appendDecision: one line to GUARD_RUN_EVENTS_FILE, nothing when it is blank or unset, no legacy variable", () => {
+    const written = [];
+    const append = (file, data) => {
+        written.push([file, data]);
+    };
+    const now = new Date("2026-01-02T03:04:05.000Z");
+    appendDecision({ GUARD_RUN_EVENTS_FILE: "/run/events.jsonl" }, { decision: "deny", rule: "run-label", cmd_hash: "abc" }, now, append);
+    assert.deepEqual(written, [
+        [
+            "/run/events.jsonl",
+            '{"ts":"2026-01-02T03:04:05.000Z","decision":"deny","rule":"run-label","cmd_hash":"abc"}\n',
+        ],
+    ]);
+    for (const env of [
+        undefined,
+        {},
+        { GUARD_RUN_EVENTS_FILE: "" },
+        { GUARD_RUN_EVENTS_FILE: "  " },
+        { FACTORY_EVENTS_FILE: "/legacy.jsonl" },
+    ])
+        appendDecision(env, { decision: "deny", rule: "x" }, now, append);
+    assert.equal(written.length, 1);
+    assert.doesNotThrow(() => {
+        appendDecision({ GUARD_RUN_EVENTS_FILE: "/x" }, { decision: "deny" }, now, () => {
+            throw new Error("unwritable");
+        });
+    });
 });

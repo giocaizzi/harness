@@ -8,8 +8,8 @@ import { fileURLToPath } from "node:url";
 import { CAPABILITIES, CONTRACT } from "../core/registration.mjs";
 import type { Capability } from "../core/registration.mjs";
 
-// Flips to true in the release that wires the v2 decisions (guard 1.0.0).
-export const ENFORCED = false;
+// The v2 decisions are enforced from guard 1.0.0.
+export const ENFORCED = true;
 
 export interface ContractProbe {
   capabilities: Capability[];

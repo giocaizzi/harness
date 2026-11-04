@@ -88,12 +88,12 @@ export const commandHash = (command) => createHash("sha256")
     .update((command ?? "").trim().replace(/\s+/g, " "))
     .digest("hex")
     .slice(0, 12);
-// One JSON line per decision to $FACTORY_EVENTS_FILE, when a factory runtime sets it: the runtime's guard deny-rate
+// One JSON line per decision to $GUARD_RUN_EVENTS_FILE, when a run's runner sets it: the runner's guard deny-rate
 // breaker reads it. Only the hash of the command, never its text; a failed write is dropped and the decision stands.
 // A well-formed GUARD_TRACEPARENT adds `trace_id` and `span_id`, the same ids as the OTLP record's.
 export function appendDecision(env, { decision, rule, cmd_hash }, now = new Date(), append = appendFileSync) {
-    const file = env?.FACTORY_EVENTS_FILE;
-    if (!file)
+    const file = env?.GUARD_RUN_EVENTS_FILE;
+    if (!file?.trim())
         return;
     try {
         const trace = traceContext(env);

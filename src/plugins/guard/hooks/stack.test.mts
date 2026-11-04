@@ -17,6 +17,8 @@ import type { HookOutputPayload } from "./types.mjs";
 delete process.env.GUARD_STACK_HINT;
 delete process.env.GUARD_UNATTENDED;
 for (const k of [
+  "GUARD_RUN_ID",
+  "GUARD_RUN_MANIFEST",
   "FACTORY_RUN_ID",
   "FACTORY_TICKET",
   "FACTORY_ATTENDED_RUN_ID",
