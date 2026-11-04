@@ -2942,6 +2942,29 @@ void test("factory run: the data directory matcher reads a path as the shell may
         "rm -rf /Users/me/.claude/plugins/*",
         "rm -rf /Users/me/**",
         "mv /Users/me/.cl* /tmp/x",
+        // review round 1: unknown starts the reader does not expand, redirections on a cd, reassigned HOME, assignments,
+        // CDPATH, a `..` after a run of multi segments, `.*` as `.`, zsh qualifiers, home-relative text
+        "touch ~me/.claude/plugins/data/guard-acme/result-gate/x",
+        "cd /Users/me/.claude/plugins/data && echo 0 > ~+/guard-acme/result-gate/x",
+        "type %USERPROFILE%\\.claude\\plugins\\data\\guard-acme\\x",
+        "echo 0 cd > /Users/me/.claude/plugins/data/guard-acme/result-gate/x",
+        "cd . > /Users/me/.claude/plugins/data/guard-acme/result-gate/x",
+        "HOME=/Users/me/.claude/plugins/data; cat ~/guard-acme/result-gate/x",
+        "export HOME=/Users/me/.claude/plugins/data && cd && echo 0 > guard-acme/result-gate/x",
+        "D=/Users/me/.claude/plugins/data/guard-a*; touch $D/result-gate/x",
+        "arr=(~/.claude/plugins/data/guard-a*); touch ${arr[0]}/result-gate/x",
+        "CDPATH=/Users/me/.claude/plugins/data cd guard-acme && echo 0 > result-gate/x",
+        "export CDPATH=/Users/me/.claude/plugins/data; cd guard-acme; echo 0 > result-gate/x",
+        "cat /Users/me/.claude/plugins/data/other/$A/$B/../guard-acme/x",
+        "cat /Users/me/.claude/plugins/data/other/**/**/../guard-acme/x",
+        "tee /Users/me/.claude/plugins/data/.*/guard-acme/result-gate/a.txt",
+        "mv /Users/me/.claude/plugins/data/guard-a*(N) /tmp/x",
+        "ls -d /Users/me/.claude/plugins/data/*(/)",
+        "tee /Users/me/.claude/plugins/data/@(guard-acme)/result-gate/a",
+        "Set-Content -Path ${env:CLAUDE_PLUGIN_DATA}\\result-gate\\x -Value 0",
+        "python3 -c \"open('$HOME/.claude/plugins/data/guard-acme/result-gate/x','w')\"",
+        'python3 -c \'open("/Users//me/.claude/plugins/data/guard-acme/x","w")\'',
+        "cat /Users/me/.cl$Y/plugins/data/guard-acme/x",
     ];
     for (const c of denied) {
         const d = run(c);
@@ -2977,11 +3000,23 @@ void test("factory run: the data directory matcher reads a path as the shell may
         "grep -rn CLAUDE_PLUGIN_DATA src",
         "echo x > `git rev-parse --git-common-dir`/../.factory/runs/12/verdict-1.md",
         'echo "RUN_ID=${FACTORY_RUN_ID:-unset} ..."; gh api user --jq .login',
+        "PATH=$HOME/bin:$PATH make check",
+        'echo "$HOME/x-$Y"',
+        "cat /Users/me/x-$Y/z",
+        "cd src && make",
+        "export CDPATH=/x; cd ./src && ls",
+        "cat /tmp/*(.)",
     ];
+    // Known limits the reader sets: a `(` after a redirection target or a bare group is read as a subshell.
+    for (const c of [
+        "echo 0 > /Users/me/.claude/plugins/data/@(guard-acme)/result-gate/x",
+        "tee /Users/me/.claude/plugins/data/(guard-acme|x)/result-gate/a",
+    ])
+        assert.notEqual(run(c).rule, "protected-path", `${c} (known limit)`);
     for (const c of allowed)
         assert.notEqual(run(c).rule, "protected-path", c);
 });
-void test("protectedWrite: a command past the scan limits that names the data directory fails closed", () => {
+void test("protectedWrite: in a run with a data directory, a command past the scan limits is denied whatever it names", () => {
     const data = "/Users/me/.claude/plugins/data/guard-acme";
     const env = { HOME: "/Users/me", TMPDIR: "/tmp/" };
     const braces = `echo {${Array.from({ length: 65 }, (_, i) => `w${String(i)}`).join(",")}}`;
@@ -2991,16 +3026,23 @@ void test("protectedWrite: a command past the scan limits that names the data di
         globs: [],
         data: d,
     });
-    assert.equal(protectedWrite(`${braces}; touch /tmp/x`, cfg([data]), env), null, "past the limit a command naming nothing of the data directory is let through");
     const hit = (c, d = [data]) => protectedWrite(`${braces}; ${c}`, cfg(d), env);
     assert.ok(hit(`dd of=${data}/x`)?.target, "spelled out: named before the scan");
     assert.ok(hit("touch $CLAUDE_PLUGIN_DATA/x")?.target);
-    assert.ok(hit("touch /tmp/GUARD-ACME/x")?.unsure);
-    assert.ok(hit("touch /tmp/guard-a*/x")?.unsure);
-    assert.ok(hit("touch /tmp/*")?.unsure, "a bare glob word may match the name");
-    assert.equal(hit("touch /tmp/x"), null);
-    assert.equal(hit("touch /tmp/other*"), null);
+    for (const c of [
+        "touch /tmp/x",
+        "ls",
+        'touch ~/.claude/plugins/data/guard-a""cme/result-gate/x',
+        "touch /Users/me/$D/result-gate/x",
+    ])
+        assert.ok(hit(c)?.unsure, `${c}: past the limit nothing is proven`);
+    assert.equal(hit("touch /tmp/x", []), null, "no data directory: a writer outside the list passes");
     assert.equal(hit(`dd of=${data}/x`, []), null);
+    // A word over the character limit, or one deep enough to overflow the matcher, is a limit too, so it is denied.
+    const deep = `truncate -s0 /Users/me/${"$E/".repeat(12000)}$D/result-gate/x`;
+    assert.ok(protectedWrite(deep, cfg([data]), env)?.unsure, "deep known start");
+    assert.ok(protectedWrite(`touch $X/${"$E/".repeat(12000)}$D/x`, cfg([data]), env)
+        ?.unsure, "deep unknown start");
 });
 void test("factory run: guard's data directory is a protected write target", () => {
     const data = "/Users/me/.claude/plugins/data/guard-acme";
