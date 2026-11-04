@@ -7,9 +7,9 @@
 // is skipped (failed with E2E_REQUIRE=1). Several harnesses run at once, one child `run.mjs <name>` each (own temp
 // home, mock port and log), and print one block each, in order. Usage: node tests/e2e/run.mjs [harness...]
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync, } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync, } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { inventory } from "../../scripts/parity.mjs";
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
@@ -58,11 +58,25 @@ function sh(cmd, args, opts = {}) {
     return { status: r.status, stdout: r.stdout, stderr: r.stderr };
 }
 // The runs must not reach the real collector: guard decisions from scripted sessions polluted the agent-ops data.
+// Nor must they run a stray run of the caller's shell (a legacy or GUARD_RUN_* variable), a make check at the stop,
+// or a sound: a stop block that never released once made Codex loop, each pass playing a clip.
 const BASE_ENV = {};
 for (const [k, v] of Object.entries(process.env)) {
-    if (!/^(GUARD_)?OTEL_/.test(k) && v !== undefined) {
-        BASE_ENV[k] = v;
+    if (!/^(GUARD_)?OTEL_/.test(k) && !/^(FACTORY_|GUARD_RUN_)/.test(k)) {
+        if (v !== undefined)
+            BASE_ENV[k] = v;
     }
+}
+BASE_ENV.GUARD_STOP_CHECK = "off";
+// sounds has no mute switch: its player is the `afplay` found on PATH (macOS only), so a no-op one comes first.
+if (process.platform !== "win32") {
+    const silent = mkdtempSync(join(tmpdir(), "harness-e2e-silent-"));
+    writeFileSync(join(silent, "afplay"), "#!/bin/sh\nexit 0\n");
+    chmodSync(join(silent, "afplay"), 0o755);
+    BASE_ENV.PATH = `${silent}${delimiter}${BASE_ENV.PATH ?? ""}`;
+    process.on("exit", () => {
+        rmSync(silent, { recursive: true, force: true });
+    });
 }
 const has = (cmd) => sh(cmd, ["--version"], { allowFail: true }).status === 0;
 // Every running mock, stopped when this process exits however a check ended (a throw between mock() and stop()
@@ -447,9 +461,11 @@ async function check(name) {
                 GUARD_RUN_ID: `e2e-${name}`,
             }, dir, m.port);
             m.stop();
+            // the block is capped at two per session, so the run ends: a third never reaches the model
             if (!m
                 .entries()
-                .some((e) => e.prompt.includes("Run registration failed")))
+                .some((e) => e.prompt.includes("Run registration failed")) ||
+                m.entries().some((e) => e.prompt.includes("(block 3 of 2)")))
                 failures.push(`run registration: the stop block did not reach the model\n${out.stdout.slice(-600)}\n${out.stderr.slice(-600)}`);
             rmSync(join(root, "mock.jsonl"), { force: true });
         }

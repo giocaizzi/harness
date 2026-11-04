@@ -1347,7 +1347,7 @@ const assertTripwireLine = (file) => {
         "reason",
     ]);
     assert.equal(lines[0]?.rule, "run-unregistered");
-    assert.equal(lines[0]?.decision, "deny");
+    assert.equal(lines[0].decision, "deny");
 };
 void test("opencode: a failed registration or the legacy-only tripwire denies every tool call and re-prompts the idle twice at most", async () => {
     for (const c of FAILED_RUNS) {
@@ -1378,7 +1378,7 @@ void test("pi: a failed registration or the legacy-only tripwire blocks every to
             for (let i = 0; i < 2; i++) {
                 const blocked = (await handlers.tool_call?.({ toolName: "bash", toolCallId: "c", input: { command: "ls" } }, piCtx(dir())));
                 assert.equal(blocked?.block, true, c.name);
-                assert.match(blocked?.reason ?? "", c.tool);
+                assert.match(blocked.reason ?? "", c.tool);
             }
             if (c.name === "tripwire")
                 assertTripwireLine(events);
@@ -1464,7 +1464,7 @@ void test("command harnesses: a failed registration or the legacy-only tripwire 
         for (const [name, args, payload, extra] of harnesses) {
             const out = spawnHook(args, payload, withEvents(extra));
             assert.equal(out.hookSpecificOutput?.permissionDecision, "deny", `${c.name} ${name}`);
-            assert.match(out.hookSpecificOutput?.permissionDecisionReason ?? "", c.tool, `${c.name} ${name}`);
+            assert.match(out.hookSpecificOutput.permissionDecisionReason ?? "", c.tool, `${c.name} ${name}`);
         }
         const anti = spawnHook(antigravityArgs, {
             hook_event_name: "PreToolUse",

@@ -555,24 +555,23 @@ const registeredRun = async (
     () => fn(cwd),
   );
 };
-const ocClient = (sent?: string[]): OpencodeClient =>
-  ({
-    session: {
-      get: async () => {
-        await Promise.resolve();
-        return null;
-      },
-      prompt: async (p: { body: { parts: { text: string }[] } }) => {
-        await Promise.resolve();
-        sent?.push(p.body.parts[0]?.text ?? "");
-      },
+const ocClient = (sent?: string[]): OpencodeClient => ({
+  session: {
+    get: async () => {
+      await Promise.resolve();
+      return null;
     },
-    tui: {
-      showToast: async () => {
-        await Promise.resolve();
-      },
+    prompt: async (p: { body: { parts: { text: string }[] } }) => {
+      await Promise.resolve();
+      sent?.push(p.body.parts[0]?.text ?? "");
     },
-  }) as unknown as OpencodeClient;
+  },
+  tui: {
+    showToast: async () => {
+      await Promise.resolve();
+    },
+  },
+});
 const piCtx = (cwd: string): PiContext => ({
   cwd,
   sessionManager: { getSessionId: () => "p1" },
@@ -1723,7 +1722,7 @@ const assertTripwireLine = (file: string): void => {
     "reason",
   ]);
   assert.equal(lines[0]?.rule, "run-unregistered");
-  assert.equal(lines[0]?.decision, "deny");
+  assert.equal(lines[0].decision, "deny");
 };
 
 void test("opencode: a failed registration or the legacy-only tripwire denies every tool call and re-prompts the idle twice at most", async () => {
@@ -1772,7 +1771,7 @@ void test("pi: a failed registration or the legacy-only tripwire blocks every to
             piCtx(dir()),
           )) as { block?: boolean; reason?: string } | undefined;
           assert.equal(blocked?.block, true, c.name);
-          assert.match(blocked?.reason ?? "", c.tool);
+          assert.match(blocked.reason ?? "", c.tool);
         }
         if (c.name === "tripwire") assertTripwireLine(events);
         const ctx = piCtx(dir());
@@ -1888,7 +1887,7 @@ void test("command harnesses: a failed registration or the legacy-only tripwire 
         `${c.name} ${name}`,
       );
       assert.match(
-        out.hookSpecificOutput?.permissionDecisionReason ?? "",
+        out.hookSpecificOutput.permissionDecisionReason ?? "",
         c.tool,
         `${c.name} ${name}`,
       );

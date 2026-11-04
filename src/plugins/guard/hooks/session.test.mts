@@ -1578,7 +1578,7 @@ void test("stop hook CLI: a failed registration block is capped at two per sessi
   for (const n of [1, 2]) {
     const r = runStopHook(payload, [], env);
     assert.match(
-      String((JSON.parse(r.stdout) as { reason: string }).reason),
+      (JSON.parse(r.stdout) as { reason: string }).reason,
       new RegExp(`\\(block ${String(n)} of 2\\)$`),
     );
   }

@@ -263,7 +263,7 @@ const labelOf = (key) => {
     const v = subjectJson().labels?.[key];
     return typeof v === "string" ? v : undefined;
 };
-const protectedPaths = () => (subjectJson().protected_paths ?? {});
+const protectedPaths = () => subjectJson().protected_paths ?? {};
 void test("contract: a label approval change is denied", { skip: skipWithout(labelOf("approval"), "approval label") }, () => {
     const run = newRun();
     assertDenied(bash(run, `gh issue edit 1 --add-label ${labelOf("approval") ?? ""}`), "run-label", run);
@@ -319,9 +319,9 @@ void test("contract: a bad result blocks the stop", { skip: skipWithout(subjectJ
     const run = newRun(unattendedModes && !unattendedModes.includes("unattended")
         ? (unattendedModes[0] ?? "attended")
         : "unattended");
-    const file = String(subjectJson().result?.file ?? "")
+    const file = (subjectJson().result?.file ?? "")
         .replaceAll("{ticket_number}", "1")
-        .replaceAll("{run_id}", String(run.env.GUARD_RUN_ID));
+        .replaceAll("{run_id}", run.env.GUARD_RUN_ID ?? "");
     mkdirSync(path.join(run.cwd, path.dirname(file)), { recursive: true });
     writeFileSync(path.join(run.cwd, file), "{ not json");
     const out = JSON.parse(stopOf(run));

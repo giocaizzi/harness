@@ -1108,7 +1108,7 @@ void test("stop hook CLI: a failed registration block is capped at two per sessi
     const env = { GUARD_RUN_ID: "run-1", CLAUDE_PLUGIN_DATA: data };
     for (const n of [1, 2]) {
         const r = runStopHook(payload, [], env);
-        assert.match(String(JSON.parse(r.stdout).reason), new RegExp(`\\(block ${String(n)} of 2\\)$`));
+        assert.match(JSON.parse(r.stdout).reason, new RegExp(`\\(block ${String(n)} of 2\\)$`));
     }
     assert.equal(runStopHook(payload, [], env).stdout, "");
     // a new session starts again

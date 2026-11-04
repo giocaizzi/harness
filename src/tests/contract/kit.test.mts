@@ -418,10 +418,7 @@ const labelOf = (key: "approval" | "takeover"): string | undefined => {
   return typeof v === "string" ? v : undefined;
 };
 const protectedPaths = (): { globs?: string[]; exempt?: string[] } =>
-  (subjectJson().protected_paths ?? {}) as {
-    globs?: string[];
-    exempt?: string[];
-  };
+  subjectJson().protected_paths ?? {};
 
 void test(
   "contract: a label approval change is denied",
@@ -540,11 +537,9 @@ void test(
         ? (unattendedModes[0] ?? "attended")
         : "unattended",
     );
-    const file = String(
-      (subjectJson().result as { file?: string } | undefined)?.file ?? "",
-    )
+    const file = (subjectJson().result?.file ?? "")
       .replaceAll("{ticket_number}", "1")
-      .replaceAll("{run_id}", String(run.env.GUARD_RUN_ID));
+      .replaceAll("{run_id}", run.env.GUARD_RUN_ID ?? "");
     mkdirSync(path.join(run.cwd, path.dirname(file)), { recursive: true });
     writeFileSync(path.join(run.cwd, file), "{ not json");
     const out = JSON.parse(stopOf(run)) as {
