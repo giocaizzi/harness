@@ -53,6 +53,7 @@ export function createGuard({ harness, noAsk = false, dataDir = DATA_DIR, deps =
         ...d.runVet,
         cache: registrationCache,
         dataDir: d.dataDir,
+        inProcess: true,
     });
     const call = async (input) => {
         try {

@@ -345,7 +345,7 @@ function bumpBlocks(runId) {
     return n;
 }
 // The registration-deny cap key: the session id when the host sends one. Without one, the cwd plus a process id that
-// is stable for the session: the harness's (the parent) for a command hook, whose own pid is new on every stop; this
+// is stable for the session: the parent's for a command hook (the harness when its shell execs the command), whose own pid is new on every stop; this
 // process's for an in-process host (`inProcess`).
 function registrationKey(input, opts = {}) {
     if (input.session_id)
@@ -419,7 +419,7 @@ export async function resultGate(input, run = spawnSync, env = process.env, onEv
         const { ctx, dataDir } = stopContext(env, payload, checkerOpts);
         if (ctx.state === "deny") {
             // Not switched off by GUARD_RESULT_GATE. Capped like result errors, per session: the agent cannot fix a
-            // registration and every tool call is already denied, so an uncapped block would only loop the session.
+            // registration and every tool call guard sees is already denied, so an uncapped block would only loop the session.
             if (ctx.rule === UNREGISTERED_RULE) {
                 recordUnregistered(env, dataDir, registrationKey(payload, checkerOpts));
             }

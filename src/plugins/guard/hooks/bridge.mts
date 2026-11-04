@@ -98,6 +98,7 @@ export function createGuard({
     ...d.runVet,
     cache: registrationCache,
     dataDir: d.dataDir,
+    inProcess: true,
   });
 
   const call = async (input: HookInput): Promise<HookOutputPayload> => {

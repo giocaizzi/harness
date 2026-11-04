@@ -2170,6 +2170,74 @@ void test("a registered run: a link target is followed component by component, b
   assert.ok(!denied(await run(edit(join(repo, "src", "fine.md"), repo))));
 });
 
+void test("a registered run: a `..` in the edit tool's own path applies after the link before it, as the kernel does (G42)", async () => {
+  const repo = realpathSync(mkdtempSync(join(tmpdir(), "guard-rawdots-")));
+  mkdirSync(join(repo, ".git"));
+  mkdirSync(join(repo, ".github", "workflows"), { recursive: true });
+  symlinkSync(".github/workflows", join(repo, "d"));
+  mkdirSync(join(repo, "src", "a"), { recursive: true });
+  symlinkSync("src/a", join(repo, "ok"));
+  const run = registered();
+  // `d/../ci.yml` is `.github/ci.yml`: absolute, relative to the cwd, and with a `./` in front
+  assert.ok(denied(await run(edit(`${repo}/d/../ci.yml`, repo))));
+  assert.ok(denied(await run(edit("d/../ci.yml", repo))));
+  assert.ok(denied(await run(edit("./d/../ci.yml", repo))));
+  // a link that leads somewhere harmless stays allowed
+  assert.ok(!denied(await run(edit(`${repo}/ok/../x.md`, repo))));
+  assert.ok(!denied(await run(edit(join(repo, "src", "x.md"), repo))));
+});
+
+void test("a registered run: a dots-only segment in the edit tool's path is protected under either reading (G42)", async () => {
+  const repo = realpathSync(mkdtempSync(join(tmpdir(), "guard-dots-")));
+  mkdirSync(join(repo, ".git"));
+  const run = registered({ protected_paths: { globs: ["**/secret.yml"] } });
+  for (const file of [
+    ".github/.../ci.yml",
+    ".github/.. /ci.yml",
+    ".../secret.yml",
+  ]) {
+    assert.ok(denied(await run(edit(join(repo, file), repo))), file);
+    assert.ok(denied(await run(edit(file, repo))), `relative ${file}`);
+    assert.ok(
+      denied(
+        await run({
+          ...pre("Bash", `echo a > '${join(repo, file)}'`),
+          cwd: repo,
+        }),
+      ),
+      `shell ${file}`,
+    );
+  }
+  assert.ok(!denied(await run(edit(join(repo, "src", "x.md"), repo))));
+});
+
+void test("a registered run: an 8.3 short name in the root part of an edit path still reaches the repo (G42)", async () => {
+  const outer = realpathSync(mkdtempSync(join(tmpdir(), "guard-short-")));
+  const run = registered();
+  for (const [real, alias] of [
+    ["runneradmin", "RUNNER~1"],
+    ["RUNNER~1", "runneradmin"],
+  ] as const) {
+    const repo = join(outer, real, "repo");
+    mkdirSync(join(repo, ".git"), { recursive: true });
+    const via = join(outer, alias, "repo");
+    assert.ok(
+      denied(await run(edit(join(via, ".github", "x.yml"), repo))),
+      `edit via ${alias}`,
+    );
+    assert.ok(
+      denied(
+        await run({
+          ...pre("Bash", `echo x > '${via}/.github/x.yml'`),
+          cwd: repo,
+        }),
+      ),
+      `shell via ${alias}`,
+    );
+    assert.ok(!denied(await run(edit(join(via, "src", "x.yml"), repo))));
+  }
+});
+
 void test("a registered run: a checkout whose path ends in a dot or a space still protects its .github", async () => {
   const outer = realpathSync(mkdtempSync(join(tmpdir(), "guard-tail-")));
   const run = registered();

@@ -45,6 +45,7 @@ import {
   pureRead,
   refFacts,
   regenFacts,
+  segmentsMayBeSame,
   stackFacts,
   stackTargets,
   tagFacts,
@@ -67,7 +68,7 @@ import type {
 } from "../core/types.mjs";
 import { contractProbe } from "./contract.mjs";
 import { pluginDataDir } from "./data.mjs";
-import { editedFiles } from "./lint.mjs";
+import { editedPaths } from "./lint.mjs";
 import type { RunContext } from "./run.mjs";
 import {
   denyReason,
@@ -993,9 +994,11 @@ interface EditToolInput {
   path?: unknown;
 }
 
-// The files an edit tool call writes, moves or deletes: editedFiles, the `Path` spelling, and the `*** Delete File:`
+// The files an edit tool call writes, moves or deletes: editedPaths, the `Path` spelling, and the `*** Delete File:`
 // and `*** Move to:` lines of an apply_patch text (the whole tool_input, `command` or `input`).
-function touchedFiles(input: HookInput): string[] {
+// Each with its lexical reading (`resolve`: `d/../x` is `x`) and its raw one (made absolute, nothing normalised: the
+// kernel follows `d` before the `..`).
+function touchedFiles(input: HookInput): { lex: string; raw: string }[] {
   const t = input.tool_input;
   const obj =
     t && typeof t === "object"
@@ -1013,32 +1016,36 @@ function touchedFiles(input: HookInput): string[] {
     ...text.matchAll(/^\*\*\* (?:Delete File|Move to): (.+)$/gm),
   ].map((m) => m[1]?.trim() ?? "");
   const base = input.cwd ?? ".";
-  return [
-    ...new Set(
-      [
-        ...editedFiles(input),
-        ...(typeof obj.Path === "string" ? [obj.Path] : []),
-        ...lines,
-      ]
-        .filter(Boolean)
-        .map((p) => resolve(base, p)),
-    ),
-  ];
+  const absBase = isAbsolute(base) ? base : resolve(base);
+  const seen = new Map<string, { lex: string; raw: string }>();
+  for (const p of [
+    ...editedPaths(input),
+    ...(typeof obj.Path === "string" ? [obj.Path] : []),
+    ...lines,
+  ].filter(Boolean)) {
+    const lex = resolve(base, p);
+    const raw = isAbsolute(p) ? p : `${absBase}${sep}${p}`;
+    seen.set(`${lex}\0${raw}`, { lex, raw });
+  }
+  return [...seen.values()];
 }
 
 const MAX_LINK_HOPS = 40;
 
-// `path` with the real path of its nearest existing ancestor, as `/` segments. Each component is followed in turn, as the
-// kernel does: a symlink is replaced by its target before the next `..` applies (`n -> d/../x` with `d -> a/b` is
-// `a/x`), and a dangling one, in the last component or any other, is followed too (a write tool creates its target);
-// null past MAX_LINK_HOPS links (a loop): the caller treats the path as protected.
-function realish(path: string): string | null {
-  const start = resolve(path);
-  const top = parse(start).root;
+// `path` with the real path of its nearest existing ancestor, as `/` segments. The path is walked as given, never
+// normalised first, and each component is followed in turn, as the kernel does: a symlink is replaced by its target
+// before the next `..` applies (`n -> d/../x` with `d -> a/b` is `a/x`; `d/../x` is `a/x` too), and a dangling one,
+// in the last component or any other, is followed too (a write tool creates its target); null past MAX_LINK_HOPS
+// links (a loop): the caller treats the path as protected. With `lexical` on win32, where a `..` in a relative link
+// target may apply to the link's own directory as text, the target is normalised before it is followed.
+function realish(path: string, lexical = false): string | null {
+  const top = parse(path).root;
   let cur = top;
   let missing = false;
   let hops = 0;
-  const queue = start.slice(top.length).split(sep).filter(Boolean);
+  const split = (p: string) =>
+    p.split(process.platform === "win32" ? /[\\/]/ : sep).filter(Boolean);
+  const queue = split(path.slice(top.length));
   while (queue.length) {
     const comp = queue.shift() ?? "";
     if (comp === ".") continue;
@@ -1058,12 +1065,27 @@ function realish(path: string): string | null {
     }
     if (link !== undefined) {
       if (++hops > MAX_LINK_HOPS) return null;
-      if (isAbsolute(link)) cur = parse(link).root;
-      queue.unshift(...link.split(/[\\/]/).filter(Boolean));
+      const target =
+        lexical && process.platform === "win32" ? resolve(cur, link) : link;
+      if (isAbsolute(target)) cur = parse(target).root;
+      queue.unshift(
+        ...split(isAbsolute(target) ? target.slice(cur.length) : target),
+      );
     } else if (missing) cur = next;
   }
   return slashes(cur);
 }
+
+// `path` relative to `dir` (both `/` separated), or null when it is not inside: compared segment by segment, a Windows
+// 8.3 short name standing for the long one it may abbreviate, in either spelling (fail closed: "may" is inside).
+const relativeInside = (path: string, dir: string): string | null => {
+  const a = path.split("/").filter(Boolean);
+  const b = dir.split("/").filter(Boolean);
+  return b.length <= a.length &&
+    b.every((x, i) => segmentsMayBeSame(x, a[i] ?? ""))
+    ? a.slice(b.length).join("/")
+    : null;
+};
 
 const insideDir = (path: string, dir: string): boolean => {
   const a = path.toLowerCase().split("/").filter(Boolean);
@@ -1105,21 +1127,30 @@ function onEdit(
       return preToolUse("deny", reason, deps.harness);
     };
     const dirs = guardDataDirs(deps);
-    const files = touchedFiles(input);
-    const real = new Map(files.map((f) => [f, realish(f)]));
-    const loop = files.find((f) => real.get(f) === null);
+    // Every reading of a target counts, and any that hits denies: the lexical one (`d/../x` is `x`), and the real path
+    // of the raw spelling and of the lexical one (the kernel follows a link before a `..`; win32 may apply a `..` in a
+    // link target as text).
+    const readingsOf = (f: { lex: string; raw: string }): (string | null)[] => {
+      const out = [slashes(f.lex), realish(f.raw), realish(f.lex)];
+      if (process.platform === "win32")
+        out.push(realish(f.raw, true), realish(f.lex, true));
+      return [...new Set(out)];
+    };
+    const files = touchedFiles(input).map((f) => ({
+      name: f.lex,
+      readings: readingsOf(f),
+    }));
+    const loop = files.find((f) => f.readings.includes(null));
     if (loop !== undefined)
       return denyEdit(
-        `${rules.run.protectedWhy} \`${loop}\` goes through too many symbolic links to be checked; leave it alone.`,
+        `${rules.run.protectedWhy} \`${loop.name}\` goes through too many symbolic links to be checked; leave it alone.`,
       );
     const hit = files.find((f) =>
-      [slashes(f), real.get(f) ?? ""].some((p) =>
-        dirs.some((d) => insideDir(p, d)),
-      ),
+      f.readings.some((p) => dirs.some((d) => insideDir(p ?? "", d))),
     );
     if (hit !== undefined)
       return denyEdit(
-        `${rules.run.protectedWhy} \`${hit}\` is in guard's own data directory in this run; leave it alone.`,
+        `${rules.run.protectedWhy} \`${hit.name}\` is in guard's own data directory in this run; leave it alone.`,
       );
     const found = protectFacts(input.cwd);
     const roots = new Set([
@@ -1134,20 +1165,16 @@ function onEdit(
     // Relative to every directory with a .git above the cwd: the agent can plant one in a subdirectory.
     for (const f of files) {
       for (const root of roots) {
-        for (const [file, base] of [
-          [slashes(f), slashes(root)],
-          [real.get(f) ?? "", realish(root) ?? slashes(root)],
-        ] as const) {
-          if (!insideDir(file, base)) continue;
-          const rel = file
-            .split("/")
-            .filter(Boolean)
-            .slice(base.split("/").filter(Boolean).length)
-            .join("/");
-          if (protectedPathHit(rel, protect, rules.run.protectedLimits))
-            return denyEdit(
-              `${rules.run.protectedWhy} \`${rel}\` is a protected path in this run; leave it to the owner and say on the ticket what should change.`,
-            );
+        const bases = [slashes(root), realish(root) ?? slashes(root)];
+        for (const file of f.readings) {
+          for (const base of bases) {
+            const rel = relativeInside(file ?? "", base);
+            if (rel === null) continue;
+            if (protectedPathHit(rel, protect, rules.run.protectedLimits))
+              return denyEdit(
+                `${rules.run.protectedWhy} \`${rel}\` is a protected path in this run; leave it to the owner and say on the ticket what should change.`,
+              );
+          }
         }
       }
     }
@@ -1418,7 +1445,7 @@ export async function handle(
     });
 
     if (ctx.state === "deny") {
-      // A run whose registration failed, or that set only legacy variables: every tool call is denied.
+      // A run whose registration failed, or that set only legacy variables: every tool call guard sees is denied.
       if (ctx.rule === "run-unregistered")
         recordUnregistered(
           deps.env ?? {},

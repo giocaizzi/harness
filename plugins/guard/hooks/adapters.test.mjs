@@ -1,7 +1,8 @@
 // The in-process adapters (opencode, pi) over a fake harness API: the guard's decisions reach the harness.
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync, } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -859,6 +860,18 @@ void test("opencode and pi: a registered run that names a checker is sent the re
         assert.equal(sent.length, 4);
         assert.match(sent[3] ?? "", /^Run result gate \(block 8; /);
     });
+});
+void test("bridge: a stop with no session id keys its cap on the host's own pid", async () => {
+    const guard = createGuard({ harness: "test", deps: trusted() });
+    const data = dir();
+    const cwd = dir();
+    await withEnv({ GUARD_RUN_ID: "run-1", CLAUDE_PLUGIN_DATA: data }, async () => {
+        assert.match((await guard.stop({ cwd })) ?? "", /block 1 of 2/);
+    });
+    const key = `registration:${cwd}:${String(process.pid)}`;
+    assert.deepEqual(readdirSync(join(data, "result-gate")), [
+        `${createHash("sha256").update(key).digest("hex").slice(0, 16)}.txt`,
+    ]);
 });
 void test("bridge: an internal error in strict mode is a reason, not null", async () => {
     const checker = checkerFile("export const resultErrors = () => []");
