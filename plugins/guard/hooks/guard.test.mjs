@@ -1642,6 +1642,12 @@ void test("FACTORY_RUN_ID set: guard's data directory is protected from shell wr
     };
     assert.equal(decision(await inRun(shell))?.permissionDecision, "deny");
     assert.equal(decision(await outside(shell)), undefined);
+    const touch = {
+        ...pre("Bash", `touch ${counter}`),
+        cwd: repo,
+    };
+    assert.equal(decision(await inRun(touch))?.permissionDecision, "deny");
+    assert.equal(decision(await outside(touch)), undefined);
     const calls = [
         edit("Write", { file_path: counter, content: "2" }),
         edit("Edit", { file_path: counter, old_string: "1", new_string: "2" }),
