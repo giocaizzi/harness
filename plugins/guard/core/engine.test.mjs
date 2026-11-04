@@ -2870,6 +2870,138 @@ void test("factory run: configured label names add to the defaults, which stay p
     ])
         assert.equal(run(c).action, "allow", c);
 });
+void test("factory run: the data directory matcher reads a path as the shell may expand it", () => {
+    const data = "/Users/me/.claude/plugins/data/guard-acme";
+    const protect = {
+        root: "/Users/me/repo",
+        cwd: "/Users/me/repo",
+        data: [data],
+    };
+    const run = (command, on = true) => evaluateCommand({
+        command,
+        state: fresh(),
+        host: calm,
+        factory: on ? { approval: "agent-ok", protect } : null,
+        env: { HOME: "/Users/me", TMPDIR: "/tmp/", dirs: { has: () => true } },
+        rules,
+    });
+    const denied = [
+        // a glob in one segment, a leading wildcard on the dot directory
+        "tee /Users/me/.claude/plugins/data/guard-a*/result-gate/a.txt",
+        "tee /Users/me/.claude/plugins/data/guard-acm?/result-gate/a.txt",
+        "tee /Users/me/.claude/plugins/data/guard-[a-z]cme/result-gate/a.txt",
+        "tee /Users/me/*/plugins/data/guard-acme/result-gate/a.txt",
+        "ls /Users/me/.claude/plugins/data/*",
+        // `**` and variable segments stand for any number of directories
+        "tee /Users/me/**/result-gate/a.txt",
+        "cat /Users/me/.claude/**/guard-acme/x",
+        "touch /Users/me/$D/result-gate/a.txt",
+        "touch /Users/me/${D}/result-gate/a.txt",
+        "touch /Users/me/$(x)/result-gate/a.txt",
+        "ls /**/x",
+        // a `..` after such a segment: it may have gone into the data directory
+        "cat /Users/me/.claude/**/../guard-acme/x",
+        "touch /Users/me/$X/../guard-acme/x",
+        "cat /Users/me/.claude/**/../other/x",
+        "cat /Users/me/.claude/plugins/data/guard-acme/**/../../x",
+        "cat /Users/me/.claude/{**,x}/../result-gate/x",
+        "cd /Users/me/.claude/plugins && cat data/**/../result-gate/x",
+        "cat $X/../guard-acme/a.txt",
+        "cat $X/**/../guard-acme/a.txt",
+        "cat $X/$Y/x",
+        "cat $X/**/x",
+        "cat /Users/me/.claude/plugins/data/other/**/../guard-acme/x",
+        // a glob bash before 5.2 reads as `..`
+        "cat /Users/me/.claude/plugins/data/other/.?/guard-acme/x",
+        "cat /Users/me/.claude/plugins/data/other/.[.]/guard-acme/x",
+        "cat /Users/me/.claude/plugins/data/other/.*/guard-acme/x",
+        "cat /Users/me/.claude/plugins/data/other/..*/guard-acme/x",
+        "cat /Users/me/.claude/plugins/data/other/.[!a]/guard-acme/x",
+        "cat /Users/me/.claude/plugins/data/other/.?/.?/.?/.?/.?/.?/.?/x",
+        // a cd target, followed or not
+        "cd /Users/me/.claude/plugins/data/guard-a* && cat result-gate/x",
+        "cd /Users/me/.claude/plugins/$D/guard-acme && cat result-gate/x",
+        "cd /Users/me/.claude/** && cat ../result-gate/x",
+        "pushd /Users/me/.claude/plugins/data/guard-acm? ; cat result-gate/x",
+        "Set-Location /Users/me/.claude/plugins/data/guard-[a-z]cme",
+        "cd -P /Users/me/.claude/plugins/data/guard-a*",
+        "builtin cd /Users/me/.claude/plugins/data/guard-a*",
+        "bash -c 'cd /Users/me/.claude/plugins/data/guard-a* && cat x'",
+        "cd /Users/me/.claude/plugins/data/guard-acme",
+        // quoting does not hide a spelled-out path or an expansion
+        "cat '/Users/me/.claude/plugins/data/guard-acme/x'",
+        'cat "/Users/me/.claude/plugins/data/$D/x"',
+        "cat '/Users/me/.claude/plugins/data/guard-acme'/x",
+        // the directory's path or the plugin-data variable anywhere in the text
+        `python3 -c 'open("${data}/result-gate/x","w")'`,
+        'python3 -c \'open("$CLAUDE_PLUGIN_DATA/x","w")\'',
+        'echo "x $CLAUDE_PLUGIN_DATA"',
+        "cat C:\\Users\\me\\.claude\\plugins\\data\\guard-acme\\x",
+        `node -e "require('fs').writeFileSync('${data.toUpperCase()}/x','2')"`,
+        // a remove or move of a directory above it, through a glob
+        "rm -rf /Users/me/.claude/plugins/*",
+        "rm -rf /Users/me/**",
+        "mv /Users/me/.cl* /tmp/x",
+    ];
+    for (const c of denied) {
+        const d = run(c);
+        assert.equal(d.action, "deny", c);
+        assert.equal(d.rule, "protected-path", c);
+        assert.notEqual(run(c, false).rule, "protected-path", `${c} (no run)`);
+    }
+    const allowed = [
+        "touch /Users/me/.claude/plugins/data/other*/x",
+        "touch /Users/me/.claude/plugins/dat?x/guard-acme/x",
+        "touch /Users/me/.claude/plugins/data/guard-acme2/x",
+        "touch /Users/me/.claude/plugins/data/guard-acme-x/x",
+        "ls /Users/other/**/x",
+        "ls /tmp/**/x",
+        "cat /Users/me/repo/**/x",
+        "cat /Users/me/repo/**/../x",
+        "cat /Users/me/.claude/plugins/data/other/?./guard-acme/x",
+        "ls /Users/me/.claude/plugins/data/other/.?/x",
+        "ls .*",
+        "ls /Users/me/.claude/plugins/*",
+        "cd /Users/me/.claude/plugins && ls",
+        "cd /tmp/a* && cat x",
+        "cd ~/.claude/plugins/data/other && cat x",
+        "cat src/$f",
+        "cat $TMPDIR/x",
+        "cat $X/../result-gate/a.txt",
+        "git commit -q -m 'docs: a path like ~/**/../x is denied'",
+        "sed -i 's/$x/../g' notes.txt",
+        "grep -rn '/**/../' src",
+        "grep -rn '/**' .",
+        "gh pr comment 1 --body 'see $X/../y and **/../z'",
+        "printf '%s\\n' '/**/../x'",
+        "grep -rn CLAUDE_PLUGIN_DATA src",
+        "echo x > `git rev-parse --git-common-dir`/../.factory/runs/12/verdict-1.md",
+        'echo "RUN_ID=${FACTORY_RUN_ID:-unset} ..."; gh api user --jq .login',
+    ];
+    for (const c of allowed)
+        assert.notEqual(run(c).rule, "protected-path", c);
+});
+void test("protectedWrite: a command past the scan limits that names the data directory fails closed", () => {
+    const data = "/Users/me/.claude/plugins/data/guard-acme";
+    const env = { HOME: "/Users/me", TMPDIR: "/tmp/" };
+    const braces = `echo {${Array.from({ length: 65 }, (_, i) => `w${String(i)}`).join(",")}}`;
+    const cfg = (d) => ({
+        root: "/Users/me/repo",
+        cwd: "/Users/me/repo",
+        globs: [],
+        data: d,
+    });
+    assert.equal(protectedWrite(`${braces}; touch /tmp/x`, cfg([data]), env), null, "past the limit a command naming nothing of the data directory is let through");
+    const hit = (c, d = [data]) => protectedWrite(`${braces}; ${c}`, cfg(d), env);
+    assert.ok(hit(`dd of=${data}/x`)?.target, "spelled out: named before the scan");
+    assert.ok(hit("touch $CLAUDE_PLUGIN_DATA/x")?.target);
+    assert.ok(hit("touch /tmp/GUARD-ACME/x")?.unsure);
+    assert.ok(hit("touch /tmp/guard-a*/x")?.unsure);
+    assert.ok(hit("touch /tmp/*")?.unsure, "a bare glob word may match the name");
+    assert.equal(hit("touch /tmp/x"), null);
+    assert.equal(hit("touch /tmp/other*"), null);
+    assert.equal(hit(`dd of=${data}/x`, []), null);
+});
 void test("factory run: guard's data directory is a protected write target", () => {
     const data = "/Users/me/.claude/plugins/data/guard-acme";
     const factory = {
