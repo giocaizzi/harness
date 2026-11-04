@@ -162,7 +162,7 @@ What a runner (any program that starts a harness for a ticket) registers and set
 | Variable | Set by the runner to | Guard does |
 |---|---|---|
 | `GUARD_RUN_MANIFEST` | Absolute path to the registration `.json` | Loads and validates it on every hook call (Trust). |
-| `GUARD_RUN_ID` | The run's id, matching `^[A-Za-z0-9_][\w.-]{0,99}$` | Marks a registered run; must equal `result.json`'s `run_id`. |
+| `GUARD_RUN_ID` | The run's id, matching `^[A-Za-z0-9_][\w.-]{0,99}$` | Marks a registered run; must equal `result.json`'s `run_id`. The `GUARD_RUN_*` values are checked as given, never trimmed. |
 | `GUARD_RUN_MODE` | `attended` or `unattended` (unset means `unattended`) | Must be in the manifest's `modes` (either, when `modes` is absent). |
 | `GUARD_RUN_TICKET` | `<owner>/<repo>#<number>` | Its number expands `{ticket_number}`; required when `result.file` uses it. |
 | `GUARD_RUN_FILE` | The runner's run file (may be relative) | Passed to the checker, resolved against the session's `cwd`. |
@@ -200,8 +200,8 @@ What a runner (any program that starts a harness for a ticket) registers and set
 | `runner` | `^[a-z0-9-]{1,40}$`. |
 | `requires` | Capabilities from `events`, `gh-visibility`, `labels`, `modes`, `protected-paths`, `result-gate`; an unknown one denies. At most 16, unique. |
 | `labels` | `approval`, `takeover`, `protected`: each name `^[\w.:-]{1,50}$`, `protected` at most 32. |
-| `protected_paths` | `globs` and `exempt`: together at most 256 globs of at most 1024 characters each (the existing `protectedLimits`); repo-relative, no backslash, no `.`, `..` or empty segment, no control character. An exempt glob may only narrow this registration's own globs: its first segment is literal, is not `.github`, and is the first segment of one of its globs. |
-| `result` | `file`: repo-relative template ending `.json`; only `{ticket_number}` and `{run_id}` expand; it stays inside the repo. `checker`: absolute `.mjs` path, with the rules and trust checks of `FACTORY_RESULT_CHECKER`. `hint`: at most 500 characters, the hand-back line. |
+| `protected_paths` | `globs` and `exempt`: together at most 256 globs of at most 1024 characters each (the existing `protectedLimits`); repo-relative, no backslash, no `.`, `..` or empty segment, no control character. An exempt glob may only narrow this registration's own globs: its first segment is literal, is neither `.github` nor the first segment of a built-in default protected path (case-insensitive), and is the first segment of one of its globs. Exemptions apply only to the registration's own globs. |
+| `result` | `file`: repo-relative template ending `.json`; only `{ticket_number}` and `{run_id}` expand; not under `.git` or `.github`; it stays inside the repo (checked on the text here; the real path is resolved when the gate reads it). `checker`: absolute `.mjs` path, with the rules and trust checks of `FACTORY_RESULT_CHECKER`. `hint`: at most 500 characters without control, bidi or line-separator characters, the hand-back line. |
 | `modes` | A subset of `attended`, `unattended`. |
 
 Each section needs its capability in `requires`; requiring `result-gate` needs `result`.
@@ -215,7 +215,7 @@ Each section needs its capability in `requires`; requiring `result-gate` needs `
 - Shell writes to guard's data dir are denied.
 - The core result check always runs.
 
-**Trust.** The manifest, and `result.checker`, must resolve (`realpath`) to a regular, readable file that neither it, its directory nor any ancestor is in the hook user's reach: the same checks as `FACTORY_RESULT_CHECKER` ([Refusals](#factory-run-contract-v1)). On Windows only the read-only attribute is checked; ACLs are the runner's job. The manifest is read on every hook call: command hooks re-read it each time; in-process opencode and pi keep a per-process cache keyed on realpath, inode, mtime and size, and still re-check the trust checks and the pin on every call. On first sight the realpath and sha256 are pinned in the session's state (`<data dir>/sessions/<session>.run.jsonl`; the first valid line wins, so of two parallel first hooks the later one compares against the earlier pin). An event without a session id pins nothing. A duplicate JSON key is not detected (the last one wins, as in `JSON.parse`): the file is out of the session's reach, so only the runner writes it.
+**Trust.** The manifest, and `result.checker`, must resolve (`realpath`) to a regular, readable file that neither it, its directory nor any ancestor is in the hook user's reach: the same checks as `FACTORY_RESULT_CHECKER` ([Refusals](#factory-run-contract-v1)). On Windows only the read-only attribute is checked and directories are not, so the check is no barrier against the session user (who can clear the attribute): ACLs are the runner's job. The manifest is read on every hook call: command hooks re-read it each time; in-process opencode and pi keep a per-process cache of the parsed manifest keyed on its realpath and sha256: the file is still read, hashed, vetted and pinned on every call. On first sight the realpath and sha256 are pinned in the session's state (`<data dir>/sessions/<session>.run.jsonl`; the first valid line wins, so of two parallel first hooks the later one compares against the earlier pin). An event without a session id pins nothing. The session id is sanitised as for the facts file (`a.b` and `a_b` share a pin, which can only deny). A duplicate JSON key is not detected (the last one wins, as in `JSON.parse`): the file is out of the session's reach, so only the runner writes it.
 
 **Failures.** Each denies with rule `run-registration` (from 1.0.0). A deny reason never prints an env value beyond the offending one, cut to 200 characters.
 
@@ -256,7 +256,7 @@ make contract-test MANIFEST=/opt/acme-runner/guard-registration.json
 
 - Needs Node 22+ and make only (the `.mjs` files are tracked: no `npm install`). It sets `GUARD_OTEL=off` and `GUARD_STOP_CHECK=off` and empties `FACTORY_EVENTS_FILE`.
 - For a meaningful trust scenario the manifest must be installed out of the job user's reach, e.g. owned by root, mode 0644, in a root-owned directory.
-- On Windows (no make): set `CONTRACT_MANIFEST` and run `node --test tests/contract/`.
+- On Windows (no make): set `CONTRACT_MANIFEST` and run `node --test "tests/contract/*.test.mjs"`.
 - Running now: the probe, the manifest validates and loads, unknown capability, contract major, unknown key, missing manifest, `GUARD_RUN_ID` without manifest and the reverse, writable manifest, writable checker, changed manifest (pin mismatch), tripwire line shape.
 - Pending, reported as skipped until the decision wiring lands in 1.0.0: label approval and takeover, config-unsure, protected path and exemption, gh alias, events decision line, bad result, legacy-only tripwire firing.
 - `make test` also runs the kit, with the bundled example manifest `tests/contract/fixtures/acme-runner.json`, skipping the scenarios that need a trusted `MANIFEST`.
