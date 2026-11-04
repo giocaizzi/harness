@@ -465,6 +465,7 @@ export type WriteHits = (
   dir: string,
   resolve: (path: string) => string,
   above: boolean,
+  literal?: boolean,
 ) => boolean;
 export interface GhAction {
   label: boolean;

@@ -495,9 +495,15 @@ function assign(
 // A payload whose text the outer shell expands first (`bash -c "…$X…"`, an ssh command, a heredoc: `p.expanded`)
 // resolves `$NAME` and `$PWD` with the outer values (`frozen`), not with its own assignments and `cd`s; one that also
 // escapes a `\$` for its own shell (`bash -c "D=x; rm -rf \$D"`) resolves neither, so its variables ask.
-// `cds`, when given, collects every directory a `cd` reaches, each taken to exist (see cdDirs).
+// `cds`, when given, collects every directory a `cd` reaches, each taken to exist (see cdDirs); `cdWords` collects
+// every local `cd`'s words as written, followed or not, with the directory they are read in (see cdCommands).
 const CHAIN_BREAK = new Set([";", "\n", "&"]);
 const ABS_DIR = /^(?:\/|[a-z]:[\\/])/i;
+interface CdCommand {
+  words: ShellWord[];
+  dir: string;
+  resolve: (path: string) => string;
+}
 function levelSegments(
   a: ShellAnalysis,
   baseDir: string,
@@ -507,6 +513,7 @@ function levelSegments(
   frozen: FrozenVariables | null = null,
   cds: string[] | null = null,
   ranBefore = false,
+  cdWords: CdCommand[] | null = null,
 ): Segment[] {
   const vars = { ...outer };
   let ran = ranBefore;
@@ -537,6 +544,7 @@ function levelSegments(
     if (assign(cmd, vars, env, pwd)) {
       // nothing runs
     } else if (CD.test(seg)) {
+      if (cdWords && !remote) cdWords.push({ words: cmd.words, dir, resolve });
       const m =
         followCd &&
         !SUBSHELL_SEP.has(cmd.sep) &&
@@ -588,11 +596,19 @@ function levelSegments(
               inner,
               cds,
               ranHere,
+              cdWords,
             )),
       );
     }
   }
   return out;
+}
+// Every local `cd`, `pushd` or `Set-Location` in the command (followed or not, inside a payload too), with its words as
+// written and the directory it is read in: the data-directory check reads their targets like any other word.
+function cdCommands(command: string, env: GuardEnv) {
+  const cds: CdCommand[] = [];
+  levelSegments(prepared(command), "", false, env, {}, null, null, false, cds);
+  return cds;
 }
 const prepared = (command: string) =>
   analysis(expandLoops(command).replace(SIMPLE_QUOTED, "$1"));
@@ -1794,11 +1810,16 @@ function globsMayMeet(a: string, b: string) {
   return agree(head(a), head(b), false) && agree(tail(a), tail(b), true);
 }
 // Whether one target segment may be one protected-pattern segment.
-// A variable may hold a leading dot, so only a written `*`, `?` or `[` at the start keeps a dot file out.
-function segMayMatch(pat: string, seg: string) {
-  const glob = seg.replace(/\$(?:\{[^}]*\}|\w+|\([^)]*\))|%\w+%|`[^`]*`/g, "*");
+// A variable may hold a leading dot, so only a written `*`, `?` or `[` at the start keeps a dot file out; with `dots`,
+// a leading wildcard matches a dot name too (a session may `shopt -s dotglob` or `setopt globdots`).
+const SEG_VAR = /\$(?:\{[^}]*\}|\w+|\([^)]*\))|%\w+%|`[^`]*`/;
+// A segment that may stand for any number of directories: `**` (zsh, bash with globstar), or one holding a variable or
+// substitution, whose value may hold a `/`.
+const MULTI_SEG = new RegExp(`\\*\\*|${SEG_VAR.source}`);
+function segMayMatch(pat: string, seg: string, dots = false) {
+  const glob = seg.replace(new RegExp(SEG_VAR.source, "g"), "*");
   if (SEG_GLOB.test(glob)) {
-    if (/^[*?[]/.test(seg) && pat.startsWith(".")) return false;
+    if (!dots && /^[*?[]/.test(seg) && pat.startsWith(".")) return false;
     return SEG_GLOB.test(pat)
       ? globsMayMeet(glob, pat)
       : globMatches(glob, pat.toLowerCase());
@@ -1806,6 +1827,69 @@ function segMayMatch(pat: string, seg: string) {
   return SEG_GLOB.test(pat)
     ? globMatches(pat, glob.toLowerCase())
     : pat.toLowerCase() === glob.toLowerCase();
+}
+// The segments of a path for the data-directory check, every way the shell may expand them, as arrays without `.` or
+// `..`. A word the shell does not expand (`literal`: single-quoted, or double-quoted with no `$` or backtick) is names
+// only. Otherwise a `**` or a segment holding a variable or substitution is marked as any number of directories; a
+// `..` climbs one name, and right after such a segment it is read both ways: the segment stood for nothing and the
+// `..` climbs the name before it, or it went down and the `..` steps back into it (`A/**/..` is `parent(A)` or
+// `A/**`); a `..` at the start is dropped (the root's parent is the root). A glob that bash before 5.2 reads as `..`
+// too (`.?`, `.*`, `.[.]`: it starts with a dot and matches `..`, as macOS /bin/bash 3.2 does) is read both ways.
+// Null past 64 readings, which counts as reaching anything.
+const DATA_READINGS = 64;
+// Marks a folded segment that may stand for any number of directories, its text kept after the mark (`/$X.log`); no
+// segment can hold a `/`, so a directory named `**` stays itself.
+const ANY_SEG = "/";
+const anySeg = (s: string) => s.startsWith(ANY_SEG);
+function dataPaths(p: string, literal: boolean): string[][] | null {
+  const raw = p.split("/").filter((s) => s && s !== ".");
+  const asDotDot = (s: string) =>
+    !literal &&
+    s.startsWith(".") &&
+    s !== ".." &&
+    SEG_GLOB.test(s) &&
+    globMatches(s, "..");
+  const fold = (v: string[], s: string): string[][] => {
+    if (s === "..") {
+      if (!v.length) return [v];
+      if (!anySeg(defined(v.at(-1)))) return [v.slice(0, -1)];
+      return [v.slice(0, -2), v];
+    }
+    return [[...v, !literal && MULTI_SEG.test(s) ? ANY_SEG + s : s]];
+  };
+  let variants: string[][] = [[]];
+  for (const s of raw) {
+    variants = variants.flatMap((v) =>
+      (asDotDot(s) ? [s, ".."] : [s]).flatMap((a) => fold(v, a)),
+    );
+    if (variants.length > DATA_READINGS) return null;
+  }
+  return variants;
+}
+// Whether a path (from `dataPaths`: literal, glob and ANY_SEG-marked segments, no `..`) may lie inside the data
+// directory `d` (literal segments), or, with `above`, end at or above it. A marked segment takes any number of its
+// segments, a glob one, a literal one by name, case ignored; a leading wildcard matches a dot directory too.
+function reachData(
+  d: string[],
+  path: string[],
+  above: boolean,
+  tick: () => void,
+) {
+  const memo = new Map<number, boolean>();
+  const f = (i: number, j: number): boolean => {
+    if (j === d.length) return true;
+    if (i === path.length) return above;
+    const key = i * (d.length + 1) + j;
+    if (memo.has(key)) return defined(memo.get(key));
+    tick();
+    const seg = defined(path[i]);
+    const r = anySeg(seg)
+      ? f(i + 1, j) || f(i, j + 1)
+      : segMayMatch(defined(d[j]), seg, true) && f(i + 1, j + 1);
+    memo.set(key, r);
+    return r;
+  };
+  return f(0, 0);
 }
 // Whether pattern segments `pat` match target segments `segs`; `above` lets the target end above a match, when every
 // segment it has matched one literal leading segment of the pattern (no `**` took any). `tick` counts the work.
@@ -1907,68 +1991,85 @@ export function protectedWrite(
     .slice(0, limits.globs)
     .map((d) => normalizeSegments(posixPath(d).replace(/^\/(?=[a-z]:)/i, "")));
   // Guard's own data directory: a path inside it (any command, a read too), or, for the writers, a remove or move of it or
-  // a directory above it. A Git Bash drive path (`/c/Users/...`) also counts as `c:/Users/...` against a drive-letter dir.
-  const inData = (dir: string, resolved: string, above: boolean) => {
+  // a directory above it. A path's start is known when it is absolute or relative to a directory the guard knows (the
+  // call's cwd, a followed `cd`): it is read as the shell may expand it (`dataPaths`) and checked against the
+  // directory's segments (`reachData`), each spelling of a glob that may be `..` on its own; past that many such globs,
+  // it may reach anything. A start the guard cannot know (a variable, substitution or `~user` first, a relative path
+  // after a `cd` not followed) is matched by its tail: it hits when any tail may be the data directory's last segment
+  // followed by anything, so a variable or `**` segment after the start counts as that name. A Git Bash drive path
+  // (`/c/Users/...`) also counts as `c:/Users/...` against a drive-letter dir.
+  const inData = (
+    dir: string,
+    resolved: string,
+    above: boolean,
+    literal = false,
+  ) => {
     if (!dataDirs.length) return false;
     const p = posixPath(resolved);
     const unknown =
-      /^[$~%`]/.test(p) || (dir === UNKNOWN_DIR && !ABS_DIR.test(p));
-    let full: string | null = null;
-    if (!unknown) {
-      full =
-        dir && !ABS_DIR.test(p)
-          ? `${posixPath(dir).replace(/\/+$/, "")}/${p}`
+      (!literal && /^[$~%`]/.test(p)) ||
+      (dir === UNKNOWN_DIR && !ABS_DIR.test(p));
+    if (unknown) {
+      const first = p.split("/").find(Boolean) ?? "";
+      const rest =
+        /^(?:\$(?:\{[^}]*\}|\w+|\([^)]*\))|%\w+%|~[\w.-]*|`[^`]*`)$/.test(first)
+          ? p.slice(p.indexOf(first) + first.length)
           : p;
-      if (!ABS_DIR.test(full))
-        full = protect.cwd
-          ? `${posixPath(protect.cwd).replace(/\/+$/, "")}/${full}`
-          : null;
+      const paths = dataPaths(rest, literal);
+      if (paths === null) return true;
+      return dataDirs.some((d) => {
+        const base = d.at(-1);
+        return (
+          base !== undefined &&
+          paths.some((segs) =>
+            patternHits(
+              [base, "**"],
+              segs.map((x) => (anySeg(x) ? x.slice(1) : x)),
+              above,
+              true,
+              tick,
+            ),
+          )
+        );
+      });
     }
-    for (const d of dataDirs) {
-      if (full !== null) {
-        const s = normalizeSegments(full.replace(/^\/(?=[a-z]:)/i, ""));
-        const same = (a: string[], b: string[]) =>
-          a.every((x, i) => x.toLowerCase() === defined(b[i]).toLowerCase());
-        if (d.length <= s.length ? same(d, s) : above && same(s, d))
-          return true;
-        const git = /^\/([a-z])(?:\/|$)/i.exec(full);
-        if (git && /^[a-z]:$/i.test(d[0] ?? "")) {
-          const g = [`${defined(git[1])}:`, ...s.slice(1)];
-          if (d.length <= g.length ? same(d, g) : above && same(g, d))
-            return true;
-        }
-        continue;
-      }
-      const base = d.at(-1);
-      if (
-        base !== undefined &&
-        patternHits(
-          [base, "**"],
-          repoSegments(p, dir, { ...protect, root: undefined })?.segs ?? [],
-          above,
-          true,
-          tick,
-        )
-      )
-        return true;
+    let full =
+      dir && !ABS_DIR.test(p)
+        ? `${posixPath(dir).replace(/\/+$/, "")}/${p}`
+        : p;
+    if (!ABS_DIR.test(full)) {
+      if (!protect.cwd) return false;
+      full = `${posixPath(protect.cwd).replace(/\/+$/, "")}/${full}`;
     }
-    return false;
+    const paths = dataPaths(full.replace(/^\/(?=[a-z]:)/i, ""), literal);
+    if (paths === null) return true;
+    const git = /^\/([a-z])(?:\/|$)/i.exec(full);
+    return dataDirs.some((d) =>
+      paths.some(
+        (s) =>
+          reachData(d, s, above, tick) ||
+          (git !== null &&
+            /^[a-z]:$/i.test(d[0] ?? "") &&
+            reachData(d, [`${defined(git[1])}:`, ...s.slice(1)], above, tick)),
+      ),
+    );
   };
-  // A word naming a path inside the data directory, as a path or through the plugin-data variable; `key=value` and
-  // `--opt=value` words count by their value too.
-  const named: WriteHits = (word, dir, resolve) => {
+  // A word naming a path inside the data directory, as a path or through the plugin-data variable (in any quoting);
+  // `key=value` and `--opt=value` words count by their value too.
+  const named: WriteHits = (word, dir, resolve, _above, literal) => {
     if (!dataDirs.length) return false;
     for (const t of [
       word,
       ...(word.includes("=") ? [word.slice(word.indexOf("=") + 1)] : []),
     ]) {
       tick();
-      if (DATA_VAR.test(t) || inData(dir, resolve(t), false)) return true;
+      if (DATA_VAR.test(t) || inData(dir, resolve(t), false, literal))
+        return true;
     }
     return false;
   };
-  const hits: WriteHits = (target, dir, resolve, above) => {
-    if (inData(dir, resolve(target), above)) return true;
+  const hits: WriteHits = (target, dir, resolve, above, literal) => {
+    if (inData(dir, resolve(target), above, literal)) return true;
     const at = repoSegments(resolve(target), dir, protect);
     if (at === null) return false;
     const hit = globs.filter((g) =>
@@ -1985,6 +2086,27 @@ export function protectedWrite(
       )
     );
   };
+  // The data directory's path, or a reference to the plugin-data variable, spelled anywhere in the command's text (inside
+  // a quoted script, an option's value, a word with other text around it) names it whatever the reader makes of the word.
+  const text = posixPath(command);
+  const dataText = (d: string[]) => {
+    const dir = d.join("/");
+    const forms = /^[a-z]:$/i.test(d[0] ?? "")
+      ? [dir, `/${dir.replace(":", "")}`]
+      : [`/${dir}`];
+    return forms.find((f) =>
+      new RegExp(
+        `(?<![\\w.%+@-])${f.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&")}(?![\\w.%+@-])`,
+        "i",
+      ).test(text),
+    );
+  };
+  const spelled = dataDirs.map(dataText).find((f) => f !== undefined);
+  if (spelled !== undefined) return { target: spelled };
+  const ref = /(?:\$\{?|\$env:|%)(?:claude|copilot)_plugin_data\b/i.exec(
+    command,
+  );
+  if (ref && dataDirs.length) return { target: ref[0] };
   try {
     const target = scanWrites(
       command,
@@ -1996,7 +2118,20 @@ export function protectedWrite(
     return target === null ? null : { target };
   } catch (e) {
     // Any failure (a limit, a stack overflow, a bug) denies a command that may write, and lets the rest through.
-    if (!MAY_WRITE.test(command)) return null;
+    // A command naming the data directory (its last segment, or a glob word that may match it) fails closed whatever
+    // the writer.
+    const low = command.toLowerCase();
+    const bases = dataDirs
+      .map((d) => d.at(-1)?.toLowerCase())
+      .filter((b): b is string => b !== undefined && b !== "");
+    const names =
+      bases.some((b) => low.includes(b)) ||
+      low
+        .split(/[\s/\\'"=;|&<>()]+/)
+        .some(
+          (w) => /[*?[]/.test(w) && bases.some((b) => segMayMatch(b, w, true)),
+        );
+    if (!names && !MAY_WRITE.test(command)) return null;
     return {
       unsure:
         e === LIMITED
@@ -2028,6 +2163,15 @@ function scanWrites(
   hits: WriteHits,
   named: WriteHits | null,
 ) {
+  // A word the shell does not expand is literal text: no glob, variable or `**` in it stands for anything else.
+  const literal = (w: ShellWord) => !dynamicText(w.raw);
+  // Any `cd` target, followed or not: a glob or variable spelling of the data directory is a `cd` the guard cannot
+  // follow, so what comes after it is matched by its tail only, and the target itself must be read.
+  if (named)
+    for (const { words, dir, resolve } of cdCommands(command, env))
+      for (const w of words)
+        for (const t of spellings(w))
+          if (named(defined(t), dir, resolve, false, literal(w))) return t;
   for (const { words, redirs = [], dir, remote, resolve } of segments(
     command,
     env,
@@ -2037,14 +2181,14 @@ function scanWrites(
     if (named)
       for (const w of [...redirs, ...words])
         for (const t of spellings(w))
-          if (named(defined(t), dir, resolve, false)) return t;
+          if (named(defined(t), dir, resolve, false, literal(w))) return t;
     for (const w of redirs) {
       if (NOT_A_FILE.test(w.val)) continue;
       count(w);
       for (const t of spellings(w))
         if (
           !NOT_A_FILE.test(defined(t)) &&
-          hits(defined(t), dir, resolve, false)
+          hits(defined(t), dir, resolve, false, literal(w))
         )
           return t;
     }
@@ -2070,7 +2214,13 @@ function scanWrites(
       continue;
     // Only a writer's words are counted and expanded: a read-only command never fails closed.
     for (const w of cw.slice(1)) if (!w.val.startsWith("-")) count(w);
-    const args = cw.slice(1).flatMap(spellings);
+    // Each spelling keeps whether its word is literal; a built `<dest>/<source name>` is not.
+    const lit = new Map<string, boolean>();
+    const args = cw.slice(1).flatMap((w) => {
+      const out = spellings(w);
+      for (const t of out) lit.set(defined(t), literal(w));
+      return out;
+    });
     const operands = args.filter((a) => !defined(a).startsWith("-"));
     let writes: string[] = [];
     let removes: string[] = [];
@@ -2123,8 +2273,10 @@ function scanWrites(
         ];
       if (PROTECT_MV.test(name)) removes = sources;
     }
-    for (const t of writes) if (hits(t, dir, resolve, false)) return t;
-    for (const t of removes) if (hits(t, dir, resolve, true)) return t;
+    for (const t of writes)
+      if (hits(t, dir, resolve, false, lit.get(t) ?? false)) return t;
+    for (const t of removes)
+      if (hits(t, dir, resolve, true, lit.get(t) ?? false)) return t;
   }
   return null;
 }
