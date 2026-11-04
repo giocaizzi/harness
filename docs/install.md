@@ -79,7 +79,7 @@ Update: `git pull` in the checkout, then `make install HARNESS=antigravity` agai
 
 A plugin can leave this marketplace, for example when it moves to a separate plugin repository (the `factory` plugin did in 4.0.0). In Claude Code (checked with 2.1.318 in a throwaway `HOME`, with a git-sourced marketplace):
 
-- After `claude plugin marketplace update giocaizzi-harness`, the installed copy stays in the plugin cache but no longer loads: `claude plugin list` shows `failed to load: Plugin <name> not found in marketplace giocaizzi-harness`. `claude plugin update <name>@giocaizzi-harness` fails with `Plugin "<name>" not found`, and so does a fresh install.
+- After `claude plugin marketplace update giocaizzi-harness`, the installed copy stays in the plugin cache but no longer loads: `claude plugin list` shows `failed to load: Plugin <name> not found in marketplace giocaizzi-harness`. `claude plugin update <name>@giocaizzi-harness` fails with `Plugin "<name>" not found`, and a fresh install with `Plugin "<name>" not found in marketplace "giocaizzi-harness"`.
 - A plugin from any marketplace that depends on `<name>@giocaizzi-harness` (or on the bare `<name>` inside this marketplace) fails to load too, with `Dependency "<name>@giocaizzi-harness" is not installed`. Installing the moved plugin from its new marketplace does not satisfy it: a dependency names its marketplace, so the depending plugin's manifest has to name the new one.
 - While the stale entry is installed, `claude plugin prune` refuses to run (`cannot determine orphans`).
 
@@ -91,9 +91,9 @@ claude plugin install <name>@<new-marketplace>
 claude plugin uninstall <name>@giocaizzi-harness
 ```
 
-Install the new one before uninstalling the old one when the moved plugin depends on plugins from here (as `factory` does on `dev-tools` and `guard`). Those were auto-installed as its dependencies, and uninstalling the old copy with nothing else depending on them marks them unneeded, so a later `claude plugin prune` would remove them. Once the new copy declares them (as `dev-tools@giocaizzi-harness`, with `allowCrossMarketplaceDependenciesOn` in its marketplace, or Claude Code installs the plugin but does not fetch them), they stay. The uninstalled version's cache directory is marked orphaned and cleaned up by Claude Code later.
+Install the new one before uninstalling the old one when the moved plugin depends on plugins from here (as `factory` does on `dev-tools` and `guard`). Those were auto-installed as its dependencies, and uninstalling the old copy with nothing else depending on them marks them unneeded, so a later `claude plugin prune` would remove them. With the new copy installed first and declaring them as `dev-tools@giocaizzi-harness` and `guard@giocaizzi-harness`, `prune` keeps them. Its marketplace needs `allowCrossMarketplaceDependenciesOn: ["giocaizzi-harness"]` for Claude Code to install them with it; without that, the plugin installs but does not load until they are installed. The uninstalled version's cache directory stays on disk, marked orphaned (`.orphaned_at`).
 
-Copilot CLI and Codex were not probed: uninstall the plugin there with their own plugin command, then install it from its new marketplace. For Codex agents, opencode and Antigravity, re-running `make install` after `git pull` removes the files an earlier run installed that the checkout no longer ships. pi installs the whole repo, so the plugin's skills and agents leave with `pi update`.
+Copilot CLI, VS Code and Codex were not probed: uninstall the plugin there with their own plugin command, then install it from its new marketplace. For Codex agents, opencode and Antigravity, re-running `make install` after `git pull` removes the files an earlier run installed that the checkout no longer ships. pi installs the whole repo, so the plugin's skills and agents leave with the package update (`pi update --extensions`, above).
 
 ## From a checkout (development)
 
