@@ -161,6 +161,9 @@ void test("denyReason: the texts say what to do and carry no env value", () => {
     assert.match(denyReason(bad, "stop"), /^Run registration failed: .*stop and report it\.$/);
     for (const d of [trip, bad])
         for (const at of ["tool", "stop"])
+            assert.match(denyReason(d, at), /every tool call guard sees/i, at);
+    for (const d of [trip, bad])
+        for (const at of ["tool", "stop"])
             assert.doesNotMatch(denyReason(d, at), /secret-run-id|legacy-secret/, `${d.rule} ${at}`);
 });
 void test("recordUnregistered: one line per session in guard's log and the legacy events file, in the {ts, event, decision, rule, reason} shape", () => {
@@ -193,6 +196,15 @@ void test("recordUnregistered: one line per session in guard's log and the legac
     recordUnregistered({}, other, undefined, now);
     recordUnregistered({}, other, undefined, now);
     assert.equal(readFileSync(unregisteredLog(other), "utf8").trim().split("\n").length, 2);
+});
+void test("recordUnregistered: a very long session key still writes once", () => {
+    const dir = mkdtempSync(join(root, "tw-long-"));
+    const dataDir = join(dir, "data");
+    const key = `${"x".repeat(150)}/${"y".repeat(150)}:12345`;
+    assert.equal(key.length > 300, true);
+    recordUnregistered({}, dataDir, key);
+    recordUnregistered({}, dataDir, key);
+    assert.equal(readFileSync(unregisteredLog(dataDir), "utf8").trim().split("\n").length, 1);
 });
 void test("recordUnregistered: an unwritable path never throws", () => {
     const dir = mkdtempSync(join(root, "tw-"));
