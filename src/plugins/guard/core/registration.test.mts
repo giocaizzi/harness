@@ -208,6 +208,8 @@ void test("registration: protected_paths exempt", () => {
   has(e("{a,b}/x"), re);
   has(e("other/x"), re);
   has(e("!x"), re);
+  has(e(".factory/**", [".factory/x/**"]), re);
+  has(e(".FACTORY/**", [".FACTORY/x/**"]), re);
   assert.equal(
     validateRegistration(
       mod(
@@ -269,6 +271,20 @@ void test("registration: result", () => {
     /^result\.hint must be 1 to 500/,
   );
   bad((m) => ((m.result as M).hint = "a\tb"), /^result\.hint must be 1 to 500/);
+  bad(
+    (m) => ((m.result as M).hint = "a\u202eb"),
+    /^result\.hint must be 1 to 500/,
+  );
+  bad(
+    (m) => ((m.result as M).hint = "a\u2028b"),
+    /^result\.hint must be 1 to 500/,
+  );
+  for (const file of [".git/x.json", ".GITHUB/r.json"]) {
+    bad(
+      (m) => ((m.result as M).file = file),
+      /^result\.file must not be under \.git or \.github, got /,
+    );
+  }
 });
 
 void test("registration: modes", () => {
@@ -385,7 +401,10 @@ void test("registration: runEnvErrors", () => {
     .registration;
   const base = { GUARD_RUN_ID: "run-1", GUARD_RUN_TICKET: "acme/app#12" };
   assert.deepEqual(runEnvErrors(base, reg), []);
-  assert.deepEqual(runEnvErrors({ ...base, GUARD_RUN_ID: " run-1 " }, reg), []);
+  has(
+    runEnvErrors({ ...base, GUARD_RUN_ID: "  run-1  " }, reg),
+    /^GUARD_RUN_ID must match/,
+  );
   has(
     runEnvErrors({ ...base, GUARD_RUN_ID: "../x" }, reg),
     /^GUARD_RUN_ID must match .*, got "\.\.\/x"/,
@@ -399,8 +418,12 @@ void test("registration: runEnvErrors", () => {
     runEnvErrors(base, only),
     /^GUARD_RUN_MODE "unattended" is not one of the registration's modes \["attended"\]/,
   );
-  assert.deepEqual(
+  has(
     runEnvErrors({ ...base, GUARD_RUN_MODE: " attended " }, only),
+    /^GUARD_RUN_MODE " attended " is not one of/,
+  );
+  assert.deepEqual(
+    runEnvErrors({ ...base, GUARD_RUN_MODE: "attended" }, only),
     [],
   );
   has(

@@ -7,6 +7,7 @@ import path from "node:path";
 
 import { DEFAULT_PROTECTED_LIMITS } from "./constants.mjs";
 import { checkerPathError, report, show, TICKET } from "./result.mjs";
+import { rules } from "./rules.mjs";
 import type { ProtectedLimits } from "./types.mjs";
 
 export const CONTRACT = 2;
@@ -60,6 +61,9 @@ const get = (o: Obj, k: string): unknown =>
 const isStr = (v: unknown): v is string => typeof v === "string";
 
 const CONTROL = /[\u0000-\u001f\u007f]/;
+
+// Line separators and bidi controls, which can disguise text in a hint.
+const BIDI = /[\u2028\u2029\u200e\u200f\u202a-\u202e\u2066-\u2069]/;
 
 // Why a repo-relative path or glob is not acceptable, or null: 1..max characters, no control character, no
 // backslash, not absolute, no empty, "." or ".." segment.
@@ -194,12 +198,19 @@ const checkProtected = (
   }
   if (globs) out.globs = globs;
   if (exempt) {
+    // Exemptions apply only to this registration's own globs: never under .github or a built-in protected default.
+    const floor = new Set([
+      ".github",
+      ...rules.factory.protectedPaths.map((g) =>
+        (g.split("/")[0] ?? "").toLowerCase(),
+      ),
+    ]);
     const firsts = new Set((globs ?? []).map((e) => e.split("/")[0]));
     exempt.forEach((e, i) => {
       const first = e.split("/")[0] ?? "";
       if (
         GLOB_CHARS.test(first) ||
-        first.toLowerCase() === ".github" ||
+        floor.has(first.toLowerCase()) ||
         !firsts.has(first)
       ) {
         errors.push(
@@ -233,7 +244,11 @@ const checkResult = (
       .replaceAll("{ticket_number}", "")
       .replaceAll("{run_id}", "");
     if (why) errors.push(`result.file ${why}, got ${show(file)}`);
-    else if (/[*?[\]!]/.test(file)) {
+    else if (/^\.git(hub)?$/i.test(file.split("/")[0] ?? "")) {
+      errors.push(
+        `result.file must not be under .git or .github, got ${show(file)}`,
+      );
+    } else if (/[*?[\]!]/.test(file)) {
       errors.push(
         `result.file must not contain glob characters, got ${show(file)}`,
       );
@@ -265,10 +280,11 @@ const checkResult = (
       !isStr(hint) ||
       hint.length < 1 ||
       hint.length > 500 ||
-      CONTROL.test(hint)
+      CONTROL.test(hint) ||
+      BIDI.test(hint)
     ) {
       errors.push(
-        `result.hint must be 1 to 500 characters without control characters, got ${show(hint)}`,
+        `result.hint must be 1 to 500 characters without control, bidi or line-separator characters, got ${show(hint)}`,
       );
     } else out.hint = hint;
   }
@@ -458,19 +474,20 @@ export function resultFile(
 }
 
 // Errors in the run's GUARD_RUN_* variables against a valid registration (GUARD_RUN_ID, GUARD_RUN_MODE,
-// GUARD_RUN_TICKET). Never throws.
+// GUARD_RUN_TICKET), each checked as-is (no trimming; unset or "" mode means unattended, unset or "" ticket means
+// unset). Never throws.
 export function runEnvErrors(
   env: Readonly<Record<string, string | undefined>>,
   registration: Registration,
 ): string[] {
   const errors: string[] = [];
   try {
-    if (!RUN_ID.test((env.GUARD_RUN_ID ?? "").trim())) {
+    if (!RUN_ID.test(env.GUARD_RUN_ID ?? "")) {
       errors.push(
         `GUARD_RUN_ID must match ${RUN_ID.source}, got ${show(env.GUARD_RUN_ID)}`,
       );
     }
-    const raw = (env.GUARD_RUN_MODE ?? "").trim();
+    const raw = env.GUARD_RUN_MODE ?? "";
     const mode = raw === "" ? "unattended" : raw;
     const allowed: readonly string[] = registration.modes ?? MODES;
     if (
