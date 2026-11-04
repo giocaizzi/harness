@@ -7,7 +7,7 @@
 // reads /dev/tty fails at once instead of hanging the session.
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, rmSync, statfsSync, writeFileSync, } from "node:fs";
+import { closeSync, constants, fstatSync, mkdirSync, openSync, readFileSync, rmSync, statfsSync, writeFileSync, } from "node:fs";
 import { loadavg, platform } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -213,12 +213,37 @@ export function takeLock(file) {
     }
 }
 const RESULT_GATE_MAX = 2;
+const RESULT_MAX_BYTES = 1024 * 1024;
+class ResultReadError extends Error {
+}
+// result.json's text: only a regular file up to 1 MiB. Opened non-blocking and checked through the descriptor, so a
+// FIFO or a device (the agent can plant one) is an error, never a read that hangs the hook.
+function readResultFile(file) {
+    // O_NONBLOCK does not exist on Windows
+    const nonBlock = constants.O_NONBLOCK ?? 0;
+    const fd = openSync(file, constants.O_RDONLY | nonBlock);
+    try {
+        const st = fstatSync(fd);
+        if (!st.isFile())
+            throw new ResultReadError("not a regular file");
+        if (st.size > RESULT_MAX_BYTES) {
+            throw new ResultReadError("too large (over 1 MiB)");
+        }
+        return readFileSync(fd, "utf8");
+    }
+    finally {
+        closeSync(fd);
+    }
+}
 const TICKET_NUMBER = /^[\w.-]+\/[\w.-]+#([1-9]\d*)$/;
 const STRICT_WRITE_HINT = "Fix result.json until it passes the core check and the launcher's checker; never edit the checker.";
 const SUBAGENT_HINT = "A subagent (such as the verifier) ignores this and ends its turn: the main session writes the file.";
 // The factory run this stop belongs to, or null: the gate is off, a subagent is stopping, or no run is identified
 // (the runtime's FACTORY_RUN_ID and FACTORY_TICKET, or an attended run's pair).
-function gateRun(input, env) {
+// A payload that is not a plain object counts as an empty one.
+const plainInput = (v) => v !== null && typeof v === "object" && !Array.isArray(v) ? v : {};
+function gateRun(raw, env) {
+    const input = plainInput(raw);
     if (env.GUARD_RESULT_GATE === "off" ||
         input.agent_id ||
         /^subagentstop$/i.test(input.hook_event_name ?? "")) {
@@ -274,6 +299,7 @@ export async function resultGate(input, run = spawnSync, env = process.env, onEv
         const gate = gateRun(input, env);
         if (!gate)
             return null;
+        const cwd = plainInput(input).cwd ?? process.cwd();
         const { runId, number, runtime } = gate;
         const runner = runtime ? "runtime" : "attended";
         // Resolved once, before the result is read.
@@ -282,7 +308,7 @@ export async function resultGate(input, run = spawnSync, env = process.env, onEv
             ? prepareChecker(env.FACTORY_RESULT_CHECKER, checkerOpts)
             : dflt && { path: dflt.path, shown: dflt.path };
         const checkerShown = checker?.shown ?? "";
-        const git = run("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], { cwd: input.cwd ?? process.cwd(), encoding: "utf8", windowsHide: true });
+        const git = run("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], { cwd, encoding: "utf8", windowsHide: true });
         if (git.status !== 0 || !git.stdout.trim()) {
             if (strict)
                 throw new Error("git rev-parse failed");
@@ -297,12 +323,12 @@ export async function resultGate(input, run = spawnSync, env = process.env, onEv
             ? runFile
                 ? {
                     ...env,
-                    FACTORY_RUN_FILE: resolve(input.cwd ?? process.cwd(), runFile),
+                    FACTORY_RUN_FILE: resolve(cwd, runFile),
                 }
                 : env
             : {};
         try {
-            const content = readFileSync(file, "utf8").replace(/^\uFEFF/, "");
+            const content = readResultFile(file).replace(/^\uFEFF/, "");
             parsed = JSON.parse(content);
             parsedOk = true;
         }
@@ -311,11 +337,13 @@ export async function resultGate(input, run = spawnSync, env = process.env, onEv
                 return null;
             const err = e;
             errors = [
-                err.code === "ENOENT"
-                    ? "no such file"
-                    : e instanceof SyntaxError
-                        ? `not valid JSON (${err.message ?? ""})`
-                        : `cannot read (${err.code ?? err.message ?? ""})`,
+                e instanceof ResultReadError
+                    ? e.message
+                    : err.code === "ENOENT"
+                        ? "no such file"
+                        : e instanceof SyntaxError
+                            ? `not valid JSON (${err.message ?? ""})`
+                            : `cannot read (${err.code ?? err.message ?? ""})`,
             ];
         }
         if (parsedOk) {
@@ -371,10 +399,9 @@ export async function stopCheck(input, run = spawnSync, opts = {}) {
     try {
         check = await makeCheck(input, run, opts);
     }
-    catch (e) {
-        // a gate block must survive a failing make check
-        if (!gate)
-            throw e;
+    catch {
+        // a failing make check never denies a stop (a gate block or a result that passed): it fails open
+        check = null;
     }
     if (!gate)
         return check;
@@ -539,7 +566,7 @@ if (entryArg && import.meta.url === pathToFileURL(entryArg).href) {
     };
     try {
         const raw = await readInput();
-        input = JSON.parse(raw || "{}");
+        input = plainInput(JSON.parse(raw || "{}"));
         if (input.terminationReason !== undefined && !input.hook_event_name) {
             input.hook_event_name = "Stop";
         }
@@ -554,32 +581,39 @@ if (entryArg && import.meta.url === pathToFileURL(entryArg).href) {
         const out = await stopCheck(input, spawnSync, {
             report: (attrs) => events.push(attrs),
         });
-        // written before the usage step, so a failure there cannot lose a block
+        // written before the usage and telemetry steps, so a failure there cannot lose a block or deny a passed result
         writeOut(out);
-        if (isAntigravity() &&
-            (input.transcriptPath ||
-                input.transcript_path)) {
-            const tPath = input.transcriptPath ??
-                input.transcript_path;
-            const dataDir = pluginDataDir();
-            const store = sessionStore(dataDir, input.session_id);
-            const state = store.load();
-            const newStep = await emitAntigravityUsage(tPath, input.conversationId ?? input.session_id, input.modelName, state.lastTranscriptStep, process.env);
-            if (newStep !== undefined && newStep !== state.lastTranscriptStep) {
-                state.lastTranscriptStep = newStep;
-                store.save(state);
+        try {
+            if (isAntigravity() &&
+                (input.transcriptPath ||
+                    input.transcript_path)) {
+                const tPath = input.transcriptPath ??
+                    input.transcript_path;
+                const dataDir = pluginDataDir();
+                const store = sessionStore(dataDir, input.session_id);
+                const state = store.load();
+                const newStep = await emitAntigravityUsage(tPath, input.conversationId ?? input.session_id, input.modelName, state.lastTranscriptStep, process.env);
+                if (newStep !== undefined && newStep !== state.lastTranscriptStep) {
+                    state.lastTranscriptStep = newStep;
+                    store.save(state);
+                }
             }
         }
-        for (const event of events) {
-            await emit(process.env, "guard.stop", recordAttrs({ ...event, cmd_class: "stop", session_id: input.session_id }, input.cwd ?? process.cwd(), harnessName()));
+        catch {
+            // telemetry only
         }
-        if (isAntigravity()) {
-            process.exit(0);
+        try {
+            for (const event of events) {
+                await emit(process.env, "guard.stop", recordAttrs({ ...event, cmd_class: "stop", session_id: input.session_id }, input.cwd ?? process.cwd(), harnessName()));
+            }
+        }
+        catch {
+            // telemetry only
         }
     }
     catch {
-        // unreadable payload or an internal error: let the agent stop, unless the launcher named a result checker, in
-        // which case the stop stays blocked
+        // unreadable payload or an internal error in the gate: let the agent stop, unless the launcher named a result
+        // checker, in which case the stop stays blocked
         try {
             const reason = gateFailClosed(process.env, input, "internal error");
             if (reason) {
@@ -597,11 +631,7 @@ if (entryArg && import.meta.url === pathToFileURL(entryArg).href) {
         catch {
             // never exit non-zero by accident
         }
-        if (activeHarness === "antigravity") {
-            process.exit(0);
-        }
     }
-    if (activeHarness === "antigravity") {
-        process.exit(0);
-    }
+    // exits once it has answered, so a stuck checker thread cannot hold the hook open
+    process.exit(0);
 }

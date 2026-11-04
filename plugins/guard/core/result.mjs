@@ -74,6 +74,12 @@ export const checkerPathError = (value, pathApi = path) => {
 export const checkerOutput = (v) => Array.isArray(v) && v.every((e) => typeof e === "string")
     ? { errors: report(v) }
     : { why: `returned ${show(v)}, not an array of strings` };
+// The path is printed raw (a Windows path keeps its single backslashes), cut to 200 characters, control characters
+// replaced by "?".
+const rawPath = (v) => {
+    const text = v.length > 200 ? `${v.slice(0, 200)}…` : v;
+    return text.replace(/[\u0000-\u001F\u007F]/g, "?");
+};
 export const couldNotRun = (checkerPath, why) => [
-    `result checker ${show(checkerPath)} (FACTORY_RESULT_CHECKER) could not run: ${why}`,
+    `result checker ${rawPath(checkerPath)} (FACTORY_RESULT_CHECKER) could not run: ${why}`,
 ];

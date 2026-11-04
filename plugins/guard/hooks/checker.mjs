@@ -14,27 +14,29 @@ export const defaultChecker = (buildCopy = BUILD_COPY) => existsSync(buildCopy) 
 // Part of the seam: the hand-back line that names the default checker's writer script.
 export const DEFAULT_WRITE_HINT = "Write it with the ticket-run skill's scripts/write-result.mjs, never by hand: put the judgment fields in a JSON file and run `node <skill dir>/scripts/write-result.mjs <file>` from the repo; fix the input, never the written file, until it exits 0.";
 const STICKY = 0o1000;
-// Whether this user can write `target`, or could make it writable (the owner can chmod it back). Fails closed. On
-// win32 only the access result counts (the read-only attribute): ACLs are the launcher's job, and the check does not
-// prove them there.
-export function isWritableByMe(target, platform = process.platform) {
+const accessCode = (target) => {
     try {
         accessSync(target, constants.W_OK);
-        return true;
+        return undefined;
     }
     catch (e) {
-        try {
-            if (e.code === "EROFS")
-                return false;
-            if (platform !== "win32") {
-                return statSync(target).uid === process.getuid?.();
-            }
-            return false;
-        }
-        catch {
-            return true;
-        }
+        return e.code ?? "unknown";
     }
+};
+// Whether this user can write `target` right now. EROFS (a read-only mount), EACCES and EPERM mean it cannot; any
+// other error is not known to be safe, so it counts as writable (fails closed). On win32 only the access result
+// counts (the read-only attribute): ACLs are the launcher's job, and the check does not prove them there.
+export function isWritableByMe(target, platform = process.platform) {
+    const code = accessCode(target);
+    if (code === undefined)
+        return true;
+    if (platform === "win32")
+        return false;
+    return !["EROFS", "EACCES", "EPERM"].includes(code);
+}
+// Whether `target` is on a read-only mount: a file there cannot be chmodded, so owning it gives no reach.
+export function isReadOnlyMount(target) {
+    return accessCode(target) === "EROFS";
 }
 // Whether this user owns `target`. Fails closed.
 function isOwnedByMe(target) {
@@ -53,14 +55,16 @@ function isSticky(target) {
         return false;
     }
 }
-const WRITABLE_TAIL = "install it read-only, owned by another user or on a read-only mount";
+const WRITABLE_TAIL = "install it owned by another user and not writable by this one, or on a read-only mount";
 // Vets the raw FACTORY_RESULT_CHECKER value: { path, shown } or { why, shown }. Never throws. The file, its directory
 // and every ancestor directory must be out of this user's reach: an owned or plainly writable directory lets the user
-// rename it and swap the module between this check and the import (a sticky writable one, like /tmp, does not).
+// rename it and swap the module between this check and the import (a sticky writable one, like /tmp, does not). A
+// path on a read-only mount cannot be chmodded, so there the owner check is skipped for that path.
 export function prepareChecker(raw, opts = {}) {
     const platform = opts.platform ?? process.platform;
     const writable = opts.writable ?? ((t) => isWritableByMe(t, platform));
     const owner = opts.owner ?? isOwnedByMe;
+    const readOnly = opts.readOnlyMount ?? isReadOnlyMount;
     const sticky = opts.sticky ?? isSticky;
     const shown = typeof raw === "string" ? raw.trim() : "";
     try {
@@ -80,6 +84,12 @@ export function prepareChecker(raw, opts = {}) {
                 shown,
             };
         }
+        if (path.extname(real).toLowerCase() !== ".mjs") {
+            return {
+                why: `not a .mjs file (resolves to ${real.length > 200 ? `${real.slice(0, 200)}…` : real})`,
+                shown,
+            };
+        }
         if (!statSync(real).isFile())
             return { why: "not a regular file", shown };
         try {
@@ -92,15 +102,16 @@ export function prepareChecker(raw, opts = {}) {
             why: `writable by this user (${which}): ${WRITABLE_TAIL}`,
             shown,
         });
-        if (writable(real) || (platform !== "win32" && owner(real))) {
+        // out of reach: not writable, and (off a read-only mount) not owned either, as the owner can chmod it
+        const reach = (t) => writable(t) || (platform !== "win32" && !readOnly(t) && owner(t));
+        if (reach(real))
             return refuse("the file");
-        }
         if (platform !== "win32") {
             const dir = path.dirname(real);
-            if (writable(dir) || owner(dir))
+            if (reach(dir))
                 return refuse("its directory");
             for (let a = dir;;) {
-                if (owner(a) || (writable(a) && !sticky(a))) {
+                if (!readOnly(a) && (owner(a) || (writable(a) && !sticky(a)))) {
                     return refuse(`ancestor ${a}`);
                 }
                 const up = path.dirname(a);
@@ -169,6 +180,8 @@ export function runChecker(checkerPath, result, env, { timeoutMs = 10_000 } = {}
                 stdout: true,
                 stderr: true,
             });
+            // a checker stuck in a blocking syscall cannot be terminated: it must not keep the process alive
+            worker.unref();
             worker.stdout.resume();
             worker.stderr.resume();
             worker.on("message", (m) => {

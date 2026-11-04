@@ -95,6 +95,13 @@ export const checkerOutput = (v: unknown): CheckerOutput =>
     ? { errors: report(v) }
     : { why: `returned ${show(v)}, not an array of strings` };
 
+// The path is printed raw (a Windows path keeps its single backslashes), cut to 200 characters, control characters
+// replaced by "?".
+const rawPath = (v: string): string => {
+  const text = v.length > 200 ? `${v.slice(0, 200)}…` : v;
+  return text.replace(/[\u0000-\u001F\u007F]/g, "?");
+};
+
 export const couldNotRun = (checkerPath: string, why: string): string[] => [
-  `result checker ${show(checkerPath)} (FACTORY_RESULT_CHECKER) could not run: ${why}`,
+  `result checker ${rawPath(checkerPath)} (FACTORY_RESULT_CHECKER) could not run: ${why}`,
 ];
