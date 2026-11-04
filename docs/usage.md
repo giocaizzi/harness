@@ -128,13 +128,15 @@ Settings are env vars, set in the shell that starts the harness (or the `env` bl
 |---|---|---|
 | `GUARD_UNATTENDED=1` | off | Every risky ask becomes a deny, and Claude Code parks its permission asks at once. Use for overnight and headless runs (`unattended-runs` skill). Set it in the launching shell or Claude Code's settings `env`; a command that exports it in the session holds for the rest of the session ([guard.md](guard.md#unattended-and-auto-approve-runs)). |
 | `GUARD_STOP_CHECK=off` | on | Turns off `make check` on stop; `force` runs it even on a strained host (CI). |
-| `GUARD_RESULT_GATE=off` | on | Turns off the factory result gate: in a factory run, a stop is held at most twice while the run's `result.json` is missing or invalid. A verifier or other side session started with the run's variables sets it. |
+| `GUARD_RESULT_GATE=off` | on | Turns off the factory result gate: in a factory run, a stop is held (at most twice, unless the launcher sets `FACTORY_RESULT_CHECKER`) while the run's `result.json` is missing or invalid. A verifier or other side session started with the run's variables sets it. |
 | `GUARD_STOP_TIMEOUT_MS` | `300000` | Time limit for that check; a timeout defers it to the next stop, never blocks. |
 | `GUARD_ASK_TIMEOUT_MS` | `60000` | Claude Code: an unanswered permission prompt is parked after this (the agent is told nobody answered and to carry on, not that you denied it); `0` turns it off. |
 | `GUARD_THROTTLE` | `warn` | Claude Code: what a subagent spawn does once a plan window is at 90 %. `warn` starts it with a toast, `ask` puts it in an Allow/Deny prompt (parked like any ask: after `GUARD_ASK_TIMEOUT_MS`, at once under `GUARD_UNATTENDED`), `deny` refuses it, `off` turns the throttle off. Any other value is `warn`. |
 | `GUARD_OTEL=off` | on | Sends no guard telemetry, whatever the OTel endpoint (`make test` sets it). |
 | `GUARD_OTEL_EXPORTER_OTLP_ENDPOINT`, `GUARD_OTEL_EXPORTER_OTLP_HEADERS` | unset | Send each deny and ask to Grafana as logs ([guard.md](guard.md#grafana)). |
 | `GUARD_TRACEPARENT` | unset | A W3C `traceparent` a runtime sets for a traced run: each decision record carries its trace and span ids; a malformed value is ignored ([guard.md](guard.md#grafana)). |
+
+The factory result gate's checker (`FACTORY_RESULT_CHECKER`) and the other `FACTORY_*` variables are set by a run's launcher, not by you: [guard.md](guard.md#factory-run-contract-v1).
 
 A repo with a slow suite defines a `check-fast` make target; the stop hook runs that instead of `check`.
 

@@ -5,6 +5,7 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
+import { createGuard } from "./bridge.mjs";
 import { GuardPlugin } from "./opencode.mjs";
 import guardExtension from "./pi.mjs";
 const inheritedParentSession = process.env.GUARD_PARENT_SESSION;
@@ -803,6 +804,93 @@ void test("pi: a factory run without a valid result.json is sent the result gate
         }
         assert.equal(sent.length, 2);
         assert.match(sent[1] ?? "", /^Factory result gate \(block 2 of 2\)/);
+    });
+});
+void test("opencode and pi: a refused FACTORY_RESULT_CHECKER is sent on every idle and settle, with no cap", async () => {
+    await factoryRun("strict-run", async (cwd) => {
+        process.env.FACTORY_RESULT_CHECKER = "rel/c.mjs";
+        try {
+            const sentOc = [];
+            const client = {
+                session: {
+                    get: async () => {
+                        await Promise.resolve();
+                        return null;
+                    },
+                    prompt: async (p) => {
+                        await Promise.resolve();
+                        sentOc.push(p.body.parts[0]?.text ?? "");
+                    },
+                },
+                tui: {
+                    showToast: async () => {
+                        await Promise.resolve();
+                    },
+                },
+            };
+            const hooks = await GuardPlugin({ client, directory: cwd }, deps());
+            for (let i = 0; i < 4; i++) {
+                await hooks.event({
+                    event: { type: "session.idle", properties: { sessionID: "s" } },
+                });
+            }
+            assert.equal(sentOc.length, 4);
+            for (const m of sentOc)
+                assert.match(m, /could not run: not an absolute path/);
+            assert.match(sentOc[3] ?? "", /^Factory result gate \(block 4; FACTORY_RESULT_CHECKER is set/);
+            const { handlers, sent, api } = fakePi();
+            guardExtension(api, deps());
+            const ctx = {
+                cwd,
+                ui: {
+                    confirm: async () => {
+                        await Promise.resolve();
+                        return true;
+                    },
+                    notify: () => {
+                        /* noop */
+                    },
+                },
+            };
+            for (let i = 0; i < 4; i++) {
+                await handlers.agent_settled?.({ aborted: false }, ctx);
+            }
+            assert.equal(sent.length, 4);
+            assert.match(sent[3] ?? "", /could not run: not an absolute path/);
+        }
+        finally {
+            delete process.env.FACTORY_RESULT_CHECKER;
+        }
+    });
+});
+void test("bridge: an internal error in strict mode is a reason, not null", async () => {
+    await factoryRun("strict-bridge", async (cwd) => {
+        const make = (strict) => {
+            if (strict)
+                process.env.FACTORY_RESULT_CHECKER = "";
+            else
+                delete process.env.FACTORY_RESULT_CHECKER;
+            const spawn = () => {
+                throw new Error("spawn exploded");
+            };
+            // the gate reports its own error through emit, which throws: that escapes the gate's catch and stopCheck, so
+            // only the bridge's own catch can answer
+            const emit = () => {
+                throw new Error("emit exploded");
+            };
+            return createGuard({
+                harness: "test",
+                deps: { ...deps(), spawnSync: spawn, emit },
+            });
+        };
+        try {
+            const strict = await make(true).stop({ cwd });
+            assert.match(strict ?? "", /^Factory result gate: could not check the result for run strict-bridge \(internal error\); FACTORY_RESULT_CHECKER is set/);
+            assert.equal(await make(false).stop({ cwd }), null);
+        }
+        finally {
+            delete process.env.FACTORY_RESULT_CHECKER;
+        }
     });
 });
 void test("usage: opencode and pi report each assistant message once, as their own service", async () => {

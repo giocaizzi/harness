@@ -10,7 +10,7 @@ import { keepAwake } from "./awake.mjs";
 import { fallbackDataDir } from "./data.mjs";
 import { handle, hostFacts, pythonManager, run } from "./guard.mjs";
 import { type SpawnSyncFn, lintFile } from "./lint.mjs";
-import { stopCheck } from "./stop.mjs";
+import { gateFailClosed, stopCheck } from "./stop.mjs";
 import { recordAttrs } from "./telemetry.mjs";
 import type {
   GuardAskResultParams,
@@ -252,7 +252,8 @@ export function createGuard({
         );
         return out?.decision === "block" ? (out.reason ?? null) : null;
       } catch {
-        return null;
+        // stopCheck reads process.env: a launcher-named result checker keeps the stop blocked
+        return gateFailClosed(process.env, { cwd }, "internal error");
       }
     },
 

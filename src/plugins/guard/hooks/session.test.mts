@@ -10,6 +10,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -21,6 +22,7 @@ import { harnessPid, keepAwake, keeperArgv } from "./awake.mjs";
 import { lintFile } from "./lint.mjs";
 import {
   fingerprint,
+  gateFailClosed,
   resultGate,
   runDetached,
   stopCheck,
@@ -741,6 +743,534 @@ void test("result gate: runs before make check, and both reasons go in one block
   }
 });
 
+// A checker module written into its own temp dir, and the hooks that make prepareChecker treat it as out of reach.
+const checkerFile = (body: string): string => {
+  const p = join(tmp(), "checker.mjs");
+  writeFileSync(p, body);
+  return p;
+};
+const OUT_OF_REACH = { writable: () => false, owner: () => false };
+const strictEnv = (checker: string): Record<string, string> => ({
+  ...RUNTIME,
+  FACTORY_RESULT_CHECKER: checker,
+});
+const passes = "export const resultErrors = () => []";
+
+void test("result gate: a broken build copy blocks with the reason, a missing one means the core check alone", async () => {
+  try {
+    for (const [body, reason] of [
+      ["throw new Error('at import')", /did not load \(at import\)/],
+      ["export const other = 1", /exports no resultErrors function/],
+      [
+        "export const resultErrors = () => { throw new Error('boom') }",
+        /threw \(boom\)/,
+      ],
+    ] as const) {
+      const out = await resultGate(
+        { cwd: gateRepo(validResult()) },
+        undefined,
+        RUNTIME,
+        undefined,
+        { buildCopy: checkerFile(body) },
+      );
+      assert.match(out ?? "", /block 1 of 2/);
+      assert.match(out ?? "", /\(FACTORY_RESULT_CHECKER\) could not run: /);
+      assert.match(out ?? "", reason);
+    }
+    assert.equal(
+      await resultGate(
+        { cwd: gateRepo(validResult()) },
+        undefined,
+        RUNTIME,
+        undefined,
+        { buildCopy: join(tmp(), "none.mjs") },
+      ),
+      null,
+    );
+  } finally {
+    delete process.env.CLAUDE_PLUGIN_DATA;
+  }
+});
+
+void test("result gate: unset keeps the write-result hand-back, strict gives the generic one", async () => {
+  try {
+    const unset = await resultGate({ cwd: gateRepo() }, undefined, RUNTIME);
+    assert.match(unset ?? "", /write-result\.mjs, never by hand/);
+    const strict = await resultGate(
+      { cwd: gateRepo() },
+      undefined,
+      strictEnv(checkerFile(passes)),
+      undefined,
+      OUT_OF_REACH,
+    );
+    assert.match(
+      strict ?? "",
+      /\nFix result\.json until it passes the core check and the launcher's checker; never edit the checker\.\nA subagent/,
+    );
+    assert.doesNotMatch(strict ?? "", /write-result/);
+  } finally {
+    delete process.env.CLAUDE_PLUGIN_DATA;
+  }
+});
+
+void test("result gate: a refused FACTORY_RESULT_CHECKER blocks with the reason and the core errors", async () => {
+  try {
+    const dir = tmp();
+    const cases: [string, RegExp][] = [
+      ["", /could not run: empty$/m],
+      ["   ", /could not run: empty$/m],
+      ["rel/c.mjs", /could not run: not an absolute path$/m],
+      ["file:///x/c.mjs", /could not run: a URL or module specifier/],
+      ["node:fs", /could not run: a URL or module specifier/],
+      [join(dir, "missing.mjs"), /could not run: no such file$/m],
+      [dir, /could not run: not a \.mjs file$/m],
+    ];
+    for (const [raw, reason] of cases) {
+      const valid = await resultGate(
+        { cwd: gateRepo(validResult()) },
+        undefined,
+        strictEnv(raw),
+      );
+      assert.match(valid ?? "", /block 1; FACTORY_RESULT_CHECKER is set/);
+      assert.match(valid ?? "", reason);
+      assert.doesNotMatch(valid ?? "", /differs from/);
+      const bad = await resultGate(
+        { cwd: gateRepo(validResult({ ticket: 12, run_id: "other" })) },
+        undefined,
+        strictEnv(raw),
+      );
+      assert.match(bad ?? "", reason);
+      assert.match(bad ?? "", /ticket must be a string/);
+      assert.match(bad ?? "", /run_id "other" differs from FACTORY_RUN_ID/);
+      const missing = await resultGate(
+        { cwd: gateRepo() },
+        undefined,
+        strictEnv(raw),
+      );
+      assert.match(missing ?? "", /\nno such file\n/);
+      assert.match(missing ?? "", reason);
+    }
+    const unwritable = await resultGate(
+      { cwd: gateRepo(validResult()) },
+      undefined,
+      strictEnv(checkerFile(passes)),
+      undefined,
+      { writable: () => true, owner: () => false },
+    );
+    assert.match(unwritable ?? "", /could not run: writable by this user/);
+  } finally {
+    delete process.env.CLAUDE_PLUGIN_DATA;
+  }
+});
+
+void test("result gate: a vetted checker passes a valid result, adds its errors and cannot loosen the core", async () => {
+  try {
+    assert.equal(
+      await resultGate(
+        { cwd: gateRepo(validResult()) },
+        undefined,
+        strictEnv(checkerFile(passes)),
+        undefined,
+        OUT_OF_REACH,
+      ),
+      null,
+    );
+    const added = await resultGate(
+      { cwd: gateRepo(validResult()) },
+      undefined,
+      strictEnv(checkerFile("export const resultErrors = () => ['custom']")),
+      undefined,
+      OUT_OF_REACH,
+    );
+    assert.match(
+      added ?? "",
+      /block 1; FACTORY_RESULT_CHECKER is set[\s\S]*\ncustom\n/,
+    );
+    const loose = await resultGate(
+      { cwd: gateRepo(validResult({ run_id: "other" })) },
+      undefined,
+      strictEnv(checkerFile(passes)),
+      undefined,
+      OUT_OF_REACH,
+    );
+    assert.match(
+      loose ?? "",
+      /run_id "other" differs from FACTORY_RUN_ID "run-1"/,
+    );
+    const dup = await resultGate(
+      { cwd: gateRepo(validResult({ end_state: "" })) },
+      undefined,
+      strictEnv(
+        checkerFile(
+          "export const resultErrors = () => ['end_state must be a non-empty string, got \"\"', 'custom', 'custom']",
+        ),
+      ),
+      undefined,
+      OUT_OF_REACH,
+    );
+    assert.equal(
+      (dup ?? "").split("\n").filter((l) => l.startsWith("end_state must"))
+        .length,
+      1,
+    );
+    assert.equal(
+      (dup ?? "").split("\n").filter((l) => l === "custom").length,
+      1,
+    );
+    const throws = await resultGate(
+      { cwd: gateRepo(validResult()) },
+      undefined,
+      strictEnv(checkerFile("export const resultErrors = () => { for (;;); }")),
+      undefined,
+      { ...OUT_OF_REACH, timeoutMs: 300 },
+    );
+    assert.match(throws ?? "", /could not run: timed out after 0\.3 s/);
+  } finally {
+    delete process.env.CLAUDE_PLUGIN_DATA;
+  }
+});
+
+void test("result gate: strict mode is never capped, unset is capped after two blocks", async () => {
+  try {
+    const events: Record<string, unknown>[] = [];
+    const cwd = gateRepo();
+    const env = strictEnv("");
+    for (let i = 1; i <= 4; i++) {
+      const out = await resultGate({ cwd }, undefined, env, (e) =>
+        events.push(e),
+      );
+      assert.ok(
+        out?.startsWith(
+          `Factory result gate (block ${String(i)}; FACTORY_RESULT_CHECKER is set, so the stop stays blocked until the result passes)`,
+        ),
+        out ?? "null",
+      );
+    }
+    assert.deepEqual(
+      events.map((e) => e.result),
+      ["block", "block", "block", "block"],
+    );
+    const plain = gateRepo();
+    assert.ok(await resultGate({ cwd: plain }, undefined, RUNTIME));
+    assert.ok(await resultGate({ cwd: plain }, undefined, RUNTIME));
+    assert.equal(await resultGate({ cwd: plain }, undefined, RUNTIME), null);
+  } finally {
+    delete process.env.CLAUDE_PLUGIN_DATA;
+  }
+});
+
+void test("result gate: strict mode never fails open on an internal error", async () => {
+  try {
+    const cwd = gateRepo();
+    const events: Record<string, unknown>[] = [];
+    const throwing: SyncRunner = () => {
+      throw new Error("spawn failed token=abc123");
+    };
+    const out = await resultGate({ cwd }, throwing, strictEnv(""), (e) =>
+      events.push(e),
+    );
+    assert.match(
+      out ?? "",
+      /^Factory result gate: could not check the result for run run-1 \(spawn failed token=\*\*\*\); FACTORY_RESULT_CHECKER is set, so the stop stays blocked\.$/,
+    );
+    assert.deepEqual(
+      events.map((e) => e.result),
+      ["error"],
+    );
+    const gitFails: SyncRunner = () =>
+      ({
+        status: 128,
+        stdout: "",
+        stderr: "",
+      }) as unknown as SpawnSyncReturns<string>;
+    assert.match(
+      (await resultGate({ cwd }, gitFails, strictEnv(""))) ?? "",
+      /could not check the result for run run-1 \(git rev-parse failed\)/,
+    );
+    // the counter cannot be written: a file where the data dir should be
+    const blocked = gateRepo();
+    writeFileSync(
+      join(process.env.CLAUDE_PLUGIN_DATA ?? "", "result-gate"),
+      "",
+    );
+    assert.match(
+      (await resultGate({ cwd: blocked }, undefined, strictEnv(""))) ?? "",
+      /^Factory result gate: could not check the result/,
+    );
+    // exempt or unidentified stops stay free, and unset still fails open
+    assert.equal(
+      await resultGate({ cwd, agent_id: "a" }, throwing, strictEnv("")),
+      null,
+    );
+    assert.equal(
+      await resultGate({ cwd }, throwing, { FACTORY_RESULT_CHECKER: "" }),
+      null,
+    );
+    assert.equal(await resultGate({ cwd }, throwing, RUNTIME), null);
+    assert.equal(gateFailClosed(RUNTIME, { cwd }, "x"), null);
+    assert.equal(
+      gateFailClosed(
+        { ...RUNTIME, GUARD_RESULT_GATE: "off", FACTORY_RESULT_CHECKER: "" },
+        {},
+        "x",
+      ),
+      null,
+    );
+  } finally {
+    delete process.env.CLAUDE_PLUGIN_DATA;
+  }
+});
+
+void test("result check: a BOM and CRLF line ends in result.json are read", async () => {
+  try {
+    const text = `\uFEFF${JSON.stringify(validResult(), null, 2).replace(/\n/g, "\r\n")}`;
+    assert.equal(
+      await resultGate({ cwd: gateRepo(text) }, undefined, RUNTIME),
+      null,
+    );
+    assert.equal(
+      await resultGate(
+        { cwd: gateRepo(text) },
+        undefined,
+        strictEnv(checkerFile(passes)),
+        undefined,
+        OUT_OF_REACH,
+      ),
+      null,
+    );
+  } finally {
+    delete process.env.CLAUDE_PLUGIN_DATA;
+  }
+});
+
+void test("result gate: an attended run keeps its semantics in strict mode", async () => {
+  try {
+    const env = { ...ATTENDED, FACTORY_RESULT_CHECKER: "" };
+    assert.equal(await resultGate({ cwd: gateRepo() }, undefined, env), null);
+    assert.equal(
+      await resultGate({ cwd: gateRepo("not json") }, undefined, env),
+      null,
+    );
+    assert.equal(
+      await resultGate(
+        { cwd: gateRepo(validResult({ run_id: "other", ticket: 12 })) },
+        undefined,
+        env,
+      ),
+      null,
+    );
+    assert.equal(
+      await resultGate({ cwd: gateRepo("[]") }, undefined, env),
+      null,
+    );
+    const out = await resultGate(
+      { cwd: gateRepo(validResult({ ticket: 12 })) },
+      undefined,
+      env,
+    );
+    assert.match(
+      out ?? "",
+      /block 1; FACTORY_RESULT_CHECKER is set[\s\S]*ticket must be a string[\s\S]*could not run: empty/,
+    );
+    assert.equal(
+      await resultGate(
+        { cwd: gateRepo(validResult()) },
+        undefined,
+        {
+          ...ATTENDED,
+          FACTORY_RESULT_CHECKER: checkerFile(passes),
+        },
+        undefined,
+        OUT_OF_REACH,
+      ),
+      null,
+    );
+  } finally {
+    delete process.env.CLAUDE_PLUGIN_DATA;
+  }
+});
+
+void test("result gate: a failing make check never denies a stop, whether or not the gate blocked", async () => {
+  const cwd = gateRepo();
+  Object.assign(process.env, RUNTIME);
+  try {
+    const run: SyncRunner = (cmd, args, opts) => {
+      if (cmd === "make") throw new Error("make exploded");
+      return spawnSync(
+        cmd,
+        args as string[],
+        opts as object,
+      ) as unknown as SpawnSyncReturns<string>;
+    };
+    const out = await stopCheck({ cwd }, run, { strain: () => null });
+    assert.equal(out?.decision, "block");
+    assert.match(out.reason ?? "", /^Factory result gate \(block 1 of 2\)/);
+    // the gate passed: a later make error does not deny the stop
+    const ok = gateRepo(validResult());
+    assert.equal(
+      await stopCheck({ cwd: ok }, run, { strain: () => null }),
+      null,
+    );
+    delete process.env.FACTORY_RUN_ID;
+    assert.equal(await stopCheck({ cwd }, run, { strain: () => null }), null);
+  } finally {
+    for (const k of Object.keys(RUNTIME))
+      Reflect.deleteProperty(process.env, k);
+    delete process.env.CLAUDE_PLUGIN_DATA;
+  }
+});
+
+// A result.json the agent could plant: the gate must answer promptly with a block, never hang or read it.
+const plantResult = (make: (file: string) => void): string => {
+  const cwd = gateRepo();
+  const dir = join(cwd, ".factory", "runs", "12");
+  mkdirSync(dir, { recursive: true });
+  make(join(dir, "result.json"));
+  return cwd;
+};
+
+void test(
+  "result gate: a FIFO or a device at result.json is a read error, never a hang",
+  { skip: process.platform === "win32", timeout: 30_000 },
+  async () => {
+    try {
+      const fifo = plantResult((f) => {
+        assert.equal(spawnSync("mkfifo", [f]).status, 0);
+      });
+      const zero = plantResult((f) => {
+        symlinkSync("/dev/zero", f);
+      });
+      for (const checker of [undefined, ""]) {
+        const env = checker === undefined ? RUNTIME : strictEnv(checker);
+        for (const cwd of [fifo, zero]) {
+          const started = Date.now();
+          const out = await resultGate({ cwd }, undefined, env);
+          assert.match(
+            out ?? "",
+            /result\.json is not a valid result[\s\S]*\nnot a regular file\n/,
+          );
+          assert.ok(Date.now() - started < 10_000);
+        }
+      }
+    } finally {
+      delete process.env.CLAUDE_PLUGIN_DATA;
+    }
+  },
+);
+
+void test("result gate: a result.json over 1 MiB is blocked as too large, not read", async () => {
+  try {
+    const cwd = plantResult((f) => {
+      writeFileSync(f, ` ${"x".repeat(1024 * 1024)}`);
+    });
+    for (const env of [RUNTIME, strictEnv("")]) {
+      assert.match(
+        (await resultGate({ cwd }, undefined, env)) ?? "",
+        /\ntoo large \(over 1 MiB\)\n/,
+      );
+    }
+    // an attended run keeps returning null on any read failure
+    assert.equal(
+      await resultGate({ cwd }, undefined, {
+        ...ATTENDED,
+        FACTORY_RESULT_CHECKER: "",
+      }),
+      null,
+    );
+  } finally {
+    delete process.env.CLAUDE_PLUGIN_DATA;
+  }
+});
+
+void test("result gate: a null or non-object input counts as an empty payload and a strict stop stays blocked", () => {
+  for (const bad of [null, 5, [], "x"]) {
+    const reason = gateFailClosed(
+      { ...RUNTIME, FACTORY_RESULT_CHECKER: "" },
+      bad as never,
+      "x",
+    );
+    assert.match(reason ?? "", /could not check the result for run run-1/);
+  }
+});
+
+// The emitted stop hook as a harness runs it: payload on stdin, one JSON object on stdout, exit 0.
+const STOP_HOOK = fileURLToPath(new URL("./stop.mjs", import.meta.url));
+const runStopHook = (
+  payload: string,
+  extraArgs: string[],
+  env: Record<string, string>,
+) => {
+  const clean = Object.fromEntries(
+    Object.entries(process.env).filter(
+      ([k]) => !k.startsWith("FACTORY_") && !k.startsWith("GUARD_"),
+    ),
+  );
+  return spawnSync(process.execPath, [STOP_HOOK, ...extraArgs], {
+    input: payload,
+    encoding: "utf8",
+    env: {
+      ...clean,
+      GUARD_STOP_CHECK: "off",
+      GUARD_OTEL: "off",
+      FACTORY_EVENTS_FILE: "",
+      CLAUDE_PLUGIN_DATA: tmp(),
+      ...env,
+    },
+  });
+};
+
+void test("result check: the stop hook CLI blocks on a refused checker, once, in each harness's shape", () => {
+  const cwd = gateRepo();
+  delete process.env.CLAUDE_PLUGIN_DATA;
+  const env = { ...RUNTIME, FACTORY_RESULT_CHECKER: "rel/c.mjs" };
+  const payload = JSON.stringify({ cwd, hook_event_name: "Stop" });
+  const reason = /could not run: not an absolute path/;
+
+  const claude = runStopHook(payload, [], env);
+  assert.equal(claude.status, 0, claude.stderr);
+  const c = JSON.parse(claude.stdout) as Record<string, unknown>;
+  assert.equal(c.decision, "block");
+  assert.match(String(c.reason), reason);
+  assert.equal(
+    (c.hookSpecificOutput as { decision: string }).decision,
+    "block",
+  );
+
+  const codex = runStopHook(payload, ["--harness=codex"], env);
+  assert.equal(codex.status, 0, codex.stderr);
+  const x = JSON.parse(codex.stdout) as Record<string, unknown>;
+  assert.deepEqual(Object.keys(x).sort(), ["decision", "reason"]);
+  assert.equal(x.decision, "block");
+  assert.match(String(x.reason), reason);
+
+  const anti = runStopHook(payload, ["--harness=antigravity"], env);
+  assert.equal(anti.status, 0, anti.stderr);
+  const a = JSON.parse(anti.stdout) as Record<string, unknown>;
+  assert.equal(a.decision, "continue");
+  assert.match(String(a.reason), reason);
+
+  const free = runStopHook(payload, [], { ...RUNTIME });
+  assert.equal(free.status, 0, free.stderr);
+});
+
+void test("result check: the stop hook CLI keeps a strict stop blocked on an unreadable payload, and lets an unset one go", () => {
+  const strict = runStopHook("{", [], {
+    ...RUNTIME,
+    FACTORY_RESULT_CHECKER: "",
+  });
+  assert.equal(strict.status, 0, strict.stderr);
+  const out = JSON.parse(strict.stdout) as { decision: string; reason: string };
+  assert.equal(out.decision, "block");
+  assert.match(
+    out.reason,
+    /could not check the result for run run-1 \(internal error\)/,
+  );
+
+  const unset = runStopHook("{", [], { ...RUNTIME });
+  assert.equal(unset.status, 0, unset.stderr);
+  assert.equal(unset.stdout, "");
+});
+
 void test("lint: shellcheck findings come back as context; clean, missing tool or other files pass", () => {
   const dir = lintTmp();
   const sh = join(dir, "a.sh");
@@ -1222,4 +1752,13 @@ void test('stop check: Antigravity hook receives { decision: "continue", reason 
   );
   assert.equal(res.status, 0);
   assert.equal(res.stdout, "");
+});
+
+void test("result check: the stop hook CLI keeps a strict stop blocked on a payload that is not an object", () => {
+  for (const payload of ["null", "5", "[]", '"x"']) {
+    const strict = runStopHook(payload, [], strictEnv(""));
+    assert.equal(strict.status, 0, strict.stderr);
+    const out = JSON.parse(strict.stdout) as { decision: string };
+    assert.equal(out.decision, "block");
+  }
 });
