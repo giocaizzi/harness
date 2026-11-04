@@ -331,6 +331,8 @@ export interface ProtectConfig {
   root?: string;
   // Every directory with a .git above the cwd, nearest first: a path is protected when it is relative to any of them.
   roots?: string[];
+  // The run is on a Windows host: a share or a stream in a spelling is read (a drive-letter root or directory says so too).
+  windows?: boolean;
 }
 
 export interface ProtectHit {
@@ -519,6 +521,8 @@ export interface CorpusOptions {
   run?: "registered" | "configured" | "unsure" | "protected" | null;
   stack?: StackFact | null;
   read?: boolean;
+  // A Windows run: a drive-letter root and directory, the Bash tool.
+  windows?: boolean;
 }
 export type CorpusRow = [
   command: string,

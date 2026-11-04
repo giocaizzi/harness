@@ -53,6 +53,7 @@ import {
   tagFacts,
   tagTargets,
   unattendedSet,
+  windowsRun,
   withPreview,
   worktreeFacts,
 } from "../core/engine.mjs";
@@ -770,6 +771,7 @@ async function onShell(
               ...protectFacts(input.cwd),
               powershell:
                 (input.tool_name ?? "").toLowerCase() === "powershell",
+              windows: (deps.platform ?? process.platform) === "win32",
             })
           : null,
       rules: {
@@ -1147,9 +1149,16 @@ function onEdit(
       raw: f.raw,
       readings: readingsOf(f),
     }));
-    // A spelling Windows reads differently is denied, not modelled (`oddSpelling`).
+    // A spelling Windows reads differently is denied, not modelled (`oddSpelling`); a share or a stream only in a Windows
+    // run.
+    const windows = windowsRun({
+      ...protectFacts(input.cwd),
+      windows: (deps.platform ?? process.platform) === "win32",
+    });
     for (const f of files) {
-      const kind = oddSpelling(f.given) ?? oddSpelling(f.raw, false);
+      const kind =
+        oddSpelling(f.given, { windows }) ??
+        oddSpelling(f.raw, { windows, streams: false });
       if (kind !== null)
         return denyEdit(spellingWhy(rules.run.protectedWhy, f.name, kind));
     }

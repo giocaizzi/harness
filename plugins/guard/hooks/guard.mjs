@@ -8,7 +8,7 @@ import { statfs } from "node:fs/promises";
 import { cpus, homedir, loadavg, platform } from "node:os";
 import { dirname, isAbsolute, join, parse, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { analysis, branchFacts, cdDirs, cmdClass, codexRules, deniedBy, deniedDir, evaluateCommand, evaluateEdit, evaluateRouting, hostJudged, isHeavy, isRisky, nativeAsk, oddSpelling, previewCommand, protectedPathHit, pureRead, refFacts, regenFacts, segmentsMayBeSame, spellingWhy, stackFacts, stackTargets, tagFacts, tagTargets, unattendedSet, withPreview, worktreeFacts, } from "../core/engine.mjs";
+import { analysis, branchFacts, cdDirs, cmdClass, codexRules, deniedBy, deniedDir, evaluateCommand, evaluateEdit, evaluateRouting, hostJudged, isHeavy, isRisky, nativeAsk, oddSpelling, previewCommand, protectedPathHit, pureRead, refFacts, regenFacts, segmentsMayBeSame, spellingWhy, stackFacts, stackTargets, tagFacts, tagTargets, unattendedSet, windowsRun, withPreview, worktreeFacts, } from "../core/engine.mjs";
 import { cpuPercentFrom, hostCaps } from "../core/host.mjs";
 import { emit } from "../core/otel.mjs";
 import { sessionAttrs } from "../core/registration.mjs";
@@ -488,6 +488,7 @@ async function onShell(input, state, deps, ctx) {
                 ? runFacts(ctx, {
                     ...protectFacts(input.cwd),
                     powershell: (input.tool_name ?? "").toLowerCase() === "powershell",
+                    windows: (deps.platform ?? process.platform) === "win32",
                 })
                 : null,
             rules: {
@@ -766,9 +767,15 @@ function onEdit(input, state, deps, ctx) {
             raw: f.raw,
             readings: readingsOf(f),
         }));
-        // A spelling Windows reads differently is denied, not modelled (`oddSpelling`).
+        // A spelling Windows reads differently is denied, not modelled (`oddSpelling`); a share or a stream only in a Windows
+        // run.
+        const windows = windowsRun({
+            ...protectFacts(input.cwd),
+            windows: (deps.platform ?? process.platform) === "win32",
+        });
         for (const f of files) {
-            const kind = oddSpelling(f.given) ?? oddSpelling(f.raw, false);
+            const kind = oddSpelling(f.given, { windows }) ??
+                oddSpelling(f.raw, { windows, streams: false });
             if (kind !== null)
                 return denyEdit(spellingWhy(rules.run.protectedWhy, f.name, kind));
         }
