@@ -1426,7 +1426,7 @@ void test("readable asks: what the risky part does, the step on its own, where i
     const rm = ask("git status && cd sub && rm -rf build dist");
     assert.equal(rm.action, "ask");
     assert.match(defined(rm.reason), /^Risky command: Deletes 2 paths recursively: sub\/build, sub\/dist\.\nStep: rm -rf build dist\nRule: rm \(recursive delete\)$/);
-    assert.match(defined(ask("ssh deploy@pi.local 'cd /srv && rm -rf data'").reason), /Deletes recursively: \/srv\/data on pi\.local\.\nStep: rm -rf data/);
+    assert.match(defined(ask("ssh deploy@host.example 'cd /srv && rm -rf data'").reason), /Deletes recursively: \/srv\/data on host\.example\.\nStep: rm -rf data/);
     assert.match(defined(ask("git push -f origin feat").reason), /^Risky command: Force-pushes origin feat\.\nRule: force/);
     assert.match(defined(ask("git branch -D a b").reason), /Deletes branches a, b/);
     assert.match(defined(ask("git reset --hard").reason), /Discards uncommitted changes/);
