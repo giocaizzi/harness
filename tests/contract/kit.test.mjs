@@ -65,14 +65,17 @@ void test("contract: the manifest validates", () => {
     const v = parseRegistration(readFileSync(subject), DEFAULT_PROTECTED_LIMITS, pathApi);
     assert.ok(v.ok, `invalid manifest: ${errorsOf(v).join("; ")}`);
 });
+const runEnv = () => ({
+    GUARD_RUN_MANIFEST: MANIFEST,
+    GUARD_RUN_ID: "contract-test-1",
+    GUARD_RUN_TICKET: "acme/app#1",
+    GUARD_RUN_MODE: subjectJson().modes?.[0] ?? "unattended",
+});
 void test("contract: the manifest loads with trust", { skip: skipUnlessManifest }, () => {
-    const modes = subjectJson().modes;
-    const loaded = loadRegistration({
-        GUARD_RUN_MANIFEST: MANIFEST,
-        GUARD_RUN_ID: "contract-test-1",
-        GUARD_RUN_TICKET: "acme/app#1",
-        GUARD_RUN_MODE: modes?.[0] ?? "unattended",
-    }, { dataDir, sessionId: "contract-load" });
+    const loaded = loadRegistration(runEnv(), {
+        dataDir,
+        sessionId: "contract-load",
+    });
     if (loaded.state !== "registered") {
         assert.fail(loaded.state === "deny" ? loaded.why : "no registration");
     }
@@ -140,7 +143,7 @@ void test("contract: a manifest changed during the session denies", { skip: skip
         manifest: realpathSync(subject),
         sha256: "0".repeat(64),
     }) + "\n");
-    const loaded = loadRegistration({ GUARD_RUN_MANIFEST: MANIFEST, GUARD_RUN_ID: "contract-test-1" }, { dataDir, sessionId });
+    const loaded = loadRegistration(runEnv(), { dataDir, sessionId });
     assert.match(denied(loaded).why, /changed during the session/);
 });
 void test("contract: the legacy-only tripwire line has a fixed shape", () => {

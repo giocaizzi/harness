@@ -66,7 +66,7 @@ contract-test: export GUARD_STOP_CHECK := off
 contract-test: export FACTORY_EVENTS_FILE :=
 contract-test: ## Run contract v2 kit against a runner's manifest (docs/guard.md).  Usage: make contract-test MANIFEST=<absolute path>
 	@test -n "$(MANIFEST)" || { echo "Usage: make contract-test MANIFEST=<absolute path>"; exit 2; }
-	@CONTRACT_MANIFEST="$(MANIFEST)" node --test tests/contract/
+	@CONTRACT_MANIFEST="$(MANIFEST)" node --test $(wildcard tests/contract/*.test.mjs)
 
 eval: ## Run the plugins' skill evals (calls a model, costs money, not part of check or CI).  Usage: make eval [PLUGIN=<plugin>] [TAG=trigger|routing] [MODEL=<model>] [RUNS=<n>] [ALLOW=<tools>] [MAX_COST=<usd>]
 	@for d in $(if $(PLUGIN),plugins/$(PLUGIN),$(patsubst %/evals/,%,$(sort $(dir $(wildcard plugins/*/evals/))))); do \
