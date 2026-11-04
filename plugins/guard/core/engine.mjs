@@ -1536,6 +1536,12 @@ export function protectedWrite(command, protect, env = {}, limits = { globs: 256
                 full = protect.cwd
                     ? `${posixPath(protect.cwd).replace(/\/+$/, "")}/${full}`
                     : null;
+            // A `..` after a `**` or variable segment climbs out of an unknown number of directories, so normalising it away
+            // would drop that segment: only the rest of the path counts, as for an unknown start.
+            const segs = full?.split("/") ?? [];
+            const multi = segs.findIndex((x) => MULTI_SEG.test(x));
+            if (multi >= 0 && segs.slice(multi + 1).includes(".."))
+                full = null;
         }
         for (const d of dataDirs) {
             if (full !== null) {

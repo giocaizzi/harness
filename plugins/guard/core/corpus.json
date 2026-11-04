@@ -553,5 +553,8 @@
   ["touch /Users/me/$D/result-gate/a.txt", "deny:protected-path", "G36", "review: a variable segment whose value holds a slash may reach the data directory", {"factory": "readable"}],
   ["touch /Users/me/$X/foo", "deny:protected-path", "G36", "control: an unresolved variable segment may stand for the data directory (accepted over-deny)", {"factory": "readable"}],
   ["ls /Users/other/**/x", "allow", "G36", "control: a `**` segment under a directory that cannot lead to the data directory", {"factory": "readable"}],
-  ["ls /tmp/**/x", "allow", "G36", "control: a `**` segment outside the data directory's path", {"factory": "readable"}]
+  ["ls /tmp/**/x", "allow", "G36", "control: a `**` segment outside the data directory's path", {"factory": "readable"}],
+  ["cat /Users/me/.claude/**/../guard-acme/x", "deny:protected-path", "G36", "review: a `..` after a `**` segment must not cancel it", {"factory": "readable"}],
+  ["touch /Users/me/$X/../guard-acme/x", "deny:protected-path", "G36", "review: a `..` after a variable segment must not cancel it", {"factory": "readable"}],
+  ["cat /Users/me/.claude/**/../other/x", "allow", "G36", "control: a `..` after a `**` segment, then a path that does not name the data directory", {"factory": "readable"}]
 ]

@@ -1,9 +1,9 @@
 // Reads a hook's payload from stdin without ever truncating it silently: the caller learns whether the whole payload
 // arrived, so a hook can fail closed on a partial read instead of judging half a tool call.
 export const STDIN_MAX_BYTES = 32 * 1024 * 1024;
-// Hook timeouts in hooks.json: 30 s for PreToolUse, 10 s for the other guard events; Codex's generated SessionEnd hook
-// has 3 s. The reminder events fail open, so a read cut short by a harness timeout is harmless there. A PreToolUse
-// hook still spends up to 20 s on lookups and 3 s on the preview after the read, so its read gets 5 s (5 + 20 + 3 < 30).
+// Hook timeouts in hooks.json: 30 s for PreToolUse, 1800 s for Stop, 10 s for the other guard events; Codex's
+// generated SessionEnd hook has 3 s. The reminder events fail open, so a read cut short by a harness timeout is
+// harmless there. The PreToolUse read counts toward its 30 s, before the guard's lookups and preview, so it gets 5 s.
 export const PRE_TOOL_DEADLINE_MS = 5_000;
 export const EVENT_DEADLINE_MS = 5_000;
 export const STOP_DEADLINE_MS = 10_000;
