@@ -12,6 +12,7 @@ import { loadavg, platform } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { docsOnly } from "../core/docsonly.mjs";
+import { hostCaps } from "../core/host.mjs";
 import { emit } from "../core/otel.mjs";
 import { coreErrors, couldNotRun, report } from "../core/result.mjs";
 import { rules } from "../core/rules.mjs";
@@ -159,15 +160,18 @@ function markGreen(cwd, fp, run) {
     }
 }
 // Why the host cannot take a check now, or null. Load average on Unix only (Windows reports 0), free disk everywhere.
-export function hostStrain(cwd) {
+export function hostStrain(cwd, env = process.env) {
     try {
+        const caps = hostCaps(env, rules.host);
+        if (caps.off)
+            return null;
         const load1 = loadavg()[0] ?? 0;
-        if (platform() !== "win32" && load1 > rules.host.loadCap) {
+        if (platform() !== "win32" && load1 > caps.loadCap) {
             return `load ${String(Math.round(load1 * 10) / 10)}`;
         }
         const fs = statfsSync(cwd);
         const freeGb = (fs.bavail * fs.bsize) / 1073741824;
-        return freeGb < rules.host.freeFloorGb
+        return freeGb < caps.freeFloorGb
             ? `${String(Math.round(freeGb))} GB free`
             : null;
     }

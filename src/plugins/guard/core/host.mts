@@ -62,3 +62,34 @@ export function cpuPercentFrom(
     ? Math.round((100 * (total - (b.idle - a.idle))) / total)
     : undefined;
 }
+
+export interface HostCaps {
+  loadCap: number;
+  cpuPercentCap: number;
+  freeFloorGb: number;
+  off: boolean;
+}
+
+const DECIMAL = /^\d+(?:\.\d+)?$/;
+const cap = (raw: string | undefined, fallback: number): number => {
+  const v = (raw ?? "").trim();
+  const n = DECIMAL.test(v) ? Number(v) : NaN;
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+};
+
+/**
+ * Effective host caps. Reads the hook's own environment (the launcher's), never the agent's command, so an agent
+ * cannot loosen them. A cap is a plain positive decimal, anything else keeps the default; only GUARD_HOST_CHECK=off
+ * turns the rule off.
+ */
+export function hostCaps(
+  env: Readonly<Record<string, string | undefined>> | undefined,
+  defaults: { loadCap: number; cpuPercentCap: number; freeFloorGb: number },
+): HostCaps {
+  return {
+    loadCap: cap(env?.GUARD_HOST_LOAD_CAP, defaults.loadCap),
+    cpuPercentCap: cap(env?.GUARD_HOST_CPU_CAP, defaults.cpuPercentCap),
+    freeFloorGb: cap(env?.GUARD_HOST_DISK_FLOOR_GB, defaults.freeFloorGb),
+    off: env?.GUARD_HOST_CHECK === "off",
+  };
+}

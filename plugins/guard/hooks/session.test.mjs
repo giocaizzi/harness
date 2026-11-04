@@ -1,14 +1,14 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync, } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync, } from "node:fs";
+import { chmodSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statfsSync, symlinkSync, writeFileSync, } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { harnessPid, keepAwake, keeperArgv } from "./awake.mjs";
 import { lintFile } from "./lint.mjs";
-import { fingerprint, gateFailClosed, resultGate, runDetached, stopCheck, takeLock, } from "./stop.mjs";
+import { fingerprint, gateFailClosed, hostStrain, resultGate, runDetached, stopCheck, takeLock, } from "./stop.mjs";
 const tmp = () => mkdtempSync(join(tmpdir(), "guard-test-"));
 const LINT_ROOT = fileURLToPath(new URL("./.lint-test/", import.meta.url));
 const lintTmp = () => {
@@ -1451,5 +1451,15 @@ void test("result check: the stop hook CLI keeps a strict stop blocked on a payl
         assert.equal(strict.status, 0, strict.stderr);
         const out = JSON.parse(strict.stdout);
         assert.equal(out.decision, "block");
+    }
+});
+void test("stop: the strain check reads its caps and off switch from the given environment", () => {
+    const cwd = tmp();
+    const calm = { GUARD_HOST_LOAD_CAP: "999999" };
+    assert.equal(hostStrain(cwd, { GUARD_HOST_CHECK: "off" }), null);
+    assert.match(hostStrain(cwd, { ...calm, GUARD_HOST_DISK_FLOOR_GB: "999999999" }) ?? "", /GB free$/);
+    const fs = statfsSync(cwd);
+    if ((fs.bavail * fs.bsize) / 1073741824 > 20) {
+        assert.equal(hostStrain(cwd, { ...calm, GUARD_HOST_DISK_FLOOR_GB: "abc" }), null);
     }
 });
