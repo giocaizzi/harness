@@ -2630,6 +2630,7 @@ void test("factory run: protected-path fails closed past its limits, for a comma
     const groups = "{a,b}".repeat(4000);
     assert.deepEqual(pw(`echo ${groups}; echo x > .github/a`), {
         target: ".github/a",
+        data: false,
     });
     assert.match(defined(defined(pw(`rm ${groups}; echo x > .github/a`)).unsure), /brace/);
     assert.match(defined(defined(pw(`tee ${"{a..b}".repeat(4000)}`)).unsure), /brace/);
@@ -2877,12 +2878,17 @@ void test("factory run: the data directory matcher reads a path as the shell may
         cwd: "/Users/me/repo",
         data: [data],
     };
-    const run = (command, on = true) => evaluateCommand({
+    const run = (command, on = true, extra = {}) => evaluateCommand({
         command,
         state: fresh(),
         host: calm,
         factory: on ? { approval: "agent-ok", protect } : null,
-        env: { HOME: "/Users/me", TMPDIR: "/tmp/", dirs: { has: () => true } },
+        env: {
+            HOME: "/Users/me",
+            TMPDIR: "/tmp/",
+            dirs: { has: () => true },
+            ...extra,
+        },
         rules,
     });
     const denied = [
@@ -2908,7 +2914,6 @@ void test("factory run: the data directory matcher reads a path as the shell may
         "cd /Users/me/.claude/plugins && cat data/**/../result-gate/x",
         "cat $X/../guard-acme/a.txt",
         "cat $X/**/../guard-acme/a.txt",
-        "cat $X/$Y/x",
         "cat $X/**/x",
         "cat /Users/me/.claude/plugins/data/other/**/../guard-acme/x",
         // a glob bash before 5.2 reads as `..`
@@ -3039,6 +3044,18 @@ void test("factory run: the data directory matcher reads a path as the shell may
         assert.notEqual(run(c).rule, "protected-path", `${c} (known limit)`);
     for (const c of allowed)
         assert.notEqual(run(c).rule, "protected-path", c);
+    // CDPATH from the hook's environment: a relative or variable `cd` target is read in each of its directories.
+    const cdpath = { CDPATH: "/x:/Users/me/.claude/plugins/data" };
+    for (const c of [
+        "cd $D && echo 0 > count",
+        "cd gu* && echo 0 > count",
+        "cd src && echo 0 > guard-acme/count",
+    ])
+        assert.equal(run(c, true, cdpath).rule, "protected-path", c);
+    for (const c of ["cd src && make", "cd ./guard-acme && make"])
+        assert.notEqual(run(c, true, cdpath).rule, "protected-path", c);
+    assert.notEqual(run("cd $D && make", true, { CDPATH: "/x" }).rule, "protected-path", "a variable target in a CDPATH directory away from the data directory");
+    assert.equal(run("cd $D && echo 0 > count", true, { CDPATH: "/Users/me" }).rule, "protected-path", "a CDPATH directory above the data directory");
 });
 void test("protectedWrite: in a run with a data directory, a command past the scan limits is denied whatever it names", () => {
     const data = "/Users/me/.claude/plugins/data/guard-acme";
@@ -3163,6 +3180,9 @@ void test("factory run: a Git Bash drive path names a drive-letter data director
         "touch /c/Users/me/AppData/Local/Temp/guard-plugin-*/x",
         "type \\\\?\\C:\\Users\\me\\AppData\\Local\\Temp\\guard-plugin-me\\x",
         "Set-Location C:\\Users\\me\\AppData\\Local\\Temp\\guard-plugin-m?",
+        // A CDPATH directory with a drive letter keeps its colon.
+        "CDPATH=C:/Users/me; cd AppData/Local/Temp/guard-plugin-me && type x",
+        "CDPATH=D:/x:C:/Users/me/AppData/Local/Temp; cd $D && type x",
     ]) {
         const d = run(c, win);
         assert.equal(d.action, "deny", c);

@@ -14,6 +14,7 @@ export interface GuardEnv {
   TMP?: string;
   TMPDIR?: string;
   USERPROFILE?: string;
+  CDPATH?: string;
   dirs?: DirSet;
 }
 
@@ -448,6 +449,7 @@ export interface Segment {
   words: ShellWord[];
   redirs: ShellWord[];
   dir: string;
+  viaCdpath: boolean;
   remote: boolean;
   resolve: (path: string) => string;
 }

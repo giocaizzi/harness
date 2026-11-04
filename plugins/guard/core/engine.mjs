@@ -311,6 +311,20 @@ const CD = /(?:^|[\s({])(?:cd|chdir|set-location|sl|pushd|popd|push-location|pop
 const PLAIN_CD = /^\s*(?:cd|chdir|set-location|sl)(?:\s+(\S+))?\s*$/i;
 const PLAIN_DIR = /^[\w.@%+=:,\\/~][\w.@%+=:,\\/~-]*$/;
 // A `cd` target the shell never looks up through CDPATH: absolute, `~`, a variable, or `.`/`..` as its first segment.
+// A `cd` target CDPATH may look up: relative without a leading dot, or a variable or substitution first.
+const MAY_CDPATH = /^(?!(?:[\\/~]|\.\.?(?:[\\/]|$)))/;
+// The directories of a CDPATH value (`:`-separated; a drive letter keeps its colon).
+function cdpathDirs(value) {
+    const dirs = [];
+    for (const piece of value.split(":")) {
+        const last = dirs.length - 1;
+        if (last >= 0 && /^[a-z]$/i.test(defined(dirs[last])))
+            dirs[last] = `${defined(dirs[last])}:${piece}`;
+        else
+            dirs.push(piece);
+    }
+    return dirs;
+}
 const NOT_VIA_CDPATH = /^(?:[\\/~$%`]|\.\.?(?:[\\/]|$))/;
 // Where `cd` stops being followed: a separator that opens a subshell or a branch, or a group or keyword that starts one.
 const BRANCH_SEP = new Set(["(", ")", "||", ";;"]);
@@ -386,10 +400,13 @@ function assign(cmd, vars, env, pwd) {
 // every local `cd`'s words as written, followed or not, with the directory they are read in (see cdCommands).
 const CHAIN_BREAK = new Set([";", "\n", "&"]);
 const ABS_DIR = /^(?:\/|[a-z]:[\\/])/i;
-function levelSegments(a, baseDir, remote, env, outer = {}, frozen = null, cds = null, ranBefore = false, cdWords = null) {
+function levelSegments(a, baseDir, remote, env, outer = {}, frozen = null, cds = null, ranBefore = false, cdWords = null, cdpathBefore = false) {
     const vars = { ...outer };
     let ran = ranBefore;
     let dir = baseDir;
+    // The directory was reached by a relative `cd` that a CDPATH the engine cannot see (a startup file) may have resolved
+    // elsewhere: a relative path in it is also read by its tail.
+    let viaCdpath = cdpathBefore;
     let followCd = true;
     let sure = true;
     let chainSure = !ranBefore;
@@ -422,6 +439,14 @@ function levelSegments(a, baseDir, remote, env, outer = {}, frozen = null, cds =
                     words: cmd.words,
                     redirs: cmd.redirs,
                     dir,
+                    viaCdpath,
+                    cdpath: "CDPATH" in vars
+                        ? vars.CDPATH
+                        : "cdpath" in vars
+                            ? vars.cdpath
+                            : env.CDPATH === "?"
+                                ? null
+                                : env.CDPATH,
                     resolve,
                 });
         };
@@ -448,6 +473,11 @@ function levelSegments(a, baseDir, remote, env, outer = {}, frozen = null, cds =
                 to && !cdpath && PLAIN_DIR.test(to) && !to.startsWith("~")
                     ? inDir(dir, to)
                     : UNKNOWN_DIR;
+            viaCdpath =
+                dir !== UNKNOWN_DIR &&
+                    to !== null &&
+                    to !== undefined &&
+                    !NOT_VIA_CDPATH.test(to);
             if (cds && dir !== UNKNOWN_DIR)
                 cds.push(dir);
             sure = chainSure =
@@ -468,6 +498,7 @@ function levelSegments(a, baseDir, remote, env, outer = {}, frozen = null, cds =
                     words: cmd.words,
                     redirs: cmd.redirs,
                     dir: gitDirs(seg).map(resolve).reduce(inDir, dir),
+                    viaCdpath,
                     remote,
                     resolve,
                 });
@@ -476,7 +507,9 @@ function levelSegments(a, baseDir, remote, env, outer = {}, frozen = null, cds =
         const prefixed = { ...snapshot };
         let k = 0;
         let lead = cmd.words;
-        if (lead[0]?.val === "env") {
+        while (lead.length > 0 &&
+            /^(?:(?:\S*\/)?env|command|exec|nohup|nice|builtin|time)$/.test(defined(lead[0]).val)) {
+            k = 0;
             lead = lead.slice(1);
             while (k < lead.length && defined(lead[k]).val.startsWith("-")) {
                 if (/^(?:-u|--unset|-C|--chdir|-S|--split-string)$/.test(defined(lead[k]).val))
@@ -512,7 +545,7 @@ function levelSegments(a, baseDir, remote, env, outer = {}, frozen = null, cds =
                     ? snapshot
                     : p.expanded
                         ? expandedVars
-                        : prefixed, inner, cds, ranHere, cdWords)));
+                        : prefixed, inner, cds, ranHere, cdWords, viaCdpath)));
         }
     }
     return out;
@@ -522,18 +555,36 @@ function levelSegments(a, baseDir, remote, env, outer = {}, frozen = null, cds =
 // in: the data-directory check reads their targets like any other word, and their redirections are writes.
 function droppedCommands(command, env) {
     const cds = [];
-    levelSegments(prepared(command), "", false, env, {}, null, null, false, cds);
+    levelSegments(prepared(command), "", false, shellEnv(command, env), {}, null, null, false, cds);
     return cds;
+}
+// A command that may change HOME or CDPATH in a form the engine does not read (`+=`, an array element, `read`,
+// `printf -v`, `declare`, a nameref, `${X:=…}`, `eval`, a wrapper's prefix assignment) makes their values unknown for
+// the whole command: a `~`, `$HOME` or bare `cd` then has an unknown start, and a relative `cd` may go through CDPATH.
+// An assignment the engine reads (`NAME=/abs/path`) still resolves, since `vars` wins over `env`.
+const touches = (name) => new RegExp(`(?<![$\\w{])${name}\\s*(?:\\[[^\\]]*\\])?\\s*[+:]?=|\\b(?:read|printf|declare|typeset|local|export|readonly|mapfile|readarray)\\b[^;&|\\n]*(?<![$\\w{])${name}(?!\\w)|\\$\\{${name}:?=|\\beval\\b|\\bdeclare\\s+-\\w*n`);
+const TOUCHES_HOME = touches("HOME");
+const TOUCHES_CDPATH = touches("(?:CDPATH|cdpath)");
+function shellEnv(command, env) {
+    const home = TOUCHES_HOME.test(command);
+    const cdpath = TOUCHES_CDPATH.test(command);
+    if (!home && !cdpath)
+        return env;
+    return {
+        ...env,
+        ...(home ? { HOME: undefined } : {}),
+        ...(cdpath ? { CDPATH: env.CDPATH ?? "?" } : {}),
+    };
 }
 const prepared = (command) => analysis(expandLoops(command).replace(SIMPLE_QUOTED, "$1"));
 function segments(command, env = {}) {
-    return levelSegments(prepared(command), "", false, env);
+    return levelSegments(prepared(command), "", false, shellEnv(command, env));
 }
 // Every directory a `cd` in the command reaches on this machine, as the engine names it (relative to the cwd when it
 // does not start with `/`): the adapter checks which exist and passes them back as `env.dirs`.
 export function cdDirs(command, env = {}) {
     const cds = [];
-    levelSegments(prepared(command), "", false, env, {}, null, cds);
+    levelSegments(prepared(command), "", false, shellEnv(command, env), {}, null, cds);
     return [...new Set(cds)];
 }
 const plainArgs = (rest) => rest.split(/\s+/).filter((t) => t && !t.startsWith("-"));
@@ -1477,7 +1528,77 @@ function globsMayMeet(a, b) {
 // Whether one target segment may be one protected-pattern segment.
 // A variable may hold a leading dot, so only a written `*`, `?` or `[` at the start keeps a dot file out; with `dots`,
 // a leading wildcard matches a dot name too (a session may `shopt -s dotglob` or `setopt globdots`).
-const SEG_VAR = /\$(?:\{[^}]*\}|\w+|\([^)]*\))|%\w+%|`[^`]*`/;
+const SEG_VAR = /\$(?:\{[^}]*\}|[=^~]?\w+|\([^)]*\)|[@*#?!$-])|%\w+%|`[^`]*`/;
+// A path with every balanced `$(…)`, `${…}` and backtick span, nested parentheses and braces included, replaced by one
+// variable token (`$_s0`), and every `$((…))` by a number: a `/`, `(` or `)` inside a span never splits a segment
+// or is read as a group. An unbalanced span runs to the end of the word.
+function spans(p) {
+    let out = "";
+    let n = 0;
+    for (let i = 0; i < p.length; i++) {
+        const c = defined(p[i]);
+        const two = p.slice(i, i + 2);
+        if (c === "`") {
+            const end = p.indexOf("`", i + 1);
+            out += `$_s${String(n++)}`;
+            i = end < 0 ? p.length : end;
+        }
+        else if (two === "$(" || two === "${") {
+            const j = spanEnd(p, i);
+            const arith = p.slice(i, i + 3) === "$((" && p.slice(j - 1, j + 1) === "))";
+            out += arith ? "0" : `$_s${String(n++)}`;
+            i = j;
+        }
+        else
+            out += c;
+    }
+    return out;
+}
+// The index of the parenthesis or brace closing the `$(` or `${` at `i`, or the end of the word when none does.
+function spanEnd(p, i) {
+    const open = defined(p[i + 1]);
+    const close = open === "(" ? ")" : "}";
+    let depth = 0;
+    let j = i + 1;
+    for (; j < p.length; j++) {
+        if (p[j] === open)
+            depth++;
+        else if (p[j] === close && --depth === 0)
+            return j;
+    }
+    return p.length;
+}
+// A path's readings by its parameter expansions with a fallback word (`${X:-~/x}`, `-`, `=`, `+`, with or without the
+// colon): the expansion as one token, and the word in its place, which the shell expands as part of the path. Null
+// past six such expansions (64 readings), which counts as reaching anything.
+const FALLBACK = /^\$\{[\w@*#?!$-]+(?:\[[^\]]*\])?:?[-=+]([\s\S]*)\}$/;
+function fallbackReadings(p, depth = 0) {
+    for (let i = 0; i < p.length; i++) {
+        if (p.slice(i, i + 2) !== "${")
+            continue;
+        const end = spanEnd(p, i);
+        const m = FALLBACK.exec(p.slice(i, end + 1));
+        if (m === null) {
+            i = end;
+            continue;
+        }
+        if (depth >= 6)
+            return null;
+        const kept = fallbackReadings(p.slice(end + 1), depth + 1);
+        const word = fallbackReadings(p.slice(0, i) + defined(m[1]) + p.slice(end + 1), depth + 1);
+        if (kept === null || word === null)
+            return null;
+        return [...kept.map((r) => p.slice(0, end + 1) + r), ...word];
+    }
+    return [p];
+}
+// A path's first token that is a start the engine cannot know: a variable or special parameter (`$X`, `$1`, `$@`, a
+// substitution or expansion as one `spans` token), a Windows `%VAR%`, or `~` with a user name or alone.
+// A segment that matches no name: no file is named by an empty string.
+const NO_NAME = "\0";
+// A segment of nothing but variables and substitutions, which spells no name (a written wildcard does).
+const TOKENS_ONLY = new RegExp(`^(?:${SEG_VAR.source})+$`);
+const START_TOKEN = /^(?:\$(?:[=^~]?\w+|[@*#?!$-])|%\w+%|~[\w.-]*)$/;
 // A segment that may stand for any number of directories: `**` (zsh, bash with globstar), or one holding a variable or
 // substitution, whose value may hold a `/`.
 const MULTI_SEG = new RegExp(`\\*\\*|${SEG_VAR.source}`);
@@ -1690,28 +1811,50 @@ export function protectedWrite(command, protect, env = {}, limits = { globs: 256
     // after a `cd` not followed) is matched by its tail: it hits when any tail may be the data directory's last segment
     // followed by anything, so a variable or `**` segment after the start counts as that name. A Git Bash drive path
     // (`/c/Users/...`) also counts as `c:/Users/...` against a drive-letter dir.
+    let dataHit = false;
     const inData = (dir, resolved, above, literal = false) => {
+        const hit = inDataPath(dir, resolved, above, literal);
+        if (hit)
+            dataHit = true;
+        return hit;
+    };
+    const inDataPath = (dir, resolved, above, literal) => {
         if (!dataDirs.length)
             return false;
-        // An arithmetic expansion yields a number, never a path.
-        const p = posixPath(resolved).replace(/\$\(\([^()]*\)\)/g, "0");
+        const readings = fallbackReadings(posixPath(resolved));
+        if (readings === null)
+            return true;
+        return readings.some((r) => inDataReading(dir, r, above, literal));
+    };
+    const inDataReading = (dir, reading, above, literal) => {
+        // Each balanced substitution or expansion is one token; an arithmetic expansion is a number.
+        const p = spans(reading);
         const unknown = /^[$~%`]/.test(p) || (dir === UNKNOWN_DIR && !ABS_DIR.test(p));
         if (unknown) {
-            // A start that is the whole word (`$((i+1))`, `$X`, `~`) has no tail to match; `${E}guard-acme` has one.
-            if (/^(?:\$\(\([^()]*\)\)|\$\([^()]*\)|\$\{[^}]*\}|\$\w+|~[\w.-]*|%\w+%|`[^`]*`)$/.test(p))
-                return false;
+            // A start that is the whole word (`$X`, one substitution, `~`) has no tail to match; `${E}guard-acme` has one.
+            const whole = START_TOKEN.test(p);
             const first = p.split("/").find(Boolean) ?? "";
-            const rest = /^(?:\$(?:\{[^}]*\}|\w+|\([^)]*\))|%\w+%|~[\w.-]*|`[^`]*`)$/.test(first)
+            const rest = START_TOKEN.test(first)
                 ? p.slice(p.indexOf(first) + first.length)
                 : p;
-            const paths = dataPaths(rest, literal);
+            const paths = whole ? [] : dataPaths(rest, literal);
             if (paths === null)
                 return true;
-            return dataDirs.some((d) => {
+            // A segment made of nothing but variables and substitutions (`$X/$Y`) spells no name, like a lone `$X`: it may
+            // stand for anything after the data directory's name, never for that name itself.
+            const tail = dataDirs.some((d) => {
                 const base = d.at(-1);
                 return (base !== undefined &&
-                    paths.some((segs) => patternHits([base, "**"], segs.map((x) => (anySeg(x) ? x.slice(1) || "*" : x)), above, true, tick)));
+                    paths.some((segs) => patternHits([base, "**"], segs.map((x) => anySeg(x)
+                        ? TOKENS_ONLY.test(x.slice(1))
+                            ? NO_NAME
+                            : x.slice(1)
+                        : x), above, true, tick)));
             });
+            // A variable or substitution first may also hold a path relative to the directory the word is read in
+            // (`cd data && cat $X/count`): read there too, the token as any number of directories.
+            if (tail || p.startsWith("~") || dir === UNKNOWN_DIR)
+                return tail;
         }
         let full = dir && !ABS_DIR.test(p)
             ? `${posixPath(dir).replace(/\/+$/, "")}/${p}`
@@ -1747,9 +1890,11 @@ export function protectedWrite(command, protect, env = {}, limits = { globs: 256
         for (const t of [word, ...(value === null ? [] : [value]), ...elements]) {
             tick();
             // The word's value with its quotes removed may spell the path where the command's text did not (`guard-a""cme`).
-            if (DATA_VAR.test(t) ||
-                spelledIn(t) !== undefined ||
-                inData(dir, resolve(t), false, literal))
+            if (DATA_VAR.test(t) || spelledIn(t) !== undefined) {
+                dataHit = true;
+                return true;
+            }
+            if (inData(dir, resolve(t), false, literal))
                 return true;
         }
         return false;
@@ -1794,13 +1939,13 @@ export function protectedWrite(command, protect, env = {}, limits = { globs: 256
     };
     const spelled = spelledIn(command);
     if (spelled !== undefined)
-        return { target: spelled };
+        return { target: spelled, data: true };
     const ref = /(?:\$\{?(?:env:)?|%)(?:claude|copilot)_plugin_data\b/i.exec(command);
     if (ref && dataDirs.length)
-        return { target: ref[0] };
+        return { target: ref[0], data: true };
     try {
         const target = scanWrites(command, env, count, hits, dataDirs.length ? named : null);
-        return target === null ? null : { target };
+        return target === null ? null : { target, data: dataHit };
     }
     catch (e) {
         // Any failure (a limit, a stack overflow, a bug) denies a command that may write, and lets the rest through. In a
@@ -1837,9 +1982,6 @@ function scanWrites(command, env, count, hits, named) {
     // unquoted `(`, `^` or `#` counts as expansion too: a zsh qualifier, extendedglob operator or a bash extglob (`@(x)`)
     // is a glob the reader keeps whole.
     const literal = (w) => !dynamicText(w.raw, /[*?[(^#]/);
-    // A relative `cd` target without a leading dot may resolve through CDPATH, when the environment or the command sets it.
-    const cdpath = typeof env.CDPATH === "string" ||
-        /\b(?:CDPATH|cdpath)\s*\+?=|\bread\b[^;&|\n]*\bCDPATH\b/.test(command);
     // Every command, the ones the segment reader drops included (a `cd`, followed or not, whose target may be a glob or
     // variable spelling of the data directory, and a command made only of assignments): their words, redirections and,
     // for a `cd` the reader took for one by a later word (`rm -rf x cd`), their writer too.
@@ -1852,22 +1994,49 @@ function scanWrites(command, env, count, hits, named) {
             words: s.words,
             redirs: s.redirs,
             dir: s.dir,
+            viaCdpath: s.viaCdpath,
+            cdpath: undefined,
             resolve: s.resolve,
         })),
     ];
-    for (const { cd, words, redirs, dir, resolve } of entries) {
+    for (const entry of entries) {
+        const { cd, words, redirs, dir, viaCdpath, resolve } = entry;
         // Any command naming a path inside guard's data directory, whatever its program (a redirection target too).
+        // A `cd` operand is also read by its tail: a literal relative one always (CDPATH may be set in a way the engine
+        // cannot see) and every operand of a `cd` with two or more (zsh `cd old new` edits the directory's path), the
+        // resolved value deciding what CDPATH never looks up. So is
+        // every word in a directory such a `cd` reached (`viaCdpath`). A target CDPATH may look up (relative, or a
+        // variable or substitution first) is also read in each directory of a CDPATH the engine knows; one it knows
+        // is set to a value it cannot read makes such a variable target unknowable.
+        const cdOperands = cd
+            ? words.filter((w, i) => i > 0 && !w.val.startsWith("-")).length
+            : 0;
         if (named)
             for (const [i, w] of [...redirs, ...words].entries())
                 for (const t of spellings(w)) {
                     if (named(defined(t), dir, resolve, false, literal(w)))
                         return t;
-                    if (cd &&
-                        cdpath &&
-                        i > redirs.length &&
-                        !NOT_VIA_CDPATH.test(defined(t)) &&
+                    const r = resolve(defined(t));
+                    if ((viaCdpath ||
+                        (cd &&
+                            i > redirs.length &&
+                            (cdOperands > 1 ||
+                                (!NOT_VIA_CDPATH.test(r) && !MULTI_SEG.test(spans(r)))))) &&
                         named(defined(t), UNKNOWN_DIR, resolve, false, literal(w)))
                         return t;
+                    if (cd &&
+                        i > redirs.length &&
+                        entry.cdpath !== undefined &&
+                        MAY_CDPATH.test(r)) {
+                        if (entry.cdpath === null) {
+                            if (MULTI_SEG.test(spans(r)))
+                                return t;
+                        }
+                        else
+                            for (const e of cdpathDirs(entry.cdpath))
+                                if (named(defined(t), e || dir, resolve, false, literal(w)))
+                                    return t;
+                    }
                 }
         for (const w of redirs) {
             if (NOT_A_FILE.test(w.val))
@@ -2594,7 +2763,9 @@ export function evaluateCommand({ command, loadedSkills = new Set(), state, host
         return {
             action: "deny",
             rule: "protected-path",
-            reason: `${rules.factory.protectedWhy} \`${shielded.target}\` is a protected path in this run; leave it to the owner and say on the ticket what should change.`,
+            reason: shielded.data
+                ? `${rules.factory.protectedWhy} \`${shielded.target}\` could not be proven to stay outside guard's own data directory in this run (the guard reads every spelling the shell could expand it to); spell the path as a literal absolute path, or without a variable, glob or \`..\` near that directory.`
+                : `${rules.factory.protectedWhy} \`${shielded.target}\` is a protected path in this run; leave it to the owner and say on the ticket what should change.`,
         };
     if (shielded?.unsure)
         return {
