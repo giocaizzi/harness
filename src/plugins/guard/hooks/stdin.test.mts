@@ -342,7 +342,8 @@ void test("gateFailClosed: a registered unattended run whose stop input cannot b
   assert.equal(
     gateFailClosed(
       { ...env, GUARD_RUN_MODE: "attended" },
-      input,
+      // another session: the run variables are pinned per session
+      { session_id: "s-unreadable-attended" },
       "stdin: payload never completed",
       opts,
     ),

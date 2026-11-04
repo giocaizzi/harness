@@ -270,7 +270,9 @@ void test("gateFailClosed: a registered unattended run whose stop input cannot b
     };
     const input = { session_id: "s-unreadable" };
     assert.match(gateFailClosed(env, input, "stdin: payload never completed", opts) ?? "", /^Run result gate: could not check the result for run run-1 /);
-    assert.equal(gateFailClosed({ ...env, GUARD_RUN_MODE: "attended" }, input, "stdin: payload never completed", opts), null);
+    assert.equal(gateFailClosed({ ...env, GUARD_RUN_MODE: "attended" }, 
+    // another session: the run variables are pinned per session
+    { session_id: "s-unreadable-attended" }, "stdin: payload never completed", opts), null);
 });
 void test("stopCheck: the gate's answer is reported before the make check starts", async () => {
     const saved = { ...process.env };
