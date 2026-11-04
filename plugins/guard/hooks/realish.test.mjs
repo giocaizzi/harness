@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { win32 } from "node:path";
 import { test } from "node:test";
-import { realish } from "./guard.mjs";
+import { readingsOf, realish } from "./guard.mjs";
 // A Windows tree of links (lowercase, `\` paths); every other path is a plain directory or missing.
 const links = {
     "c:\\r\\d": "C:\\other",
@@ -29,4 +29,12 @@ void test("realish: a link loop returns null", () => {
         readLink: () => "a",
     };
     assert.equal(realish("C:\\a", false, loop), null);
+});
+void test("readingsOf: the lexical win32 readings are added on win32 only (the platform comes from the env)", () => {
+    const file = { lex: "C:\\r\\n", raw: "C:\\r\\n" };
+    // win32: the link followed as the kernel does (C:/z) and its target taken as text (C:/r/z), beside the lexical path
+    assert.deepEqual(readingsOf(file, env).sort(), ["C:/r/n", "C:/r/z", "C:/z"]);
+    // elsewhere the lexical readings are not tried: a `..` in a link target is followed as the kernel does
+    const posix = { ...env, platform: "linux" };
+    assert.ok(!readingsOf(file, posix).includes("C:/r/z"));
 });

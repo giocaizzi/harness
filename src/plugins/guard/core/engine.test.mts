@@ -4272,3 +4272,268 @@ void test("protectedWrite: a root or cwd that ends in a dot or space folds like 
   };
   assert.equal(protectedWrite("echo a > ../.factory/runs/1/r/x.md", g), null);
 });
+
+void test("protectedWrite: an ordinary Windows backslash path is no odd spelling, quoted or not; a protected one still is denied (G44)", () => {
+  const root = String.raw`C:\Users\runneradmin\repo`;
+  const g = {
+    globs: [".github/**"],
+    root: "C:/Users/runneradmin/repo",
+    roots: ["C:/Users/runneradmin/repo"],
+    cwd: "C:/Users/runneradmin/repo",
+  };
+  for (const command of [
+    String.raw`Set-Content C:\temp\x.txt a`,
+    String.raw`Set-Content -Path C:\Users\runneradmin\repo\src\x -Value a`,
+    String.raw`Get-Date | Out-File C:\temp\x.txt`,
+    String.raw`Out-File -FilePath C:\Users\runneradmin\Desktop\x.txt`,
+    String.raw`Remove-Item C:\temp\build -Recurse`,
+    String.raw`Remove-Item C:\Users\x\build -Recurse`,
+    String.raw`echo a > C:\temp\x.txt`,
+    String.raw`cd C:\temp; echo a > x.txt`,
+    String.raw`Copy-Item x ..\..`,
+    String.raw`Set-Content -Path C:\Temp\out.txt -Value a`,
+    String.raw`Set-Content 'C:\temp\x.txt' a`,
+    String.raw`Set-Content "C:\temp\x.txt" a`,
+    String.raw`echo a > 'C:\temp\x.txt'`,
+    String.raw`echo a > "C:\temp\x.txt"`,
+    "echo a > C:/temp/x.txt",
+    String.raw`Set-Content $env:TEMP\x.txt a`,
+  ])
+    assert.equal(protectedWrite(command, g), null, command);
+  for (const command of [
+    String.raw`Set-Content ${root}\.github\x a`,
+    String.raw`Set-Content '${root}\.github\x' a`,
+    String.raw`Set-Content "${root}\.github\x" a`,
+    String.raw`echo a > ${root}\.github\x`,
+    String.raw`Remove-Item ${root}\.github -Recurse`,
+  ])
+    assert.ok(protectedWrite(command, g)?.target, command);
+  // an odd spelling is still read on a raw spelling that keeps its separators
+  for (const command of [
+    String.raw`Set-Content C:temp\x.txt a`,
+    String.raw`Set-Content ...\x a`,
+  ])
+    assert.ok(protectedWrite(command, g)?.spelled, command);
+});
+
+void test("protectedWrite: a glob or variable in a target above the root may be the root's directory (G44)", () => {
+  const root = "/o/runneradmin/repo";
+  const g = { globs: [".github/**"], root, roots: [root], cwd: root };
+  for (const command of [
+    "rm -rf /o/*",
+    "rm -rf /o/runner*",
+    "mv /o/* /tmp/",
+    "rm -rf /o/$U",
+    "rm -rf /o/runneradmin/*",
+    "rm -rf /*",
+  ])
+    assert.ok(protectedWrite(command, g)?.target, command);
+  const win = {
+    globs: [".github/**"],
+    root: "C:/Users/runneradmin/repo",
+    cwd: "C:/Users/runneradmin/repo",
+  };
+  assert.ok(protectedWrite("rm -rf /c/Users/*", win)?.target);
+  for (const command of [
+    "rm -rf /tmp/*",
+    "rm -rf /o/other/x",
+    "rm -rf /o/other/*",
+    "cp x /o/*",
+    "echo a > /o/*",
+  ])
+    assert.equal(protectedWrite(command, g), null, command);
+  assert.equal(protectedWrite("rm -rf /d/Users/*", win), null);
+});
+
+void test("protectedWrite: a `**` in the root part of an absolute target counts as the repo, with no exemption (G44)", () => {
+  const root = "/o/runneradmin/repo";
+  const g = {
+    globs: [".github/**"],
+    registered: [".factory/**"],
+    exempt: [".factory/runs/*/*/**"],
+    root,
+    roots: [root],
+    cwd: root,
+  };
+  for (const command of [
+    "echo a > /o/**/.github/workflows/ci.yml",
+    "rm -rf /o/**/.github",
+    "echo a > /**/.github/x",
+    "echo a > /o/**/runneradmin/repo/.github/x",
+    "echo a > /o/**/.factory/runs/1/r/x.md",
+  ])
+    assert.ok(protectedWrite(command, g)?.target, command);
+  for (const command of [
+    "echo a > /o/**/src/x",
+    "echo a > /p/**/.github/x",
+    "echo a > /o/**/src/.github/x",
+  ])
+    assert.equal(protectedWrite(command, g), null, command);
+});
+
+void test("protectedWrite: a variable or substitution in the middle of a path may stand for `..` (G44)", () => {
+  const g = {
+    globs: [".github/**"],
+    registered: ["config/app.yaml"],
+    root: "/r",
+    roots: ["/r"],
+    cwd: "/r",
+  };
+  for (const command of [
+    "D=..; echo a > src/$D/.github/workflows/ci.yml",
+    "echo a > src/$X/.github/workflows/ci.yml",
+    "echo a > src/${X}/.github/workflows/ci.yml",
+    "echo a > src/$(echo ..)/.github/workflows/ci.yml",
+    "echo a > src/`echo ..`/.github/workflows/ci.yml",
+    "D=..; echo a > config/x/$D/app.yaml",
+    "echo a > a/b/$D/config/app.yaml",
+  ])
+    assert.ok(protectedWrite(command, g)?.target, command);
+  for (const command of [
+    "echo a > $OUT/file.txt",
+    "echo a > src/$X/app.ts",
+    "echo a > build/$NAME/out.js",
+    "echo a > config/$X/other.yaml",
+  ])
+    assert.equal(protectedWrite(command, g), null, command);
+});
+
+void test("protectedWrite: a glob or variable in a path to guard's data directory may name it, in the shell (G44)", () => {
+  const data = "/u/.claude/plugins/data/guard-acme";
+  const g = {
+    globs: [".github/**"],
+    root: "/u/repo",
+    cwd: "/u/repo",
+    data: [data],
+  };
+  const env = { HOME: "/u" };
+  for (const command of [
+    "echo 0 > ~/.claude/plugins/data/guard-*/result-gate/x.txt",
+    "echo 0 > /u/.claude/plugins/data/guard-a?me/result-gate/x.txt",
+    "rm -rf ~/.claude/plugins/data/guard-*",
+    "rm -rf /u/.claude/plugins/data/*",
+    "echo a > /u/.claude/plugins/data/*/blocks.txt",
+    "echo a > /$USER/.claude/plugins/data/guard-acme/blocks.txt",
+    "echo a > /*/.claude/plugins/data/guard-acme/blocks.txt",
+    "rm -rf /*/.claude/plugins/data",
+  ])
+    assert.ok(protectedWrite(command, g, env)?.target, command);
+  const win = {
+    globs: [".github/**"],
+    root: "C:/Users/runneradmin/repo",
+    cwd: "C:/Users/runneradmin/repo",
+    data: ["C:/Users/runneradmin/.claude/plugins/data/guard-x"],
+  };
+  for (const command of [
+    "echo a > /c/Users/$USERNAME/.claude/plugins/data/guard-x/blocks.txt",
+    "echo a > /c/Users/*/.claude/plugins/data/guard-x/blocks.txt",
+    "echo a > /cygdrive/c/Users/runneradmin/.claude/plugins/data/guard-x/blocks.txt",
+    "rm -rf /c/Users/*/.claude/plugins/data",
+  ])
+    assert.ok(protectedWrite(command, win)?.target, command);
+  const mac = { ...g, data: ["/Users/me/.claude/plugins/data/guard-x"] };
+  for (const command of [
+    "echo a > /Users/$USER/.claude/plugins/data/guard-x/blocks.txt",
+    "echo a > /Users/*/.claude/plugins/data/guard-x/blocks.txt",
+    "echo a > /Users/m?/.claude/plugins/data/guard-x/blocks.txt",
+    "rm -rf /Users/*/.claude/plugins/data",
+  ])
+    assert.ok(protectedWrite(command, mac, env)?.target, command);
+  for (const command of [
+    "echo a > ~/.claude/plugins/data/other-plugin/x",
+    "echo a > ~/.cache/x",
+    "echo a > /u/.claude/plugins/data/other-*/x",
+  ])
+    assert.equal(protectedWrite(command, g, env), null, command);
+});
+
+void test("protectedWrite: a share path, an NTFS stream, a root-relative PowerShell path and a Cygwin drive path in a run (G44)", () => {
+  const root = "C:/Users/runneradmin/repo";
+  const g = {
+    globs: [".github/**"],
+    registered: ["config/app.yaml"],
+    root,
+    roots: [root],
+    cwd: root,
+  };
+  for (const command of [
+    "echo a > //localhost/C$/Users/runneradmin/repo/.github/x",
+    "echo a > //127.0.0.1/c$/Users/runneradmin/repo/src/x",
+    String.raw`echo a > '\\localhost\C$\Users\runneradmin\repo\.github\x'`,
+    String.raw`Set-Content \\host\share\x a`,
+    "echo a > '.github::$INDEX_ALLOCATION/workflows/ci.yml'",
+    "echo a > 'config/app.yaml::$DATA'",
+    "echo a > src/a.txt:hidden",
+    "rm -rf '.github::$INDEX_ALLOCATION'",
+  ])
+    assert.equal(protectedWrite(command, g)?.spelled, "drive", command);
+  for (const command of [
+    "echo a > /cygdrive/c/Users/runneradmin/repo/.github/x",
+    "rm -rf /cygdrive/c/Users/runneradmin/repo/.github",
+    "cd /cygdrive/c/Users/runneradmin/repo && echo a > .github/x",
+  ])
+    assert.ok(protectedWrite(command, g)?.target, command);
+  for (const command of [
+    "echo a > /cygdrive/c/Users/runneradmin/repo/src/x",
+    "echo a > /cygdrive/d/Users/runneradmin/repo/.github/x",
+    "sed -i 's:a:b:' f",
+    "curl -o x.txt https://example.com/a",
+    "echo https://example.com/a > x.txt",
+    String.raw`Set-Content C:\Users\runneradmin\AppData\x.txt a`,
+    "echo a > C:/temp/x.txt",
+    String.raw`Set-Content $env:TEMP\x.txt a`,
+    "echo a > log-$(date +%H:%M).txt",
+    // the text a PowerShell writer takes beside its path is no path to read a stream or share in
+    'Set-Content log.txt "error: failed"',
+    'Add-Content log.txt "[12:30] done"',
+    'Add-Content -Value "status: ok" log.txt',
+    "Set-Content -Path log.txt -Value 'a: b'",
+    "Set-Content log.txt //not-a-share",
+  ])
+    assert.equal(protectedWrite(command, g), null, command);
+  for (const command of [
+    "Set-Content -Value a '.github::$INDEX_ALLOCATION/workflows/ci.yml'",
+    "Set-Content '.github::$INDEX_ALLOCATION/workflows/ci.yml' a",
+    "Add-Content -Path '.github::$INDEX_ALLOCATION/x' -Value a",
+  ])
+    assert.equal(protectedWrite(command, g)?.spelled, "drive", command);
+  // a path from a root under PowerShell is on the drive of its directory; with no drive known it is denied
+  const ps = { ...g, powershell: true };
+  assert.ok(
+    protectedWrite(
+      String.raw`Set-Content -Path \Users\runneradmin\repo\.github\x -Value a`,
+      ps,
+    )?.target,
+  );
+  assert.ok(
+    protectedWrite("Set-Content /Users/runneradmin/repo/.github/x a", ps)
+      ?.target,
+  );
+  assert.equal(
+    protectedWrite(String.raw`Set-Content \temp\x a`, ps),
+    null,
+    "another path on the drive",
+  );
+  assert.equal(
+    protectedWrite(
+      String.raw`Set-Content \Users\runneradmin\repo\.github\x a`,
+      g,
+    ),
+    null,
+    "not a PowerShell command: an escape, not a root",
+  );
+  const posix = {
+    globs: [".github/**"],
+    root: "/r",
+    cwd: "/r",
+    powershell: true,
+  };
+  assert.equal(
+    protectedWrite(String.raw`Set-Content \x a`, posix)?.spelled,
+    "drive",
+  );
+  assert.equal(protectedWrite("Set-Content /tmp/x a", posix), null);
+  assert.equal(oddSpelling("a/b:c"), "drive");
+  assert.equal(oddSpelling("C:/a/b"), null);
+  assert.equal(oddSpelling("a/b:c", false), null);
+});

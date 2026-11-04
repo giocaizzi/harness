@@ -2321,6 +2321,75 @@ void test("a registered run: a device path or a drive-relative path is denied; a
     assert.ok(!denied(await shell(command)), command);
 });
 
+void test("a registered run: PowerShell writes to an ordinary Windows path are allowed; a path from a root, a share and a stream are not (G44)", async () => {
+  const repo = realpathSync(mkdtempSync(join(tmpdir(), "guard-ps-")));
+  mkdirSync(join(repo, ".git"));
+  const run = registered({ protected_paths: { globs: ["config/app.yaml"] } });
+  const ps = (command: string) =>
+    run({ ...pre("PowerShell", command), cwd: repo });
+  for (const command of [
+    String.raw`Set-Content C:\temp\x.txt a`,
+    String.raw`Set-Content -Path C:\Users\runneradmin\repo\src\x -Value a`,
+    String.raw`Get-Date | Out-File C:\temp\x.txt`,
+    String.raw`Out-File -FilePath C:\Users\runneradmin\Desktop\x.txt`,
+    String.raw`Remove-Item C:\temp\build -Recurse`,
+    String.raw`echo a > C:\temp\x.txt`,
+    String.raw`cd C:\temp; echo a > x.txt`,
+    String.raw`Copy-Item x ..\..`,
+    String.raw`Set-Content -Path C:\Temp\out.txt -Value a`,
+    String.raw`Set-Content 'C:\temp\x.txt' a`,
+    "echo a > C:/temp/x.txt",
+    String.raw`Set-Content $env:TEMP\x.txt a`,
+  ])
+    assert.ok(!denied(await ps(command)), command);
+  for (const command of [
+    `Set-Content '${repo}/.github/x' a`,
+    `Set-Content ${repo}/.github/x a`,
+    // a path from a root has no drive here: it cannot be placed
+    String.raw`Set-Content \Users\x\repo\.github\x a`,
+    String.raw`Set-Content \\host\share\x a`,
+    "echo a > '.github::$INDEX_ALLOCATION/workflows/ci.yml'",
+    "echo a > 'config/app.yaml::$DATA'",
+  ])
+    assert.ok(denied(await ps(command)), command);
+  assert.ok(!denied(await ps("Set-Content /tmp/guard-ps-x a")));
+  assert.ok(
+    denied(await run(edit(`${repo}/.github::$INDEX_ALLOCATION/x`, repo))),
+  );
+  assert.ok(denied(await run(edit("config/app.yaml::$DATA", repo))));
+  assert.ok(denied(await run(edit("//host/share/x.txt", repo))));
+  assert.ok(!denied(await run(edit(join(repo, "src", "x.txt"), repo))));
+});
+
+void test("a registered run: a glob or variable in a path to guard's data directory is denied (edit tool and shell) (G44)", async () => {
+  const data = realpathSync(mkdtempSync(join(tmpdir(), "guard-datadir-")));
+  const repo = realpathSync(mkdtempSync(join(tmpdir(), "guard-repo-")));
+  mkdirSync(join(repo, ".git"));
+  const run = registered(DEFAULT_REG, { CLAUDE_PLUGIN_DATA: data });
+  const parent = data.slice(0, data.lastIndexOf("/"));
+  for (const file of [
+    `${parent}/guard-datadir-*/blocks.txt`,
+    `${parent}/guard-datad?r-*/blocks.txt`,
+    `${parent}/*/blocks.txt`,
+    `${parent}/$GUARD_DATA/blocks.txt`,
+  ]) {
+    assert.ok(denied(await run(edit(file, repo))), `edit ${file}`);
+    assert.ok(
+      denied(await run({ ...pre("Bash", `echo 0 > ${file}`), cwd: repo })),
+      `shell ${file}`,
+    );
+  }
+  assert.ok(
+    denied(await run({ ...pre("Bash", `rm -rf ${parent}/*`), cwd: repo })),
+  );
+  assert.ok(!denied(await run(edit(`${parent}/other-plugin/x`, repo))));
+  assert.ok(
+    !denied(
+      await run({ ...pre("Bash", `echo 0 > ${parent}/other-*/x`), cwd: repo }),
+    ),
+  );
+});
+
 void test("a registered run: a checkout whose path ends in a dot or a space still protects its .github", async () => {
   const outer = realpathSync(mkdtempSync(join(tmpdir(), "guard-tail-")));
   const run = registered();

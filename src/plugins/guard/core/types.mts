@@ -325,6 +325,8 @@ export interface ProtectConfig {
   exempt?: string[];
   // Never waived: the built-in floor and GUARD_RUN_PROTECTED_PATHS.
   globs: string[];
+  // The command runs under PowerShell: a path from a root (`\Users\x`) is on the drive of its directory.
+  powershell?: boolean;
   // The registration's globs: waived by `exempt`.
   registered?: string[];
   root?: string;
@@ -475,6 +477,8 @@ export type WriteHits = (
   dir: string,
   resolve: (path: string) => string,
   above: boolean,
+  // False for text that is no path to read an odd spelling on (a writer's value).
+  path?: boolean,
 ) => boolean;
 export interface GhAction {
   label: boolean;

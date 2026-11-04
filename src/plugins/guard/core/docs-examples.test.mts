@@ -4,9 +4,16 @@ import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
-// The source and the emitted file sit at different depths: walk up to the repo's docs.
+// The source and the emitted file sit at different depths: walk up to the repo's docs, and stop at the filesystem root
+// (an installed plugin copy has no docs).
 let root = dirname(fileURLToPath(import.meta.url));
-while (!existsSync(join(root, "docs", "guard.md"))) root = dirname(root);
+while (!existsSync(join(root, "docs", "guard.md"))) {
+  if (dirname(root) === root)
+    throw new Error(
+      "docs/guard.md not found in any directory above this test: run it from a checkout of the repo",
+    );
+  root = dirname(root);
+}
 const doc = readFileSync(join(root, "docs", "guard.md"), "utf8");
 
 // The fenced json block that follows the paragraph containing `intro`.

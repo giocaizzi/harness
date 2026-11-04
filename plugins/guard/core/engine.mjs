@@ -1374,8 +1374,9 @@ function repoSegments(target, dir, protect) {
     const keep = dir === UNKNOWN_DIR ? dir : posixPath(dir);
     const fold = (x) => x === undefined ? x : foldWindows(posixPath(x));
     const pair = (path, where) => readings(repoSegmentsOf(path, where, protect), repoSegmentsOf(foldWindows(path), where === UNKNOWN_DIR ? where : foldWindows(where), { ...protect, root: fold(protect.root), cwd: fold(protect.cwd) }));
-    // A Git Bash (`/c/...`) or WSL (`/mnt/c/...`) drive path is also read as the drive-letter path it stands for.
-    const drive = (x) => x.replace(/^\/(?:mnt\/)?([a-z])(?=\/|$)/i, (_, d) => `${d}:`);
+    // A Git Bash (`/c/...`), WSL (`/mnt/c/...`) or Cygwin (`/cygdrive/c/...`) drive path is also read as the drive-letter
+    // path it stands for.
+    const drive = (x) => x.replace(/^\/(?:mnt\/|cygdrive\/)?([a-z])(?=\/|$)/i, (_, d) => `${d}:`);
     const out = pair(p, keep);
     if (drive(p) !== p)
         out.push(...pair(drive(p), keep));
@@ -1383,20 +1384,42 @@ function repoSegments(target, dir, protect) {
         out.push(...pair(p, drive(keep)));
     return out;
 }
-// The raw reading of a target and the one Windows gives it, `folded` when they differ.
+// Each reading, then the ones a variable in its middle adds, made one at a time: a long path of variables would
+// otherwise build thousands of readings before the time limit applies.
+function* withDynamic(list) {
+    for (const at of list) {
+        yield at;
+        yield* dynamicReadings(at);
+    }
+}
+// The raw readings of a target and the ones Windows gives it, `folded` when they differ.
 function readings(raw, at) {
     // Only a fold inside the repo-relative part counts: a root or cwd that merely ends in a dot changes both spellings alike.
-    const same = !!at &&
-        !!raw &&
-        raw.suffix === at.suffix &&
-        raw.segs.length === at.segs.length &&
-        raw.segs.every((x, i) => x === at.segs[i]);
-    const out = [];
-    if (raw)
-        out.push(same ? raw : { ...raw, folded: true });
-    if (at && !same)
-        out.push({ ...at, folded: true });
+    const same = (a, b) => a.suffix === b.suffix &&
+        a.segs.length === b.segs.length &&
+        a.segs.every((x, i) => x === b.segs[i]);
+    const out = raw.map((r) => at.some((a) => same(r, a)) ? r : { ...r, folded: true });
+    for (const a of at)
+        if (!raw.some((r) => same(r, a)))
+            out.push({ ...a, folded: true });
     return out;
+}
+// A whole segment that is a variable or a substitution: it may be a name, or one or more `..` (`D=..`).
+const DYNAMIC_SEGMENT = /^(?:\$(?:\{[^}]*\}|\w+|\([^)]*\))|%\w+%|`[^`]*`)$/;
+// The readings a target also has when a variable or substitution segment in the middle of it stands for `..` (one or
+// more): the segments after it, re-rooted at each ancestor of the ones before it, up to the root. None is exempted.
+function* dynamicReadings(at) {
+    for (const [i, x] of at.segs.entries()) {
+        if (!DYNAMIC_SEGMENT.test(x))
+            continue;
+        const tail = at.segs.slice(i + 1);
+        for (let kept = 0; kept < i; kept++)
+            yield {
+                ...at,
+                segs: [...at.segs.slice(0, kept), ...tail],
+                folded: true,
+            };
+    }
 }
 function repoSegmentsOf(p, dir, protect) {
     const cwdRel = protect.root && protect.cwd
@@ -1405,27 +1428,29 @@ function repoSegmentsOf(p, dir, protect) {
     // A first segment that is only a variable or `~user` is dropped; one with text after the variable stays (`$P.github`).
     if (/^[$~%`]/.test(p)) {
         const segs = normalizeSegments(p);
-        return {
-            segs: /^(?:\$(?:\{[^}]*\}|\w+|\([^)]*\))|%\w+%|~[\w.-]*|`[^`]*`)$/.test(segs[0] ?? "")
-                ? segs.slice(1)
-                : segs,
-            suffix: true,
-        };
+        return [
+            {
+                segs: /^(?:\$(?:\{[^}]*\}|\w+|\([^)]*\))|%\w+%|~[\w.-]*|`[^`]*`)$/.test(segs[0] ?? "")
+                    ? segs.slice(1)
+                    : segs,
+                suffix: true,
+            },
+        ];
     }
     // An absolute target is where it says, whatever directory a `cd` reached.
     if (dir === UNKNOWN_DIR && !ABS_DIR.test(p))
-        return { segs: normalizeSegments(p), suffix: true };
+        return [{ segs: normalizeSegments(p), suffix: true }];
     const full = dir && !ABS_DIR.test(p) ? `${posixPath(dir).replace(/\/+$/, "")}/${p}` : p;
     if (ABS_DIR.test(full)) {
         if (!protect.root)
-            return { segs: normalizeSegments(full), suffix: true };
+            return [{ segs: normalizeSegments(full), suffix: true }];
         return relativeTo(posixPath(protect.root), full.replace(/^\/(?=[a-z]:)/i, ""), true);
     }
     const segs = normalizeSegments([...cwdRel, ...full.split("/")].join("/"));
     // Above the root (`..`) holds the whole repo; beside it (`../other`) is outside.
     if (segs[0] === "..")
-        return segs.every((x) => x === "..") ? { segs: [] } : null;
-    return { segs };
+        return segs.every((x) => x === "..") ? [{ segs: [] }] : [];
+    return [{ segs }];
 }
 function relativeTo(root, path, wrap = false) {
     const r = normalizeSegments(root);
@@ -1445,12 +1470,53 @@ function relativeTo(root, path, wrap = false) {
     const inside = r.length <= s.length && same(r, s, true);
     if (!wrap)
         return inside ? s.slice(r.length) : [];
-    // A root part matched only through an 8.3 name is a guess: nothing is exempt there.
-    return inside
-        ? { segs: s.slice(r.length), ...(exact ? {} : { folded: true }) }
-        : same(s, r)
-            ? { segs: [] }
-            : null;
+    const out = [];
+    if (r.length > 0 && s.includes("**")) {
+        // `**` stops, or takes one more root segment and may take more; every place it leaves the root's end is a reading.
+        const ends = new Set();
+        const seen = new Set();
+        const todo = [[0, 0]];
+        for (let step = todo.pop(); step; step = todo.pop()) {
+            const [i, j] = step;
+            const key = i * (s.length + 1) + j;
+            if (seen.has(key))
+                continue;
+            seen.add(key);
+            if (i === r.length) {
+                ends.add(j);
+                if (s[j] === "**")
+                    todo.push([i, j + 1]);
+            }
+            else if (j < s.length) {
+                const x = defined(s[j]);
+                const y = defined(r[i]);
+                if (x === "**")
+                    todo.push([i, j + 1], [i + 1, j]);
+                else if (x.toLowerCase() === y.toLowerCase() ||
+                    segmentsMayBeSame(y, x) ||
+                    segMayMatch(y, x))
+                    todo.push([i + 1, j + 1]);
+            }
+        }
+        for (const j of ends)
+            out.push({ segs: s.slice(j), folded: true });
+    }
+    else if (inside)
+        // A root part matched only through an 8.3 name is a guess: nothing is exempt there.
+        out.push({
+            segs: s.slice(r.length),
+            ...(exact ? {} : { folded: true }),
+        });
+    // Above the root: the target ends inside the root's length, a glob or variable in it standing for the root's segment.
+    if (s.length < r.length &&
+        s.every((x, i) => {
+            const y = defined(r[i]);
+            return (x.toLowerCase() === y.toLowerCase() ||
+                segmentsMayBeSame(y, x) ||
+                segMayMatch(y, x));
+        }))
+        out.push({ segs: [] });
+    return out;
 }
 // Whether two path segments may name one directory when one is a Windows 8.3 short name (`RUNNER~1` and `runneradmin`,
 // either way round); the matching is the protected-pattern matcher's, and "may" counts: a root is compared the same way.
@@ -1475,7 +1541,7 @@ function globsMayMeet(a, b) {
 }
 // Whether one target segment may be one protected-pattern segment.
 // A variable may hold a leading dot, so only a written `*`, `?` or `[` at the start keeps a dot file out.
-function segMayMatch(pat, seg) {
+export function segMayMatch(pat, seg) {
     // A Windows 8.3 short name (`GITHUB~1`, `CONFIG~1.YAM`) stands for any name, dot dropped, that starts with its prefix
     // and, when it has one, whose extension starts with the short one.
     const short = /^([^~./]{1,6})~\d+(?:\.([^./]{1,3}))?$/.exec(seg);
@@ -1557,18 +1623,36 @@ function expandBraces(text, limit = 64) {
 }
 const LIMITED = new Error("limited");
 // A spelling the guard denies in a run instead of modelling it: a path segment made only of dots and spaces (other than
-// `.` and `..`), which Windows drops or reads as `..`; a Windows device path (`//?/C:/...`) or a drive-relative path
-// (`C:dir`), which no repo root can be compared with.
+// `.` and `..`), which Windows drops or reads as `..`; a Windows device path (`//?/C:/...`), a network or admin share
+// (`//host/share`), a drive-relative path (`C:dir`) or an NTFS stream (`.github::$INDEX_ALLOCATION`, `name:stream`), which no
+// repo root can be compared with. It is read on a spelling that keeps its separators: a backslash word the shell read
+// as escapes (`C:\temp\x` is `C:tempx`) is no such spelling.
 export function spellingWhy(why, target, kind) {
     return kind === "dots"
         ? `${why} \`${target}\` has a path segment of only dots and spaces, which Windows reads differently; spell the path plainly.`
-        : `${why} \`${target}\` is a Windows path spelling (a device path or a drive-relative one) the guard cannot place in the repo; spell the path plainly.`;
+        : `${why} \`${target}\` is a Windows path spelling (a device or share path, a drive-relative one or an NTFS stream) the guard cannot place in the repo; spell the path plainly.`;
 }
-export function oddSpelling(path) {
+// With `strict` off, a network share and a stream are not looked for: the path was made absolute by the hook, so its
+// colons and double slash are not the agent's spelling.
+export function oddSpelling(path, strict = true) {
     const p = posixPath(path);
     if (p.split("/").some((x) => x !== "." && x !== ".." && /^[. ]+$/.test(x)))
         return "dots";
-    return /^\/\/[?.]\//.test(p) || /^[a-z]:[^\\/]/i.test(p) ? "drive" : null;
+    if (/^\/\/[?.]\//.test(p) || /^[a-z]:[^\\/]/i.test(p))
+        return "drive";
+    if (!strict)
+        return null;
+    if (/^\/\/[^/]/.test(p))
+        return "drive";
+    // A colon in a segment other than a leading drive letter; a variable or substitution (`$env:TEMP`) is no stream.
+    const named = p
+        .replace(/^\/(?=[a-z]:)/i, "")
+        .replace(/\$env:\w+|\$\{[^}]*\}|\$\([^)]*\)|`[^`]*`|%\w+%/gi, "_");
+    return named
+        .split("/")
+        .some((x, i) => x.includes(":") && !(i === 0 && /^[a-z]:$/i.test(x)))
+        ? "drive"
+        : null;
 }
 // A command that may write at all: an output redirection or a writer's name. Only such a command can fail closed.
 const MAY_WRITE = /[>]|(?:^|[^\w-])(?:tee|sed|perl|rm|rmdir|unlink|mv|cp|move|copy|set-content|add-content|out-file|tee-object|remove-item|move-item|copy-item|ri|mi|ci|cpi|del|erase|rd|sc|ac)(?![\w-])/i;
@@ -1598,6 +1682,8 @@ export function protectedWrite(command, protect, env = {}, limits = { globs: 256
     let targets = 0;
     // Set when a target is denied only for its spelling (`oddSpelling`), not for the path it names.
     let spelled;
+    // The spellings of the words seen that keep their separators (see `spellings`).
+    const plain = new Set();
     const tick = () => {
         if ((++work & 255) === 0 && Date.now() > until)
             throw LIMITED;
@@ -1631,23 +1717,30 @@ export function protectedWrite(command, protect, env = {}, limits = { globs: 256
         }
         // A segment pair names one directory when equal ignoring case, once the dots and spaces Windows drops are cut, or
         // through an 8.3 short name on either side.
+        // A glob or variable in the target's segment (`guard-*`, `$USER`) may name the directory's: `targetIsA` says which side
+        // is the target.
         const cut = (x) => x.replace(/[. ]+$/, "") || x;
-        const same = (a, b) => a.every((x, i) => {
+        const same = (a, b, targetIsA = false) => a.every((x, i) => {
             const y = defined(b[i]);
-            return segmentsMayBeSame(x, y) || segmentsMayBeSame(cut(x), cut(y));
+            const [wanted, given] = targetIsA ? [y, x] : [x, y];
+            return (segmentsMayBeSame(x, y) ||
+                segmentsMayBeSame(cut(x), cut(y)) ||
+                segMayMatch(wanted, given) ||
+                segMayMatch(cut(wanted), cut(given)));
         });
         for (const d of dataDirs) {
             if (full !== null) {
                 const bare = full.replace(/^\/(?=[a-z]:)/i, "");
-                // As written, as Windows reads it, and (a Git Bash `/c/...` or WSL `/mnt/c/...` path) as a drive-letter path.
-                const spelled = [bare, foldWindows(bare)].flatMap((text) => {
+                // As written, as Windows reads it, and (a Git Bash `/c/...`, WSL `/mnt/c/...` or Cygwin `/cygdrive/c/...` path) as a
+                // drive-letter path.
+                const forms = [bare, foldWindows(bare)].flatMap((text) => {
                     const s = normalizeSegments(text);
-                    const win = /^\/(mnt\/)?([a-z])(?:\/|$)/i.exec(text);
+                    const win = /^\/(mnt\/|cygdrive\/)?([a-z])(?:\/|$)/i.exec(text);
                     return win && /^[a-z]:$/i.test(d[0] ?? "")
                         ? [s, [`${defined(win[2])}:`, ...s.slice(win[1] ? 2 : 1)]]
                         : [s];
                 });
-                if (spelled.some((s) => d.length <= s.length ? same(d, s) : above && same(s, d)))
+                if (forms.some((s) => d.length <= s.length ? same(d, s) : above && same(s, d, true)))
                     return true;
                 continue;
             }
@@ -1673,19 +1766,32 @@ export function protectedWrite(command, protect, env = {}, limits = { globs: 256
         }
         return false;
     };
-    const hits = (target, dir, resolve, above) => {
+    const hits = (spelling, dir, resolve, above, path = true) => {
+        const kept = path && plain.has(spelling);
+        let target = spelling;
+        // PowerShell reads a path from a root (`\Users\x`, `/Users/x`) on the drive of its directory.
+        if (kept && protect.powershell && /^[\\/](?![\\/])/.test(spelling)) {
+            const drive = /^[a-z]:/i.exec(protect.cwd ?? protect.root ?? "")?.[0];
+            if (drive)
+                target = `${drive}${spelling}`;
+            else if (spelling.startsWith("\\")) {
+                spelled = "drive";
+                return true;
+            }
+        }
         if (inData(dir, resolve(target), above))
             return true;
         const resolved = resolve(target);
         // A spelling the guard will not model is denied outright, before any reading of the path is tried.
-        const odd = oddSpelling(target) ?? oddSpelling(dir) ?? oddSpelling(resolved);
+        const odd = (kept ? (oddSpelling(target) ?? oddSpelling(resolved)) : null) ??
+            oddSpelling(dir);
         if (odd !== null) {
             spelled = odd;
             return true;
         }
         // Relative to every directory with a .git above the cwd, not only the nearest: a planted `x/.git` moves no root.
         for (const root of new Set([protect.root, ...(protect.roots ?? [])])) {
-            for (const at of repoSegments(resolved, dir, { ...protect, root })) {
+            for (const at of withDynamic(repoSegments(resolved, dir, { ...protect, root }))) {
                 const hit = globs.filter((g) => patternHits(g.segs, at.segs, above, at.suffix, tick));
                 if (hit.some((g) => !g.base))
                     return true;
@@ -1702,7 +1808,7 @@ export function protectedWrite(command, protect, env = {}, limits = { globs: 256
         return false;
     };
     try {
-        const target = scanWrites(command, env, count, hits, dataDirs.length ? named : null);
+        const target = scanWrites(command, env, count, hits, dataDirs.length ? named : null, plain);
         return target === null ? null : { target, ...(spelled ? { spelled } : {}) };
     }
     catch (e) {
@@ -1761,36 +1867,40 @@ export function protectedPathHit(path, protect, limits = { globs: 256, targets: 
 }
 // PowerShell and cmd keep a backslash (`.github\ci.yml`) that a POSIX shell reads as an escape: both spellings count. A
 // brace list the shell expands counts as each word it yields; past the limit, the command fails closed.
-function spellings(w) {
-    const out = [
-        w.val,
-        ...(w.raw.includes("\\") ? [w.raw.replace(/['"]/g, "")] : []),
-    ];
+// `plain` collects the spellings that keep their separators (the word as written, braces expanded when it has no
+// backslash): a backslash word's other reading has its escapes gone, so `oddSpelling` is not read on it.
+function spellings(w, plain) {
+    const raw = w.raw.includes("\\") ? w.raw.replace(/['"]/g, "") : null;
+    const out = [w.val, ...(raw === null ? [] : [raw])];
+    plain.add(raw ?? w.val);
     if (!w.val.includes("{") || !dynamicText(w.raw))
         return out;
     const words = expandBraces(w.val);
     if (!words)
         throw LIMITED;
+    if (raw === null)
+        for (const x of words)
+            plain.add(x);
     return [...out, ...words];
 }
 const POSIX_MOVERS = /^(?:cp|mv)$/;
 // The plugin-data variable in any shell's spelling, at the start of a word and followed by its end or a separator.
 const DATA_VAR = /^(?:\$\{?|\$env:|%)(?:claude|copilot)_plugin_data(?:\}|%)?(?:$|[\\/])/i;
-function scanWrites(command, env, count, hits, named) {
+function scanWrites(command, env, count, hits, named, plain) {
     for (const { words, redirs = [], dir, remote, resolve } of segments(command, env)) {
         if (remote)
             continue;
         // Any command naming a path inside guard's data directory, whatever its program (a redirection target too).
         if (named)
             for (const w of [...redirs, ...words])
-                for (const t of spellings(w))
+                for (const t of spellings(w, plain))
                     if (named(defined(t), dir, resolve, false))
                         return t;
         for (const w of redirs) {
             if (NOT_A_FILE.test(w.val))
                 continue;
             count(w);
-            for (const t of spellings(w))
+            for (const t of spellings(w, plain))
                 if (!NOT_A_FILE.test(defined(t)) &&
                     hits(defined(t), dir, resolve, false))
                     return t;
@@ -1817,10 +1927,14 @@ function scanWrites(command, env, count, hits, named) {
         for (const w of cw.slice(1))
             if (!w.val.startsWith("-"))
                 count(w);
-        const args = cw.slice(1).flatMap(spellings);
+        const per = cw.slice(1).map((w) => spellings(w, plain));
+        const args = per.flat();
         const operands = args.filter((a) => !defined(a).startsWith("-"));
         let writes = [];
         let removes = [];
+        // Writes that are text a path-less PowerShell writer takes beside its path (`Set-Content x.txt "a: b"`): matched as a
+        // path, but no odd spelling is read on them.
+        const value = new Set();
         if (name === "tee")
             writes = operands;
         else if (inPlace) {
@@ -1830,10 +1944,23 @@ function scanWrites(command, env, count, hits, named) {
         else if (PROTECT_PS.test(name)) {
             const k = args.findIndex((a) => /^-(?:path|filepath|literalpath)$/i.test(defined(a)));
             const end = args.findIndex((x, i) => i > k && defined(x).startsWith("-"));
-            writes =
-                k >= 0
-                    ? args.slice(k + 1, end < 0 ? undefined : end)
-                    : operands.slice(0, 2);
+            if (k >= 0)
+                writes = args.slice(k + 1, end < 0 ? undefined : end);
+            else {
+                // The value is the word after `-Value`, else the second positional word.
+                const flag = per.findIndex((p) => /^-v(?:a(?:l(?:ue?)?)?)?$/i.test(defined(p[0])));
+                const positional = per
+                    .map((p, i) => i)
+                    .filter((i) => !defined(per[i]?.[0]).startsWith("-"));
+                const at = flag >= 0 ? flag + 1 : positional[1];
+                const tagged = per.flatMap((p, i) => p
+                    .filter((x) => !x.startsWith("-"))
+                    .map((t) => ({ t, value: i === at })));
+                writes = tagged.slice(0, 2).map((x) => x.t);
+                for (const [i, x] of tagged.slice(0, 2).entries())
+                    if (x.value)
+                        value.add(i);
+            }
         }
         else if (PROTECT_RM.test(name))
             removes = operands;
@@ -1869,8 +1996,8 @@ function scanWrites(command, env, count, hits, named) {
             if (PROTECT_MV.test(name))
                 removes = sources;
         }
-        for (const t of writes)
-            if (hits(t, dir, resolve, false))
+        for (const [i, t] of writes.entries())
+            if (hits(t, dir, resolve, false, !value.has(i)))
                 return t;
         for (const t of removes)
             if (hits(t, dir, resolve, true))

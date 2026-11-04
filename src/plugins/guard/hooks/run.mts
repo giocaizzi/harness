@@ -109,7 +109,13 @@ export function runContext(env: Env, opts: LoadOptions = {}): RunContext {
 // `at` is where the session is: the repo root, the cwd (`/` separators) and guard's data directories.
 export function runFacts(
   run: RegisteredRun,
-  at: { cwd?: string; data?: string[]; root?: string; roots?: string[] },
+  at: {
+    cwd?: string;
+    data?: string[];
+    powershell?: boolean;
+    root?: string;
+    roots?: string[];
+  },
 ): RunFacts | null {
   if (run.mode === "attended") return null;
   const reg = run.registration;

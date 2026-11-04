@@ -47,6 +47,7 @@ import {
   pureRead,
   refFacts,
   regenFacts,
+  segMayMatch,
   segmentsMayBeSame,
   spellingWhy,
   stackFacts,
@@ -787,6 +788,8 @@ async function onShell(
           ? runFacts(ctx, {
               ...protectFacts(input.cwd),
               data: guardDataDirs(deps),
+              powershell:
+                (input.tool_name ?? "").toLowerCase() === "powershell",
             })
           : null,
       rules: {
@@ -1103,6 +1106,23 @@ export function realish(
   return slashes(cur);
 }
 
+// Every reading of an edit tool's target that counts, and any that hits denies: the lexical one (`d/../x` is `x`), and the
+// real path of the raw spelling and of the lexical one (the kernel follows a link before a `..`; win32 may apply a `..`
+// in a link target as text).
+export function readingsOf(
+  f: { lex: string; raw: string },
+  env: LinkEnv = linkEnv,
+): (string | null)[] {
+  const out = [
+    slashes(f.lex),
+    realish(f.raw, false, env),
+    realish(f.lex, false, env),
+  ];
+  if (env.platform === "win32")
+    out.push(realish(f.raw, true, env), realish(f.lex, true, env));
+  return [...new Set(out)];
+}
+
 // `path` relative to `dir` (both `/` separated), or null when it is not inside: compared segment by segment, a Windows
 // 8.3 short name standing for the long one it may abbreviate, in either spelling (fail closed: "may" is inside).
 const relativeInside = (path: string, dir: string): string | null => {
@@ -1124,7 +1144,12 @@ const insideDir = (path: string, dir: string): boolean => {
     b.length <= a.length &&
     b.every((x, i) => {
       const y = a[i] ?? "";
-      return segmentsMayBeSame(x, y) || segmentsMayBeSame(cut(x), cut(y));
+      return (
+        segmentsMayBeSame(x, y) ||
+        segmentsMayBeSame(cut(x), cut(y)) ||
+        segMayMatch(x, y) ||
+        segMayMatch(cut(x), cut(y))
+      );
     })
   );
 };
@@ -1163,15 +1188,6 @@ function onEdit(
       return preToolUse("deny", reason, deps.harness);
     };
     const dirs = guardDataDirs(deps);
-    // Every reading of a target counts, and any that hits denies: the lexical one (`d/../x` is `x`), and the real path
-    // of the raw spelling and of the lexical one (the kernel follows a link before a `..`; win32 may apply a `..` in a
-    // link target as text).
-    const readingsOf = (f: { lex: string; raw: string }): (string | null)[] => {
-      const out = [slashes(f.lex), realish(f.raw), realish(f.lex)];
-      if (process.platform === "win32")
-        out.push(realish(f.raw, true), realish(f.lex, true));
-      return [...new Set(out)];
-    };
     const files = touchedFiles(input).map((f) => ({
       name: f.lex,
       given: f.given,
@@ -1180,7 +1196,7 @@ function onEdit(
     }));
     // A spelling Windows reads differently is denied, not modelled (`oddSpelling`).
     for (const f of files) {
-      const kind = oddSpelling(f.given) ?? oddSpelling(f.raw);
+      const kind = oddSpelling(f.given) ?? oddSpelling(f.raw, false);
       if (kind !== null)
         return denyEdit(spellingWhy(rules.run.protectedWhy, f.name, kind));
     }
