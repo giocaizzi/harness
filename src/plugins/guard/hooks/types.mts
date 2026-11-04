@@ -1,6 +1,8 @@
 // Type definitions for the guard hook layer, harness abstractions, and hook lifecycles.
 
 import type { HostFacts } from "../core/types.mjs";
+import type { PrepareOptions } from "./checker.mjs";
+import type { RegistrationCache } from "./registration.mjs";
 
 export type HarnessName =
   | "claude"
@@ -170,7 +172,12 @@ export interface GuardBridge {
     sessionId?: string;
     source?: string;
   }): Promise<HookOutputPayload>;
-  stop(params: { active?: boolean; cwd?: string }): Promise<string | null>;
+  stop(params: {
+    active?: boolean;
+    agentId?: string;
+    cwd?: string;
+    sessionId?: string;
+  }): Promise<string | null>;
   usage(params: GuardModelUsageParams): Promise<void>;
 }
 
@@ -202,6 +209,8 @@ export interface GuardDeps {
     attrs: Record<string, unknown>,
   ) => Promise<void> | void;
   rootTimeoutMs?: number;
+  // Tests only: the trust checks' probes for the run manifest and its checker, for tool calls and stops.
+  runVet?: PrepareOptions;
   run?: (
     argv: readonly string[],
     cwd?: string,
@@ -236,6 +245,10 @@ export interface HandleDeps {
   pythonManager?: (cwd?: string) => string | null;
   random?: () => number;
   readTool?: boolean;
+  // In-process harnesses (opencode, pi): one per process, so the parsed run manifest is reused while unchanged.
+  registrationCache?: RegistrationCache;
+  // Tests only: the trust checks' probes for the run manifest and its checker (hooks/checker.mjs PrepareOptions).
+  runVet?: PrepareOptions;
   run?: (
     argv: readonly string[],
     cwd?: string,

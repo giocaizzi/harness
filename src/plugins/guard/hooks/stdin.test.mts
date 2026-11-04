@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
@@ -8,7 +8,7 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { readStdin } from "./stdin.mjs";
-import { crashAnswer, stopCheck } from "./stop.mjs";
+import { crashAnswer, gateFailClosed, stopCheck } from "./stop.mjs";
 import type { SyncRunner } from "./stop.mjs";
 
 const sleep = (ms: number): Promise<void> =>
@@ -170,8 +170,7 @@ const hook = (
         ...clean,
         GUARD_OTEL: "off",
         GUARD_STOP_CHECK: "off",
-        FACTORY_EVENTS_FILE: "",
-        FACTORY_RUN_ID: "",
+        GUARD_RUN_EVENTS_FILE: "",
         GUARD_UNATTENDED: "",
         CLAUDE_PLUGIN_DATA: mkdtempSync(join(tmpdir(), "guard-stdin-")),
         ...env,
@@ -274,9 +273,10 @@ void test("guard hook: a payload that trickles in is judged whole", async () => 
   assert.match(d.reason, /not a Conventional Commit header/);
 });
 
-const RUNTIME = { FACTORY_RUN_ID: "run-1", FACTORY_TICKET: "acme/app#12" };
+// A run whose registration cannot load (no manifest): the stop hook fails closed for it, as for any identified run.
+const RUNTIME = { GUARD_RUN_ID: "run-1" };
 
-void test("stop hook: a payload that never completes blocks a runtime run, and lets an attended stop go", async () => {
+void test("stop hook: a payload that never completes blocks an identified run, and lets a stop with no run go", async () => {
   // stdin stays open on a partial payload, so the reader runs out its deadline
   const [runtime, attended] = await Promise.all([
     hook(STOP, [], ['{"cwd":'], { end: false, env: RUNTIME }),
@@ -285,7 +285,7 @@ void test("stop hook: a payload that never completes blocks a runtime run, and l
   assert.equal(runtime.status, 0, runtime.stderr);
   const o = JSON.parse(runtime.stdout) as { decision: string; reason: string };
   assert.equal(o.decision, "block");
-  assert.match(o.reason, /could not read the hook input/);
+  assert.match(o.reason, /^Run registration failed: GUARD_RUN_ID is set/);
 
   assert.equal(attended.status, 0, attended.stderr);
   assert.equal(attended.stdout, "");
@@ -306,11 +306,49 @@ void test("crashAnswer: a passed gate stays passed, a blocked gate keeps its blo
 
   const open = crashAnswer({ done: false, reason: null }, env, input, "why");
   assert.equal(open?.decision, "block");
-  assert.match(
-    open.reason ?? "",
-    /could not check the result for run run-1 \(why\)/,
-  );
+  assert.match(open.reason ?? "", /^Run registration failed: /);
   assert.equal(crashAnswer({ done: false, reason: null }, {}, input), null);
+});
+
+void test("gateFailClosed: a registered unattended run whose stop input cannot be read blocks, and the attended run passes", () => {
+  const dir = mkdtempSync(join(tmpdir(), "guard-stdin-"));
+  const m = join(dir, "run.json");
+  writeFileSync(
+    m,
+    JSON.stringify({
+      contract: 2,
+      runner: "acme-runner",
+      requires: ["result-gate"],
+      result: { file: ".acme/runs/{ticket_number}/result.json" },
+    }),
+  );
+  // a manifest made out of reach through the PrepareOptions probes, as session.test does
+  const opts = {
+    writable: () => false,
+    owner: () => false,
+    readOnlyMount: () => false,
+    dataDir: mkdtempSync(join(tmpdir(), "guard-stdin-data-")),
+  };
+  const env = {
+    GUARD_RUN_MANIFEST: m,
+    GUARD_RUN_ID: "run-1",
+    GUARD_RUN_TICKET: "acme/app#12",
+  } as NodeJS.ProcessEnv;
+  const input = { session_id: "s-unreadable" };
+  assert.match(
+    gateFailClosed(env, input, "stdin: payload never completed", opts) ?? "",
+    /^Run result gate: could not check the result for run run-1 /,
+  );
+  assert.equal(
+    gateFailClosed(
+      { ...env, GUARD_RUN_MODE: "attended" },
+      // another session: the run variables are pinned per session
+      { session_id: "s-unreadable-attended" },
+      "stdin: payload never completed",
+      opts,
+    ),
+    null,
+  );
 });
 
 void test("stopCheck: the gate's answer is reported before the make check starts", async () => {

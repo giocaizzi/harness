@@ -5,7 +5,7 @@
 // Row: [command, expected ('allow' | 'allow:<hint>' | 'ask:<rule>' | 'deny:<rule>'), bug id, source, options?]
 // options: { python: 'uv' } the repo's Python manager; { hints: true } the read and edit hints not yet shown;
 // { read: false } the command must not get the plain-read allow (`pureRead`), so the harness's own prompt decides.
-// { factory: 'readable' | 'configured' | 'unsure' } a factory run whose config was read (with extra configured label names, for 'configured'), or could not be.
+// { run: 'registered' | 'configured' | 'unsure' | 'protected' } a registered unattended run: example labels and protected paths, other label names (for 'configured'), a registration that requires labels but names none, or one protecting only a label.
 // { stack: <facts> } the stacked-PR facts `stackFacts` gathered: { below: { number, branch }, base }, or {} for none.
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -47,29 +47,32 @@ const run = (argv) => {
 const PROTECT = {
     root: "/Users/me/repo",
     cwd: "/Users/me/repo",
-    data: ["/Users/me/.claude/plugins/data/guard-acme"],
 };
-const FACTORY = {
-    readable: {
-        approval: "agent-ok",
-        takeover: "factory-takeover",
-        protect: PROTECT,
+const RUN = {
+    registered: {
+        labels: { approval: "agent-ok", takeover: "factory-takeover" },
+        protect: {
+            ...PROTECT,
+            registered: [".factory/**"],
+            exempt: [".factory/runs/*/*/**"],
+        },
     },
     configured: {
-        approval: "agent-ok",
-        takeover: "factory-takeover",
-        approvals: ["go-ahead"],
-        takeovers: ["hand-over"],
-        protect: PROTECT,
+        labels: {
+            approval: "go-ahead",
+            takeover: "hand-over",
+            protected: ["agent-ok", "factory-takeover"],
+        },
+        protect: {
+            ...PROTECT,
+            registered: [".factory/**"],
+            exempt: [".factory/runs/*/*/**"],
+        },
     },
-    unsure: {
-        approval: "agent-ok",
-        takeover: "factory-takeover",
-        unsure: true,
-        extra: [],
-    },
+    protected: { labels: { protected: ["acme-parked"] }, protect: PROTECT },
+    unsure: { unsure: true },
 };
-const decide = async (command, { python = null, hints = false, factory = null, stack = null, } = {}) => {
+const decide = async (command, { python = null, hints = false, run: runOption = null, stack = null, } = {}) => {
     const [worktrees, branches, regenerable, refs] = await Promise.all([
         worktreeFacts(command, env, rules, run),
         branchFacts(command, rules, run, env),
@@ -88,7 +91,7 @@ const decide = async (command, { python = null, hints = false, factory = null, s
         refs,
         python,
         stack,
-        factory: factory ? FACTORY[factory] : null,
+        run: runOption ? RUN[runOption] : null,
         rules,
     });
     return (d.action +
@@ -131,11 +134,12 @@ function isOptions(value) {
             typeof value.python === "string") &&
         (value.hints === undefined || typeof value.hints === "boolean") &&
         (value.read === undefined || typeof value.read === "boolean") &&
-        (value.factory === undefined ||
-            value.factory === null ||
-            value.factory === "readable" ||
-            value.factory === "configured" ||
-            value.factory === "unsure") &&
+        (value.run === undefined ||
+            value.run === null ||
+            value.run === "registered" ||
+            value.run === "configured" ||
+            value.run === "protected" ||
+            value.run === "unsure") &&
         (value.stack === undefined || value.stack === null || isStack(value.stack)));
 }
 function readCorpus(value) {

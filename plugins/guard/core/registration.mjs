@@ -1,7 +1,6 @@
 // Run contract v2: the runner's registration manifest (GUARD_RUN_MANIFEST). Pure: no fs or process I/O. The schema is
 // strict (unknown keys, unknown capabilities and another contract major are refused), and a registration can only add
-// protection on top of guard's built-in floor, never remove or loosen it. Not wired into decisions yet: contract v1
-// stays the enforced contract until guard 1.0.0.
+// protection on top of guard's built-in floor, never remove or loosen it. Enforced from guard 1.0.0.
 import path from "node:path";
 import { DEFAULT_PROTECTED_LIMITS } from "./constants.mjs";
 import { checkerPathError, report, show, TICKET } from "./result.mjs";
@@ -153,7 +152,7 @@ const checkProtected = (v, limits, errors) => {
         // Exemptions apply only to this registration's own globs: never under .github or a built-in protected default.
         const floor = new Set([
             ".github",
-            ...rules.factory.protectedPaths.map((g) => (g.split("/")[0] ?? "").toLowerCase()),
+            ...rules.run.protectedPaths.map((g) => (g.split("/")[0] ?? "").toLowerCase()),
         ]);
         const firsts = new Set((globs ?? []).map((e) => e.split("/")[0]));
         exempt.forEach((e, i) => {
@@ -374,20 +373,23 @@ export function parseRegistration(bytes, limits = DEFAULT_PROTECTED_LIMITS, path
         return fail(failure(e));
     }
 }
-// Expands result.file's {ticket_number} and {run_id}: { path } (repo-relative, POSIX separators) or { why }.
+// Expands result.file's {ticket_number} and {run_id}: { path } (repo-relative, POSIX separators) or { why }. A
+// variable is checked only when the template uses it.
 export function resultFile(template, vars) {
-    if (!/^[1-9]\d{0,9}$/.test(vars.ticket_number)) {
+    const ticketNumber = vars.ticket_number ?? "";
+    if (template.includes("{ticket_number}") &&
+        !/^[1-9]\d{0,9}$/.test(ticketNumber)) {
         return {
             why: `ticket number must match ^[1-9]\\d{0,9}$, got ${show(vars.ticket_number)}`,
         };
     }
-    if (!RUN_ID.test(vars.run_id)) {
+    if (template.includes("{run_id}") && !RUN_ID.test(vars.run_id)) {
         return {
             why: `run id must match ${RUN_ID.source}, got ${show(vars.run_id)}`,
         };
     }
     const expanded = template
-        .replaceAll("{ticket_number}", vars.ticket_number)
+        .replaceAll("{ticket_number}", ticketNumber)
         .replaceAll("{run_id}", vars.run_id);
     const why = pathRuleError(expanded, DEFAULT_PROTECTED_LIMITS.chars);
     if (why)

@@ -5,22 +5,23 @@
 
 import { execFile } from "node:child_process";
 import {
-  appendFileSync,
   closeSync,
   existsSync,
   fstatSync,
+  lstatSync,
   mkdirSync,
   openSync,
   readFileSync,
   readSync,
   readdirSync,
-  realpathSync,
+  readlinkSync,
   rmSync,
   statSync,
 } from "node:fs";
 import { statfs } from "node:fs/promises";
 import { cpus, homedir, loadavg, platform } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, parse, resolve, sep } from "node:path";
+import type { win32 } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
@@ -39,6 +40,7 @@ import {
   isRisky,
   nativeAsk,
   previewCommand,
+  protectedPathHit,
   pureRead,
   refFacts,
   regenFacts,
@@ -52,6 +54,7 @@ import {
 } from "../core/engine.mjs";
 import { cpuPercentFrom, hostCaps } from "../core/host.mjs";
 import { emit } from "../core/otel.mjs";
+import { sessionAttrs } from "../core/registration.mjs";
 import { rules } from "../core/rules.mjs";
 import { commandWords, units } from "../core/shell.mjs";
 import type {
@@ -62,8 +65,16 @@ import type {
   TagFact,
 } from "../core/types.mjs";
 import { contractProbe } from "./contract.mjs";
-import { pluginDataDir } from "./data.mjs";
-import { editedFiles } from "./lint.mjs";
+import { appendDataFile, pluginDataDir, readDataFile } from "./data.mjs";
+import { editedPaths } from "./lint.mjs";
+import type { RunContext } from "./run.mjs";
+import {
+  denyReason,
+  legacySet,
+  recordUnregistered,
+  runContext,
+  runFacts,
+} from "./run.mjs";
 import {
   isEditTool,
   isReadTool,
@@ -186,6 +197,7 @@ const readerArgs = (command: string): string[] =>
     return reader ? args : [];
   });
 
+const FACTS_MAX_BYTES = 4 * 1024 * 1024;
 const WEEK_MS = 7 * 24 * 3600 * 1000;
 
 export function knownSkills(
@@ -288,12 +300,8 @@ export function sessionStore(
         return { reminded: [], loaded: [], plugins: {} };
       }
       const proc = processId != null ? String(processId) : "";
-      let text = "";
-      try {
-        text = readFileSync(file, "utf8");
-      } catch {
-        // no facts yet
-      }
+      // missing, or not a regular file of bounded size: no facts yet
+      const text = readDataFile(file, FACTS_MAX_BYTES) ?? "";
       for (const line of text.split("\n")) {
         let fact: RawSessionFact;
         try {
@@ -385,7 +393,7 @@ export function sessionStore(
       ];
       if (!lines.length) return;
       mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
-      appendFileSync(file, lines.join("\n") + "\n");
+      appendDataFile(file, lines.join("\n") + "\n");
     },
 
     sweep(): void {
@@ -495,6 +503,26 @@ const preToolUse = (
   };
 };
 
+// The answer when guard itself crashed: a PreToolUse in a run is denied (a crash must not let a tool call through), in
+// every mode; the manifest variable counts as set when defined, even blank, as the loader reads it. Anything else is
+// allowed.
+export function crashResult(
+  input: { hook_event_name?: string },
+  env: Readonly<Record<string, string | undefined>>,
+  harness?: string,
+): HandleResult {
+  return input.hook_event_name === "PreToolUse" &&
+    (legacySet(env) ||
+      (env.GUARD_RUN_ID ?? "").trim() !== "" ||
+      env.GUARD_RUN_MANIFEST !== undefined)
+    ? preToolUse(
+        "deny",
+        "The command guard failed in a registered run, so this tool call was not run.",
+        harness,
+      )
+    : {};
+}
+
 const note = (context: string, notice?: string): HandleResult => ({
   stdout: JSON.stringify({
     hookSpecificOutput: {
@@ -569,97 +597,13 @@ export function existingDirs(
   return dirs;
 }
 
-export interface FactoryLabelsResult {
-  approval: string;
-  approvals?: string[];
-  extra?: string[];
-  takeover?: string;
-  takeovers?: string[];
-  unsure?: boolean;
-}
-
-export function factoryLabels(cwd?: string): FactoryLabelsResult {
-  const defaults: FactoryLabelsResult = {
-    approval: rules.factory.approval,
-    takeover: rules.factory.takeover,
-  };
-  for (let dir = resolve(cwd ?? "."); ; dir = dirname(dir)) {
-    let text: string | undefined;
-    try {
-      text = readFileSync(join(dir, ".factory", "config.yaml"), "utf8").replace(
-        /\r/g,
-        "",
-      );
-    } catch (e: unknown) {
-      const code =
-        typeof e === "object" && e !== null && "code" in e
-          ? (e as { code?: unknown }).code
-          : undefined;
-      if (code !== "ENOENT" && code !== "ENOTDIR") {
-        return { ...defaults, unsure: true, extra: [] };
-      }
-    }
-    if (text !== undefined) {
-      if (!/^labels\b/m.test(text)) return defaults;
-      const block = /^labels:[ \t]*\n((?:[ \t]+.*(?:\n|$)|[ \t]*\n)*)/m.exec(
-        text,
-      )?.[1];
-      const named: Record<string, string | null> = {};
-      const keys = ["approval", "takeover"] as const;
-      for (const key of keys) {
-        if (block === undefined) {
-          named[key] = null;
-        } else if (!new RegExp(`^[ \\t]+${key}[ \\t]*:`, "m").test(block)) {
-          named[key] = defaults[key] ?? null;
-        } else {
-          const m = new RegExp(
-            `^[ \\t]+${key}:[ \\t]*(?:"([^"]+)"|'([^']+)'|([^\\s#]+))`,
-            "m",
-          ).exec(block);
-          named[key] = m ? (m[1] ?? m[2] ?? m[3] ?? null) : null;
-        }
-      }
-      if (keys.every((key) => named[key] !== null)) {
-        const app = named.approval;
-        const take = named.takeover;
-        if (typeof app === "string") {
-          // Configured names add to the defaults, which stay protected.
-          const more = (name: string | null | undefined, dflt: string) =>
-            typeof name === "string" && name !== dflt ? [name] : [];
-          const approvals = more(app, defaults.approval);
-          const takeovers = more(take, defaults.takeover ?? "");
-          return {
-            ...defaults,
-            ...(approvals.length ? { approvals } : {}),
-            ...(takeovers.length ? { takeovers } : {}),
-          };
-        }
-      }
-      const extra = [
-        ...text.matchAll(
-          /\b(?:approval|takeover)[ \t]*:[ \t]*["']?([^\s"',}\]#]+)/g,
-        ),
-      ].map((m) => m[1] ?? "");
-      return { ...defaults, unsure: true, extra };
-    }
-    if (dirname(dir) === dir) return defaults;
-  }
-}
-
 export interface ProtectFactsResult {
   cwd: string;
-  extra: string[];
   root: string;
 }
 
-export function protectFacts(
-  env?: Record<string, string | undefined>,
-  cwd?: string,
-): ProtectFactsResult {
-  const extra = (env?.FACTORY_PROTECTED_PATHS ?? "")
-    .split(/\r?\n/)
-    .map((g) => g.trim())
-    .filter(Boolean);
+// Where the session is: the repo root (the nearest directory with a .git) and the cwd, `/` separators.
+export function protectFacts(cwd?: string): ProtectFactsResult {
   const at = resolve(cwd ?? ".");
   let root = at;
   for (let dir = at; ; dir = dirname(dir)) {
@@ -670,27 +614,10 @@ export function protectFacts(
     if (dirname(dir) === dir) break;
   }
   const slash = (p: string): string => p.replace(/\\/g, "/");
-  return { extra, root: slash(root), cwd: slash(at) };
+  return { root: slash(root), cwd: slash(at) };
 }
 
 const slashes = (p: string): string => p.replace(/\\/g, "/");
-
-// Guard's own data directories in this run (absolute, `/` separators): the one the hook keeps its files in and the one
-// the stop hook reads, each also by its real path when that differs (/tmp is /private/tmp on macOS).
-export function guardDataDirs(deps: HandleDeps): string[] {
-  const out = new Set<string>();
-  for (const d of [pluginDataDir(deps.env ?? process.env), deps.dataDir]) {
-    if (!d) continue;
-    const abs = slashes(resolve(d));
-    out.add(abs);
-    try {
-      out.add(slashes(realpathSync(abs)));
-    } catch {
-      // not created yet
-    }
-  }
-  return [...out];
-}
 
 interface ShellToolInput {
   command?: unknown;
@@ -700,6 +627,7 @@ async function onShell(
   input: HookInput,
   state: StoredSessionState,
   deps: HandleDeps,
+  ctx: RunContext,
 ): Promise<HandleResult> {
   const rawCommand = (input.tool_input as ShellToolInput | undefined)?.command;
   const command = typeof rawCommand === "string" ? rawCommand : "";
@@ -825,15 +753,10 @@ async function onShell(
       host,
       readTool: deps.readTool ?? true,
       ...facts,
-      factory: deps.env?.FACTORY_RUN_ID
-        ? {
-            ...factoryLabels(input.cwd),
-            protect: {
-              ...protectFacts(deps.env, input.cwd),
-              data: guardDataDirs(deps),
-            },
-          }
-        : null,
+      run:
+        ctx.state === "registered"
+          ? runFacts(ctx, protectFacts(input.cwd))
+          : null,
       rules: {
         ...rules,
         host: {
@@ -1002,7 +925,9 @@ async function onShell(
       : {};
   } catch (err: unknown) {
     const errorObj = err instanceof Error ? err : null;
-    if (isRisky(command, rules)) {
+    // A crash must not let an unattended run's write through: every command is denied there, not only risky ones.
+    const strict = ctx.state === "registered" && ctx.mode === "unattended";
+    if (strict || isRisky(command, rules)) {
       appendDecision(deps.env, {
         decision: "deny",
         rule: "guard-error",
@@ -1023,10 +948,10 @@ async function onShell(
         input.cwd,
       );
     }
-    return isRisky(command, rules)
+    return strict || isRisky(command, rules)
       ? preToolUse(
           "deny",
-          `The command guard failed, so this risky command was not run: ${errorObj ? errorObj.message : String(err)}`,
+          `The command guard failed, so this ${strict ? "" : "risky "}command was not run: ${errorObj ? errorObj.message : String(err)}`,
           deps.harness,
         )
       : {};
@@ -1040,9 +965,11 @@ interface EditToolInput {
   path?: unknown;
 }
 
-// The files an edit tool call writes, moves or deletes: editedFiles, the `Path` spelling, and the `*** Delete File:`
+// The files an edit tool call writes, moves or deletes: editedPaths, the `Path` spelling, and the `*** Delete File:`
 // and `*** Move to:` lines of an apply_patch text (the whole tool_input, `command` or `input`).
-function touchedFiles(input: HookInput): string[] {
+// Each with its lexical reading (`resolve`: `d/../x` is `x`) and its raw one (made absolute, nothing normalised: the
+// kernel follows `d` before the `..`).
+function touchedFiles(input: HookInput): { lex: string; raw: string }[] {
   const t = input.tool_input;
   const obj =
     t && typeof t === "object"
@@ -1060,50 +987,127 @@ function touchedFiles(input: HookInput): string[] {
     ...text.matchAll(/^\*\*\* (?:Delete File|Move to): (.+)$/gm),
   ].map((m) => m[1]?.trim() ?? "");
   const base = input.cwd ?? ".";
-  return [
-    ...new Set(
-      [
-        ...editedFiles(input),
-        ...(typeof obj.Path === "string" ? [obj.Path] : []),
-        ...lines,
-      ]
-        .filter(Boolean)
-        .map((p) => resolve(base, p)),
-    ),
-  ];
-}
-
-// `path` with the real path of its nearest existing ancestor, as `/` segments.
-function realish(path: string): string {
-  const rest: string[] = [];
-  for (let p = resolve(path); ; p = dirname(p)) {
-    try {
-      return slashes(join(realpathSync(p), ...rest));
-    } catch {
-      rest.unshift(basename(p));
-    }
-    if (dirname(p) === p) return slashes(resolve(path));
+  const absBase = isAbsolute(base) ? base : resolve(base);
+  const seen = new Map<string, { lex: string; raw: string }>();
+  for (const p of [
+    ...editedPaths(input),
+    ...(typeof obj.Path === "string" ? [obj.Path] : []),
+    ...lines,
+  ].filter(Boolean)) {
+    const lex = resolve(base, p);
+    const raw = isAbsolute(p) ? p : `${absBase}${sep}${p}`;
+    seen.set(`${lex}\0${raw}`, { lex, raw });
   }
+  return [...seen.values()];
 }
 
-const insideDir = (path: string, dir: string): boolean => {
-  const a = path.toLowerCase().split("/").filter(Boolean);
-  const b = dir.toLowerCase().split("/").filter(Boolean);
-  return b.length <= a.length && b.every((x, i) => x === a[i]);
+const MAX_LINK_HOPS = 40;
+
+// `path` with the real path of its nearest existing ancestor, as `/` segments. The path is walked as given, never
+// normalised first, and each component is followed in turn, as the kernel does: a symlink is replaced by its target
+// before the next `..` applies (`n -> d/../x` with `d -> a/b` is `a/x`; `d/../x` is `a/x` too), and a dangling one,
+// in the last component or any other, is followed too (a write tool creates its target); null past MAX_LINK_HOPS
+// links (a loop): the caller treats the path as protected. With `lexical` on win32, where a `..` in a relative link
+// target may apply to the link's own directory as text, the target is normalised before it is followed.
+export interface LinkEnv {
+  platform: NodeJS.Platform;
+  path: Pick<
+    typeof win32,
+    "dirname" | "isAbsolute" | "join" | "parse" | "resolve" | "sep"
+  >;
+  isLink: (path: string) => boolean;
+  readLink: (path: string) => string;
+}
+
+const linkEnv: LinkEnv = {
+  platform: process.platform,
+  path: { dirname, isAbsolute, join, parse, resolve, sep },
+  isLink: (p) => lstatSync(p).isSymbolicLink(),
+  readLink: readlinkSync,
+};
+
+export function realish(
+  path: string,
+  lexical = false,
+  env: LinkEnv = linkEnv,
+): string | null {
+  const { dirname, isAbsolute, join, parse, resolve, sep } = env.path;
+  const top = parse(path).root;
+  let cur = top;
+  let missing = false;
+  let hops = 0;
+  const split = (p: string) =>
+    p.split(env.platform === "win32" ? /[\\/]/ : sep).filter(Boolean);
+  const queue = split(path.slice(top.length));
+  while (queue.length) {
+    const comp = queue.shift() ?? "";
+    if (comp === ".") continue;
+    if (comp === "..") {
+      cur = dirname(cur);
+      continue;
+    }
+    const next = join(cur, comp);
+    let link: string | undefined;
+    if (!missing) {
+      try {
+        if (env.isLink(next)) link = env.readLink(next);
+        else cur = next;
+      } catch {
+        missing = true;
+      }
+    }
+    if (link !== undefined) {
+      if (++hops > MAX_LINK_HOPS) return null;
+      const target =
+        lexical && env.platform === "win32" ? resolve(cur, link) : link;
+      if (isAbsolute(target)) cur = parse(target).root;
+      queue.unshift(
+        ...split(isAbsolute(target) ? target.slice(cur.length) : target),
+      );
+    } else if (missing) cur = next;
+  }
+  return slashes(cur);
+}
+
+// Every reading of an edit tool's target that counts, and any that hits denies: the lexical one (`d/../x` is `x`), and the
+// real path of the raw spelling and of the lexical one (the kernel follows a link before a `..`; win32 may apply a `..`
+// in a link target as text).
+export function readingsOf(
+  f: { lex: string; raw: string },
+  env: LinkEnv = linkEnv,
+): (string | null)[] {
+  const out = [
+    slashes(f.lex),
+    realish(f.raw, false, env),
+    realish(f.lex, false, env),
+  ];
+  if (env.platform === "win32")
+    out.push(realish(f.raw, true, env), realish(f.lex, true, env));
+  return [...new Set(out)];
+}
+
+// `path` relative to `dir` (both `/` separated, letter case ignored), or null when it is not inside.
+const relativeInside = (path: string, dir: string): string | null => {
+  const a = path.split("/").filter(Boolean);
+  const b = dir.split("/").filter(Boolean);
+  return b.length <= a.length &&
+    b.every((x, i) => x.toLowerCase() === (a[i] ?? "").toLowerCase())
+    ? a.slice(b.length).join("/")
+    : null;
 };
 
 function onEdit(
   input: HookInput,
   state: StoredSessionState,
   deps: HandleDeps,
+  ctx: RunContext,
 ): HandleResult {
-  // In a factory run an edit tool never touches guard's own data directory (the result gate's block counter lives there).
-  if (deps.env?.FACTORY_RUN_ID) {
-    const dirs = guardDataDirs(deps);
-    const hit = touchedFiles(input).find((f) =>
-      [slashes(f), realish(f)].some((p) => dirs.some((d) => insideDir(p, d))),
-    );
-    if (hit !== undefined) {
+  const facts =
+    ctx.state === "registered" ? runFacts(ctx, protectFacts(input.cwd)) : null;
+  // In an unattended registered run an edit tool never touches a protected path.
+  if (facts) {
+    const denyEdit = (reason: string): HandleResult => {
+      appendDecision(deps.env, { decision: "deny", rule: "protected-path" });
       fire(
         deps,
         "guard.decision",
@@ -1117,11 +1121,36 @@ function onEdit(
         },
         input.cwd,
       );
-      return preToolUse(
-        "deny",
-        `${rules.factory.protectedWhy} \`${hit}\` is in guard's own data directory in this run; leave it alone.`,
-        deps.harness,
+      return preToolUse("deny", reason, deps.harness);
+    };
+    const files = touchedFiles(input).map((f) => ({
+      name: f.lex,
+      raw: f.raw,
+      readings: readingsOf(f),
+    }));
+    const loop = files.find((f) => f.readings.includes(null));
+    if (loop !== undefined)
+      return denyEdit(
+        `${rules.run.protectedWhy} \`${loop.name}\` goes through too many symbolic links to be checked; leave it alone.`,
       );
+    const protect = {
+      globs: [...rules.run.protectedPaths, ...(facts.protect?.extra ?? [])],
+      registered: facts.protect?.registered ?? [],
+      exempt: facts.protect?.exempt ?? [],
+    };
+    const root = facts.protect?.root ?? protectFacts(input.cwd).root;
+    const bases = [...new Set([slashes(root), realish(root) ?? slashes(root)])];
+    for (const f of files) {
+      for (const file of f.readings) {
+        for (const base of bases) {
+          const rel = relativeInside(file ?? "", base);
+          if (rel === null) continue;
+          if (protectedPathHit(rel, protect, rules.run.protectedLimits))
+            return denyEdit(
+              `${rules.run.protectedWhy} \`${rel}\` is a protected path in this run; leave it to the owner and say on the ticket what should change.`,
+            );
+        }
+      }
     }
   }
   const t = (input.tool_input as EditToolInput | undefined) ?? {};
@@ -1321,6 +1350,13 @@ export async function handle(
           input.cwd,
         );
         if (self.versioned && self.version) installed[self.name] = self.version;
+        const start = runContext(deps.env ?? {}, {
+          dataDir: deps.dataDir,
+          sessionId: session,
+          cache: deps.registrationCache,
+          vet: deps.runVet,
+        });
+        const registered = start.state === "registered" ? start : null;
         const attrs = Object.fromEntries(
           Object.entries(installed).map(([p, v]) => [
             `plugin_version_${p.replace(/[^a-z0-9]/g, "_")}`,
@@ -1334,6 +1370,7 @@ export async function handle(
             session_id: input.session_id,
             source: input.source,
             ...attrs,
+            ...sessionAttrs(registered),
           },
           input.cwd,
         );
@@ -1374,7 +1411,43 @@ export async function handle(
       );
     }
 
-    if (
+    const ctx = runContext(deps.env ?? {}, {
+      dataDir: deps.dataDir,
+      sessionId: session,
+      cache: deps.registrationCache,
+      vet: deps.runVet,
+    });
+
+    if (ctx.state === "deny") {
+      // A run whose registration failed, or that set only legacy variables: every tool call guard sees is denied.
+      if (ctx.rule === "run-unregistered")
+        recordUnregistered(
+          deps.env ?? {},
+          deps.dataDir ?? pluginDataDir(deps.env ?? process.env),
+          session,
+        );
+      const cmd =
+        isShellTool(tool) && typeof t.command === "string" ? t.command : null;
+      appendDecision(deps.env, {
+        decision: "deny",
+        rule: ctx.rule,
+        ...(cmd === null ? {} : { cmd_hash: commandHash(cmd) }),
+      });
+      fire(
+        deps,
+        "guard.decision",
+        {
+          rule: ctx.rule,
+          action: "deny",
+          cmd_class: ctx.rule,
+          tool: input.tool_name ?? "",
+          session_id: input.session_id,
+          tool_use_id: (input as { tool_use_id?: string }).tool_use_id,
+        },
+        input.cwd,
+      );
+      out = preToolUse("deny", denyReason(ctx, "tool"), deps.harness);
+    } else if (
       tool === "skill" &&
       (typeof t.skill === "string" || typeof t.name === "string")
     ) {
@@ -1386,15 +1459,20 @@ export async function handle(
             : "",
       );
     } else if (isShellTool(tool)) {
-      out = await onShell(input, state, deps);
+      out = await onShell(input, state, deps, ctx);
     } else if (isEditTool(tool)) {
-      out = onEdit(input, state, deps);
+      out = onEdit(input, state, deps, ctx);
     } else if (rules.routing.tools.includes(tool)) {
       out = onSpawn(input, state, deps);
     } else if (isTaskTool(tool)) {
       const command = taskCommand(tool, t as TaskInput, input.cwd);
       if (command) {
-        out = await onShell({ ...input, tool_input: { command } }, state, deps);
+        out = await onShell(
+          { ...input, tool_input: { command } },
+          state,
+          deps,
+          ctx,
+        );
       } else if (tool === "run_task") {
         out = note(
           `The guard could not read the command of task "${(t as TaskInput).id ?? ""}" in .vscode/tasks.json, so it did not check it. If it deletes, force-pushes or reads secrets, confirm with the user first.`,
@@ -1590,7 +1668,7 @@ async function main(): Promise<void> {
       new Promise((r) => setImmediate(r)).then(() =>
         emit(process.env, event, recordAttrs(attrs, cwd, harness)),
       ),
-  }).catch((): HandleResult => ({}));
+  }).catch((): HandleResult => crashResult(input, process.env, harness));
 
   if (harness === "antigravity") {
     let agOut: AntigravityOut = { decision: "allow" };

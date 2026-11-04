@@ -8,8 +8,16 @@ import { cmdClass } from "../core/engine.mjs";
 import { emit } from "../core/otel.mjs";
 import { keepAwake } from "./awake.mjs";
 import { fallbackDataDir } from "./data.mjs";
-import { handle, hostFacts, pythonManager, run } from "./guard.mjs";
+import {
+  crashResult,
+  handle,
+  hostFacts,
+  pythonManager,
+  run,
+} from "./guard.mjs";
 import { type SpawnSyncFn, lintFile } from "./lint.mjs";
+import { createRegistrationCache } from "./registration.mjs";
+import type { RegistrationCache } from "./registration.mjs";
 import { gateFailClosed, stopCheck } from "./stop.mjs";
 import { recordAttrs } from "./telemetry.mjs";
 import type {
@@ -56,6 +64,8 @@ export function createGuard({
   dataDir = DATA_DIR,
   deps = {},
 }: CreateGuardOptions): GuardBridge {
+  // one per bridge: the parsed run manifest is reused while its file is unchanged
+  const registrationCache = createRegistrationCache();
   const d: GuardDeps & {
     dataDir: string;
     env: NodeJS.ProcessEnv;
@@ -64,6 +74,7 @@ export function createGuard({
     noAsk: boolean;
     processId: number;
     pythonManager: typeof pythonManager;
+    registrationCache: RegistrationCache;
     run: typeof run;
   } = {
     dataDir,
@@ -74,12 +85,21 @@ export function createGuard({
     run,
     pythonManager,
     noAsk,
+    registrationCache,
     emit: (event, attrs, cwd) =>
       emit(process.env, event, recordAttrs(attrs, cwd, harness)),
     // The harness's own usage, as the harness (service.name opencode or pi): neither exports telemetry itself.
     report: (event, attrs) => emit(process.env, event, attrs, fetch, harness),
     ...deps,
   };
+
+  // The stop gate's options: the same cache, data dir and (tests only) trust probes as the tool hooks.
+  const gateOpts = () => ({
+    ...d.runVet,
+    cache: registrationCache,
+    dataDir: d.dataDir,
+    inProcess: true,
+  });
 
   const call = async (input: HookInput): Promise<HookOutputPayload> => {
     try {
@@ -90,7 +110,11 @@ export function createGuard({
         systemMessage: o.systemMessage,
       };
     } catch {
-      return {};
+      // A crash lets the call through, except a tool call in a run, which is denied (as in the command hook).
+      const o = JSON.parse(
+        crashResult(input, d.env, harness).stdout ?? "{}",
+      ) as { hookSpecificOutput?: object };
+      return { ...o.hookSpecificOutput };
     }
   };
 
@@ -226,18 +250,27 @@ export function createGuard({
       }
     },
 
-    // The reason to keep going (the factory result gate or make check), or null. `active` is true when the last stop was already blocked.
+    // The reason to keep going (the run result gate or make check), or null. `active` is true when the last stop was already blocked.
     // Async: make runs detached, so the harness's event loop keeps going meanwhile.
     async stop({
       cwd,
       active,
+      sessionId,
+      agentId,
     }: {
       active?: boolean;
+      agentId?: string;
       cwd?: string;
+      sessionId?: string;
     }): Promise<string | null> {
       try {
         const out = await stopCheck(
-          { cwd, stop_hook_active: active },
+          {
+            cwd,
+            stop_hook_active: active,
+            session_id: sessionId,
+            agent_id: agentId,
+          },
           d.spawnSync as typeof import("./stop.mjs").fingerprint extends (
             c: string,
             r: infer R,
@@ -245,6 +278,7 @@ export function createGuard({
             ? R
             : never,
           {
+            gate: gateOpts(),
             report: (attrs) => {
               void d.emit?.("guard.stop", { ...attrs, cmd_class: "stop" }, cwd);
             },
@@ -252,8 +286,13 @@ export function createGuard({
         );
         return out?.decision === "block" ? (out.reason ?? null) : null;
       } catch {
-        // stopCheck reads process.env: a launcher-named checker or a runtime run keeps the stop blocked
-        return gateFailClosed(process.env, { cwd }, "internal error");
+        // stopCheck reads process.env: a registered run's result gate, or a failed registration, keeps the stop blocked
+        return gateFailClosed(
+          process.env,
+          { cwd, session_id: sessionId, agent_id: agentId },
+          "internal error",
+          gateOpts(),
+        );
       }
     },
 

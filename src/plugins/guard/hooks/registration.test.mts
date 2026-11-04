@@ -271,6 +271,9 @@ void test(
     assert.deepEqual(JSON.parse(readFileSync(pin, "utf8")), {
       manifest: m,
       sha256: sha(MANIFEST),
+      run_id: "r1",
+      mode: "unattended",
+      ticket: "acme/app#7",
     });
     assert.equal(statSync(join(dataDir, "sessions")).mode & 0o777, 0o700);
     assert.equal(loadRegistration(envFor(m), opts).state, "registered");
@@ -299,6 +302,37 @@ void test("registration: a manifest that changed during the session is refused",
   );
 });
 
+void test("registration: a run variable that changed during the session is refused, without its value", () => {
+  const dataDir = fresh("data");
+  const m = manifest();
+  const opts = { vet: ro, dataDir, sessionId: "s3b" };
+  assert.equal(loadRegistration(envFor(m), opts).state, "registered");
+  assert.equal(
+    loadRegistration(envFor(m, { GUARD_RUN_MODE: "" }), opts).state,
+    "registered",
+    "a blank mode is the unattended default",
+  );
+  for (const [extra, which] of [
+    [{ GUARD_RUN_MODE: "attended" }, "GUARD_RUN_MODE"],
+    [{ GUARD_RUN_ID: "r2-secret" }, "GUARD_RUN_ID"],
+    [{ GUARD_RUN_TICKET: "acme/app#8" }, "GUARD_RUN_TICKET"],
+  ] as const) {
+    assert.equal(
+      denyWhy(loadRegistration(envFor(m, extra), opts)),
+      `run variables changed during the session (${which})`,
+    );
+  }
+  assert.equal(
+    denyWhy(
+      loadRegistration(
+        envFor(m, { GUARD_RUN_MODE: "attended", GUARD_RUN_ID: "r9" }),
+        opts,
+      ),
+    ),
+    "run variables changed during the session (GUARD_RUN_ID, GUARD_RUN_MODE)",
+  );
+});
+
 void test("registration: a second manifest path in one session is refused", () => {
   const dataDir = fresh("data");
   const opts = { vet: ro, dataDir, sessionId: "s3" };
@@ -321,6 +355,13 @@ void test("registration: garbage pin lines are ignored and the first valid one i
       "[]",
       JSON.stringify({ manifest: m, sha256: "short" }),
       JSON.stringify({ manifest: m, sha256: sha(MANIFEST) }),
+      JSON.stringify({
+        manifest: m,
+        sha256: sha(MANIFEST),
+        run_id: "r1",
+        mode: "unattended",
+        ticket: "acme/app#7",
+      }),
       JSON.stringify({ manifest: "/other.json", sha256: sha("x") }),
     ].join("\n"),
   );
@@ -341,8 +382,26 @@ void test("registration: an unreadable pin file is refused", () => {
         sessionId: "s5",
       }),
     ),
-    "cannot read the session's registration pin (EISDIR)",
+    "cannot read the session's registration pin (ENOTREG)",
   );
+});
+
+void test("registration: only a pin failure is marked as one, so the stop can re-check it", () => {
+  const dataDir = fresh("data");
+  mkdirSync(pinFile(dataDir, "s6"), { recursive: true });
+  const pinned = loadRegistration(envFor(manifest()), {
+    vet: ro,
+    dataDir,
+    sessionId: "s6",
+  });
+  assert.equal(pinned.state === "deny" && pinned.pin, true);
+  const bad = loadRegistration(envFor(join(fresh("none"), "gone.json")), {
+    vet: ro,
+    dataDir,
+    sessionId: "s6",
+  });
+  assert.equal(bad.state, "deny");
+  assert.equal("pin" in bad, false);
 });
 
 void test("registration: the trust vet and the pin run on every call, cache hit or not", () => {
@@ -429,3 +488,55 @@ void test("registration: an unusable env value does not throw", () => {
     "deny",
   );
 });
+
+// A consumer's read-only run: the manifest is a read-only bind-mounted 0444 file owned by another uid, the root
+// filesystem is read-only and the session user is not root. The ownership rule is "neither owned nor writable by the
+// session user": on a read-only mount the owner check is skipped, so every path is out of reach.
+void test(
+  "posix registration: a 0444 manifest owned by another uid on a read-only mount is accepted and pinned",
+  posixOnly,
+  () => {
+    const p = manifest();
+    chmodSync(p, 0o444);
+    assert.equal(statSync(p).mode & 0o777, 0o444);
+    const real = realpathSync(p);
+    const dataDir = fresh("data");
+    const opts = {
+      dataDir,
+      sessionId: "ro",
+      vet: {
+        writable: () => false,
+        owner: () => false,
+        readOnlyMount: () => true,
+      },
+    };
+    const got = loadRegistration(envFor(p), opts);
+    assert.equal(got.state, "registered", JSON.stringify(got));
+    assert.equal((got as { path: string }).path, real);
+    assert.ok(existsSync(pinFile(dataDir, "ro")));
+    // the pin holds on the next call
+    assert.equal(loadRegistration(envFor(p), opts).state, "registered");
+  },
+);
+
+void test(
+  "posix registration: control, the same read-only case with a file the user can write is denied",
+  posixOnly,
+  () => {
+    const p = manifest();
+    chmodSync(p, 0o444);
+    const real = realpathSync(p);
+    const why = denyWhy(
+      loadRegistration(envFor(p), {
+        dataDir: fresh("data"),
+        sessionId: "ro",
+        vet: {
+          writable: (t: string) => t === real,
+          owner: () => false,
+          readOnlyMount: () => true,
+        },
+      }),
+    );
+    assert.match(why, /writable by this user \(the file\)/);
+  },
+);

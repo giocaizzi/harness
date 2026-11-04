@@ -141,8 +141,11 @@ void test("registration: protected_paths exempt", () => {
     has(e("{a,b}/x"), re);
     has(e("other/x"), re);
     has(e("!x"), re);
-    has(e(".factory/**", [".factory/x/**"]), re);
-    has(e(".FACTORY/**", [".FACTORY/x/**"]), re);
+    // Only .github is the built-in floor: a runner's own directory is its registration's to protect and to exempt.
+    assert.equal(validateRegistration(mod((m) => (m.protected_paths = {
+        globs: [".factory/**"],
+        exempt: [".factory/runs/*/*/**"],
+    }))).ok, true);
     assert.equal(validateRegistration(mod((m) => (m.protected_paths = { globs: [".acme/**"], exempt: [".acme/x"] }))).ok, true);
 });
 void test("registration: result", () => {
@@ -266,6 +269,16 @@ void test("registration: parse bytes", () => {
     has(one(enc("[]")), /^manifest must be a JSON object/);
     const ok = parseRegistration(enc(JSON.stringify(full())));
     assert.equal(ok.ok, true);
+});
+void test("registration: resultFile checks only the variables its template uses", () => {
+    assert.deepEqual(resultFile(".acme/runs/{run_id}.json", { run_id: "run-1" }), {
+        path: ".acme/runs/run-1.json",
+    });
+    assert.deepEqual(resultFile(".acme/result.json", { run_id: "" }), {
+        path: ".acme/result.json",
+    });
+    const r = resultFile(".acme/{ticket_number}.json", { run_id: "run-1" });
+    assert.ok("why" in r && r.why.startsWith("ticket number must match"));
 });
 void test("registration: resultFile expands and checks", () => {
     const vars = { run_id: "run-1", ticket_number: "12" };

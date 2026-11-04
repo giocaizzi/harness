@@ -1,35 +1,13 @@
-// The launcher's result checker for the stop hook's result gate: vetting its path, running it in a child process.
+// The runner's result checker (result.checker in the run manifest) for the stop hook's result gate: vetting its
+// path, running it in a child process.
 
 import { type ChildProcess, spawn } from "node:child_process";
-import {
-  accessSync,
-  constants,
-  existsSync,
-  realpathSync,
-  statSync,
-} from "node:fs";
+import { accessSync, constants, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { checkerPathError, report } from "../core/result.mjs";
 import { scrub } from "./telemetry.mjs";
-
-// THE SINGLE TRANSITION SEAM. While the factory plugin ships in this repository, an unset FACTORY_RESULT_CHECKER
-// falls back to the build copy of its checker. The change that removes that plugin from this repository deletes
-// BUILD_COPY, defaultChecker and DEFAULT_WRITE_HINT; after that, unset means the core check only. The build copy is
-// exempt from the writability rule: it is guard's own install.
-export const BUILD_COPY = fileURLToPath(
-  new URL("../.generated/factory/check-result.mjs", import.meta.url),
-);
-
-export const defaultChecker = (
-  buildCopy: string = BUILD_COPY,
-): { path: string } | null =>
-  existsSync(buildCopy) ? { path: buildCopy } : null;
-
-// Part of the seam: the hand-back line that names the default checker's writer script.
-export const DEFAULT_WRITE_HINT =
-  "Write it with the ticket-run skill's scripts/write-result.mjs, never by hand: put the judgment fields in a JSON file and run `node <skill dir>/scripts/write-result.mjs <file>` from the repo; fix the input, never the written file, until it exits 0.";
 
 const STICKY = 0o1000;
 
@@ -50,8 +28,9 @@ const accessCode = (target: string): string | undefined => {
 export function isWritableByMe(
   target: string,
   platform: Platform = process.platform,
+  access: (target: string) => string | undefined = accessCode,
 ): boolean {
-  const code = accessCode(target);
+  const code = access(target);
   if (code === undefined) return true;
   if (platform === "win32") return false;
   return !["EROFS", "EACCES", "EPERM"].includes(code);
@@ -168,7 +147,7 @@ export function vetTrustedFile(
   }
 }
 
-// Vets the raw FACTORY_RESULT_CHECKER value (a .mjs file): see vetTrustedFile.
+// Vets the raw result.checker value (a .mjs file): see vetTrustedFile.
 export function prepareChecker(
   raw: unknown,
   opts: PrepareOptions = {},

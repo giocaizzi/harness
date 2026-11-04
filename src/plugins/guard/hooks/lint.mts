@@ -30,7 +30,8 @@ interface ReplacementItem {
 // Edited files: Claude `file_path`, Copilot `path`, VS Code `filePath` or `replacements[].filePath`, and the
 // `*** Add/Update File:` lines of an apply_patch (Copilot sends the patch as the whole tool_input, VS Code as `input`,
 // Codex as `command`).
-export function editedFiles(input: HookInput): string[] {
+// The paths as the tool call spells them, nothing resolved.
+export function editedPaths(input: HookInput): string[] {
   const t = input.tool_input;
   let patch: string | undefined;
   let paths: unknown[] = [];
@@ -62,11 +63,14 @@ export function editedFiles(input: HookInput): string[] {
     paths = matches.map((m) => m[1]?.trim());
   }
 
-  const validPaths = paths.filter(
+  return paths.filter(
     (p): p is string => typeof p === "string" && p.length > 0,
   );
+}
+
+export function editedFiles(input: HookInput): string[] {
   const baseDir = input.cwd ?? ".";
-  return [...new Set(validPaths.map((p) => resolve(baseDir, p)))];
+  return [...new Set(editedPaths(input).map((p) => resolve(baseDir, p)))];
 }
 
 export interface LintResult {

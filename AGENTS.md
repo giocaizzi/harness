@@ -64,8 +64,7 @@ The other four harnesses read the same sources differently (details in [docs/com
 │           ├── codex/<name>.toml         Codex agents (scripts/install.mjs copies them)
 │           ├── codex/hooks.json          Codex hooks file
 │           ├── opencode/<name>.md        opencode subagents (scripts/install.mjs copies them)
-│           ├── antigravity/<name>.md     Antigravity agents (scripts/install.mjs copies them)
-│           └── factory/check-result.mjs  guard only: factory's result checker, for the stop hook's result gate
+│           └── antigravity/<name>.md     Antigravity agents (scripts/install.mjs copies them)
 │
 ├── scripts/
 │   ├── build_agents.mjs          agents/*.md (+ .yaml) and manifests → .generated/, .github/plugin/, .codex-plugin/
@@ -88,7 +87,7 @@ The other four harnesses read the same sources differently (details in [docs/com
 | `plugins/<plugin>/.claude-plugin/plugin.json` | Authored | Read by Claude. **No `skills` field** (Claude rejects it) and **no `agents` field** (build provides the Copilot override separately). |
 | `plugins/<plugin>/agents/<name>.md`, `<name>.yaml` | Authored | The Claude agent, and the other harnesses' overrides. |
 | `plugins/<plugin>/.github/plugin/plugin.json`, `.codex-plugin/plugin.json`, `.antigravity-plugin/plugin.json` | **Generated** | Copilot, Codex and Antigravity manifests. Never edit. |
-| `plugins/<plugin>/.generated/` | **Generated** | Copilot, Codex, opencode and Antigravity agents, Codex hooks file, guard's copy of factory's `check-result.mjs` (plugins install separately, so a hook never imports across plugin dirs). Never edit. |
+| `plugins/<plugin>/.generated/` | **Generated** | Copilot, Codex, opencode and Antigravity agents, Codex hooks file. Never edit. |
 | `src/**/*.mts` | Authored | TypeScript sources; matching emitted `.mjs` paths outside `src/` are tracked and generated. `make validate` checks their synchronization without writing them. |
 | `plugins/<plugin>/hooks/`, `core/` | Mixed | JSON and unmigrated scripts are authored; `.mjs` files with matching `src/` sources are generated. External-host JavaScript wrappers remain authored. See [docs/guard.md](docs/guard.md). |
 | `package.json` | Authored | pi package: `pi.skills` and `pi.extensions`. |
@@ -107,7 +106,7 @@ The other four harnesses read the same sources differently (details in [docs/com
 | `make typecheck` | Type-check authored TypeScript without emitting runtime files. |
 | `make check` | `make lint` + `make typecheck` + `make test` (standard entrypoint, run by CI on Linux). The `.ps1` script tests skip off Windows: CI's `windows-scripts` job runs them ([CI](docs/compatibility.md#verify)). |
 | `make e2e` | Copilot CLI, Codex, opencode and pi against a scripted model in throwaway homes (skips a CLI that is missing; CI runs it on Linux, macOS and Windows). |
-| `make contract-test MANIFEST=<abs path>` | Run contract v2 kit against a runner's manifest (one CI job in the runner's repo): [docs/guard.md](docs/guard.md#run-contract-v2-enforced-from-guard-100). |
+| `make contract-test MANIFEST=<abs path>` | Run contract v2 kit against a runner's manifest (one CI job in the runner's repo): [docs/guard.md](docs/guard.md#run-contract-v2). |
 | `make agent-review` | Weekly agent-telemetry review without an agent; in a session use the repo-local `/agent-review` skill (`.agents/skills/`, linked from `.claude/skills/`): [docs/agent-review.md](docs/agent-review.md). |
 | `make install HARNESS="codex opencode antigravity"` | Copy what Codex, opencode and Antigravity cannot take from the marketplace into their config dirs. |
 | `make new-agent NAME=<name> PLUGIN=<plugin>` | Scaffold `plugins/<plugin>/agents/<name>.md` and `<name>.yaml`. |
@@ -131,10 +130,10 @@ If `make validate` fails, check the common drift points first:
 - Use `${CLAUDE_PLUGIN_ROOT}` in commands and `CLAUDE_PLUGIN_DATA` for state: both CLIs set them; VS Code sets only `CLAUDE_PLUGIN_ROOT`, so read `CLAUDE_PLUGIN_DATA` with a fallback.
 - VS Code ignores `matcher`: every hook of an event runs, so each script checks `tool_name` itself. One `command` field runs under bash and PowerShell, so keep it to `node "<path>" <args>`.
 - Codex reads `.generated/codex/hooks.json`, generated from `hooks.json`; opencode and pi run `hooks/opencode.mjs` and `hooks/pi.mjs`, which go through `hooks/bridge.mjs` to the same handlers. A new hook script needs its event mapped in both adapters (and a case in `adapters.test.mjs`), or a row in docs/compatibility.md saying why not.
-- The stop hook's factory result gate runs `plugins/guard/.generated/factory/check-result.mjs`, which `make build` copies from `plugins/factory/skills/ticket-run/scripts/`: after editing the checker, run `make build`. Probe a stop with `GUARD_RESULT_GATE=off` unless you test the gate.
+- The stop hook's result gate runs only a registered run's core check and its `result.checker` ([docs/guard.md](docs/guard.md#run-contract-v2)). Probe a stop with `GUARD_RESULT_GATE=off` unless you test the gate.
 - Rules are data in `plugins/guard/core/rules.mjs`; `core/engine.mjs` stays pure (no I/O). Bump the `guard` version (plugin.json + marketplace entry) for every behaviour change: installed caches update only on a version change.
 - To probe a harness from this checkout (`claude -p "What skills are available?"`, a hook check), set `GUARD_STOP_CHECK=off`: otherwise the probe's Stop hook runs `make check` and the probe tries to fix what fails, editing files here.
-- Probe the guard (spawning `hooks/guard.mjs`, importing the engine) with `GUARD_OTEL=off`: the hook otherwise posts its decisions to the collector your shell exports, and fake sessions pollute the real telemetry. `make test` sets it, and empties `FACTORY_EVENTS_FILE` so a factory run's events file gets no fake decisions; do the same in a probe.
+- Probe the guard (spawning `hooks/guard.mjs`, importing the engine) with `GUARD_OTEL=off`: the hook otherwise posts its decisions to the collector your shell exports, and fake sessions pollute the real telemetry. `make test` sets it, and empties `GUARD_RUN_EVENTS_FILE` so a runner's events file gets no fake decisions; do the same in a probe.
 - Every guard false ask or missed command found in telemetry or transcripts becomes a row in `plugins/guard/core/corpus.json` (the regression corpus, [docs/guard.md](docs/guard.md#regression-corpus)), with its bug id open in `corpus.test.mjs` until the fix lands.
 
 ---

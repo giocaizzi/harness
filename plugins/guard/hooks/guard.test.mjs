@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, writeFileSync, } from "node:fs";
+import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, realpathSync, symlinkSync, writeFileSync, } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir, userInfo } from "node:os";
 import { join, resolve } from "node:path";
@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 import { codexRules } from "../core/engine.mjs";
 import { rules } from "../core/rules.mjs";
 import { fallbackDataDir } from "./data.mjs";
-import { CODEX_RULES, codexAsks, codexReviewer, factoryLabels, handle, inWorkTree, protectFacts, pythonManager, sessionStore, tail, } from "./guard.mjs";
+import { CODEX_RULES, codexAsks, codexReviewer, crashResult, handle, inWorkTree, protectFacts, pythonManager, sessionStore, tail, } from "./guard.mjs";
 const calm = async () => {
     await Promise.resolve();
     return { load1: 1, freeGb: 100 };
@@ -32,6 +32,50 @@ const pre = (tool_name, command) => ({
     hook_event_name: "PreToolUse",
     tool_name,
     tool_input: { command },
+});
+// A run registration for the in-process tests: a manifest in a temp dir, trusted through `runVet` (the real vet needs
+// a file out of the test user's reach). `requires` follows the keys the registration sets.
+const RO = {
+    writable: () => false,
+    owner: () => false,
+    readOnlyMount: () => false,
+};
+const REG_DIR = mkdtempSync(join(tmpdir(), "guard-run-reg-"));
+let regCount = 0;
+const DEFAULT_REG = {
+    labels: { approval: "agent-ok", takeover: "factory-takeover" },
+    protected_paths: {
+        globs: [".factory/**"],
+        exempt: [".factory/runs/*/*/**"],
+    },
+};
+const writeManifest = (reg) => {
+    const requires = [
+        ...(reg.labels ? ["labels"] : []),
+        ...(reg.protected_paths ? ["protected-paths"] : []),
+        ...(reg.modes ? ["modes"] : []),
+        ...(Array.isArray(reg.requires) ? reg.requires : []),
+    ];
+    const file = join(REG_DIR, `m${String(regCount++)}.json`);
+    writeFileSync(file, JSON.stringify({
+        contract: 2,
+        runner: "acme-runner",
+        ...reg,
+        requires: [...new Set(requires)].sort(),
+    }));
+    return file;
+};
+// A registered unattended run (override GUARD_RUN_MODE for an attended one): `reg` is the registration, `env` adds to
+// the run's variables, `deps` to the hook's.
+const registered = (reg = DEFAULT_REG, env = {}, deps = {}) => setup({
+    env: {
+        GUARD_RUN_ID: "r1",
+        GUARD_RUN_TICKET: "acme/app#7",
+        GUARD_RUN_MANIFEST: writeManifest(reg),
+        ...env,
+    },
+    runVet: RO,
+    ...deps,
 });
 // Runs the hook as a child with `payload` as a file on its stdin: a file reads to EOF at once, so a test of a rule does
 // not depend on pipe timing (a closed pipe on a hook that exits early raises EPIPE). The hook's reader waits for the
@@ -518,9 +562,9 @@ void test("telemetry: a deny emits a decision record with its class; an allow on
     assert.deepEqual([event, attrs.action, attrs.via, attrs.sample_rate, attrs.cmd_class], ["guard.decision", "allow", undefined, 10, "list"]);
     assert.ok(!JSON.stringify(sent).includes("ls -la"));
 });
-void test("FACTORY_EVENTS_FILE: one JSON line per deny or ask with ts, decision, rule and cmd_hash, never the command", async () => {
+void test("GUARD_RUN_EVENTS_FILE: one JSON line per deny or ask with ts, decision, rule and cmd_hash, never the command", async () => {
     const file = join(mkdtempSync(join(tmpdir(), "guard-events-")), "events.jsonl");
-    const run = setup({ env: { FACTORY_EVENTS_FILE: file } });
+    const run = setup({ env: { GUARD_RUN_EVENTS_FILE: file } });
     await run(pre("Bash", 'git commit -m "bad title"'));
     await run(pre("Bash", "ls"));
     const lines = readFileSync(file, "utf8")
@@ -536,13 +580,13 @@ void test("FACTORY_EVENTS_FILE: one JSON line per deny or ask with ts, decision,
     assert.ok(!Number.isNaN(Date.parse(first.ts ?? "")));
     assert.doesNotMatch(readFileSync(file, "utf8"), /bad title|git commit/);
 });
-void test("FACTORY_EVENTS_FILE: a well-formed GUARD_TRACEPARENT adds trace_id and span_id to each line, a malformed one adds neither", async () => {
+void test("GUARD_RUN_EVENTS_FILE: a well-formed GUARD_TRACEPARENT adds trace_id and span_id to each line, a malformed one adds neither", async () => {
     const tp = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
     const getLines = async (guardTraceParent) => {
         const file = join(mkdtempSync(join(tmpdir(), "guard-events-")), "events.jsonl");
         const out = await setup({
             env: {
-                FACTORY_EVENTS_FILE: file,
+                GUARD_RUN_EVENTS_FILE: file,
                 GUARD_TRACEPARENT: guardTraceParent,
             },
         })(pre("Bash", 'git commit -m "bad title"'));
@@ -625,8 +669,8 @@ void test("through the real hook and its real emit, the OTLP guard.decision reco
                 OTEL_EXPORTER_OTLP_ENDPOINT: "",
                 GUARD_OTEL_EXPORTER_OTLP_ENDPOINT: `http://127.0.0.1:${String(port)}`,
                 GUARD_UNATTENDED: "",
-                FACTORY_RUN_ID: "",
-                FACTORY_EVENTS_FILE: "",
+                GUARD_RUN_ID: "",
+                GUARD_RUN_EVENTS_FILE: "",
                 GUARD_TRACEPARENT: "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
                 CLAUDE_PLUGIN_DATA: mkdtempSync(join(tmpdir(), "guard-test-")),
             },
@@ -674,8 +718,8 @@ void test("through the real hook (Claude, Copilot CLI, VS Code; Codex with --har
                 ...process.env,
                 GUARD_OTEL: "off",
                 GUARD_UNATTENDED: "",
-                FACTORY_RUN_ID: "",
-                FACTORY_EVENTS_FILE: file,
+                GUARD_RUN_ID: "",
+                GUARD_RUN_EVENTS_FILE: file,
                 GUARD_TRACEPARENT: "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
                 CLAUDE_PLUGIN_DATA: mkdtempSync(join(tmpdir(), "guard-test-")),
             },
@@ -691,10 +735,10 @@ void test("through the real hook (Claude, Copilot CLI, VS Code; Codex with --har
         assert.deepEqual([line.trace_id, line.span_id], ["4bf92f3577b34da6a3ce929d0e0e4736", "00f067aa0ba902b7"], args.join(" "));
     }
 });
-void test("FACTORY_EVENTS_FILE: a crashing guard logs its fail-closed deny as guard-error", async () => {
+void test("GUARD_RUN_EVENTS_FILE: a crashing guard logs its fail-closed deny as guard-error", async () => {
     const file = join(mkdtempSync(join(tmpdir(), "guard-events-")), "events.jsonl");
     const h = setup({
-        env: { FACTORY_EVENTS_FILE: file },
+        env: { GUARD_RUN_EVENTS_FILE: file },
         hostFacts: async () => {
             await Promise.resolve();
             throw new Error("boom");
@@ -710,10 +754,10 @@ void test("FACTORY_EVENTS_FILE: a crashing guard logs its fail-closed deny as gu
     assert.ok(line);
     assert.deepEqual([line.decision, line.rule], ["deny", "guard-error"]);
 });
-void test("FACTORY_EVENTS_FILE: unset writes nothing, an unwritable path leaves the decision standing", async () => {
+void test("GUARD_RUN_EVENTS_FILE: unset writes nothing, an unwritable path leaves the decision standing", async () => {
     const dir = mkdtempSync(join(tmpdir(), "guard-events-"));
     assert.equal(decision(await setup({
-        env: { FACTORY_EVENTS_FILE: join(dir, "missing", "events.jsonl") },
+        env: { GUARD_RUN_EVENTS_FILE: join(dir, "missing", "events.jsonl") },
     })(pre("Bash", 'git commit -m "bad"')))?.permissionDecision, "deny");
     assert.equal(decision(await setup()(pre("Bash", 'git commit -m "bad"')))
         ?.permissionDecision, "deny");
@@ -1234,29 +1278,22 @@ void test("VS Code task tools are judged by the command they run", async () => {
     })), undefined);
     assert.match(decision(await task("run_task", { id: "shell: missing", workspaceFolder: ws }))?.additionalContext ?? "", /could not read the command/);
 });
-void test("FACTORY_RUN_ID set: a shell write to a protected path is denied; FACTORY_PROTECTED_PATHS adds globs (#213)", async () => {
+void test("a registered run: a shell write to a protected path is denied; GUARD_RUN_PROTECTED_PATHS adds globs (#213)", async () => {
     const testRepo = mkdtempSync(join(tmpdir(), "guard-protect-"));
     mkdirSync(join(testRepo, ".git"));
     mkdirSync(join(testRepo, "src"));
     const sub = join(testRepo, "src");
     const slash = (p) => p.replace(/\\/g, "/");
-    assert.deepEqual(protectFacts({}, sub), { extra: [], root: slash(testRepo), cwd: slash(sub) }, "unset: no extra globs, root found above cwd");
-    assert.deepEqual(protectFacts({ FACTORY_PROTECTED_PATHS: "" }, testRepo).extra, [], "set but empty: no extra globs (the defaults stay)");
-    assert.deepEqual(protectFacts({ FACTORY_PROTECTED_PATHS: " infra/** \r\n\n deploy/*.tf\n" }, testRepo).extra, ["infra/**", "deploy/*.tf"], "one glob per line, blanks dropped");
+    assert.deepEqual(protectFacts(sub), { root: slash(testRepo), cwd: slash(sub) }, "root found above cwd");
     const write = (command, cwd = testRepo) => ({
         ...pre("Bash", command),
         cwd,
     });
-    const inRun = (paths) => setup({
-        env: {
-            FACTORY_RUN_ID: "r1",
-            ...(paths === undefined ? {} : { FACTORY_PROTECTED_PATHS: paths }),
-        },
-    });
+    const inRun = (paths) => registered(DEFAULT_REG, paths === undefined ? {} : { GUARD_RUN_PROTECTED_PATHS: paths });
     for (const paths of [undefined, "", "infra/**"]) {
         const d = decision(await inRun(paths)(write("echo x > .github/workflows/ci.yml")));
         assert.ok(d);
-        assert.equal(d.permissionDecision, "deny", `defaults always on (${JSON.stringify(paths)})`);
+        assert.equal(d.permissionDecision, "deny", `the floor is always on (${JSON.stringify(paths)})`);
         assert.match(d.permissionDecisionReason ?? "", /protected path/);
         assert.equal(decision(await inRun(paths)(write("echo x > ../.factory/config.yaml", sub)))?.permissionDecision, "deny", "relative to the repo root, from a subdirectory");
     }
@@ -1296,14 +1333,101 @@ void test("FACTORY_RUN_ID set: a shell write to a protected path is denied; FACT
     }
     assert.equal(decision(await inRun(".factory/runs/*/result.json")(write("echo x > .factory/runs/12/result.json")))?.permissionDecision, "deny", "a listed glob under runs/ protects it");
     assert.notEqual(decision(await inRun(".factory/runs/*/result.json")(write("echo x > .factory/runs/12/checklist.md")))?.permissionDecision, "deny", "only what the glob names");
-    assert.notEqual(decision(await setup({ env: {} })(write("echo x > .github/workflows/ci.yml")))?.permissionDecision, "deny", "no factory run: allowed");
+    assert.notEqual(decision(await setup({ env: {} })(write("echo x > .github/workflows/ci.yml")))?.permissionDecision, "deny", "no run: allowed");
 });
-void test("FACTORY_RUN_ID set: the protected-path check denies within the hook budget on worst cases (#213 review)", () => {
-    // Through the real entry point, in a child with a timeout: a hook that times out lets the command through.
-    const script = fileURLToPath(new URL("./guard.mjs", import.meta.url));
+// An edit tool's call, from `cwd`.
+const edit = (file_path, cwd) => ({
+    hook_event_name: "PreToolUse",
+    tool_name: "Write",
+    tool_input: { file_path },
+    cwd,
+});
+const denied = (out) => decision(out)?.permissionDecision === "deny";
+void test("a registered run: an edit through a dangling symlink is checked at its target", async () => {
+    const repo = realpathSync(mkdtempSync(join(tmpdir(), "guard-links-")));
+    mkdirSync(join(repo, ".git"));
+    symlinkSync(".github/workflows/new.yml", join(repo, "notes.md"));
+    symlinkSync("b", join(repo, "a"));
+    symlinkSync("a", join(repo, "b"));
+    symlinkSync(".github/workflows", join(repo, "wf"));
+    const run = registered();
+    assert.ok(denied(await run(edit(join(repo, "notes.md"), repo))), "the final component");
+    assert.ok(denied(await run(edit(join(repo, "wf", "new.yml"), repo))), "a middle component");
+    assert.ok(denied(await run(edit(join(repo, "a"), repo))), "a link loop is protected");
+    assert.ok(!denied(await run(edit(join(repo, "plain.md"), repo))));
+});
+void test("a registered run: a link target is followed component by component, before its `..` applies", async () => {
+    const repo = realpathSync(mkdtempSync(join(tmpdir(), "guard-dotdot-")));
+    mkdirSync(join(repo, ".git"));
+    mkdirSync(join(repo, ".github", "workflows"), { recursive: true });
+    symlinkSync(".github/workflows", join(repo, "d"));
+    symlinkSync("d/../ci.yml", join(repo, "n.md"));
+    mkdirSync(join(repo, "src"));
+    symlinkSync("../src/../src/ok.md", join(repo, "src", "fine.md"));
+    const run = registered();
+    assert.ok(denied(await run(edit(join(repo, "n.md"), repo))), "d/../ci.yml is .github/ci.yml");
+    assert.ok(!denied(await run(edit(join(repo, "src", "fine.md"), repo))));
+});
+void test("a registered run: a `..` in the edit tool's own path applies after the link before it, as the kernel does", async () => {
+    const repo = realpathSync(mkdtempSync(join(tmpdir(), "guard-rawdots-")));
+    mkdirSync(join(repo, ".git"));
+    mkdirSync(join(repo, ".github", "workflows"), { recursive: true });
+    symlinkSync(".github/workflows", join(repo, "d"));
+    mkdirSync(join(repo, "src", "a"), { recursive: true });
+    symlinkSync("src/a", join(repo, "ok"));
+    const run = registered();
+    // `d/../ci.yml` is `.github/ci.yml`: absolute, relative to the cwd, and with a `./` in front
+    assert.ok(denied(await run(edit(`${repo}/d/../ci.yml`, repo))));
+    assert.ok(denied(await run(edit("d/../ci.yml", repo))));
+    assert.ok(denied(await run(edit("./d/../ci.yml", repo))));
+    // a link that leads somewhere harmless stays allowed
+    assert.ok(!denied(await run(edit(`${repo}/ok/../x.md`, repo))));
+    assert.ok(!denied(await run(edit(join(repo, "src", "x.md"), repo))));
+});
+void test("crashResult: a crash denies a tool call in a run, whatever its mode, and allows the rest", () => {
+    const tool = { hook_event_name: "PreToolUse" };
+    const stop = { hook_event_name: "Stop" };
+    for (const env of [
+        { GUARD_RUN_ID: "r1" },
+        { GUARD_RUN_MANIFEST: "/m.json" },
+        { GUARD_RUN_MANIFEST: "" },
+        { GUARD_RUN_MANIFEST: "  " },
+        { FACTORY_RUN_ID: "r1" },
+        { GUARD_RUN_ID: "r1", GUARD_RUN_MODE: "attended" },
+    ]) {
+        const out = crashResult(tool, env, "claude");
+        assert.match(out.stdout ?? "", /"permissionDecision":"deny".*The command guard failed in a registered run/, JSON.stringify(env));
+        assert.deepEqual(crashResult(stop, env), {}, "only a tool call is denied");
+    }
+    for (const env of [{}, { GUARD_RUN_ID: " " }, { FACTORY_RUN_ID: "" }]) {
+        assert.deepEqual(crashResult(tool, env), {}, JSON.stringify(env));
+    }
+});
+void test("a registered run: a run variable changed mid-session denies every tool call", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "guard-pin-"));
+    const manifest = writeManifest(DEFAULT_REG);
+    const call = (extra) => setup({
+        dataDir,
+        runVet: RO,
+        env: {
+            GUARD_RUN_ID: "r1",
+            GUARD_RUN_TICKET: "acme/app#7",
+            GUARD_RUN_MANIFEST: manifest,
+            ...extra,
+        },
+    })({ ...pre("Bash", "echo a > .github/ci.yml"), cwd: "/" });
+    assert.ok(denied(await call({})), "the first call pins the run");
+    const attended = decision(await call({ GUARD_RUN_MODE: "attended" }));
+    assert.equal(attended?.permissionDecision, "deny");
+    assert.match(attended.permissionDecisionReason ?? "", /run variables changed during the session \(GUARD_RUN_MODE\)/);
+    assert.doesNotMatch(attended.permissionDecisionReason ?? "", /attended/);
+    assert.match(decision(await call({ GUARD_RUN_TICKET: "acme/app#8" }))
+        ?.permissionDecisionReason ?? "", /changed during the session \(GUARD_RUN_TICKET\)/);
+});
+void test("a registered run: the protected-path check denies within the hook budget on worst cases (#213 review)", async () => {
     const testRepo = mkdtempSync(join(tmpdir(), "guard-protect-"));
     mkdirSync(join(testRepo, ".git"));
-    // Past the cap the globs are short: Linux caps one environment string at 128 KB, and spawnSync fails past it.
+    // Past the cap the globs are short.
     const globs = (n) => Array.from({ length: n }, (_, i) => n > 256
         ? `p${String(i)}/**`
         : i % 3 === 0
@@ -1341,28 +1465,12 @@ void test("FACTORY_RUN_ID set: the protected-path check denies within the hook b
         // Each case ends in a protected write, so the only right answer is a deny, whatever limit it hits first.
         const command = `${plain}; echo x > .github/workflows/ci.yml`;
         const started = Date.now();
-        const r = hookSync(script, ["PreToolUse"], JSON.stringify({
-            hook_event_name: "PreToolUse",
-            tool_name: "Bash",
-            tool_input: { command },
-            cwd: testRepo,
-            session_id: "s",
-        }), {
-            timeout: 20000,
-            env: {
-                ...process.env,
-                FACTORY_RUN_ID: "r1",
-                FACTORY_PROTECTED_PATHS: globs(n),
-                GUARD_OTEL: "off",
-                FACTORY_EVENTS_FILE: "",
-                CLAUDE_PLUGIN_DATA: mkdtempSync(join(tmpdir(), "guard-test-")),
-            },
-        });
-        assert.equal(r.error, undefined, "spawn failed: " + (r.error?.message ?? ""));
-        assert.equal(r.signal, null, `timed out: ${command.slice(0, 40)}`);
-        assert.equal(r.status, 0, r.stderr);
+        const out = await registered(DEFAULT_REG, {
+            GUARD_RUN_PROTECTED_PATHS: globs(n),
+            GUARD_RUN_EVENTS_FILE: "",
+        })({ ...pre("Bash", command), cwd: testRepo });
         assert.ok(Date.now() - started < 10000, `${String(Date.now() - started)} ms: ${command.slice(0, 40)}`);
-        assert.match(r.stdout, /"permissionDecision":"deny"/, `no deny: ${command.slice(0, 40)}`);
+        assert.equal(decision(out)?.permissionDecision, "deny", `no deny: ${command.slice(0, 40)}`);
     }
 });
 void test("through the real hook, a risky command behind a wrapper option asks; the safe one passes (#282)", () => {
@@ -1380,8 +1488,8 @@ void test("through the real hook, a risky command behind a wrapper option asks; 
                 ...process.env,
                 GUARD_OTEL: "off",
                 GUARD_UNATTENDED: "",
-                FACTORY_RUN_ID: "",
-                FACTORY_EVENTS_FILE: "",
+                GUARD_RUN_ID: "",
+                GUARD_RUN_EVENTS_FILE: "",
                 CLAUDE_PLUGIN_DATA: mkdtempSync(join(tmpdir(), "guard-test-")),
             },
         });
@@ -1412,37 +1520,18 @@ void test("through the real hook, a risky command behind a wrapper option asks; 
         assert.equal(run(c), "allow", c);
     }
 });
-void test("through the real hook, time before a reserved word and chrt without a priority hide no command (#282 review)", () => {
-    const script = fileURLToPath(new URL("./guard.mjs", import.meta.url));
+void test("time before a reserved word and chrt without a priority hide no command (#282 review)", async () => {
     const testRepo = mkdtempSync(join(tmpdir(), "guard-time-"));
     mkdirSync(join(testRepo, ".git"));
-    const run = (command, factory) => {
-        const r = hookSync(script, ["PreToolUse"], JSON.stringify({
-            hook_event_name: "PreToolUse",
-            tool_name: "Bash",
-            tool_input: { command },
-            cwd: testRepo,
-            session_id: "s",
-        }), {
-            timeout: 20000,
-            env: {
-                ...process.env,
-                GUARD_OTEL: "off",
-                GUARD_UNATTENDED: "",
-                FACTORY_RUN_ID: factory ? "r1" : "",
-                FACTORY_PROTECTED_PATHS: "",
-                FACTORY_EVENTS_FILE: "",
-                CLAUDE_PLUGIN_DATA: mkdtempSync(join(tmpdir(), "guard-test-")),
-            },
-        });
-        assert.equal(r.status, 0, r.stderr);
-        return r.stdout
-            ? (JSON.parse(r.stdout).hookSpecificOutput
-                ?.permissionDecision ?? "allow")
-            : "allow";
+    const run = async (command, inRun) => {
+        const h = inRun
+            ? registered(DEFAULT_REG, { GUARD_RUN_PROTECTED_PATHS: "" })
+            : setup({ env: {} });
+        const out = await h({ ...pre("Bash", command), cwd: testRepo });
+        return decision(out)?.permissionDecision ?? "allow";
     };
     const label = "GH api repos/o/r/issues/1/labels --input b.json";
-    // In a factory run: the protected-path check and the label check see the command inside the group or after `!`.
+    // In a registered run: the protected-path check and the label check see the command inside the group or after `!`.
     for (const c of [
         "time { tee .github/workflows/ci.yml < b; }",
         "time ! tee .github/workflows/ci.yml < b",
@@ -1454,10 +1543,10 @@ void test("through the real hook, time before a reserved word and chrt without a
         `time -p ${label}`,
         `chrt --idle ${label}`,
     ]) {
-        assert.equal(run(c, true), "deny", c);
+        assert.equal(await run(c, true), "deny", c);
     }
-    assert.equal(run("time make", true), "allow");
-    // Out of a run: a recursive delete still asks, a write to .github is not protected.
+    assert.equal(await run("time make", true), "allow");
+    // Outside a run: a recursive delete still asks, a write to .github is not protected.
     for (const c of [
         "time { rm -rf .factory/runs/12; }",
         "time ! rm -rf src",
@@ -1466,14 +1555,14 @@ void test("through the real hook, time before a reserved word and chrt without a
         "chrt --other bash -c 'rm -rf x'",
         "chrt -f 10 bash -c 'rm -rf x'",
     ]) {
-        assert.equal(run(c, false), "ask", c);
+        assert.equal(await run(c, false), "ask", c);
     }
     for (const c of [
         "time { tee .github/workflows/ci.yml < b; }",
         "time make",
         "chrt -b make",
     ]) {
-        assert.equal(run(c, false), "allow", c);
+        assert.equal(await run(c, false), "allow", c);
     }
 });
 void test("a long chain of commands is judged in linear time, and the decision is the same as for a short one", () => {
@@ -1491,7 +1580,7 @@ void test("a long chain of commands is judged in linear time, and the decision i
             env: {
                 ...process.env,
                 GUARD_OTEL: "off",
-                FACTORY_EVENTS_FILE: "",
+                GUARD_RUN_EVENTS_FILE: "",
                 CLAUDE_PLUGIN_DATA: mkdtempSync(join(tmpdir(), "guard-test-")),
             },
         });
@@ -1508,65 +1597,17 @@ void test("a long chain of commands is judged in linear time, and the decision i
     assert.ok(big.ms < 8000, `${String(big.ms)} ms for 20,000 segments`);
     assert.match(run(`${chain(20000)} rm -rf /`).out, /"permissionDecision":"deny"/);
 });
-void test("FACTORY_RUN_ID set: the approval and takeover labels (default or the repo's configured ones) cannot be added; unset, they can", async () => {
-    const cwd = mkdtempSync(join(tmpdir(), "guard-factory-"));
-    const configured = mkdtempSync(join(tmpdir(), "guard-factory-"));
-    mkdirSync(join(configured, ".factory"));
-    writeFileSync(join(configured, ".factory", "config.yaml"), "labels:\n  approval: go-ahead\n  claimed: x\n  takeover: hand-over # set by an approver\n");
-    const crlf = mkdtempSync(join(tmpdir(), "guard-factory-"));
-    mkdirSync(join(crlf, ".factory"));
-    writeFileSync(join(crlf, ".factory", "config.yaml"), 'labels:\r\n  approval: "go ahead"\r\n  claimed: x\r\n');
-    assert.deepEqual(factoryLabels(crlf), {
-        approval: "agent-ok",
-        takeover: "factory-takeover",
-        approvals: ["go ahead"],
-    }, "CRLF and a quoted name with a space; an unset key keeps its default; configured names add");
-    assert.deepEqual(factoryLabels(configured), {
-        approval: "agent-ok",
-        takeover: "factory-takeover",
-        approvals: ["go-ahead"],
-        takeovers: ["hand-over"],
-    });
-    assert.deepEqual(factoryLabels(cwd), { approval: "agent-ok", takeover: "factory-takeover" }, "no config: the defaults");
-    const config = (text) => {
-        const d = mkdtempSync(join(tmpdir(), "guard-factory-"));
-        mkdirSync(join(d, ".factory"));
-        if (text === null)
-            mkdirSync(join(d, ".factory", "config.yaml"));
-        else
-            writeFileSync(join(d, ".factory", "config.yaml"), text);
-        return d;
-    };
-    const same = config("labels:\n  approval: agent-ok\n  takeover: factory-takeover\n");
-    assert.deepEqual(factoryLabels(same), { approval: "agent-ok", takeover: "factory-takeover" }, "a configured name equal to the default adds nothing");
-    assert.deepEqual(factoryLabels(config("version: 1\n")), { approval: "agent-ok", takeover: "factory-takeover" }, "no labels key: the defaults");
-    assert.deepEqual(factoryLabels(config("labels: {approval: go-ahead, takeover: hand-over}\n")), {
-        approval: "agent-ok",
-        takeover: "factory-takeover",
-        unsure: true,
-        extra: ["go-ahead", "hand-over"],
-    }, "flow style: fail closed");
-    assert.deepEqual(factoryLabels(config("labels:\n  approval:\n    - x\n")), {
-        approval: "agent-ok",
-        takeover: "factory-takeover",
-        unsure: true,
-        extra: [],
-    }, "a key without a plain value: fail closed");
-    assert.deepEqual(factoryLabels(config(null)), {
-        approval: "agent-ok",
-        takeover: "factory-takeover",
-        unsure: true,
-        extra: [],
-    }, "unreadable: fail closed");
-    const inRun = setup({ env: { FACTORY_RUN_ID: "r1" } });
-    const add = (label, dir) => ({
+void test("a registered run: the approval, takeover and protected labels cannot be added or removed; attended or outside a run, they can", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "guard-run-"));
+    const inRun = registered();
+    const add = (label) => ({
         ...pre("Bash", `gh issue edit 70 --add-label ${label}`),
-        cwd: dir,
+        cwd,
     });
-    const denied = decision(await inRun(add("agent-ok", cwd)));
+    const denied = decision(await inRun(add("agent-ok")));
     assert.ok(denied);
     assert.equal(denied.permissionDecision, "deny");
-    assert.match(denied.permissionDecisionReason ?? "", /approval label/);
+    assert.match(denied.permissionDecisionReason ?? "", /registered for this run/);
     assert.equal(decision(await inRun({
         ...pre("Bash", "gh api repos/o/r/issues/70/labels -f labels[]=agent-ok"),
         cwd,
@@ -1575,26 +1616,34 @@ void test("FACTORY_RUN_ID set: the approval and takeover labels (default or the 
         ...pre("Bash", "gh pr edit 3 --add-label agent-ok"),
         cwd,
     }))?.permissionDecision, "deny");
-    assert.equal(decision(await inRun(add("go-ahead", configured)))?.permissionDecision, "deny");
-    assert.equal(decision(await inRun(add("agent-ok", configured)))?.permissionDecision, "deny", "the default stays protected beside the configured name");
-    assert.equal(decision(await inRun(add("needs-owner", cwd))), undefined);
-    const takeover = decision(await inRun(add("factory-takeover", cwd)));
+    assert.equal(decision(await inRun(add("needs-owner"))), undefined);
+    const takeover = decision(await inRun(add("factory-takeover")));
     assert.ok(takeover);
     assert.equal(takeover.permissionDecision, "deny");
-    assert.match(takeover.permissionDecisionReason ?? "", /takeover label/);
-    assert.equal(decision(await inRun(add("hand-over", configured)))?.permissionDecision, "deny", "the configured takeover label");
-    assert.equal(decision(await setup({ env: {} })(add("factory-takeover", cwd))), undefined, "an attended run removes or adds it freely");
-    const flow = config("labels: {approval: go-ahead}\n");
-    const unsure = decision(await inRun(add("needs-owner", flow)));
-    assert.ok(unsure);
-    assert.equal(unsure.permissionDecision, "deny", "an unparsable config denies every label change in a run");
-    assert.match(unsure.permissionDecisionReason ?? "", /could not be read/);
-    assert.equal(decision(await inRun({
+    assert.match(takeover.permissionDecisionReason ?? "", /owner's to apply/);
+    const configured = registered({
+        labels: {
+            approval: "go-ahead",
+            takeover: "hand-over",
+            protected: ["acme-parked"],
+        },
+    });
+    for (const label of ["go-ahead", "hand-over", "acme-parked"]) {
+        assert.equal(decision(await configured(add(label)))?.permissionDecision, "deny", label);
+    }
+    assert.equal(decision(await configured(add("agent-ok"))), undefined, "only the registered names");
+    const unsure = registered({ requires: ["labels"] });
+    const unsureDeny = decision(await unsure(add("needs-owner")));
+    assert.ok(unsureDeny);
+    assert.equal(unsureDeny.permissionDecision, "deny", "a registration that requires labels but names none denies every label change");
+    assert.match(unsureDeny.permissionDecisionReason ?? "", /names no labels/);
+    assert.equal(decision(await unsure({
         ...pre("Bash", "gh issue view 70 --json labels"),
-        cwd: flow,
+        cwd,
     })), undefined, "reads still pass");
-    assert.equal(decision(await setup({ env: {} })(add("needs-owner", flow))), undefined, "outside a run: unchanged");
-    assert.equal(decision(await setup({ env: {} })(add("agent-ok", cwd))), undefined, "no run active: allowed");
+    assert.equal(decision(await registered(DEFAULT_REG, { GUARD_RUN_MODE: "attended" })(add("agent-ok"))), undefined, "attended: the shell rules do not apply");
+    assert.equal(decision(await setup({ env: {} })(add("agent-ok"))), undefined, "no run active: allowed");
+    assert.equal(decision(await setup({ env: {} })(add("factory-takeover"))), undefined, "an attended run removes or adds it freely");
 });
 void test("SessionStart: one guard.session per session and process, with the plugin versions", async () => {
     const cache = join(mkdtempSync(join(tmpdir(), "guard-test-")), "cache", "mkt");
@@ -1674,54 +1723,267 @@ void test("Antigravity payload: toolCall on run_command evaluates decisions and 
     assert.equal(askJson.decision, "ask");
     assert.match(askJson.reason ?? "", /git reset --hard/);
 });
-void test("FACTORY_RUN_ID set: guard's data directory is protected from shell writes and edit tools; unset, it is not", async () => {
-    const data = mkdtempSync(join(tmpdir(), "guard-data-"));
+void test("a registered run: an edit tool never changes a protected path; the registration's exemption, attended and no run allow it", async () => {
     const repo = mkdtempSync(join(tmpdir(), "guard-repo-"));
-    const counter = join(data, "result-gate", "x.txt");
-    const inRun = setup({
-        env: { FACTORY_RUN_ID: "r1", CLAUDE_PLUGIN_DATA: data },
-    });
-    const outside = setup({ env: { CLAUDE_PLUGIN_DATA: data } });
-    const edit = (tool, tool_input, cwd = repo) => ({
+    mkdirSync(join(repo, ".git"));
+    mkdirSync(join(repo, "src"));
+    const file = (...p) => join(repo, ...p);
+    const edit = (tool, path, cwd = repo) => ({
         hook_event_name: "PreToolUse",
         tool_name: tool,
-        tool_input,
+        tool_input: { file_path: path, content: "x" },
         cwd,
     });
-    const shell = {
-        ...pre("Bash", `echo 2 > ${counter}`),
-        cwd: repo,
-    };
-    assert.equal(decision(await inRun(shell))?.permissionDecision, "deny");
-    assert.equal(decision(await outside(shell)), undefined);
-    const touch = {
-        ...pre("Bash", `touch ${counter}`),
-        cwd: repo,
-    };
-    assert.equal(decision(await inRun(touch))?.permissionDecision, "deny");
-    assert.equal(decision(await outside(touch)), undefined);
-    const calls = [
-        edit("Write", { file_path: counter, content: "2" }),
-        edit("Edit", { file_path: counter, old_string: "1", new_string: "2" }),
-        edit("MultiEdit", { file_path: counter, edits: [] }),
-        edit("create", { path: counter, file_text: "2" }),
-        edit("apply_patch", `*** Begin Patch\n*** Update File: ${counter}\n@@\n-1\n+2\n*** End Patch`),
-        edit("apply_patch", `*** Begin Patch\n*** Add File: ${join(repo, "ok.txt")}\n+x\n*** Delete File: ${counter}\n*** End Patch`),
-        edit("apply_patch", {
-            command: `*** Begin Patch\n*** Update File: ${join(repo, "a.txt")}\n*** Move to: ${counter}\n@@\n-1\n+2\n*** End Patch`,
-        }),
-    ];
-    for (const c of calls) {
-        const d = decision(await inRun(c));
-        assert.ok(d, JSON.stringify(c.tool_input));
-        assert.equal(d.permissionDecision, "deny", JSON.stringify(c.tool_input));
-        assert.match(d.permissionDecisionReason ?? "", /data directory/);
-        assert.equal(decision(await outside(c))?.permissionDecision, undefined, "outside a run: " + JSON.stringify(c.tool_input));
-    }
-    const repoEdit = edit("Edit", {
-        file_path: join(repo, "src", "a.ts"),
-        old_string: "1",
-        new_string: "2",
+    const inRun = registered(DEFAULT_REG, {
+        CLAUDE_PLUGIN_DATA: mkdtempSync(join(tmpdir(), "guard-data-")),
+        GUARD_RUN_PROTECTED_PATHS: "infra/**\n.factory/runs/*/*/secret/**",
     });
-    assert.equal(decision(await inRun(repoEdit))?.permissionDecision, undefined);
+    for (const [tool, path] of [
+        ["Write", file(".github", "workflows", "ci.yml")],
+        ["Edit", file(".GITHUB", "workflows", "ci.yml")],
+        ["Write", file(".github", "runs", "12", "r1", "notes.md")],
+        ["Write", file(".factory", "config.yaml")],
+        ["Write", file(".factory", "runs", "12", "r1", "secret", "k.md")],
+        ["Write", file("infra", "main.tf")],
+        ["MultiEdit", file("src", "..", ".github", "x.yml")],
+    ]) {
+        const d = decision(await inRun(edit(tool, path)));
+        assert.ok(d, path);
+        assert.equal(d.permissionDecision, "deny", path);
+        assert.match(d.permissionDecisionReason ?? "", /protected path/, path);
+    }
+    const rel = decision(await inRun(edit("Write", ".github/x.yml")));
+    assert.equal(rel?.permissionDecision, "deny", "a relative path from the cwd");
+    assert.match(rel.permissionDecisionReason ?? "", /`\.github\/x\.yml`/);
+    const sub = decision(await inRun(edit("Write", "../.github/x.yml", file("src"))));
+    assert.equal(sub?.permissionDecision, "deny", "relative to the repo root");
+    for (const path of [
+        file(".factory", "runs", "12", "r1", "notes.md"),
+        file("src", "a.ts"),
+        file("README.md"),
+        join(tmpdir(), "outside-the-repo.md"),
+    ]) {
+        assert.notEqual(decision(await inRun(edit("Write", path)))?.permissionDecision, "deny", path);
+    }
+    const attended = registered(DEFAULT_REG, { GUARD_RUN_MODE: "attended" });
+    assert.equal(decision(await attended(edit("Write", file(".github", "x.yml")))), undefined, "attended");
+    assert.equal(decision(await setup()(edit("Write", file(".github", "x.yml")))), undefined, "no run");
+});
+void test("a registered run: a protected edit and a protected shell write are counted in the events file", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "guard-repo-"));
+    mkdirSync(join(repo, ".git"));
+    const events = join(mkdtempSync(join(tmpdir(), "guard-events-")), "events.jsonl");
+    const inRun = registered(DEFAULT_REG, { GUARD_RUN_EVENTS_FILE: events });
+    await inRun({
+        hook_event_name: "PreToolUse",
+        tool_name: "Write",
+        tool_input: { file_path: join(repo, ".github", "x.yml"), content: "x" },
+        cwd: repo,
+    });
+    await inRun({
+        ...pre("Bash", "gh issue edit 1 --add-label agent-ok"),
+        cwd: repo,
+    });
+    await inRun({ ...pre("Bash", "echo x > .github/x"), cwd: repo });
+    const lines = readFileSync(events, "utf8")
+        .trim()
+        .split("\n")
+        .map((l) => JSON.parse(l));
+    assert.deepEqual(lines.map((l) => [l.decision, l.rule]), [
+        ["deny", "protected-path"],
+        ["deny", "run-label"],
+        ["deny", "protected-path"],
+    ]);
+    assert.equal(lines[0]?.cmd_hash, undefined, "an edit has no command");
+    assert.match(lines[1]?.cmd_hash ?? "", /^[0-9a-f]{12}$/);
+});
+void test("a registration that fails denies every tool with run-registration, whatever the tool", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "guard-run-"));
+    const events = join(dir, "events.jsonl");
+    const sent = [];
+    const h = setup({
+        env: {
+            GUARD_RUN_ID: "r1",
+            GUARD_RUN_MANIFEST: join(dir, "missing.json"),
+            GUARD_RUN_EVENTS_FILE: events,
+        },
+        runVet: RO,
+        emit: (e, a) => {
+            if (e === "guard.decision")
+                sent.push(a);
+        },
+    });
+    for (const input of [
+        pre("Bash", "ls"),
+        {
+            hook_event_name: "PreToolUse",
+            tool_name: "Edit",
+            tool_input: { file_path: "/x/a.ts" },
+        },
+        {
+            hook_event_name: "PreToolUse",
+            tool_name: "Read",
+            tool_input: { file_path: "/x/a.ts" },
+        },
+        {
+            hook_event_name: "PreToolUse",
+            tool_name: "Skill",
+            tool_input: { skill: "ship" },
+        },
+    ]) {
+        const d = decision(await h(input));
+        assert.ok(d, String(input.tool_name));
+        assert.equal(d.permissionDecision, "deny", String(input.tool_name));
+        assert.match(d.permissionDecisionReason ?? "", /^Run registration failed: /);
+        assert.doesNotMatch(d.permissionDecisionReason ?? "", /r1/);
+    }
+    const lines = readFileSync(events, "utf8")
+        .trim()
+        .split("\n")
+        .map((l) => JSON.parse(l));
+    assert.equal(lines.length, 4);
+    assert.ok(lines.every((l) => l.rule === "run-registration"));
+    assert.equal(lines.filter((l) => l.cmd_hash !== undefined).length, 1);
+    assert.ok(sent.every((a) => a.rule === "run-registration" && a.action === "deny"));
+    assert.equal(sent.length, 4);
+    // GUARD_RUN_ID alone, and the manifest alone, are registration failures too.
+    for (const env of [
+        { GUARD_RUN_ID: "r1" },
+        { GUARD_RUN_MANIFEST: "/x/m.json" },
+    ]) {
+        const d = decision(await setup({ env, runVet: RO })(pre("Bash", "ls")));
+        assert.equal(d?.permissionDecision, "deny", JSON.stringify(env));
+    }
+});
+void test("legacy run variables without a registration deny every tool with run-unregistered and write one line per session", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "guard-run-"));
+    const legacyEvents = join(dir, "legacy.jsonl");
+    const dataDir = mkdtempSync(join(tmpdir(), "guard-test-"));
+    const h = setup({
+        dataDir,
+        env: { FACTORY_RUN_ID: "r1", FACTORY_EVENTS_FILE: legacyEvents },
+    });
+    for (const input of [
+        pre("Bash", "ls"),
+        {
+            hook_event_name: "PreToolUse",
+            tool_name: "Edit",
+            tool_input: { file_path: "/x/a.ts" },
+        },
+        {
+            hook_event_name: "PreToolUse",
+            tool_name: "Read",
+            tool_input: { file_path: "/x/a.ts" },
+        },
+    ]) {
+        const d = decision(await h(input));
+        assert.equal(d?.permissionDecision, "deny", String(input.tool_name));
+        assert.match(d.permissionDecisionReason ?? "", /GUARD_RUN_MANIFEST/);
+        assert.doesNotMatch(d.permissionDecisionReason ?? "", /FACTORY_RUN_ID/);
+    }
+    const lines = readFileSync(legacyEvents, "utf8").trim().split("\n");
+    assert.equal(lines.length, 1, "one line for the session");
+    const line = JSON.parse(lines[0] ?? "");
+    assert.deepEqual(Object.keys(line), [
+        "ts",
+        "event",
+        "decision",
+        "rule",
+        "reason",
+    ]);
+    assert.equal(line.rule, "run-unregistered");
+    assert.equal(readFileSync(join(dataDir, "run-unregistered.jsonl"), "utf8")
+        .trim()
+        .split("\n").length, 1);
+    // Blank legacy values do not trip it, and a registered run reads no legacy variable.
+    assert.equal(decision(await setup({ env: { FACTORY_RUN_ID: "", FACTORY_TICKET: " " } })(pre("Bash", "ls"))), undefined);
+});
+void test("a registered unattended run: a crash in the shell check denies every command, an attended one only the risky", async () => {
+    const boom = async () => {
+        await Promise.resolve();
+        throw new Error("boom");
+    };
+    const build = pre("Bash", "npm run build");
+    assert.equal(decision(await registered(DEFAULT_REG, {}, { hostFacts: boom })(build))
+        ?.permissionDecision, "deny");
+    assert.equal(decision(await registered(DEFAULT_REG, { GUARD_RUN_MODE: "attended" }, { hostFacts: boom })(build)), undefined);
+    assert.equal(decision(await setup({ hostFacts: boom })(build)), undefined, "no run");
+});
+void test("SessionStart: guard.session says whether a run is registered and which runner, never a path", async () => {
+    const attrsOf = async (env) => {
+        const sent = [];
+        const h = setup({
+            env,
+            runVet: RO,
+            emit: (e, a) => {
+                if (e === "guard.session")
+                    sent.push(a);
+            },
+        });
+        await h({ hook_event_name: "SessionStart", source: "startup" });
+        assert.equal(sent.length, 1);
+        return sent[0] ?? {};
+    };
+    assert.equal((await attrsOf({}))["run.registered"], false);
+    const file = writeManifest(DEFAULT_REG);
+    const reg = await attrsOf({
+        GUARD_RUN_ID: "r1",
+        GUARD_RUN_TICKET: "acme/app#7",
+        GUARD_RUN_MANIFEST: file,
+    });
+    assert.equal(reg["run.registered"], true);
+    assert.equal(reg["runner.name"], "acme-runner");
+    assert.equal(reg["runner.contract"], 2);
+    assert.match(String(reg["runner.manifest_sha16"]), /^[0-9a-f]{16}$/);
+    assert.doesNotMatch(JSON.stringify(reg), new RegExp(file.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&")));
+    assert.equal((await attrsOf({
+        GUARD_RUN_ID: "r1",
+        GUARD_RUN_MANIFEST: join(REG_DIR, "missing.json"),
+    }))["run.registered"], false, "a failed registration is not registered");
+});
+void test("through the real hook: the legacy-only tripwire and a run id without a manifest deny; the contract probe says enforced", () => {
+    const script = fileURLToPath(new URL("./guard.mjs", import.meta.url));
+    // An empty manifest variable is itself a registration failure, so the child gets none.
+    const inherited = { ...process.env };
+    delete inherited.GUARD_RUN_MANIFEST;
+    const run = (env, args = ["PreToolUse"]) => hookSync(script, args, JSON.stringify({
+        hook_event_name: "PreToolUse",
+        tool_name: "Read",
+        tool_input: { file_path: "/x/a.ts" },
+        cwd: tmpdir(),
+        session_id: "s",
+    }), {
+        timeout: 20000,
+        env: {
+            ...inherited,
+            GUARD_OTEL: "off",
+            GUARD_UNATTENDED: "",
+            GUARD_RUN_ID: "",
+            GUARD_RUN_EVENTS_FILE: "",
+            FACTORY_RUN_ID: "",
+            FACTORY_EVENTS_FILE: "",
+            CLAUDE_PLUGIN_DATA: mkdtempSync(join(tmpdir(), "guard-test-")),
+            ...env,
+        },
+    });
+    const legacy = join(mkdtempSync(join(tmpdir(), "guard-events-")), "e.jsonl");
+    const tripped = run({ FACTORY_RUN_ID: "r1", FACTORY_EVENTS_FILE: legacy });
+    assert.equal(tripped.status, 0, tripped.stderr);
+    assert.match(tripped.stdout, /"permissionDecision":"deny"/);
+    assert.match(tripped.stdout, /GUARD_RUN_MANIFEST/);
+    assert.equal(readFileSync(legacy, "utf8").trim().split("\n").length, 1);
+    const noManifest = run({ GUARD_RUN_ID: "r1" });
+    assert.equal(noManifest.status, 0, noManifest.stderr);
+    assert.match(noManifest.stdout, /"permissionDecision":"deny"/);
+    assert.match(noManifest.stdout, /GUARD_RUN_MANIFEST is not/);
+    const plain = run({});
+    assert.equal(plain.stdout, "");
+    const probe = spawnSync(process.execPath, [script, "--contract"], {
+        encoding: "utf8",
+        input: "",
+        timeout: 10000,
+        env: { ...process.env, GUARD_OTEL: "off" },
+    });
+    assert.equal(probe.status, 0);
+    assert.match(probe.stdout, /"enforced":true/);
 });

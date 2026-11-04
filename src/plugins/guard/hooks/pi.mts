@@ -245,7 +245,12 @@ export default function guardExtension(pi: PiApp, deps?: GuardDeps): void {
 
   pi.on("agent_settled", async (event: PiAgentSettledEvent, ctx: PiContext) => {
     if (event.aborted) return;
-    const reason = await guard.stop({ cwd: ctx.cwd, active: blocked });
+    const reason = await guard.stop({
+      cwd: ctx.cwd,
+      active: blocked,
+      sessionId: sessionOf(ctx),
+      agentId,
+    });
     blocked = Boolean(reason);
     if (reason) await pi.sendUserMessage(reason);
   });

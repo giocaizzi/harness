@@ -40,9 +40,14 @@ else
 endif
 
 # Tests and probes never post to a real collector, whatever the shell exports (GUARD_OTEL=off, core/otel.mjs),
-# nor append fake decisions to a factory run's events file.
+# nor append fake decisions to a runner's run events file (GUARD_RUN_EVENTS_FILE), nor see a run's registration or
+# legacy run variables from the caller's shell (RUN_ENV): hooks spawned with the inherited env would read them.
+# GNU make 3.81 (macOS) has no target-specific unexport, so the unexport is makefile-wide.
+RUN_ENV := GUARD_RUN_MANIFEST GUARD_RUN_ID GUARD_RUN_MODE GUARD_RUN_TICKET GUARD_RUN_FILE GUARD_RUN_PROTECTED_PATHS \
+	FACTORY_RUN_ID FACTORY_ATTENDED_RUN_ID FACTORY_TICKET FACTORY_ATTENDED_TICKET FACTORY_RUN_FILE FACTORY_PROTECTED_PATHS FACTORY_EVENTS_FILE FACTORY_RESULT_CHECKER
+unexport $(RUN_ENV)
 test: export GUARD_OTEL := off
-test: export FACTORY_EVENTS_FILE :=
+test: export GUARD_RUN_EVENTS_FILE :=
 test: ## Run the plugins' hook tests (Node 22+), their mod tests (`claude plugin test`), then the skill script tests.
 	@node --test $(wildcard plugins/*/core/*.test.mjs plugins/*/hooks/*.test.mjs plugins/*/pi/*.test.mjs tests/*.test.mjs tests/contract/*.test.mjs)
 ifneq ($(WIN_CMD),)
@@ -63,7 +68,7 @@ e2e: ## Drive each installed harness CLI (Copilot CLI, Codex, opencode, pi) agai
 
 contract-test: export GUARD_OTEL := off
 contract-test: export GUARD_STOP_CHECK := off
-contract-test: export FACTORY_EVENTS_FILE :=
+contract-test: export GUARD_RUN_EVENTS_FILE :=
 contract-test: ## Run contract v2 kit against a runner's manifest (docs/guard.md).  Usage: make contract-test MANIFEST=<absolute path>
 	@test -n "$(MANIFEST)" || { echo "Usage: make contract-test MANIFEST=<absolute path>"; exit 2; }
 	@CONTRACT_MANIFEST="$(MANIFEST)" node --test $(wildcard tests/contract/*.test.mjs)

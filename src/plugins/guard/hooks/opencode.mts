@@ -378,6 +378,7 @@ export const GuardPlugin = (
         const reason = await guard.stop({
           cwd: directory,
           active: blocked.has(sessionId),
+          sessionId,
         });
         if (!reason) {
           blocked.delete(sessionId);

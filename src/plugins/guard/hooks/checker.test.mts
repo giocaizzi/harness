@@ -1,4 +1,4 @@
-// The launcher's result checker: vetting its path and running it in a child process. Tests named `result check:` run on
+// The runner's result checker: vetting its path and running it in a child process. Tests named `result check:` run on
 // every OS; the ones that need POSIX permissions are named `posix checker:` and skip on Windows.
 
 import assert from "node:assert/strict";
@@ -17,8 +17,6 @@ import { dirname, join } from "node:path";
 import { after, test } from "node:test";
 
 import {
-  BUILD_COPY,
-  defaultChecker,
   isWritableByMe,
   prepareChecker,
   runChecker,
@@ -106,13 +104,6 @@ void test("result check: a vetted checker returns its real path", () => {
   assert.deepEqual(prepareChecker(p, ro), { path: p, shown: p });
 });
 
-void test("result check: the default checker is the build copy when it exists", () => {
-  const p = file("export const resultErrors = () => []");
-  assert.deepEqual(defaultChecker(p), { path: p });
-  assert.equal(defaultChecker(join(root, "none.mjs")), null);
-  assert.ok(BUILD_COPY.endsWith("check-result.mjs"));
-});
-
 void test(
   "posix checker: a file this user owns or can write is refused, even read-only",
   posixOnly,
@@ -193,6 +184,16 @@ void test(
     );
   },
 );
+
+void test("checker: EROFS, EACCES and EPERM mean not writable, any other access error or none means writable", () => {
+  const code = (c: string | undefined) => () => c;
+  for (const c of ["EROFS", "EACCES", "EPERM"]) {
+    assert.equal(isWritableByMe("/x", "linux", code(c)), false, c);
+  }
+  for (const c of ["ENOENT", "EIO", "ELOOP", "unknown", undefined]) {
+    assert.equal(isWritableByMe("/x", "linux", code(c)), true, String(c));
+  }
+});
 
 void test("posix checker: an unreadable file is refused", posixOnly, () => {
   if (process.getuid?.() === 0) return;
@@ -283,13 +284,13 @@ void test("result check: returns the checker errors, or none", async () => {
 void test("result check: the checker gets the result and the environment", async () => {
   const c = prepareChecker(
     file(
-      "export const resultErrors = (r, env) => [`${r.run_id}/${env.FACTORY_X}`]",
+      "export const resultErrors = (r, env) => [`${r.run_id}/${env.GUARD_RUN_X}`]",
     ),
     ro,
   );
   assert.ok("path" in c);
   assert.deepEqual(
-    await runChecker(c.path, { run_id: "r1" }, { FACTORY_X: "x" }),
+    await runChecker(c.path, { run_id: "r1" }, { GUARD_RUN_X: "x" }),
     {
       errors: ["r1/x"],
     },

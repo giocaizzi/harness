@@ -11,7 +11,8 @@ const PS_LINT = "if (Get-Module -ListAvailable -Name PSScriptAnalyzer) { $r = In
 // Edited files: Claude `file_path`, Copilot `path`, VS Code `filePath` or `replacements[].filePath`, and the
 // `*** Add/Update File:` lines of an apply_patch (Copilot sends the patch as the whole tool_input, VS Code as `input`,
 // Codex as `command`).
-export function editedFiles(input) {
+// The paths as the tool call spells them, nothing resolved.
+export function editedPaths(input) {
     const t = input.tool_input;
     let patch;
     let paths = [];
@@ -39,9 +40,11 @@ export function editedFiles(input) {
         const matches = [...patch.matchAll(/^\*\*\* (?:Add|Update) File: (.+)$/gm)];
         paths = matches.map((m) => m[1]?.trim());
     }
-    const validPaths = paths.filter((p) => typeof p === "string" && p.length > 0);
+    return paths.filter((p) => typeof p === "string" && p.length > 0);
+}
+export function editedFiles(input) {
     const baseDir = input.cwd ?? ".";
-    return [...new Set(validPaths.map((p) => resolve(baseDir, p)))];
+    return [...new Set(editedPaths(input).map((p) => resolve(baseDir, p)))];
 }
 export function lintFile(input, run = spawnSync, platform = process.platform, env = process.env) {
     const tool = input.tool_name ?? "";
