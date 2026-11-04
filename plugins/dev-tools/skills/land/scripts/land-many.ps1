@@ -15,7 +15,8 @@
 # DIRTY is a conflict; BEHIND (only without a queue) needs the base merged in; STACKED is a PR based on another
 # branch than the default one (land it with `gh stack merge`, or retarget it as `land` step 3 says); ERROR is gh
 # failing 3 polls in a row; TIMEOUT names what it waited on (pending required checks, running workflows, gh's
-# refusal, a merge-async request still pending). Exits 0 when every PR merged, 1 otherwise, 2 on usage. Needs gh.
+# refusal, a merge-async request still pending). A cancelled run superseded by a newer, non-skipped run of the same
+# check (name, workflow, event) is ignored, and a cancelled newest run waits while its workflow still runs on the head, then fails. Exits 0 when every PR merged, 1 otherwise, 2 on usage. Needs gh.
 # --interval (1-3600) and --timeout (1-86400) default to LAND_MANY_INTERVAL (30) and LAND_MANY_TIMEOUT (7200) seconds.
 $ErrorActionPreference = 'Stop'
 function Exit-Usage { [Console]::Error.WriteLine('usage: land-many.ps1 [--interval <1-3600 s>] [--timeout <1-86400 s>] <pr>...'); exit 2 }
@@ -63,9 +64,9 @@ $repo = $view.nameWithOwner; $default = $view.defaultBranchRef.name
 $owner, $name = $repo -split '/', 2
 $query = 'query($owner:String!,$name:String!,$n:Int!){repository(owner:$owner,name:$name){pullRequest(number:$n){' +
     'id state mergeStateStatus headRefOid baseRefName isInMergeQueue isMergeQueueEnabled mergeCommit{oid} ' +
-    'commits(last:1){nodes{commit{checkSuites(first:100){nodes{status workflowRun{workflow{name}}}}}}} ' +
+    'commits(last:1){nodes{commit{checkSuites(first:100){nodes{status workflowRun{event workflow{name}}}}}}} ' +
     'statusCheckRollup{contexts(first:100){nodes{__typename ' +
-    '... on CheckRun{name status conclusion detailsUrl} ... on StatusContext{context state targetUrl}}}}}}}'
+    '... on CheckRun{databaseId name status conclusion detailsUrl checkSuite{workflowRun{event workflow{name}}}} ... on StatusContext{context state targetUrl}}}}}}}'
 $apiVersion = '2026-03-10' # the REST version whose docs define merge-async
 $mutation = 'mutation($id:ID!,$head:GitObjectID!){enqueuePullRequest(input:{pullRequestId:$id,expectedHeadOid:$head}){mergeQueueEntry{position}}}'
 $requiredByBase = @{}
@@ -83,12 +84,26 @@ function Get-Required([string]$Base) {
     }
     , $requiredByBase[$Base]
 }
-# Each rollup entry as name, bucket (pass, pending, fail) and link.
+# A check run's key: name, workflow name and event, joined by U+001F so names holding "/" cannot collide.
+function Get-RunKey($C) { (@($C.name, $C.checkSuite.workflowRun.workflow.name, $C.checkSuite.workflowRun.event) | ForEach-Object { "$_" }) -join [string][char]0x1f }
+# Each rollup entry as name, bucket (pass, pending, fail) and link; a cancelled check run with a newer, non-skipped
+# run of the same key is superseded and left out; one left over reads pending, not fail, while a suite of its
+# workflow and event is still not completed on the head (its newer run's check run may not exist yet).
 function Get-Rollup($Pr) {
-    foreach ($c in @($Pr.statusCheckRollup.contexts.nodes)) {
-        if (-not $c) { continue }
+    $nodes = @($Pr.statusCheckRollup.contexts.nodes | Where-Object { $_ })
+    $running = @(@($Pr.commits.nodes) | Where-Object { $_ } | ForEach-Object { @($_.commit.checkSuites.nodes) } |
+        Where-Object { $_ -and $null -ne $_.workflowRun -and $_.status -cne 'COMPLETED' } |
+        ForEach-Object { (@($_.workflowRun.workflow.name, $_.workflowRun.event) | ForEach-Object { "$_" }) -join [string][char]0x1f })
+    foreach ($c in $nodes) {
         if ($c.__typename -eq 'CheckRun') {
-            $s = if ($c.status -ne 'COMPLETED') { 'pending' } elseif ($c.conclusion -in 'SUCCESS', 'NEUTRAL', 'SKIPPED') { 'pass' } else { 'fail' }
+            $key = Get-RunKey $c
+            $cancelled = $c.status -eq 'COMPLETED' -and $c.conclusion -eq 'CANCELLED'
+            if ($cancelled) {
+                $id = [long]$c.databaseId
+                if (@($nodes | Where-Object { $_.__typename -eq 'CheckRun' -and (Get-RunKey $_) -ceq $key -and [long]$_.databaseId -gt $id -and ($_.status -ne 'COMPLETED' -or $_.conclusion -ne 'SKIPPED') }).Count -gt 0) { continue }
+            }
+            $wf = (@($c.checkSuite.workflowRun.workflow.name, $c.checkSuite.workflowRun.event) | ForEach-Object { "$_" }) -join [string][char]0x1f
+            $s = if ($c.status -ne 'COMPLETED' -or ($cancelled -and ($running -ccontains $wf))) { 'pending' } elseif ($c.conclusion -in 'SUCCESS', 'NEUTRAL', 'SKIPPED') { 'pass' } else { 'fail' }
             [pscustomobject]@{ name = $c.name; s = $s; link = "$($c.detailsUrl)" }
         } else {
             $s = if ($c.state -eq 'SUCCESS') { 'pass' } elseif ($c.state -in 'PENDING', 'EXPECTED') { 'pending' } else { 'fail' }
