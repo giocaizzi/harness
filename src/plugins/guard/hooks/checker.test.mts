@@ -9,6 +9,7 @@ import {
   mkdtempSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -33,7 +34,11 @@ const file = (body: string): string => {
   writeFileSync(p, body);
   return p;
 };
-const ro = { writable: () => false, owner: () => false };
+const ro = {
+  writable: () => false,
+  owner: () => false,
+  readOnlyMount: () => false,
+};
 const posixOnly = { skip: process.platform === "win32" };
 
 const run = async (body: string, opts: { timeoutMs?: number } = {}) => {
@@ -115,12 +120,67 @@ void test(
     assert.match(why(prepareChecker(p)), /^writable by this user \(the file\)/);
     chmodSync(p, 0o444);
     assert.match(why(prepareChecker(p)), /^writable by this user \(the file\)/);
-    assert.equal(isWritableByMe(p), true);
+    // not writable, but the owner could chmod it: the owner check refuses it, not the access check
+    assert.equal(isWritableByMe(p), false);
   },
 );
 
 void test(
-  "posix checker: isWritableByMe is false for a file another user owns and fails closed when it cannot tell",
+  "posix checker: a file and directory this user owns pass on a read-only mount, an owned ancestor above it does not",
+  posixOnly,
+  () => {
+    const p = file("export const resultErrors = () => []");
+    const dir = dirname(p);
+    const up = dirname(dir);
+    const mount = {
+      writable: () => false,
+      readOnlyMount: (t: string) => t === p || t === dir,
+    };
+    assert.deepEqual(
+      prepareChecker(p, { ...mount, owner: (t) => t === p || t === dir }),
+      {
+        path: p,
+        shown: p,
+      },
+    );
+    assert.match(
+      why(prepareChecker(p, { ...mount, owner: (t) => t === up })),
+      /\(ancestor /,
+    );
+    // off the mount, ownership still refuses
+    assert.match(
+      why(
+        prepareChecker(p, {
+          ...mount,
+          readOnlyMount: () => false,
+          owner: (t) => t === p,
+        }),
+      ),
+      /\(the file\)/,
+    );
+  },
+);
+
+void test(
+  "posix checker: a .mjs symlink to a file that is not .mjs is refused",
+  posixOnly,
+  () => {
+    const target = join(root, `t${String(n++)}.js`);
+    writeFileSync(target, "export const resultErrors = () => []");
+    const link = join(root, `l${String(n++)}.mjs`);
+    symlinkSync(target, link);
+    assert.equal(
+      why(prepareChecker(link, ro)),
+      `not a .mjs file (resolves to ${target})`,
+    );
+    const ok = join(root, `l${String(n++)}.mjs`);
+    symlinkSync(file("export const resultErrors = () => []"), ok);
+    assert.ok("path" in prepareChecker(ok, ro));
+  },
+);
+
+void test(
+  "posix checker: isWritableByMe is false for a file this user cannot write and fails closed on an unknown error",
   posixOnly,
   () => {
     if (process.getuid?.() !== 0)

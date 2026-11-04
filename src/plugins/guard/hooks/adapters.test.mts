@@ -1079,16 +1079,21 @@ void test("bridge: an internal error in strict mode is a reason, not null", asyn
       const spawn = () => {
         throw new Error("spawn exploded");
       };
+      // the gate reports its own error through emit, which throws: that escapes the gate's catch and stopCheck, so
+      // only the bridge's own catch can answer
+      const emit = () => {
+        throw new Error("emit exploded");
+      };
       return createGuard({
         harness: "test",
-        deps: { ...deps(), spawnSync: spawn },
+        deps: { ...deps(), spawnSync: spawn, emit },
       });
     };
     try {
       const strict = await make(true).stop({ cwd });
       assert.match(
         strict ?? "",
-        /^Factory result gate: could not check the result for run strict-bridge \(spawn exploded\); FACTORY_RESULT_CHECKER is set/,
+        /^Factory result gate: could not check the result for run strict-bridge \(internal error\); FACTORY_RESULT_CHECKER is set/,
       );
       assert.equal(await make(false).stop({ cwd }), null);
     } finally {

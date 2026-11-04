@@ -159,8 +159,18 @@ void test("result check: a checker's output is bounded", () => {
   assert.equal(big.errors.length, 51);
 });
 
-void test("result check: could-not-run keeps its prefix", () => {
+void test("result check: could-not-run prints the path raw, cut and without control characters", () => {
   assert.deepEqual(couldNotRun("/x/c.mjs", "no such file"), [
-    'result checker "/x/c.mjs" (FACTORY_RESULT_CHECKER) could not run: no such file',
+    "result checker /x/c.mjs (FACTORY_RESULT_CHECKER) could not run: no such file",
   ]);
+  assert.deepEqual(couldNotRun("C:\\x\\c.mjs", "no such file"), [
+    "result checker C:\\x\\c.mjs (FACTORY_RESULT_CHECKER) could not run: no such file",
+  ]);
+  const cut = couldNotRun(`/${"a".repeat(300)}`, "x")[0] ?? "";
+  assert.ok(cut.includes(`${"a".repeat(199)}… (`));
+  assert.ok(!cut.includes("a".repeat(201)));
+  assert.equal(
+    couldNotRun("/a\n\u001b[31m\0b\u007f", "x")[0],
+    "result checker /a??[31m?b? (FACTORY_RESULT_CHECKER) could not run: x",
+  );
 });

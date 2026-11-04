@@ -10,6 +10,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -1089,7 +1090,7 @@ void test("result gate: an attended run keeps its semantics in strict mode", asy
   }
 });
 
-void test("result gate: a failing make check cannot lose the gate's block", async () => {
+void test("result gate: a failing make check never denies a stop, whether or not the gate blocked", async () => {
   const cwd = gateRepo();
   Object.assign(process.env, RUNTIME);
   try {
@@ -1104,15 +1105,91 @@ void test("result gate: a failing make check cannot lose the gate's block", asyn
     const out = await stopCheck({ cwd }, run, { strain: () => null });
     assert.equal(out?.decision, "block");
     assert.match(out.reason ?? "", /^Factory result gate \(block 1 of 2\)/);
-    delete process.env.FACTORY_RUN_ID;
-    await assert.rejects(
-      stopCheck({ cwd }, run, { strain: () => null }),
-      /make exploded/,
+    // the gate passed: a later make error does not deny the stop
+    const ok = gateRepo(validResult());
+    assert.equal(
+      await stopCheck({ cwd: ok }, run, { strain: () => null }),
+      null,
     );
+    delete process.env.FACTORY_RUN_ID;
+    assert.equal(await stopCheck({ cwd }, run, { strain: () => null }), null);
   } finally {
     for (const k of Object.keys(RUNTIME))
       Reflect.deleteProperty(process.env, k);
     delete process.env.CLAUDE_PLUGIN_DATA;
+  }
+});
+
+// A result.json the agent could plant: the gate must answer promptly with a block, never hang or read it.
+const plantResult = (make: (file: string) => void): string => {
+  const cwd = gateRepo();
+  const dir = join(cwd, ".factory", "runs", "12");
+  mkdirSync(dir, { recursive: true });
+  make(join(dir, "result.json"));
+  return cwd;
+};
+
+void test(
+  "result gate: a FIFO or a device at result.json is a read error, never a hang",
+  { skip: process.platform === "win32", timeout: 30_000 },
+  async () => {
+    try {
+      const fifo = plantResult((f) => {
+        assert.equal(spawnSync("mkfifo", [f]).status, 0);
+      });
+      const zero = plantResult((f) => {
+        symlinkSync("/dev/zero", f);
+      });
+      for (const checker of [undefined, ""]) {
+        const env = checker === undefined ? RUNTIME : strictEnv(checker);
+        for (const cwd of [fifo, zero]) {
+          const started = Date.now();
+          const out = await resultGate({ cwd }, undefined, env);
+          assert.match(
+            out ?? "",
+            /result\.json is not a valid result[\s\S]*\nnot a regular file\n/,
+          );
+          assert.ok(Date.now() - started < 10_000);
+        }
+      }
+    } finally {
+      delete process.env.CLAUDE_PLUGIN_DATA;
+    }
+  },
+);
+
+void test("result gate: a result.json over 1 MiB is blocked as too large, not read", async () => {
+  try {
+    const cwd = plantResult((f) => {
+      writeFileSync(f, ` ${"x".repeat(1024 * 1024)}`);
+    });
+    for (const env of [RUNTIME, strictEnv("")]) {
+      assert.match(
+        (await resultGate({ cwd }, undefined, env)) ?? "",
+        /\ntoo large \(over 1 MiB\)\n/,
+      );
+    }
+    // an attended run keeps returning null on any read failure
+    assert.equal(
+      await resultGate({ cwd }, undefined, {
+        ...ATTENDED,
+        FACTORY_RESULT_CHECKER: "",
+      }),
+      null,
+    );
+  } finally {
+    delete process.env.CLAUDE_PLUGIN_DATA;
+  }
+});
+
+void test("result gate: a null or non-object input counts as an empty payload and a strict stop stays blocked", () => {
+  for (const bad of [null, 5, [], "x"]) {
+    const reason = gateFailClosed(
+      { ...RUNTIME, FACTORY_RESULT_CHECKER: "" },
+      bad as never,
+      "x",
+    );
+    assert.match(reason ?? "", /could not check the result for run run-1/);
   }
 });
 
@@ -1675,4 +1752,13 @@ void test('stop check: Antigravity hook receives { decision: "continue", reason 
   );
   assert.equal(res.status, 0);
   assert.equal(res.stdout, "");
+});
+
+void test("result check: the stop hook CLI keeps a strict stop blocked on a payload that is not an object", () => {
+  for (const payload of ["null", "5", "[]", '"x"']) {
+    const strict = runStopHook(payload, [], strictEnv(""));
+    assert.equal(strict.status, 0, strict.stderr);
+    const out = JSON.parse(strict.stdout) as { decision: string };
+    assert.equal(out.decision, "block");
+  }
 });
