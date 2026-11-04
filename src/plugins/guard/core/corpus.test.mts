@@ -63,7 +63,6 @@ const run = (argv: string[]) => {
 const PROTECT = {
   root: "/Users/me/repo",
   cwd: "/Users/me/repo",
-  data: ["/Users/me/.claude/plugins/data/guard-acme"],
 };
 const RUN: Record<
   "registered" | "configured" | "unsure" | "protected",

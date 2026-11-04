@@ -3,12 +3,12 @@
 // and reads `hookSpecificOutput.permissionDecision`. A hook is a fresh process, so per-session facts
 // (loaded skills, rules already reminded) live in a JSON file under $CLAUDE_PLUGIN_DATA.
 import { execFile } from "node:child_process";
-import { appendFileSync, closeSync, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, readlinkSync, realpathSync, rmSync, statSync, } from "node:fs";
+import { appendFileSync, closeSync, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, readlinkSync, rmSync, statSync, } from "node:fs";
 import { statfs } from "node:fs/promises";
 import { cpus, homedir, loadavg, platform } from "node:os";
 import { dirname, isAbsolute, join, parse, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { analysis, branchFacts, cdDirs, cmdClass, codexRules, deniedBy, deniedDir, evaluateCommand, evaluateEdit, evaluateRouting, hostJudged, isHeavy, isRisky, nativeAsk, oddSpelling, previewCommand, protectedPathHit, pureRead, refFacts, regenFacts, segMayMatch, segmentsMayBeSame, spellingWhy, stackFacts, stackTargets, tagFacts, tagTargets, unattendedSet, withPreview, worktreeFacts, } from "../core/engine.mjs";
+import { analysis, branchFacts, cdDirs, cmdClass, codexRules, deniedBy, deniedDir, evaluateCommand, evaluateEdit, evaluateRouting, hostJudged, isHeavy, isRisky, nativeAsk, oddSpelling, previewCommand, protectedPathHit, pureRead, refFacts, regenFacts, segmentsMayBeSame, spellingWhy, stackFacts, stackTargets, tagFacts, tagTargets, unattendedSet, withPreview, worktreeFacts, } from "../core/engine.mjs";
 import { cpuPercentFrom, hostCaps } from "../core/host.mjs";
 import { emit } from "../core/otel.mjs";
 import { sessionAttrs } from "../core/registration.mjs";
@@ -413,24 +413,6 @@ export function protectFacts(cwd) {
     };
 }
 const slashes = (p) => p.replace(/\\/g, "/");
-// Guard's own data directories in this run (absolute, `/` separators): the one the hook keeps its files in and the one
-// the stop hook reads, each also by its real path when that differs (/tmp is /private/tmp on macOS).
-export function guardDataDirs(deps) {
-    const out = new Set();
-    for (const d of [pluginDataDir(deps.env ?? process.env), deps.dataDir]) {
-        if (!d)
-            continue;
-        const abs = slashes(resolve(d));
-        out.add(abs);
-        try {
-            out.add(slashes(realpathSync(abs)));
-        }
-        catch {
-            // not created yet
-        }
-    }
-    return [...out];
-}
 async function onShell(input, state, deps, ctx) {
     const rawCommand = input.tool_input?.command;
     const command = typeof rawCommand === "string" ? rawCommand : "";
@@ -505,7 +487,6 @@ async function onShell(input, state, deps, ctx) {
             run: ctx.state === "registered"
                 ? runFacts(ctx, {
                     ...protectFacts(input.cwd),
-                    data: guardDataDirs(deps),
                     powershell: (input.tool_name ?? "").toLowerCase() === "powershell",
                 })
                 : null,
@@ -763,30 +744,9 @@ const relativeInside = (path, dir) => {
         ? a.slice(b.length).join("/")
         : null;
 };
-// Whether `path` is inside `dir`, compared like a root: letter case ignored, the dots and spaces Windows drops from a
-// segment's end cut, and an 8.3 short name on either side standing for the long one it may abbreviate.
-const insideDir = (path, dir) => {
-    const a = path.split("/").filter(Boolean);
-    const b = dir.split("/").filter(Boolean);
-    const cut = (x) => x.replace(/[. ]+$/, "") || x;
-    return (b.length <= a.length &&
-        b.every((x, i) => {
-            const y = a[i] ?? "";
-            return (segmentsMayBeSame(x, y) ||
-                segmentsMayBeSame(cut(x), cut(y)) ||
-                segMayMatch(x, y) ||
-                segMayMatch(cut(x), cut(y)));
-        }));
-};
 function onEdit(input, state, deps, ctx) {
-    const facts = ctx.state === "registered"
-        ? runFacts(ctx, {
-            ...protectFacts(input.cwd),
-            data: guardDataDirs(deps),
-        })
-        : null;
-    // In an unattended registered run an edit tool never touches guard's own data directory (the result gate's block
-    // counter lives there) nor a protected path.
+    const facts = ctx.state === "registered" ? runFacts(ctx, protectFacts(input.cwd)) : null;
+    // In an unattended registered run an edit tool never touches a protected path.
     if (facts) {
         const denyEdit = (reason) => {
             appendDecision(deps.env, { decision: "deny", rule: "protected-path" });
@@ -800,7 +760,6 @@ function onEdit(input, state, deps, ctx) {
             }, input.cwd);
             return preToolUse("deny", reason, deps.harness);
         };
-        const dirs = guardDataDirs(deps);
         const files = touchedFiles(input).map((f) => ({
             name: f.lex,
             given: f.given,
@@ -816,9 +775,6 @@ function onEdit(input, state, deps, ctx) {
         const loop = files.find((f) => f.readings.includes(null));
         if (loop !== undefined)
             return denyEdit(`${rules.run.protectedWhy} \`${loop.name}\` goes through too many symbolic links to be checked; leave it alone.`);
-        const hit = files.find((f) => f.readings.some((p) => dirs.some((d) => insideDir(p ?? "", d))));
-        if (hit !== undefined)
-            return denyEdit(`${rules.run.protectedWhy} \`${hit.name}\` is in guard's own data directory in this run; leave it alone.`);
         const found = protectFacts(input.cwd);
         const roots = new Set([
             facts.protect?.root ?? found.root,

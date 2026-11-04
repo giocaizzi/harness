@@ -63,7 +63,7 @@ export function runContext(env, opts = {}) {
     }
 }
 // The shell and edit rules' facts for a registered run, or null for an attended one (result gate only).
-// `at` is where the session is: the repo root, the cwd (`/` separators) and guard's data directories.
+// `at` is where the session is: the repo root and the cwd (`/` separators).
 export function runFacts(run, at) {
     if (run.mode === "attended")
         return null;

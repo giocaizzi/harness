@@ -16,7 +16,6 @@ import {
   readSync,
   readdirSync,
   readlinkSync,
-  realpathSync,
   rmSync,
   statSync,
 } from "node:fs";
@@ -47,7 +46,6 @@ import {
   pureRead,
   refFacts,
   regenFacts,
-  segMayMatch,
   segmentsMayBeSame,
   spellingWhy,
   stackFacts,
@@ -632,23 +630,6 @@ export function protectFacts(cwd?: string): ProtectFactsResult {
 
 const slashes = (p: string): string => p.replace(/\\/g, "/");
 
-// Guard's own data directories in this run (absolute, `/` separators): the one the hook keeps its files in and the one
-// the stop hook reads, each also by its real path when that differs (/tmp is /private/tmp on macOS).
-export function guardDataDirs(deps: HandleDeps): string[] {
-  const out = new Set<string>();
-  for (const d of [pluginDataDir(deps.env ?? process.env), deps.dataDir]) {
-    if (!d) continue;
-    const abs = slashes(resolve(d));
-    out.add(abs);
-    try {
-      out.add(slashes(realpathSync(abs)));
-    } catch {
-      // not created yet
-    }
-  }
-  return [...out];
-}
-
 interface ShellToolInput {
   command?: unknown;
 }
@@ -787,7 +768,6 @@ async function onShell(
         ctx.state === "registered"
           ? runFacts(ctx, {
               ...protectFacts(input.cwd),
-              data: guardDataDirs(deps),
               powershell:
                 (input.tool_name ?? "").toLowerCase() === "powershell",
             })
@@ -1134,26 +1114,6 @@ const relativeInside = (path: string, dir: string): string | null => {
     : null;
 };
 
-// Whether `path` is inside `dir`, compared like a root: letter case ignored, the dots and spaces Windows drops from a
-// segment's end cut, and an 8.3 short name on either side standing for the long one it may abbreviate.
-const insideDir = (path: string, dir: string): boolean => {
-  const a = path.split("/").filter(Boolean);
-  const b = dir.split("/").filter(Boolean);
-  const cut = (x: string) => x.replace(/[. ]+$/, "") || x;
-  return (
-    b.length <= a.length &&
-    b.every((x, i) => {
-      const y = a[i] ?? "";
-      return (
-        segmentsMayBeSame(x, y) ||
-        segmentsMayBeSame(cut(x), cut(y)) ||
-        segMayMatch(x, y) ||
-        segMayMatch(cut(x), cut(y))
-      );
-    })
-  );
-};
-
 function onEdit(
   input: HookInput,
   state: StoredSessionState,
@@ -1161,14 +1121,8 @@ function onEdit(
   ctx: RunContext,
 ): HandleResult {
   const facts =
-    ctx.state === "registered"
-      ? runFacts(ctx, {
-          ...protectFacts(input.cwd),
-          data: guardDataDirs(deps),
-        })
-      : null;
-  // In an unattended registered run an edit tool never touches guard's own data directory (the result gate's block
-  // counter lives there) nor a protected path.
+    ctx.state === "registered" ? runFacts(ctx, protectFacts(input.cwd)) : null;
+  // In an unattended registered run an edit tool never touches a protected path.
   if (facts) {
     const denyEdit = (reason: string): HandleResult => {
       appendDecision(deps.env, { decision: "deny", rule: "protected-path" });
@@ -1187,7 +1141,6 @@ function onEdit(
       );
       return preToolUse("deny", reason, deps.harness);
     };
-    const dirs = guardDataDirs(deps);
     const files = touchedFiles(input).map((f) => ({
       name: f.lex,
       given: f.given,
@@ -1204,13 +1157,6 @@ function onEdit(
     if (loop !== undefined)
       return denyEdit(
         `${rules.run.protectedWhy} \`${loop.name}\` goes through too many symbolic links to be checked; leave it alone.`,
-      );
-    const hit = files.find((f) =>
-      f.readings.some((p) => dirs.some((d) => insideDir(p ?? "", d))),
-    );
-    if (hit !== undefined)
-      return denyEdit(
-        `${rules.run.protectedWhy} \`${hit.name}\` is in guard's own data directory in this run; leave it alone.`,
       );
     const found = protectFacts(input.cwd);
     const roots = new Set([

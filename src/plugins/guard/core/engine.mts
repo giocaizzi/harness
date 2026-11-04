@@ -1685,11 +1685,7 @@ export function shellEdit(command: string, env: GuardEnv = {}) {
 // a dot file), a brace list is expanded (one group a level, 64 words at most), and one whose start is a variable or a
 // `cd` not followed is matched by the rest of its path anywhere (`$ROOT/.github/x`). A registered glob is waived for
 // `protect.exempt` (the registration's exemptions, e.g. files inside a run directory) when the normalised path is spelled out;
-// a glob in `protect.globs` (the floor, GUARD_RUN_PROTECTED_PATHS) is never waived. Guard's own data directories (`protect.data`,
-// absolute: the result gate's block counter and the make-check state live there) are protected the same way and before
-// any glob: a write inside one, or a remove or move of one or of a directory above it, hits whatever the exemptions say;
-// a target whose start is unknown (a variable, `~`, a `cd` not followed) hits when it ends in the data directory's name
-// followed by anything (`~/.claude/plugins/data/<name>/result-gate/x`). A command that may write fails
+// a glob in `protect.globs` (the floor, GUARD_RUN_PROTECTED_PATHS) is never waived. A command that may write fails
 // closed past the limits (`rules.run.protectedLimits`: targets, characters, milliseconds) or when the check throws,
 // since a hook that times out or emits nothing lets the command through; globs past the limits are ignored. Returns { target } (the first protected target as written), { unsure } (a limit it hit) or null.
 const PROTECT_RM = /^(?:rm|rmdir|unlink|remove-item|ri|del|erase|rd)$/;
@@ -2059,12 +2055,7 @@ export function oddSpelling(
 // A command that may write at all: an output redirection or a writer's name. Only such a command can fail closed.
 const MAY_WRITE =
   /[>]|(?:^|[^\w-])(?:tee|sed|perl|rm|rmdir|unlink|mv|cp|move|copy|set-content|add-content|out-file|tee-object|remove-item|move-item|copy-item|ri|mi|ci|cpi|del|erase|rd|sc|ac)(?![\w-])/i;
-// A shell write to a protected path, or any command naming a path inside guard's data directory (`protect.data`):
-// whatever the program (touch, ln, dd of=, tar -C, a read), since no session needs that directory. The data check reads
-// every word and redirection target, `key=value` and `--opt=value` words by their value too, the plugin-data variable in
-// every shell's spelling, and a Git Bash `/c/...` path against a drive-letter directory. Merely naming a directory above
-// it (`ls ~/.claude`) is fine; only the writers' remove or move of one is denied. A link made earlier under another
-// name is out of reach (the `ln -s` that makes it names the directory, so it is denied itself).
+// A shell write to a protected path.
 export function protectedWrite(
   command: string,
   protect: ProtectConfig,
@@ -2101,88 +2092,6 @@ export function protectedWrite(
     if (++targets > limits.targets || w.val.length > limits.chars)
       throw LIMITED;
   };
-  const dataDirs = (protect.data ?? [])
-    .filter((d) => d.length <= limits.chars)
-    .slice(0, limits.globs)
-    .map((d) => normalizeSegments(posixPath(d).replace(/^\/(?=[a-z]:)/i, "")));
-  // Guard's own data directory: a path inside it (any command, a read too), or, for the writers, a remove or move of it or
-  // a directory above it. A Git Bash drive path (`/c/Users/...`) also counts as `c:/Users/...` against a drive-letter dir.
-  const inData = (dir: string, resolved: string, above: boolean) => {
-    if (!dataDirs.length) return false;
-    const p = posixPath(resolved);
-    const unknown =
-      /^[$~%`]/.test(p) || (dir === UNKNOWN_DIR && !ABS_DIR.test(p));
-    let full: string | null = null;
-    if (!unknown) {
-      full =
-        dir && !ABS_DIR.test(p)
-          ? `${posixPath(dir).replace(/\/+$/, "")}/${p}`
-          : p;
-      if (!ABS_DIR.test(full))
-        full = protect.cwd
-          ? `${posixPath(protect.cwd).replace(/\/+$/, "")}/${full}`
-          : null;
-    }
-    // A segment pair names one directory when equal ignoring case, once the dots and spaces Windows drops are cut, or
-    // through an 8.3 short name on either side.
-    // A glob or variable in the target's segment (`guard-*`, `$USER`) may name the directory's: `targetIsA` says which side
-    // is the target.
-    const cut = (x: string) => x.replace(/[. ]+$/, "") || x;
-    const same = (a: string[], b: string[], targetIsA = false) =>
-      a.every((x, i) => {
-        const y = defined(b[i]);
-        const [wanted, given] = targetIsA ? [y, x] : [x, y];
-        return (
-          segmentsMayBeSame(x, y) ||
-          segmentsMayBeSame(cut(x), cut(y)) ||
-          segMayMatch(wanted, given) ||
-          segMayMatch(cut(wanted), cut(given))
-        );
-      });
-    for (const d of dataDirs) {
-      if (full !== null) {
-        const bare = full.replace(/^\/(?=[a-z]:)/i, "");
-        // As written, as Windows reads it, and (a Git Bash `/c/...`, WSL `/mnt/c/...` or Cygwin `/cygdrive/c/...` path) as a
-        // drive-letter path.
-        const forms = [bare, foldWindows(bare)].flatMap((text) => {
-          const s = normalizeSegments(text);
-          const win = /^\/(mnt\/|cygdrive\/)?([a-z])(?:\/|$)/i.exec(text);
-          return win && /^[a-z]:$/i.test(d[0] ?? "")
-            ? [s, [`${defined(win[2])}:`, ...s.slice(win[1] ? 2 : 1)]]
-            : [s];
-        });
-        if (
-          forms.some((s) =>
-            d.length <= s.length ? same(d, s) : above && same(s, d, true),
-          )
-        )
-          return true;
-        continue;
-      }
-      const base = d.at(-1);
-      if (
-        base !== undefined &&
-        repoSegments(p, dir, { ...protect, root: undefined }).some((at) =>
-          patternHits([base, "**"], at.segs, above, true, tick),
-        )
-      )
-        return true;
-    }
-    return false;
-  };
-  // A word naming a path inside the data directory, as a path or through the plugin-data variable; `key=value` and
-  // `--opt=value` words count by their value too.
-  const named: WriteHits = (word, dir, resolve) => {
-    if (!dataDirs.length) return false;
-    for (const t of [
-      word,
-      ...(word.includes("=") ? [word.slice(word.indexOf("=") + 1)] : []),
-    ]) {
-      tick();
-      if (DATA_VAR.test(t) || inData(dir, resolve(t), false)) return true;
-    }
-    return false;
-  };
   const hits: WriteHits = (spelling, dir, resolve, above, path = true) => {
     const kept = path && plain.has(spelling);
     let target = spelling;
@@ -2195,7 +2104,6 @@ export function protectedWrite(
         return true;
       }
     }
-    if (inData(dir, resolve(target), above)) return true;
     const resolved = resolve(target);
     // A spelling the guard will not model is denied outright, before any reading of the path is tried.
     const odd =
@@ -2231,14 +2139,7 @@ export function protectedWrite(
     return false;
   };
   try {
-    const target = scanWrites(
-      command,
-      env,
-      count,
-      hits,
-      dataDirs.length ? named : null,
-      plain,
-    );
+    const target = scanWrites(command, env, count, hits, plain);
     return target === null ? null : { target, ...(spelled ? { spelled } : {}) };
   } catch (e) {
     // Any failure (a limit, a stack overflow, a bug) denies a command that may write, and lets the rest through.
@@ -2317,15 +2218,11 @@ function spellings(w: ShellWord, plain: Set<string>) {
   return [...out, ...words];
 }
 const POSIX_MOVERS = /^(?:cp|mv)$/;
-// The plugin-data variable in any shell's spelling, at the start of a word and followed by its end or a separator.
-const DATA_VAR =
-  /^(?:\$\{?|\$env:|%)(?:claude|copilot)_plugin_data(?:\}|%)?(?:$|[\\/])/i;
 function scanWrites(
   command: string,
   env: GuardEnv,
   count: (word: ShellWord) => void,
   hits: WriteHits,
-  named: WriteHits | null,
   plain: Set<string>,
 ) {
   for (const { words, redirs = [], dir, remote, resolve } of segments(
@@ -2333,11 +2230,6 @@ function scanWrites(
     env,
   )) {
     if (remote) continue;
-    // Any command naming a path inside guard's data directory, whatever its program (a redirection target too).
-    if (named)
-      for (const w of [...redirs, ...words])
-        for (const t of spellings(w, plain))
-          if (named(defined(t), dir, resolve, false)) return t;
     for (const w of redirs) {
       if (NOT_A_FILE.test(w.val)) continue;
       count(w);

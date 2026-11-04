@@ -106,12 +106,11 @@ export function runContext(env: Env, opts: LoadOptions = {}): RunContext {
 }
 
 // The shell and edit rules' facts for a registered run, or null for an attended one (result gate only).
-// `at` is where the session is: the repo root, the cwd (`/` separators) and guard's data directories.
+// `at` is where the session is: the repo root and the cwd (`/` separators).
 export function runFacts(
   run: RegisteredRun,
   at: {
     cwd?: string;
-    data?: string[];
     powershell?: boolean;
     root?: string;
     roots?: string[];

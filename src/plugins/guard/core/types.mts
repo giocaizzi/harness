@@ -320,7 +320,6 @@ export interface StackFact {
 
 export interface ProtectConfig {
   cwd?: string;
-  data?: string[];
   // Waives `registered` globs only.
   exempt?: string[];
   // Never waived: the built-in floor and GUARD_RUN_PROTECTED_PATHS.
@@ -342,12 +341,11 @@ export interface ProtectHit {
 }
 
 // A registered unattended run's facts for the shell and edit rules (run contract v2): the runner's labels, its
-// protected paths and guard's data directories. Null outside such a run.
+// protected paths. Null outside such a run.
 export interface RunFacts {
   labels?: { approval?: string; protected?: string[]; takeover?: string };
   protect?: {
     cwd?: string;
-    data?: string[];
     // The registration's protected_paths.exempt: waives its own globs (`registered`) only.
     exempt?: string[];
     // GUARD_RUN_PROTECTED_PATHS: never waived.
