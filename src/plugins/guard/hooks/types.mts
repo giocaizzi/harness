@@ -1,6 +1,8 @@
 // Type definitions for the guard hook layer, harness abstractions, and hook lifecycles.
 
 import type { HostFacts } from "../core/types.mjs";
+import type { PrepareOptions } from "./checker.mjs";
+import type { RegistrationCache } from "./registration.mjs";
 
 export type HarnessName =
   | "claude"
@@ -236,6 +238,10 @@ export interface HandleDeps {
   pythonManager?: (cwd?: string) => string | null;
   random?: () => number;
   readTool?: boolean;
+  // In-process harnesses (opencode, pi): one per process, so the parsed run manifest is reused while unchanged.
+  registrationCache?: RegistrationCache;
+  // Tests only: the trust checks' probes for the run manifest and its checker (hooks/checker.mjs PrepareOptions).
+  runVet?: PrepareOptions;
   run?: (
     argv: readonly string[],
     cwd?: string,

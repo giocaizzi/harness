@@ -351,6 +351,25 @@ export interface FactoryFacts {
   unsure?: boolean;
 }
 
+// A registered unattended run's facts for the shell and edit rules (run contract v2): the runner's labels, its
+// protected paths and guard's data directories. Null outside such a run.
+export interface RunFacts {
+  labels?: { approval?: string; protected?: string[]; takeover?: string };
+  protect?: {
+    cwd?: string;
+    data?: string[];
+    // The registration's protected_paths.exempt: waives its own globs (`registered`) only.
+    exempt?: string[];
+    // GUARD_RUN_PROTECTED_PATHS: never waived.
+    extra?: string[];
+    // The registration's protected_paths.globs.
+    registered?: string[];
+    root?: string;
+  };
+  // The registration requires "labels" but names none: every label change is denied (rule run-config).
+  unsure?: boolean;
+}
+
 export interface SessionState {
   reminded: Set<string>;
 }
