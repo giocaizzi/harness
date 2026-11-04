@@ -56,11 +56,12 @@ function isSticky(target) {
     }
 }
 const WRITABLE_TAIL = "install it owned by another user and not writable by this one, or on a read-only mount";
-// Vets the raw FACTORY_RESULT_CHECKER value: { path, shown } or { why, shown }. Never throws. The file, its directory
+// Vets a raw path to a file guard will trust (the result checker, a run manifest) with extension `ext`: { path, shown }
+// or { why, shown }. Never throws. The file, its directory
 // and every ancestor directory must be out of this user's reach: an owned or plainly writable directory lets the user
 // rename it and swap the module between this check and the import (a sticky writable one, like /tmp, does not). A
 // path on a read-only mount cannot be chmodded, so there the owner check is skipped for that path.
-export function prepareChecker(raw, opts = {}) {
+export function vetTrustedFile(raw, ext, opts = {}) {
     const platform = opts.platform ?? process.platform;
     const writable = opts.writable ?? ((t) => isWritableByMe(t, platform));
     const owner = opts.owner ?? isOwnedByMe;
@@ -68,7 +69,7 @@ export function prepareChecker(raw, opts = {}) {
     const sticky = opts.sticky ?? isSticky;
     const shown = typeof raw === "string" ? raw.trim() : "";
     try {
-        const bad = checkerPathError(shown, platform === "win32" ? path.win32 : path);
+        const bad = checkerPathError(shown, platform === "win32" ? path.win32 : path, ext);
         if (bad)
             return { why: bad, shown };
         let real;
@@ -84,9 +85,9 @@ export function prepareChecker(raw, opts = {}) {
                 shown,
             };
         }
-        if (path.extname(real).toLowerCase() !== ".mjs") {
+        if (path.extname(real).toLowerCase() !== ext) {
             return {
-                why: `not a .mjs file (resolves to ${real.length > 200 ? `${real.slice(0, 200)}…` : real})`,
+                why: `not a ${ext} file (resolves to ${real.length > 200 ? `${real.slice(0, 200)}…` : real})`,
                 shown,
             };
         }
@@ -126,6 +127,10 @@ export function prepareChecker(raw, opts = {}) {
         const msg = e instanceof Error ? e.message : String(e);
         return { why: `cannot be checked (${scrub(msg).slice(0, 100)})`, shown };
     }
+}
+// Vets the raw FACTORY_RESULT_CHECKER value (a .mjs file): see vetTrustedFile.
+export function prepareChecker(raw, opts = {}) {
+    return vetTrustedFile(raw, ".mjs", opts);
 }
 const isStrings = (v) => Array.isArray(v) && v.every((e) => typeof e === "string");
 // The worker's message is re-validated here: the checker module could post one of its own.

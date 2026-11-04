@@ -53,7 +53,7 @@ export const coreErrors = (result, env = {}) => {
 // Why a checker path is not acceptable (a short reason), or null. `value` is already trimmed. `pathApi` selects the
 // platform's rules (path.win32 on Windows): a Windows path must be a drive path or a UNC share, never drive-relative,
 // root-relative or a device path.
-export const checkerPathError = (value, pathApi = path) => {
+export const checkerPathError = (value, pathApi = path, ext = ".mjs") => {
     if (!value)
         return "empty";
     if (value.includes("\0"))
@@ -66,8 +66,9 @@ export const checkerPathError = (value, pathApi = path) => {
         : pathApi.isAbsolute(value);
     if (!absolute)
         return "not an absolute path";
-    if (pathApi.extname(value).toLowerCase() !== ".mjs")
-        return "not a .mjs file";
+    if (pathApi.extname(value).toLowerCase() !== ext) {
+        return `not a ${ext} file`;
+    }
     return null;
 };
 // What a checker returned, bounded before it crosses the thread: { errors } or { why }.
@@ -76,7 +77,7 @@ export const checkerOutput = (v) => Array.isArray(v) && v.every((e) => typeof e 
     : { why: `returned ${show(v)}, not an array of strings` };
 // The path is printed raw (a Windows path keeps its single backslashes), cut to 200 characters, control characters
 // replaced by "?".
-const rawPath = (v) => {
+export const rawPath = (v) => {
     const text = v.length > 200 ? `${v.slice(0, 200)}…` : v;
     return text.replace(/[\u0000-\u001F\u007F]/g, "?");
 };

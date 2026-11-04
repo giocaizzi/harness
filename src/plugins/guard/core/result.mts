@@ -72,6 +72,7 @@ export const coreErrors = (result: unknown, env: Env = {}): string[] => {
 export const checkerPathError = (
   value: string,
   pathApi: typeof path = path,
+  ext: ".json" | ".mjs" = ".mjs",
 ): string | null => {
   if (!value) return "empty";
   if (value.includes("\0")) return "contains a NUL character";
@@ -83,7 +84,9 @@ export const checkerPathError = (
       ? /^[A-Za-z]:[\\/]/.test(value) || /^[\\/]{2}[^\\/?.]/.test(value)
       : pathApi.isAbsolute(value);
   if (!absolute) return "not an absolute path";
-  if (pathApi.extname(value).toLowerCase() !== ".mjs") return "not a .mjs file";
+  if (pathApi.extname(value).toLowerCase() !== ext) {
+    return `not a ${ext} file`;
+  }
   return null;
 };
 
@@ -97,7 +100,7 @@ export const checkerOutput = (v: unknown): CheckerOutput =>
 
 // The path is printed raw (a Windows path keeps its single backslashes), cut to 200 characters, control characters
 // replaced by "?".
-const rawPath = (v: string): string => {
+export const rawPath = (v: string): string => {
   const text = v.length > 200 ? `${v.slice(0, 200)}…` : v;
   return text.replace(/[\u0000-\u001F\u007F]/g, "?");
 };

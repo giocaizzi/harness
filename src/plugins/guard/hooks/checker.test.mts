@@ -22,6 +22,7 @@ import {
   isWritableByMe,
   prepareChecker,
   runChecker,
+  vetTrustedFile,
 } from "./checker.mjs";
 
 const root = realpathSync(mkdtempSync(join(tmpdir(), "guard-checker-")));
@@ -379,4 +380,23 @@ process.stdout.write(JSON.stringify(await runChecker(c.path, {}, {})))`);
   const out = spawnSync(process.execPath, [script], { encoding: "utf8" });
   assert.equal(out.status, 0, out.stderr);
   assert.deepEqual(JSON.parse(out.stdout), { errors: ["x"] });
+});
+
+void test("result check: vetTrustedFile takes a .json file and checks the extension it resolves to", () => {
+  const j = join(root, "m.json");
+  writeFileSync(j, "{}");
+  assert.deepEqual(vetTrustedFile(j, ".json", ro), { path: j, shown: j });
+  assert.match(why(vetTrustedFile(j, ".mjs", ro)), /not a \.mjs file/);
+  const t = join(root, "m.txt");
+  writeFileSync(t, "{}");
+  const link = join(root, "link.json");
+  try {
+    symlinkSync(t, link);
+  } catch {
+    return; // no symlink privilege (Windows)
+  }
+  assert.match(
+    why(vetTrustedFile(link, ".json", ro)),
+    /not a \.json file \(resolves to /,
+  );
 });
