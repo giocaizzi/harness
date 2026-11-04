@@ -77,6 +77,14 @@ void test("readStdin: complete JSON with the stream left open resolves", async (
     s.write("}\n");
     assert.deepEqual(await p, { ok: true, text: '{"a":{"b":1}}\n' });
 });
+void test("readStdin: an object and its trailing newline in separate writes, left open, resolves", async () => {
+    const s = new PassThrough();
+    const p = readStdin(s, big);
+    s.write('{"a":1}');
+    await new Promise((r) => setImmediate(r));
+    s.write("\n");
+    assert.deepEqual(await p, { ok: true, text: '{"a":1}\n' });
+});
 void test("readStdin: a large object in many chunks ending in a brace, left open, resolves via the idle check", async () => {
     const s = new PassThrough();
     const json = JSON.stringify({ a: "}".repeat(4 * 1024 * 1024) });

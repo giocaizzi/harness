@@ -24,14 +24,15 @@ const size = (bytes: number): string =>
     ? `${String(bytes / (1024 * 1024))} MiB`
     : `${String(bytes)} bytes`;
 
-// True when the last non-whitespace byte is `}`: only then can the buffer be a complete JSON object.
-const endsWithBrace = (buf: Buffer): boolean => {
+// Whether the chunk's last non-whitespace byte is `}` (only then can the buffer be a complete JSON object); null for a
+// chunk of whitespace only, which leaves the buffer's answer as it was (a trailing newline sent on its own).
+const endsWithBrace = (buf: Buffer): boolean | null => {
   for (let i = buf.length - 1; i >= 0; i--) {
     const b = buf[i];
     if (b === 0x20 || b === 0x0a || b === 0x0d || b === 0x09) continue;
     return b === 0x7d;
   }
-  return false;
+  return null;
 };
 
 export function readStdin(
@@ -85,7 +86,7 @@ export function readStdin(
         chunks.push(buf);
         // A harness may leave stdin open: once the writer pauses, a buffer that parses as a whole is complete (a prefix
         // of an object never parses). Never parsed per chunk, so brace-dense input stays linear.
-        lastBrace = endsWithBrace(buf);
+        lastBrace = endsWithBrace(buf) ?? lastBrace;
         clearTimeout(idle);
         idle = setTimeout(onIdle, IDLE_PARSE_MS);
       };

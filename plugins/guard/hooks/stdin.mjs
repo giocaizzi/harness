@@ -12,7 +12,8 @@ export const IDLE_PARSE_MS = 50;
 const size = (bytes) => bytes % (1024 * 1024) === 0
     ? `${String(bytes / (1024 * 1024))} MiB`
     : `${String(bytes)} bytes`;
-// True when the last non-whitespace byte is `}`: only then can the buffer be a complete JSON object.
+// Whether the chunk's last non-whitespace byte is `}` (only then can the buffer be a complete JSON object); null for a
+// chunk of whitespace only, which leaves the buffer's answer as it was (a trailing newline sent on its own).
 const endsWithBrace = (buf) => {
     for (let i = buf.length - 1; i >= 0; i--) {
         const b = buf[i];
@@ -20,7 +21,7 @@ const endsWithBrace = (buf) => {
             continue;
         return b === 0x7d;
     }
-    return false;
+    return null;
 };
 export function readStdin(stream = process.stdin, { deadlineMs, maxBytes = STDIN_MAX_BYTES } = {
     deadlineMs: EVENT_DEADLINE_MS,
@@ -69,7 +70,7 @@ export function readStdin(stream = process.stdin, { deadlineMs, maxBytes = STDIN
                 chunks.push(buf);
                 // A harness may leave stdin open: once the writer pauses, a buffer that parses as a whole is complete (a prefix
                 // of an object never parses). Never parsed per chunk, so brace-dense input stays linear.
-                lastBrace = endsWithBrace(buf);
+                lastBrace = endsWithBrace(buf) ?? lastBrace;
                 clearTimeout(idle);
                 idle = setTimeout(onIdle, IDLE_PARSE_MS);
             };
