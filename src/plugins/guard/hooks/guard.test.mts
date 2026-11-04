@@ -2154,6 +2154,40 @@ void test("a registered run: an edit through a dangling symlink is checked at it
   assert.ok(!denied(await run(edit(join(repo, "plain.md"), repo))));
 });
 
+void test("a registered run: a link target is followed component by component, before its `..` applies", async () => {
+  const repo = realpathSync(mkdtempSync(join(tmpdir(), "guard-dotdot-")));
+  mkdirSync(join(repo, ".git"));
+  mkdirSync(join(repo, ".github", "workflows"), { recursive: true });
+  symlinkSync(".github/workflows", join(repo, "d"));
+  symlinkSync("d/../ci.yml", join(repo, "n.md"));
+  mkdirSync(join(repo, "src"));
+  symlinkSync("../src/../src/ok.md", join(repo, "src", "fine.md"));
+  const run = registered();
+  assert.ok(
+    denied(await run(edit(join(repo, "n.md"), repo))),
+    "d/../ci.yml is .github/ci.yml",
+  );
+  assert.ok(!denied(await run(edit(join(repo, "src", "fine.md"), repo))));
+});
+
+void test("a registered run: a checkout whose path ends in a dot or a space still protects its .github", async () => {
+  const outer = realpathSync(mkdtempSync(join(tmpdir(), "guard-tail-")));
+  const run = registered();
+  for (const name of ["proj.", "proj "]) {
+    const repo = join(outer, name);
+    mkdirSync(join(repo, ".git"), { recursive: true });
+    for (const command of [
+      `echo a > '${repo}/.github/ci.yml'`,
+      `rm -rf '${repo}/.github'`,
+    ])
+      assert.ok(
+        denied(await run({ ...pre("Bash", command), cwd: repo })),
+        `${name}: ${command}`,
+      );
+    assert.ok(denied(await run(edit(join(repo, ".github", "ci.yml"), repo))));
+  }
+});
+
 void test("a registered run: Windows spellings of a protected path are protected (edit tool and shell)", async () => {
   const repo = realpathSync(mkdtempSync(join(tmpdir(), "guard-win-")));
   mkdirSync(join(repo, ".git"));

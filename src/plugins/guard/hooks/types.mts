@@ -172,7 +172,12 @@ export interface GuardBridge {
     sessionId?: string;
     source?: string;
   }): Promise<HookOutputPayload>;
-  stop(params: { active?: boolean; cwd?: string }): Promise<string | null>;
+  stop(params: {
+    active?: boolean;
+    agentId?: string;
+    cwd?: string;
+    sessionId?: string;
+  }): Promise<string | null>;
   usage(params: GuardModelUsageParams): Promise<void>;
 }
 

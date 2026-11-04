@@ -3,10 +3,11 @@
 // (rule run-registration), a session that sets only the legacy run variables (the legacy-only tripwire, rule
 // run-unregistered), or no run. Guard reads no legacy variable for any decision: the tripwire only names them to fail
 // loudly, and writes its one line to FACTORY_EVENTS_FILE when that is set. Nothing here throws.
+import { createHash } from "node:crypto";
 import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { RULE, UNREGISTERED_REASON, UNREGISTERED_RULE, unregisteredLine, } from "../core/registration.mjs";
-import { loadRegistration, pinFile } from "./registration.mjs";
+import { loadRegistration } from "./registration.mjs";
 // The contract v1 run variables. Any of them set (to a non-blank value) without a registration trips the tripwire.
 export const LEGACY_VARS = [
     "FACTORY_RUN_ID",
@@ -87,11 +88,11 @@ export function denyReason(deny, at) {
     if (deny.rule === UNREGISTERED_RULE) {
         return at === "tool"
             ? "Legacy run variables are set without a run registration. This guard enforces run contract v2 only, so it denies every tool call guard sees until the runner registers the run with GUARD_RUN_MANIFEST; stop and report it."
-            : "Legacy run variables are set without a run registration (run contract v2 needs GUARD_RUN_MANIFEST), so every tool call in this run is denied; stop and report it.";
+            : "Legacy run variables are set without a run registration (run contract v2 needs GUARD_RUN_MANIFEST), so every tool call guard sees in this run is denied; stop and report it.";
     }
     return at === "tool"
         ? `Run registration failed: ${deny.why}. Guard denies every tool call guard sees in this run until the runner fixes its registration; stop and report it.`
-        : `Run registration failed: ${deny.why}. Every tool call in this run is denied until the runner fixes its registration; stop and report it.`;
+        : `Run registration failed: ${deny.why}. Every tool call guard sees in this run is denied until the runner fixes its registration; stop and report it.`;
 }
 // Where the tripwire line always goes: guard's own log, in its data directory.
 export const unregisteredLog = (dataDir) => join(dataDir, "run-unregistered.jsonl");
@@ -101,7 +102,7 @@ export const unregisteredLog = (dataDir) => join(dataDir, "run-unregistered.json
 export function recordUnregistered(env, dataDir, sessionId, now = new Date()) {
     try {
         if (sessionId) {
-            const marker = pinFile(dataDir, sessionId).replace(/\.run\.jsonl$/, ".unregistered");
+            const marker = join(join(dataDir, "sessions"), `${createHash("sha256").update(sessionId).digest("hex").slice(0, 32)}.unregistered`);
             try {
                 mkdirSync(dirname(marker), { recursive: true, mode: 0o700 });
                 writeFileSync(marker, "", { flag: "wx" });

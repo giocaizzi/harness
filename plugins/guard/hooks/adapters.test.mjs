@@ -1393,6 +1393,51 @@ void test("pi: a failed registration or the legacy-only tripwire blocks every to
         });
     }
 });
+void test("opencode: two sessions in one process keep separate registration block counters", async () => {
+    await withEnv({ GUARD_RUN_ID: "run-1", CLAUDE_PLUGIN_DATA: dir() }, async () => {
+        const sent = [];
+        const hooks = await GuardPlugin({ client: ocClient(sent), directory: dir() }, deps());
+        const idleOf = (sessionID) => hooks.event({
+            event: { type: "session.idle", properties: { sessionID } },
+        });
+        for (const id of ["s1", "s2"]) {
+            for (let i = 0; i < 3; i++)
+                await idleOf(id);
+        }
+        assert.equal(sent.length, 4);
+        assert.match(sent[2] ?? "", / \(block 1 of 2\)$/);
+        assert.match(sent[3] ?? "", / \(block 2 of 2\)$/);
+    });
+});
+void test("pi: successive sessions keep separate counters, and a subagent child's settle is exempt", async () => {
+    await withEnv({ GUARD_RUN_ID: "run-1", CLAUDE_PLUGIN_DATA: dir() }, async () => {
+        const { handlers, sent, api } = fakePi();
+        guardExtension(api, deps());
+        const cwd = dir();
+        for (const id of ["p1", "p2"]) {
+            const ctx = {
+                ...piCtx(cwd),
+                sessionManager: { getSessionId: () => id },
+            };
+            for (let i = 0; i < 3; i++) {
+                await handlers.agent_settled?.({ aborted: false }, ctx);
+            }
+        }
+        assert.equal(sent.length, 4);
+        assert.match(sent[2] ?? "", / \(block 1 of 2\)$/);
+    });
+    await withEnv({
+        GUARD_RUN_ID: "run-1",
+        CLAUDE_PLUGIN_DATA: dir(),
+        GUARD_PARENT_SESSION: "parent",
+        GUARD_AGENT_ID: "child",
+    }, async () => {
+        const { handlers, sent, api } = fakePi();
+        guardExtension(api, deps());
+        await handlers.agent_settled?.({ aborted: false }, piCtx(dir()));
+        assert.equal(sent.length, 0);
+    });
+});
 // Tool arguments that make guard itself crash: every read throws.
 const boom = () => new Proxy({}, {
     get() {

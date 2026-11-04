@@ -131,9 +131,14 @@ export function createGuard({ harness, noAsk = false, dataDir = DATA_DIR, deps =
         },
         // The reason to keep going (the run result gate or make check), or null. `active` is true when the last stop was already blocked.
         // Async: make runs detached, so the harness's event loop keeps going meanwhile.
-        async stop({ cwd, active, }) {
+        async stop({ cwd, active, sessionId, agentId, }) {
             try {
-                const out = await stopCheck({ cwd, stop_hook_active: active }, d.spawnSync, {
+                const out = await stopCheck({
+                    cwd,
+                    stop_hook_active: active,
+                    session_id: sessionId,
+                    agent_id: agentId,
+                }, d.spawnSync, {
                     gate: gateOpts(),
                     report: (attrs) => {
                         void d.emit?.("guard.stop", { ...attrs, cmd_class: "stop" }, cwd);
@@ -143,7 +148,7 @@ export function createGuard({ harness, noAsk = false, dataDir = DATA_DIR, deps =
             }
             catch {
                 // stopCheck reads process.env: a registered run's result gate, or a failed registration, keeps the stop blocked
-                return gateFailClosed(process.env, { cwd }, "internal error", gateOpts());
+                return gateFailClosed(process.env, { cwd, session_id: sessionId, agent_id: agentId }, "internal error", gateOpts());
             }
         },
         // One model response: { sessionId, model, provider, tokens: { input, output, cacheRead, cacheWrite, reasoning }, costUsd }.

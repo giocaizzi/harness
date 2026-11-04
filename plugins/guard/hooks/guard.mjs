@@ -6,7 +6,7 @@ import { execFile } from "node:child_process";
 import { appendFileSync, closeSync, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, readlinkSync, realpathSync, rmSync, statSync, } from "node:fs";
 import { statfs } from "node:fs/promises";
 import { cpus, homedir, loadavg, platform } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, parse, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { analysis, branchFacts, cdDirs, cmdClass, codexRules, deniedBy, deniedDir, evaluateCommand, evaluateEdit, evaluateRouting, hostJudged, isHeavy, isRisky, nativeAsk, previewCommand, protectedPathHit, pureRead, refFacts, regenFacts, stackFacts, stackTargets, tagFacts, tagTargets, unattendedSet, withPreview, worktreeFacts, } from "../core/engine.mjs";
 import { cpuPercentFrom, hostCaps } from "../core/host.mjs";
@@ -686,38 +686,49 @@ function touchedFiles(input) {
     ];
 }
 const MAX_LINK_HOPS = 40;
-// `path` with the real path of its nearest existing ancestor, as `/` segments. A dangling symlink, in the last component
-// or any other, is followed (a write tool creates its target); null past MAX_LINK_HOPS links (a loop): the caller
-// treats the path as protected.
+// `path` with the real path of its nearest existing ancestor, as `/` segments. Each component is followed in turn, as the
+// kernel does: a symlink is replaced by its target before the next `..` applies (`n -> d/../x` with `d -> a/b` is
+// `a/x`), and a dangling one, in the last component or any other, is followed too (a write tool creates its target);
+// null past MAX_LINK_HOPS links (a loop): the caller treats the path as protected.
 function realish(path) {
-    const rest = [];
+    const start = resolve(path);
+    const top = parse(start).root;
+    let cur = top;
+    let missing = false;
     let hops = 0;
-    for (let p = resolve(path);;) {
-        try {
-            return slashes(join(realpathSync(p), ...rest));
+    const queue = start.slice(top.length).split(sep).filter(Boolean);
+    while (queue.length) {
+        const comp = queue.shift() ?? "";
+        if (comp === ".")
+            continue;
+        if (comp === "..") {
+            cur = dirname(cur);
+            continue;
         }
-        catch {
-            let target;
+        const next = join(cur, comp);
+        let link;
+        if (!missing) {
             try {
-                if (lstatSync(p).isSymbolicLink()) {
-                    target = resolve(dirname(p), readlinkSync(p));
-                }
+                if (lstatSync(next).isSymbolicLink())
+                    link = readlinkSync(next);
+                else
+                    cur = next;
             }
             catch {
-                // missing: look at the parent
+                missing = true;
             }
-            if (target !== undefined) {
-                if (++hops > MAX_LINK_HOPS)
-                    return null;
-                p = target;
-                continue;
-            }
-            rest.unshift(basename(p));
         }
-        if (dirname(p) === p)
-            return slashes(resolve(path));
-        p = dirname(p);
+        if (link !== undefined) {
+            if (++hops > MAX_LINK_HOPS)
+                return null;
+            if (isAbsolute(link))
+                cur = parse(link).root;
+            queue.unshift(...link.split(/[\\/]/).filter(Boolean));
+        }
+        else if (missing)
+            cur = next;
     }
+    return slashes(cur);
 }
 const insideDir = (path, dir) => {
     const a = path.toLowerCase().split("/").filter(Boolean);
