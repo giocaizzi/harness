@@ -461,20 +461,32 @@ void test("contract: an unusable manifest denies label changes", () => {
 });
 
 void test(
-  "contract: a changed run id or mode during the session denies",
-  { skip: skipUnattended },
+  "contract: a changed run id, ticket or mode during the session denies",
+  { skip: skipUnlessManifest },
   () => {
+    // the pin holds in either mode: start in one the manifest allows
+    const first =
+      !unattendedModes || unattendedModes.includes("unattended")
+        ? "unattended"
+        : (unattendedModes[0] ?? "attended");
     const changes: Record<string, string>[] = [
       { GUARD_RUN_ID: "contract-run-other" },
+      { GUARD_RUN_TICKET: "acme/app#2" },
     ];
     // the mode flip needs a manifest that allows both modes
-    if (!unattendedModes || unattendedModes.includes("attended")) {
+    if (
+      !unattendedModes ||
+      (unattendedModes.includes("attended") &&
+        unattendedModes.includes("unattended"))
+    ) {
       changes.push({ GUARD_RUN_MODE: "attended" });
     }
     for (const change of changes) {
-      const run = newRun();
+      const run = newRun(first);
       assertNotDenied(bash(run, "echo ok"));
-      assertDenied(bash(run, "echo ok", change), "run-registration", run);
+      const out = bash(run, "echo ok", change);
+      assertDenied(out, "run-registration", run);
+      assert.match(out, /run variables changed during the session/);
     }
   },
 );

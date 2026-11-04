@@ -281,18 +281,27 @@ void test("contract: an unusable manifest denies label changes", () => {
     copyFileSync(subject, copy);
     assertDenied(bash(run, "gh issue edit 1 --add-label x", { GUARD_RUN_MANIFEST: copy }), "run-registration", run);
 });
-void test("contract: a changed run id or mode during the session denies", { skip: skipUnattended }, () => {
+void test("contract: a changed run id, ticket or mode during the session denies", { skip: skipUnlessManifest }, () => {
+    // the pin holds in either mode: start in one the manifest allows
+    const first = !unattendedModes || unattendedModes.includes("unattended")
+        ? "unattended"
+        : (unattendedModes[0] ?? "attended");
     const changes = [
         { GUARD_RUN_ID: "contract-run-other" },
+        { GUARD_RUN_TICKET: "acme/app#2" },
     ];
     // the mode flip needs a manifest that allows both modes
-    if (!unattendedModes || unattendedModes.includes("attended")) {
+    if (!unattendedModes ||
+        (unattendedModes.includes("attended") &&
+            unattendedModes.includes("unattended"))) {
         changes.push({ GUARD_RUN_MODE: "attended" });
     }
     for (const change of changes) {
-        const run = newRun();
+        const run = newRun(first);
         assertNotDenied(bash(run, "echo ok"));
-        assertDenied(bash(run, "echo ok", change), "run-registration", run);
+        const out = bash(run, "echo ok", change);
+        assertDenied(out, "run-registration", run);
+        assert.match(out, /run variables changed during the session/);
     }
 });
 void test("contract: a protected path write is denied", { skip: skipUnattended }, () => {
