@@ -1444,21 +1444,18 @@ void test("result gate: a failed registration blocks twice per session even with
   try {
     const cwd = gateRepo();
     const events: Record<string, unknown>[] = [];
-    const why =
-      "Run registration failed: GUARD_RUN_ID is set but GUARD_RUN_MANIFEST is not. Every tool call in this run is denied until the runner fixes its registration; stop and report it.";
+    // the tool wording ("Every tool call in this run" or "...guard sees...") is not under test
+    const why = (n: number): RegExp =>
+      new RegExp(
+        `^Run registration failed: GUARD_RUN_ID is set but GUARD_RUN_MANIFEST is not\\. (Guard denies )?[Ee]very tool call [^.]* until the runner fixes its registration; stop and report it\\. \\(block ${String(n)} of 2\\)$`,
+      );
     const offEnv = { GUARD_RUN_ID: "run-1", GUARD_RESULT_GATE: "off" };
     const first = { cwd, session_id: "s-reg-a" };
     const onEvent = (e: Record<string, unknown>): void => {
       events.push(e);
     };
-    assert.equal(
-      await gate(first, offEnv, undefined, onEvent),
-      `${why} (block 1 of 2)`,
-    );
-    assert.equal(
-      await gate(first, offEnv, undefined, onEvent),
-      `${why} (block 2 of 2)`,
-    );
+    assert.match((await gate(first, offEnv, undefined, onEvent)) ?? "", why(1));
+    assert.match((await gate(first, offEnv, undefined, onEvent)) ?? "", why(2));
     assert.equal(await gate(first, offEnv, undefined, onEvent), null);
     assert.deepEqual(events, [
       {
@@ -1563,6 +1560,72 @@ void test("result gate: a stop that sets only legacy run variables is blocked an
     // a subagent's stop is exempt, and so is a session with no run
     assert.equal(await gate({ ...input, agent_id: "a" }, env), null);
     assert.equal(await gate(input, { GUARD_RESULT_GATE: "off" }), null);
+  } finally {
+    delete process.env.CLAUDE_PLUGIN_DATA;
+  }
+});
+
+void test("result gate: with no session id the registration cap is keyed on the cwd and process id, and the tripwire logs once", async () => {
+  try {
+    const cwdA = gateRepo();
+    const cwdB = tmp();
+    const dataDir = process.env.CLAUDE_PLUGIN_DATA ?? "";
+    const env = { GUARD_RUN_ID: "run-1" };
+    const blocks = async (cwd: string): Promise<(string | null)[]> => [
+      await gate({ cwd }, env),
+      await gate({ cwd }, env),
+      await gate({ cwd }, env),
+    ];
+    const a = await blocks(cwdA);
+    assert.match(a[0] ?? "", / \(block 1 of 2\)$/);
+    assert.match(a[1] ?? "", / \(block 2 of 2\)$/);
+    assert.equal(a[2], null);
+    // another cwd on the same host is another session
+    const b = await blocks(cwdB);
+    assert.match(b[0] ?? "", / \(block 1 of 2\)$/);
+    assert.equal(b[2], null);
+    // a session id keeps its own counter, whatever the cwd
+    assert.match(
+      (await gate({ cwd: cwdA, session_id: "s-keyed" }, env)) ?? "",
+      / \(block 1 of 2\)$/,
+    );
+
+    // the tripwire's once-per-session line uses the same key
+    const legacy = { FACTORY_RUN_ID: "run-1" };
+    await gate({ cwd: cwdA }, legacy);
+    await gate({ cwd: cwdA }, legacy);
+    await gate({ cwd: cwdB }, legacy);
+    const lines = readFileSync(join(dataDir, "run-unregistered.jsonl"), "utf8")
+      .trim()
+      .split("\n");
+    assert.equal(lines.length, 2);
+  } finally {
+    delete process.env.CLAUDE_PLUGIN_DATA;
+  }
+});
+
+void test("result gate: gateFailClosed caps a failed registration like the gate: two blocks per session, then none", () => {
+  try {
+    gateRepo();
+    const env = { GUARD_RUN_ID: "run-1" };
+    const input = { cwd: "x", session_id: "s-crash" };
+    const out = [1, 2, 3, 4].map((): string | null =>
+      gateFailClosed(env, input, "why"),
+    );
+    assert.match(
+      out[0] ?? "",
+      /^Run registration failed: .* \(block 1 of 2\)$/,
+    );
+    assert.match(out[1] ?? "", / \(block 2 of 2\)$/);
+    assert.equal(out[2], null);
+    assert.equal(out[3], null);
+    // a counter that cannot be written still blocks
+    process.env.CLAUDE_PLUGIN_DATA = join(tmp(), "file");
+    writeFileSync(process.env.CLAUDE_PLUGIN_DATA, "");
+    assert.match(
+      gateFailClosed(env, { cwd: "x", session_id: "s-nowrite" }, "why") ?? "",
+      /block 1 of 2/,
+    );
   } finally {
     delete process.env.CLAUDE_PLUGIN_DATA;
   }

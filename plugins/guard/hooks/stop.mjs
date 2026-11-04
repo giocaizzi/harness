@@ -272,8 +272,9 @@ export function gateFailClosed(env, input, why, opts = {}) {
         if (isSubagentStop(raw))
             return null;
         const { ctx } = stopContext(env, raw, opts);
-        if (ctx.state === "deny")
-            return denyReason(ctx, "stop");
+        if (ctx.state === "deny") {
+            return cappedRegistrationBlock(ctx, raw)?.reason ?? null;
+        }
         if (ctx.state === "none")
             return null;
         const result = ctx.registration.result;
@@ -343,6 +344,32 @@ function bumpBlocks(runId) {
     }
     return n;
 }
+// The registration-deny cap key: the session id when the host sends one. An in-process host (opencode, pi) may send
+// none: the key is then the cwd plus this process id, so separate sessions on one host never share a counter.
+function registrationKey(input) {
+    if (input.session_id)
+        return input.session_id;
+    return `${input.cwd ?? process.cwd()}:${String(process.pid)}`;
+}
+// A failed registration blocks the stop at most RESULT_GATE_MAX times per key: the agent cannot fix it and every tool
+// call is already denied, so an uncapped block would only loop the session. Null once capped. A counter that cannot
+// be written still blocks.
+function cappedRegistrationBlock(ctx, input) {
+    const key = `registration:${registrationKey(input)}`;
+    if (blockCount(key) >= RESULT_GATE_MAX)
+        return null;
+    let n = blockCount(key) + 1;
+    try {
+        n = bumpBlocks(key);
+    }
+    catch {
+        // a counter that cannot be written still blocks
+    }
+    return {
+        reason: `${denyReason(ctx, "stop")} (block ${String(n)} of ${String(RESULT_GATE_MAX)})`,
+        n,
+    };
+}
 // No result file path segment may be a git directory under any spelling a filesystem folds onto it: trailing dots and
 // spaces (Windows), case (macOS, Windows) and 8.3 short names.
 const GIT_SEGMENT = /^(\.git(hub)?|git(hub)?~\d+)$/i;
@@ -392,22 +419,15 @@ export async function resultGate(input, run = spawnSync, env = process.env, onEv
             // Not switched off by GUARD_RESULT_GATE. Capped like result errors, per session: the agent cannot fix a
             // registration and every tool call is already denied, so an uncapped block would only loop the session.
             if (ctx.rule === UNREGISTERED_RULE) {
-                recordUnregistered(env, dataDir, payload.session_id);
+                recordUnregistered(env, dataDir, registrationKey(payload));
             }
-            const key = `registration:${payload.session_id ?? ""}`;
-            if (blockCount(key) >= RESULT_GATE_MAX) {
+            const blocked = cappedRegistrationBlock(ctx, payload);
+            if (blocked === null) {
                 event("capped", { rule: ctx.rule });
                 return null;
             }
-            let n = blockCount(key) + 1;
-            try {
-                n = bumpBlocks(key);
-            }
-            catch {
-                // a counter that cannot be written still blocks
-            }
-            event("registration", { rule: ctx.rule, blocks: n });
-            return `${denyReason(ctx, "stop")} (block ${String(n)} of ${String(RESULT_GATE_MAX)})`;
+            event("registration", { rule: ctx.rule, blocks: blocked.n });
+            return blocked.reason;
         }
         if (ctx.state === "none")
             return null;

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
@@ -8,7 +8,7 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { readStdin } from "./stdin.mjs";
-import { crashAnswer, stopCheck } from "./stop.mjs";
+import { crashAnswer, gateFailClosed, stopCheck } from "./stop.mjs";
 import type { SyncRunner } from "./stop.mjs";
 
 const sleep = (ms: number): Promise<void> =>
@@ -308,6 +308,46 @@ void test("crashAnswer: a passed gate stays passed, a blocked gate keeps its blo
   assert.equal(open?.decision, "block");
   assert.match(open.reason ?? "", /^Run registration failed: /);
   assert.equal(crashAnswer({ done: false, reason: null }, {}, input), null);
+});
+
+void test("gateFailClosed: a registered unattended run whose stop input cannot be read blocks, and the attended run passes", () => {
+  const dir = mkdtempSync(join(tmpdir(), "guard-stdin-"));
+  const m = join(dir, "run.json");
+  writeFileSync(
+    m,
+    JSON.stringify({
+      contract: 2,
+      runner: "acme-runner",
+      requires: ["result-gate"],
+      result: { file: ".acme/runs/{ticket_number}/result.json" },
+    }),
+  );
+  // a manifest made out of reach through the PrepareOptions probes, as session.test does
+  const opts = {
+    writable: () => false,
+    owner: () => false,
+    readOnlyMount: () => false,
+    dataDir: mkdtempSync(join(tmpdir(), "guard-stdin-data-")),
+  };
+  const env = {
+    GUARD_RUN_MANIFEST: m,
+    GUARD_RUN_ID: "run-1",
+    GUARD_RUN_TICKET: "acme/app#12",
+  } as NodeJS.ProcessEnv;
+  const input = { session_id: "s-unreadable" };
+  assert.match(
+    gateFailClosed(env, input, "stdin: payload never completed", opts) ?? "",
+    /^Run result gate: could not check the result for run run-1 /,
+  );
+  assert.equal(
+    gateFailClosed(
+      { ...env, GUARD_RUN_MODE: "attended" },
+      input,
+      "stdin: payload never completed",
+      opts,
+    ),
+    null,
+  );
 });
 
 void test("stopCheck: the gate's answer is reported before the make check starts", async () => {
