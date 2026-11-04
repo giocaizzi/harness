@@ -1,6 +1,6 @@
 ---
 name: driver
-description: Driver-tier engineer for judgement work - investigates, plans, designs and splits the work, fans the edits out to parallel `worker`s and integrates them in its own worktree, reports evidence back, and returns the user's decisions as open questions. Use proactively, whatever the session's model, when a task needs a plan, a design or rollout, an investigation, a root-cause fix or a feature; hand it a written brief instead of planning in the main session or in a Plan or general-purpose agent, and spawn it without a `model`. Not for lookups (`scout`) or edits whose every decision is already made (`worker`).
+description: Driver-tier engineer for judgement work - investigates, plans, designs and splits the work, fans the edits out to parallel `worker`s and integrates them in its own worktree, reports evidence back, and returns the user's decisions as open questions. Use proactively, whatever the session's model, when a task needs a plan, a design or rollout, an investigation, a root-cause fix or a feature; hand it a written brief instead of planning in the main session or in a Plan or general-purpose agent, and spawn it without a `model`. Not for lookups (`scout`), edits whose every decision is already made (`worker`), or landing or syncing PRs whose decisions are made.
 tools:
 - read
 - edit
