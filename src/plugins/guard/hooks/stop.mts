@@ -41,7 +41,7 @@ import { coreErrors, couldNotRun, report } from "../core/result.mjs";
 import { rules } from "../core/rules.mjs";
 import { prepareChecker, runChecker } from "./checker.mjs";
 import type { PrepareOptions, Prepared } from "./checker.mjs";
-import { pluginDataDir } from "./data.mjs";
+import { pluginDataDir, readDataFile, readDataFileStrict } from "./data.mjs";
 import { sessionStore } from "./guard.mjs";
 import { detectHarnessName } from "./harnesses.mjs";
 import { STOP_DEADLINE_MS, readStdin } from "./stdin.mjs";
@@ -205,22 +205,22 @@ export function changes(
   return { paths, rules: ruleText };
 }
 
-const stateFile = (cwd: string): string =>
+export const stateFile = (cwd: string): string =>
   join(pluginDataDir(), "stop", `${sha(cwd).slice(0, 16)}.txt`);
+
+const GREEN_MAX_BYTES = 4096;
+const LOCK_MAX_BYTES = 64;
 
 interface GreenState {
   fp?: string;
   head?: string;
 }
 
-function lastGreen(cwd: string): GreenState {
-  try {
-    const raw = readFileSync(stateFile(cwd), "utf8").trim();
-    const [fp, head] = raw.split("\n");
-    return { fp, head };
-  } catch {
-    return {};
-  }
+export function lastGreen(cwd: string): GreenState {
+  const text = readDataFile(stateFile(cwd), GREEN_MAX_BYTES);
+  if (text === null) return {};
+  const [fp, head] = text.trim().split("\n");
+  return { fp, head };
 }
 
 function markGreen(cwd: string, fp: string, run: SyncRunner): void {
@@ -230,11 +230,21 @@ function markGreen(cwd: string, fp: string, run: SyncRunner): void {
       encoding: "utf8",
       windowsHide: true,
     });
-    mkdirSync(join(stateFile(cwd), ".."), { recursive: true });
-    writeFileSync(
-      stateFile(cwd),
-      head.status === 0 ? `${fp}\n${head.stdout.trim()}` : fp,
-    );
+    const file = stateFile(cwd);
+    mkdirSync(dirname(file), { recursive: true });
+    // temp file and rename: whatever sits at the path (a FIFO, a symlink) is replaced, never written through
+    const tmp = `${file}.${String(process.pid)}.${randomBytes(4).toString("hex")}.tmp`;
+    try {
+      writeFileSync(
+        tmp,
+        head.status === 0 ? `${fp}\n${head.stdout.trim()}` : fp,
+        { flag: "wx" },
+      );
+      renameSync(tmp, file);
+    } catch (e: unknown) {
+      rmSync(tmp, { force: true });
+      throw e;
+    }
   } catch {
     // best effort: the next stop just runs the check again
   }
@@ -283,7 +293,7 @@ export function takeLock(file: string): (() => void) | null {
       };
     }
     try {
-      const holderPid = Number(readFileSync(file, "utf8"));
+      const holderPid = Number(readDataFileStrict(file, LOCK_MAX_BYTES));
       process.kill(holderPid, 0);
       return null;
     } catch {
@@ -426,23 +436,11 @@ const blockFile = (runId: string): string =>
 // a symlink, counts. Everything else (missing, empty, garbage, a FIFO, a directory, a symlink, a hardlink, an
 // unreadable path) is 0, so the write below replaces it and the block is counted.
 function blockCount(runId: string): number {
-  try {
-    const c = constants as { O_NONBLOCK?: number; O_NOFOLLOW?: number };
-    const fd = openSync(
-      blockFile(runId),
-      constants.O_RDONLY | (c.O_NONBLOCK ?? 0) | (c.O_NOFOLLOW ?? 0),
-    );
-    try {
-      const st = fstatSync(fd);
-      if (!st.isFile() || st.nlink > 1 || st.size > COUNTER_MAX_BYTES) return 0;
-      const text = readFileSync(fd, "utf8").trim();
-      return /^\d{1,9}$/.test(text) ? Number(text) : 0;
-    } finally {
-      closeSync(fd);
-    }
-  } catch {
-    return 0;
-  }
+  const text = readDataFile(blockFile(runId), COUNTER_MAX_BYTES, {
+    singleLink: true,
+  });
+  const n = text?.trim() ?? "";
+  return /^\d{1,9}$/.test(n) ? Number(n) : 0;
 }
 
 // Records one more block and returns the new count. Written to a temp file and renamed over the counter, so whatever

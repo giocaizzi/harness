@@ -4,13 +4,15 @@
 // deny with rule run-registration (fails closed); nothing here throws. Enforced from guard 1.0.0. The pin also holds
 // the run id, the mode and the ticket (GUARD_RUN_*) the session started with: a later change denies.
 import { createHash } from "node:crypto";
-import { appendFileSync, closeSync, constants, fstatSync, mkdirSync, openSync, readFileSync, readSync, } from "node:fs";
+import { closeSync, constants, fstatSync, mkdirSync, openSync, readSync, } from "node:fs";
 import path from "node:path";
 import { DEFAULT_PROTECTED_LIMITS } from "../core/constants.mjs";
 import { MAX_MANIFEST_BYTES, parseRegistration, RULE, runEnvErrors, } from "../core/registration.mjs";
 import { rawPath } from "../core/result.mjs";
 import { vetTrustedFile } from "./checker.mjs";
+import { appendDataFile, readDataFileStrict } from "./data.mjs";
 import { scrub } from "./telemetry.mjs";
+const PIN_MAX_BYTES = 65536;
 export function createRegistrationCache() {
     const cache = {
         clear() {
@@ -151,7 +153,7 @@ export function loadRegistration(env, opts = {}) {
             const file = pinFile(opts.dataDir, opts.sessionId);
             const read = () => {
                 try {
-                    return { pin: firstPin(readFileSync(file, "utf8")) };
+                    return { pin: firstPin(readDataFileStrict(file, PIN_MAX_BYTES)) };
                 }
                 catch (e) {
                     const code = codeOf(e);
@@ -166,7 +168,7 @@ export function loadRegistration(env, opts = {}) {
             if (!r.pin) {
                 try {
                     mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
-                    appendFileSync(file, `${JSON.stringify({ manifest: real, sha256, ...vars })}\n`);
+                    appendDataFile(file, `${JSON.stringify({ manifest: real, sha256, ...vars })}\n`);
                 }
                 catch (e) {
                     return pinDeny(`cannot pin the registration (${codeOf(e)})`);

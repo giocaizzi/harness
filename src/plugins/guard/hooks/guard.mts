@@ -5,7 +5,6 @@
 
 import { execFile } from "node:child_process";
 import {
-  appendFileSync,
   closeSync,
   existsSync,
   fstatSync,
@@ -70,7 +69,7 @@ import type {
   TagFact,
 } from "../core/types.mjs";
 import { contractProbe } from "./contract.mjs";
-import { pluginDataDir } from "./data.mjs";
+import { appendDataFile, pluginDataDir, readDataFile } from "./data.mjs";
 import { editedPaths } from "./lint.mjs";
 import type { RunContext } from "./run.mjs";
 import {
@@ -202,6 +201,7 @@ const readerArgs = (command: string): string[] =>
     return reader ? args : [];
   });
 
+const FACTS_MAX_BYTES = 4 * 1024 * 1024;
 const WEEK_MS = 7 * 24 * 3600 * 1000;
 
 export function knownSkills(
@@ -304,12 +304,8 @@ export function sessionStore(
         return { reminded: [], loaded: [], plugins: {} };
       }
       const proc = processId != null ? String(processId) : "";
-      let text = "";
-      try {
-        text = readFileSync(file, "utf8");
-      } catch {
-        // no facts yet
-      }
+      // missing, or not a regular file of bounded size: no facts yet
+      const text = readDataFile(file, FACTS_MAX_BYTES) ?? "";
       for (const line of text.split("\n")) {
         let fact: RawSessionFact;
         try {
@@ -401,7 +397,7 @@ export function sessionStore(
       ];
       if (!lines.length) return;
       mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
-      appendFileSync(file, lines.join("\n") + "\n");
+      appendDataFile(file, lines.join("\n") + "\n");
     },
 
     sweep(): void {

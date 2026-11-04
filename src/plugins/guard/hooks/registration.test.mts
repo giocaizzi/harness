@@ -382,7 +382,7 @@ void test("registration: an unreadable pin file is refused", () => {
         sessionId: "s5",
       }),
     ),
-    "cannot read the session's registration pin (EISDIR)",
+    "cannot read the session's registration pin (ENOTREG)",
   );
 });
 

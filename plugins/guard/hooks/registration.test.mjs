@@ -222,7 +222,7 @@ void test("registration: an unreadable pin file is refused", () => {
         vet: ro,
         dataDir,
         sessionId: "s5",
-    })), "cannot read the session's registration pin (EISDIR)");
+    })), "cannot read the session's registration pin (ENOTREG)");
 });
 void test("registration: only a pin failure is marked as one, so the stop can re-check it", () => {
     const dataDir = fresh("data");

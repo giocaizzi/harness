@@ -6,13 +6,11 @@
 
 import { createHash } from "node:crypto";
 import {
-  appendFileSync,
   closeSync,
   constants,
   fstatSync,
   mkdirSync,
   openSync,
-  readFileSync,
   readSync,
 } from "node:fs";
 import path from "node:path";
@@ -28,6 +26,7 @@ import {
 import { rawPath } from "../core/result.mjs";
 import type { PrepareOptions } from "./checker.mjs";
 import { vetTrustedFile } from "./checker.mjs";
+import { appendDataFile, readDataFileStrict } from "./data.mjs";
 import { scrub } from "./telemetry.mjs";
 
 export type Loaded =
@@ -67,6 +66,8 @@ export interface LoadOptions {
   sessionId?: string;
   vet?: PrepareOptions;
 }
+
+const PIN_MAX_BYTES = 65536;
 
 export function createRegistrationCache(): RegistrationCache {
   const cache: RegistrationCache = {
@@ -236,7 +237,7 @@ export function loadRegistration(
       const file = pinFile(opts.dataDir, opts.sessionId);
       const read = (): { pin?: Pin; why?: string } => {
         try {
-          return { pin: firstPin(readFileSync(file, "utf8")) };
+          return { pin: firstPin(readDataFileStrict(file, PIN_MAX_BYTES)) };
         } catch (e: unknown) {
           const code = codeOf(e);
           return code === "ENOENT"
@@ -249,7 +250,7 @@ export function loadRegistration(
       if (!r.pin) {
         try {
           mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
-          appendFileSync(
+          appendDataFile(
             file,
             `${JSON.stringify({ manifest: real, sha256, ...vars })}\n`,
           );

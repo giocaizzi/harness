@@ -3,7 +3,7 @@
 // and reads `hookSpecificOutput.permissionDecision`. A hook is a fresh process, so per-session facts
 // (loaded skills, rules already reminded) live in a JSON file under $CLAUDE_PLUGIN_DATA.
 import { execFile } from "node:child_process";
-import { appendFileSync, closeSync, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, readlinkSync, rmSync, statSync, } from "node:fs";
+import { closeSync, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, readlinkSync, rmSync, statSync, } from "node:fs";
 import { statfs } from "node:fs/promises";
 import { cpus, homedir, loadavg, platform } from "node:os";
 import { dirname, isAbsolute, join, parse, resolve, sep } from "node:path";
@@ -15,7 +15,7 @@ import { sessionAttrs } from "../core/registration.mjs";
 import { rules } from "../core/rules.mjs";
 import { commandWords, units } from "../core/shell.mjs";
 import { contractProbe } from "./contract.mjs";
-import { pluginDataDir } from "./data.mjs";
+import { appendDataFile, pluginDataDir, readDataFile } from "./data.mjs";
 import { editedPaths } from "./lint.mjs";
 import { denyReason, legacySet, recordUnregistered, runContext, runFacts, } from "./run.mjs";
 import { isEditTool, isReadTool, isShellTool, isTaskTool, } from "./harnesses.mjs";
@@ -88,6 +88,7 @@ const readerArgs = (command) => units(analysis(command)).flatMap(({ cmd }) => {
         !args.some((a) => /^(?:-i|-[a-zA-Z]*i\b|--in-place)/.test(a));
     return reader ? args : [];
 });
+const FACTS_MAX_BYTES = 4 * 1024 * 1024;
 const WEEK_MS = 7 * 24 * 3600 * 1000;
 export function knownSkills(here = dirname(fileURLToPath(import.meta.url))) {
     const names = new Set();
@@ -142,13 +143,8 @@ export function sessionStore(dir = pluginDataDir(), sessionId, agentId, processI
                 return { reminded: [], loaded: [], plugins: {} };
             }
             const proc = processId != null ? String(processId) : "";
-            let text = "";
-            try {
-                text = readFileSync(file, "utf8");
-            }
-            catch {
-                // no facts yet
-            }
+            // missing, or not a regular file of bounded size: no facts yet
+            const text = readDataFile(file, FACTS_MAX_BYTES) ?? "";
             for (const line of text.split("\n")) {
                 let fact;
                 try {
@@ -233,7 +229,7 @@ export function sessionStore(dir = pluginDataDir(), sessionId, agentId, processI
             if (!lines.length)
                 return;
             mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
-            appendFileSync(file, lines.join("\n") + "\n");
+            appendDataFile(file, lines.join("\n") + "\n");
         },
         sweep() {
             const sessions = join(dir, "sessions");
