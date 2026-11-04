@@ -555,5 +555,13 @@
   ["echo x > GI1A2B~1/workflows/g41.yml", "deny:protected-path", "G41", "run contract v2: a hashed 8.3 name whose first letters agree is treated as the .github floor", {"run": "unsure"}],
   ["echo a > .github/.../ci.yml", "deny:protected-path", "G42", "run contract v2: a dots-only segment (a name on POSIX, `..` once Windows folds it) does not move the target out of the .github floor", {"run": "unsure"}],
   ["echo a > '.github/.. /ci.yml'", "deny:protected-path", "G42", "run contract v2: `..` and a space does not move the target out of the .github floor", {"run": "unsure"}],
-  ["echo a > .factory/runs/12/r1/.../x.md", "deny:protected-path", "G42", "run contract v2: a dots-only segment is no exemption", {"run": "registered"}]
+  ["echo a > docs/.../x.md", "deny:protected-path", "G43", "run contract v2: a dots-only segment is denied whatever the registered globs (it may be dropped or read as `..` on Windows)", {"run": "registered"}],
+  ["echo a > '.factory/runs/12/r1/. ./x.md'", "deny:protected-path", "G43", "run contract v2: a segment of only a dot and a space is denied, and is no exemption", {"run": "registered"}],
+  ["echo x > $HOME/.claude/plugins/data/guard-acme./blocks.txt", "deny:protected-path", "G43", "run contract v2: a trailing dot on guard's data directory (Windows drops it) does not hide it from a target with an unknown start", {"run": "registered"}],
+  ["echo x > \"$HOME/.claude/plugins/data/guard-acme /blocks.txt\"", "deny:protected-path", "G43", "run contract v2: a trailing space on guard's data directory does not hide it", {"run": "registered"}],
+  ["rm -rf $D/guard-acme.", "deny:protected-path", "G43", "run contract v2: removing guard's data directory through a folded spelling is denied", {"run": "registered"}],
+  ["echo a > //?/C:/Users/x/a.txt", "deny:protected-path", "G43", "run contract v2: a device path cannot be placed in the repo, so it is denied", {"run": "registered"}],
+  ["echo a > C:Users/x/a.txt", "deny:protected-path", "G43", "run contract v2: a drive-relative path cannot be placed in the repo, so it is denied", {"run": "registered"}],
+  ["echo a > /Users/*/repo/.github/workflows/ci.yml", "deny:protected-path", "G43", "run contract v2: a glob in the root part of an absolute target may be the repo", {"run": "registered"}],
+  ["cp x /Users/m?/repo/.github/workflows/ci.yml", "deny:protected-path", "G43", "run contract v2: a glob in the root part of an absolute target may be the repo (cp)", {"run": "registered"}]
 ]

@@ -2238,6 +2238,89 @@ void test("a registered run: an 8.3 short name in the root part of an edit path 
   }
 });
 
+void test("a registered run: guard's data directory is matched through a trailing dot or space and an 8.3 name (edit tool and shell) (G43)", async () => {
+  const data = realpathSync(mkdtempSync(join(tmpdir(), "guard-datadir-")));
+  const repo = realpathSync(mkdtempSync(join(tmpdir(), "guard-repo-")));
+  mkdirSync(join(repo, ".git"));
+  const run = registered(DEFAULT_REG, { CLAUDE_PLUGIN_DATA: data });
+  const short = `${data.slice(0, data.lastIndexOf("/") + 1)}GUARD-~1`;
+  for (const file of [
+    `${data}./blocks.txt`,
+    `${data} /blocks.txt`,
+    `${short}/blocks.txt`,
+    `${data}/./blocks.txt`,
+  ]) {
+    assert.ok(denied(await run(edit(file, repo))), `edit ${file}`);
+    assert.ok(
+      denied(await run({ ...pre("Bash", `echo x > '${file}'`), cwd: repo })),
+      `shell ${file}`,
+    );
+  }
+  assert.ok(!denied(await run(edit(join(repo, "ok.txt"), repo))));
+});
+
+void test("a registered run: a path segment of only dots and spaces is denied in the edit tool and the shell, whatever the registered globs (G43)", async () => {
+  const repo = realpathSync(mkdtempSync(join(tmpdir(), "guard-dots2-")));
+  mkdirSync(join(repo, ".git"));
+  const run = registered({
+    protected_paths: { globs: ["config/app.yaml", "deploy/*.tf"] },
+  });
+  for (const file of [
+    "config/.../app.yaml",
+    "deploy/.../main.tf",
+    "config/. ./app.yaml",
+    "config/.. /app.yaml",
+    "config/. /app.yaml",
+    "docs/..../x.md",
+  ]) {
+    const write = await run(edit(join(repo, file), repo));
+    assert.ok(denied(write), `edit ${file}`);
+    assert.match(
+      decision(write)?.permissionDecisionReason ?? "",
+      /only dots and spaces/,
+    );
+    assert.ok(denied(await run(edit(file, repo))), `relative edit ${file}`);
+    const shell = await run({
+      ...pre("Bash", `echo a > '${join(repo, file)}'`),
+      cwd: repo,
+    });
+    assert.ok(denied(shell), `shell ${file}`);
+    assert.match(
+      decision(shell)?.permissionDecisionReason ?? "",
+      /only dots and spaces/,
+    );
+  }
+  assert.ok(!denied(await run(edit(join(repo, "docs", "x.md"), repo))));
+  assert.ok(!denied(await run(edit(join(repo, "docs", "a.b..c"), repo))));
+});
+
+void test("a registered run: a device path or a drive-relative path is denied; a glob in the root part of an absolute shell target reaches the repo (G43)", async () => {
+  const outer = realpathSync(mkdtempSync(join(tmpdir(), "guard-globroot-")));
+  const repo = join(outer, "runneradmin", "repo");
+  mkdirSync(join(repo, ".git"), { recursive: true });
+  const run = registered();
+  const shell = async (command: string) =>
+    run({ ...pre("Bash", command), cwd: repo });
+  for (const command of [
+    "echo a > //?/C:/Users/x/src/a.txt",
+    "echo a > C:Users/x/src/a.txt",
+    "cd C:Users && echo a > x",
+  ])
+    assert.ok(denied(await shell(command)), command);
+  assert.ok(denied(await run(edit("C:Users/x.txt", repo))));
+  for (const command of [
+    `echo a > ${outer}/*/repo/.github/workflows/ci.yml`,
+    `cp x ${outer}/runner?dmin/repo/.github/workflows/ci.yml`,
+    `rm -rf ${outer}/*/repo/.github`,
+  ])
+    assert.ok(denied(await shell(command)), command);
+  for (const command of [
+    `echo a > ${outer}/*/repo/src/a.txt`,
+    `echo a > ${outer}/*/other/.github/a.yml`,
+  ])
+    assert.ok(!denied(await shell(command)), command);
+});
+
 void test("a registered run: a checkout whose path ends in a dot or a space still protects its .github", async () => {
   const outer = realpathSync(mkdtempSync(join(tmpdir(), "guard-tail-")));
   const run = registered();

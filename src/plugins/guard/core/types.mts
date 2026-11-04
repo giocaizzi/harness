@@ -334,6 +334,8 @@ export interface ProtectConfig {
 
 export interface ProtectHit {
   target?: string;
+  // Set when the target is denied for its spelling alone (`oddSpelling`).
+  spelled?: "dots" | "drive";
   unsure?: string;
 }
 

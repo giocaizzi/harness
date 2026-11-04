@@ -8,7 +8,7 @@ import { statfs } from "node:fs/promises";
 import { cpus, homedir, loadavg, platform } from "node:os";
 import { dirname, isAbsolute, join, parse, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { analysis, branchFacts, cdDirs, cmdClass, codexRules, deniedBy, deniedDir, evaluateCommand, evaluateEdit, evaluateRouting, hostJudged, isHeavy, isRisky, nativeAsk, previewCommand, protectedPathHit, pureRead, refFacts, regenFacts, segmentsMayBeSame, stackFacts, stackTargets, tagFacts, tagTargets, unattendedSet, withPreview, worktreeFacts, } from "../core/engine.mjs";
+import { analysis, branchFacts, cdDirs, cmdClass, codexRules, deniedBy, deniedDir, evaluateCommand, evaluateEdit, evaluateRouting, hostJudged, isHeavy, isRisky, nativeAsk, oddSpelling, previewCommand, protectedPathHit, pureRead, refFacts, regenFacts, segmentsMayBeSame, spellingWhy, stackFacts, stackTargets, tagFacts, tagTargets, unattendedSet, withPreview, worktreeFacts, } from "../core/engine.mjs";
 import { cpuPercentFrom, hostCaps } from "../core/host.mjs";
 import { emit } from "../core/otel.mjs";
 import { sessionAttrs } from "../core/registration.mjs";
@@ -686,7 +686,7 @@ function touchedFiles(input) {
     ].filter(Boolean)) {
         const lex = resolve(base, p);
         const raw = isAbsolute(p) ? p : `${absBase}${sep}${p}`;
-        seen.set(`${lex}\0${raw}`, { lex, raw });
+        seen.set(`${lex}\0${raw}`, { lex, raw, given: p });
     }
     return [...seen.values()];
 }
@@ -748,10 +748,17 @@ const relativeInside = (path, dir) => {
         ? a.slice(b.length).join("/")
         : null;
 };
+// Whether `path` is inside `dir`, compared like a root: letter case ignored, the dots and spaces Windows drops from a
+// segment's end cut, and an 8.3 short name on either side standing for the long one it may abbreviate.
 const insideDir = (path, dir) => {
-    const a = path.toLowerCase().split("/").filter(Boolean);
-    const b = dir.toLowerCase().split("/").filter(Boolean);
-    return b.length <= a.length && b.every((x, i) => x === a[i]);
+    const a = path.split("/").filter(Boolean);
+    const b = dir.split("/").filter(Boolean);
+    const cut = (x) => x.replace(/[. ]+$/, "") || x;
+    return (b.length <= a.length &&
+        b.every((x, i) => {
+            const y = a[i] ?? "";
+            return segmentsMayBeSame(x, y) || segmentsMayBeSame(cut(x), cut(y));
+        }));
 };
 function onEdit(input, state, deps, ctx) {
     const facts = ctx.state === "registered"
@@ -787,8 +794,16 @@ function onEdit(input, state, deps, ctx) {
         };
         const files = touchedFiles(input).map((f) => ({
             name: f.lex,
+            given: f.given,
+            raw: f.raw,
             readings: readingsOf(f),
         }));
+        // A spelling Windows reads differently is denied, not modelled (`oddSpelling`).
+        for (const f of files) {
+            const kind = oddSpelling(f.given) ?? oddSpelling(f.raw);
+            if (kind !== null)
+                return denyEdit(spellingWhy(rules.run.protectedWhy, f.name, kind));
+        }
         const loop = files.find((f) => f.readings.includes(null));
         if (loop !== undefined)
             return denyEdit(`${rules.run.protectedWhy} \`${loop.name}\` goes through too many symbolic links to be checked; leave it alone.`);
@@ -808,7 +823,9 @@ function onEdit(input, state, deps, ctx) {
         // Relative to every directory with a .git above the cwd: the agent can plant one in a subdirectory.
         for (const f of files) {
             for (const root of roots) {
-                const bases = [slashes(root), realish(root) ?? slashes(root)];
+                const bases = [
+                    ...new Set([slashes(root), realish(root) ?? slashes(root)]),
+                ];
                 for (const file of f.readings) {
                     for (const base of bases) {
                         const rel = relativeInside(file ?? "", base);

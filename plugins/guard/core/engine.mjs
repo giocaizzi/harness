@@ -1373,8 +1373,18 @@ function repoSegments(target, dir, protect) {
     const p = posixPath(target);
     const keep = dir === UNKNOWN_DIR ? dir : posixPath(dir);
     const fold = (x) => x === undefined ? x : foldWindows(posixPath(x));
-    const at = repoSegmentsOf(foldWindows(p), dir === UNKNOWN_DIR ? dir : foldWindows(keep), { ...protect, root: fold(protect.root), cwd: fold(protect.cwd) });
-    const raw = repoSegmentsOf(p, keep, protect);
+    const pair = (path, where) => readings(repoSegmentsOf(path, where, protect), repoSegmentsOf(foldWindows(path), where === UNKNOWN_DIR ? where : foldWindows(where), { ...protect, root: fold(protect.root), cwd: fold(protect.cwd) }));
+    // A Git Bash (`/c/...`) or WSL (`/mnt/c/...`) drive path is also read as the drive-letter path it stands for.
+    const drive = (x) => x.replace(/^\/(?:mnt\/)?([a-z])(?=\/|$)/i, (_, d) => `${d}:`);
+    const out = pair(p, keep);
+    if (drive(p) !== p)
+        out.push(...pair(drive(p), keep));
+    if (dir !== UNKNOWN_DIR && drive(keep) !== keep)
+        out.push(...pair(p, drive(keep)));
+    return out;
+}
+// The raw reading of a target and the one Windows gives it, `folded` when they differ.
+function readings(raw, at) {
     // Only a fold inside the repo-relative part counts: a root or cwd that merely ends in a dot changes both spellings alike.
     const same = !!at &&
         !!raw &&
@@ -1421,16 +1431,18 @@ function relativeTo(root, path, wrap = false) {
     const r = normalizeSegments(root);
     const s = normalizeSegments(path);
     let exact = true;
-    const same = (a, b) => a.slice(0, Math.min(a.length, b.length)).every((x, i) => {
+    // With `globs`, a glob or variable in a segment of `b` may stand for the segment of `a` (the shell expands an unquoted
+    // one): the reading counts, and is no guess to exempt.
+    const same = (a, b, globs = false) => a.slice(0, Math.min(a.length, b.length)).every((x, i) => {
         const y = defined(b[i]);
         if (x.toLowerCase() === y.toLowerCase())
             return true;
-        if (!segmentsMayBeSame(x, y))
+        if (!segmentsMayBeSame(x, y) && !(globs && segMayMatch(x, y)))
             return false;
         exact = false;
         return true;
     });
-    const inside = r.length <= s.length && same(r, s);
+    const inside = r.length <= s.length && same(r, s, true);
     if (!wrap)
         return inside ? s.slice(r.length) : [];
     // A root part matched only through an 8.3 name is a guess: nothing is exempt there.
@@ -1544,6 +1556,20 @@ function expandBraces(text, limit = 64) {
     return done;
 }
 const LIMITED = new Error("limited");
+// A spelling the guard denies in a run instead of modelling it: a path segment made only of dots and spaces (other than
+// `.` and `..`), which Windows drops or reads as `..`; a Windows device path (`//?/C:/...`) or a drive-relative path
+// (`C:dir`), which no repo root can be compared with.
+export function spellingWhy(why, target, kind) {
+    return kind === "dots"
+        ? `${why} \`${target}\` has a path segment of only dots and spaces, which Windows reads differently; spell the path plainly.`
+        : `${why} \`${target}\` is a Windows path spelling (a device path or a drive-relative one) the guard cannot place in the repo; spell the path plainly.`;
+}
+export function oddSpelling(path) {
+    const p = posixPath(path);
+    if (p.split("/").some((x) => x !== "." && x !== ".." && /^[. ]+$/.test(x)))
+        return "dots";
+    return /^\/\/[?.]\//.test(p) || /^[a-z]:[^\\/]/i.test(p) ? "drive" : null;
+}
 // A command that may write at all: an output redirection or a writer's name. Only such a command can fail closed.
 const MAY_WRITE = /[>]|(?:^|[^\w-])(?:tee|sed|perl|rm|rmdir|unlink|mv|cp|move|copy|set-content|add-content|out-file|tee-object|remove-item|move-item|copy-item|ri|mi|ci|cpi|del|erase|rd|sc|ac)(?![\w-])/i;
 // A shell write to a protected path, or any command naming a path inside guard's data directory (`protect.data`):
@@ -1570,6 +1596,8 @@ export function protectedWrite(command, protect, env = {}, limits = { globs: 256
     const until = Date.now() + limits.ms;
     let work = 0;
     let targets = 0;
+    // Set when a target is denied only for its spelling (`oddSpelling`), not for the path it names.
+    let spelled;
     const tick = () => {
         if ((++work & 255) === 0 && Date.now() > until)
             throw LIMITED;
@@ -1601,23 +1629,31 @@ export function protectedWrite(command, protect, env = {}, limits = { globs: 256
                     ? `${posixPath(protect.cwd).replace(/\/+$/, "")}/${full}`
                     : null;
         }
+        // A segment pair names one directory when equal ignoring case, once the dots and spaces Windows drops are cut, or
+        // through an 8.3 short name on either side.
+        const cut = (x) => x.replace(/[. ]+$/, "") || x;
+        const same = (a, b) => a.every((x, i) => {
+            const y = defined(b[i]);
+            return segmentsMayBeSame(x, y) || segmentsMayBeSame(cut(x), cut(y));
+        });
         for (const d of dataDirs) {
             if (full !== null) {
-                const s = normalizeSegments(full.replace(/^\/(?=[a-z]:)/i, ""));
-                const same = (a, b) => a.every((x, i) => x.toLowerCase() === defined(b[i]).toLowerCase());
-                if (d.length <= s.length ? same(d, s) : above && same(s, d))
+                const bare = full.replace(/^\/(?=[a-z]:)/i, "");
+                // As written, as Windows reads it, and (a Git Bash `/c/...` or WSL `/mnt/c/...` path) as a drive-letter path.
+                const spelled = [bare, foldWindows(bare)].flatMap((text) => {
+                    const s = normalizeSegments(text);
+                    const win = /^\/(mnt\/)?([a-z])(?:\/|$)/i.exec(text);
+                    return win && /^[a-z]:$/i.test(d[0] ?? "")
+                        ? [s, [`${defined(win[2])}:`, ...s.slice(win[1] ? 2 : 1)]]
+                        : [s];
+                });
+                if (spelled.some((s) => d.length <= s.length ? same(d, s) : above && same(s, d)))
                     return true;
-                const git = /^\/([a-z])(?:\/|$)/i.exec(full);
-                if (git && /^[a-z]:$/i.test(d[0] ?? "")) {
-                    const g = [`${defined(git[1])}:`, ...s.slice(1)];
-                    if (d.length <= g.length ? same(d, g) : above && same(g, d))
-                        return true;
-                }
                 continue;
             }
             const base = d.at(-1);
             if (base !== undefined &&
-                patternHits([base, "**"], repoSegments(p, dir, { ...protect, root: undefined })[0]?.segs ?? [], above, true, tick))
+                repoSegments(p, dir, { ...protect, root: undefined }).some((at) => patternHits([base, "**"], at.segs, above, true, tick)))
                 return true;
         }
         return false;
@@ -1641,6 +1677,12 @@ export function protectedWrite(command, protect, env = {}, limits = { globs: 256
         if (inData(dir, resolve(target), above))
             return true;
         const resolved = resolve(target);
+        // A spelling the guard will not model is denied outright, before any reading of the path is tried.
+        const odd = oddSpelling(target) ?? oddSpelling(dir) ?? oddSpelling(resolved);
+        if (odd !== null) {
+            spelled = odd;
+            return true;
+        }
         // Relative to every directory with a .git above the cwd, not only the nearest: a planted `x/.git` moves no root.
         for (const root of new Set([protect.root, ...(protect.roots ?? [])])) {
             for (const at of repoSegments(resolved, dir, { ...protect, root })) {
@@ -1661,7 +1703,7 @@ export function protectedWrite(command, protect, env = {}, limits = { globs: 256
     };
     try {
         const target = scanWrites(command, env, count, hits, dataDirs.length ? named : null);
-        return target === null ? null : { target };
+        return target === null ? null : { target, ...(spelled ? { spelled } : {}) };
     }
     catch (e) {
         // Any failure (a limit, a stack overflow, a bug) denies a command that may write, and lets the rest through.
@@ -2453,6 +2495,12 @@ export function evaluateCommand({ command, loadedSkills = new Set(), state, host
             registered: run.protect?.registered ?? [],
             exempt: run.protect?.exempt ?? [],
         }, env, rules.run.protectedLimits);
+    if (shielded?.target && shielded.spelled)
+        return {
+            action: "deny",
+            rule: "protected-path",
+            reason: spellingWhy(rules.run.protectedWhy, shielded.target, shielded.spelled),
+        };
     if (shielded?.target)
         return {
             action: "deny",

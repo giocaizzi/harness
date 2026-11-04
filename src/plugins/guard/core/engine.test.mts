@@ -15,6 +15,7 @@ import {
   ghUnseen,
   nativeAsk,
   opencodeAsks,
+  oddSpelling,
   protectedPathHit,
   protectedWrite,
   pureRead,
@@ -4053,7 +4054,147 @@ void test("protectedWrite and protectedPathHit: a dots-only segment is read as a
     );
   }
   assert.equal(protectedPathHit("src/.../ci.yml", g), false);
-  assert.equal(protectedWrite("echo a > 'src/.../ci.yml'", g), null);
+  // a shell write to such a segment is denied for its spelling alone (G43)
+  assert.equal(protectedWrite("echo a > 'src/.../ci.yml'", g)?.spelled, "dots");
+});
+
+void test("protectedWrite: a path segment of only dots and spaces is denied, whatever the registered globs are (G43)", () => {
+  const g = {
+    globs: [".github/**"],
+    registered: ["config/app.yaml", "deploy/*.tf"],
+    root: "/r",
+    cwd: "/r",
+  };
+  for (const target of [
+    "config/.../app.yaml",
+    "deploy/.../main.tf",
+    "config/..../app.yaml",
+    "config/. ./app.yaml",
+    "config/.. /app.yaml",
+    "config/. /app.yaml",
+    "docs/.../x.md",
+  ]) {
+    const hit = protectedWrite(`echo a > '${target}'`, g);
+    assert.equal(hit?.spelled, "dots", target);
+    assert.equal(protectedWrite(`rm -rf '${target}'`, g)?.spelled, "dots");
+  }
+  assert.equal(
+    protectedWrite("cd docs/... && echo a > x.md", g)?.spelled,
+    "dots",
+    "a cd into such a directory",
+  );
+  for (const target of [
+    "config/./x.md",
+    "docs/../x.md",
+    "docs/a.b.c",
+    "docs/x...txt",
+    "./docs/x.md",
+  ])
+    assert.equal(protectedWrite(`echo a > '${target}'`, g), null, target);
+  assert.equal(oddSpelling("a/.../b"), "dots");
+  assert.equal(oddSpelling("a/./b/../c"), null);
+});
+
+void test("protectedWrite: guard's data directory is matched through trailing dots and spaces, 8.3 names and every reading (G43)", () => {
+  const data = "/u/data/guard-x";
+  const g = {
+    globs: [".github/**"],
+    root: "/u/repo",
+    cwd: "/u/repo",
+    data: [data],
+  };
+  for (const command of [
+    "echo x > $HOME/data/guard-x./blocks.txt",
+    'echo x > "$HOME/data/guard-x /blocks.txt"',
+    "rm -rf $D/guard-x.",
+    "cd $X && echo a > guard-x./state",
+    "echo x > /u/data/guard-x./blocks.txt",
+    "echo x > '/u/data/guard-x /blocks.txt'",
+    "echo x > /u/DATA/GUARD-~1/blocks.txt",
+    "rm -rf /u/data/guard-x.",
+  ])
+    assert.ok(protectedWrite(command, g)?.target, command);
+  const win = {
+    globs: [".github/**"],
+    root: "C:/Users/runneradmin/repo",
+    cwd: "C:/Users/runneradmin/repo",
+    data: ["C:/Users/runneradmin/data/guard-x"],
+  };
+  for (const command of [
+    "echo a > C:/Users/runneradmin/data/guard-x./s",
+    "echo a > C:/Users/RUNNER~1/data/guard-x/s",
+    "echo a > C:/Users/runneradmin/data/GUARD-~1/s",
+    "echo a > /c/Users/RUNNER~1/data/guard-x./s",
+    "echo a > /mnt/c/Users/runneradmin/data/guard-x/s",
+    "echo a > /c/Users/runneradmin/data/guard-x/s",
+  ])
+    assert.ok(protectedWrite(command, win)?.target, command);
+  for (const command of [
+    "echo x > $HOME/data/guard-y./blocks.txt",
+    "echo x > /u/data/other/blocks.txt",
+  ])
+    assert.equal(protectedWrite(command, g), null, command);
+  for (const command of [
+    "echo a > /d/Users/runneradmin/data/guard-x/s",
+    "echo a > C:/Users/other/data/guard-x/s",
+  ])
+    assert.equal(protectedWrite(command, win), null, command);
+});
+
+void test("protectedWrite: a drive path in the Bash or WSL form, a device path and a drive-relative path against a drive-letter root (G43)", () => {
+  const root = "C:/Users/runneradmin/repo";
+  const g = { globs: [".github/**"], root, roots: [root], cwd: root };
+  for (const command of [
+    "echo a > /c/Users/runneradmin/repo/.github/x",
+    "echo a > /C/Users/runneradmin/repo/.github/x",
+    "echo a > /mnt/c/Users/runneradmin/repo/.github/x",
+    "cd /c/Users/runneradmin/repo && echo a > .github/x",
+    "cd /mnt/c/Users/runneradmin/repo && echo a > .github/x",
+    "rm -rf /c/Users/runneradmin/repo/.github",
+    "echo a > /c/Users/RUNNER~1/repo/.github/x",
+  ])
+    assert.ok(protectedWrite(command, g)?.target, command);
+  for (const command of [
+    "echo a > //?/C:/Users/runneradmin/repo/src/x",
+    "echo a > C:Users/runneradmin/repo/src/x",
+    "cd C:Users && echo a > x",
+  ])
+    assert.equal(protectedWrite(command, g)?.spelled, "drive", command);
+  for (const command of [
+    "echo a > /c/Users/runneradmin/repo/src/x",
+    "echo a > /mnt/c/Users/other/repo/.github/x",
+    "echo a > /mnt/d/Users/runneradmin/repo/.github/x",
+    "cd /c/Users/runneradmin/repo && echo a > src/x",
+  ])
+    assert.equal(protectedWrite(command, g), null, command);
+});
+
+void test("protectedWrite: a glob or variable in the root part of an absolute target may be the repo, with no exemption (G43)", () => {
+  const root = "/o/runneradmin/repo";
+  const g = {
+    globs: [".github/**"],
+    registered: [".factory/**"],
+    exempt: [".factory/runs/*/*/**"],
+    root,
+    roots: [root],
+    cwd: root,
+  };
+  for (const command of [
+    "echo a > /o/*/repo/.github/workflows/ci.yml",
+    "cp x /o/runner?dmin/repo/.github/workflows/ci.yml",
+    "rm -rf /o/*/repo/.github",
+    "echo a > /o/runner[a-z]*/repo/.github/x",
+    "echo a > /o/$U/repo/.github/x",
+    "echo a > /o/*/repo/.factory/runs/1/r/x.md",
+  ])
+    assert.ok(protectedWrite(command, g)?.target, command);
+  for (const command of [
+    "echo a > /o/*/repo/src/x",
+    "echo a > /o/*/other/.github/x",
+    "echo a > /p/*/repo/.github/x",
+    "rm -rf /tmp/*",
+  ])
+    assert.equal(protectedWrite(command, g), null, command);
 });
 
 void test("protectedWrite: an 8.3 short name in the root part of an absolute target counts, in either spelling (G42)", () => {

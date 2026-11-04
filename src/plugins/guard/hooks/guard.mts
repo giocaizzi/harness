@@ -40,12 +40,14 @@ import {
   isHeavy,
   isRisky,
   nativeAsk,
+  oddSpelling,
   previewCommand,
   protectedPathHit,
   pureRead,
   refFacts,
   regenFacts,
   segmentsMayBeSame,
+  spellingWhy,
   stackFacts,
   stackTargets,
   tagFacts,
@@ -998,7 +1000,9 @@ interface EditToolInput {
 // and `*** Move to:` lines of an apply_patch text (the whole tool_input, `command` or `input`).
 // Each with its lexical reading (`resolve`: `d/../x` is `x`) and its raw one (made absolute, nothing normalised: the
 // kernel follows `d` before the `..`).
-function touchedFiles(input: HookInput): { lex: string; raw: string }[] {
+function touchedFiles(
+  input: HookInput,
+): { lex: string; raw: string; given: string }[] {
   const t = input.tool_input;
   const obj =
     t && typeof t === "object"
@@ -1017,7 +1021,7 @@ function touchedFiles(input: HookInput): { lex: string; raw: string }[] {
   ].map((m) => m[1]?.trim() ?? "");
   const base = input.cwd ?? ".";
   const absBase = isAbsolute(base) ? base : resolve(base);
-  const seen = new Map<string, { lex: string; raw: string }>();
+  const seen = new Map<string, { lex: string; raw: string; given: string }>();
   for (const p of [
     ...editedPaths(input),
     ...(typeof obj.Path === "string" ? [obj.Path] : []),
@@ -1025,7 +1029,7 @@ function touchedFiles(input: HookInput): { lex: string; raw: string }[] {
   ].filter(Boolean)) {
     const lex = resolve(base, p);
     const raw = isAbsolute(p) ? p : `${absBase}${sep}${p}`;
-    seen.set(`${lex}\0${raw}`, { lex, raw });
+    seen.set(`${lex}\0${raw}`, { lex, raw, given: p });
   }
   return [...seen.values()];
 }
@@ -1087,10 +1091,19 @@ const relativeInside = (path: string, dir: string): string | null => {
     : null;
 };
 
+// Whether `path` is inside `dir`, compared like a root: letter case ignored, the dots and spaces Windows drops from a
+// segment's end cut, and an 8.3 short name on either side standing for the long one it may abbreviate.
 const insideDir = (path: string, dir: string): boolean => {
-  const a = path.toLowerCase().split("/").filter(Boolean);
-  const b = dir.toLowerCase().split("/").filter(Boolean);
-  return b.length <= a.length && b.every((x, i) => x === a[i]);
+  const a = path.split("/").filter(Boolean);
+  const b = dir.split("/").filter(Boolean);
+  const cut = (x: string) => x.replace(/[. ]+$/, "") || x;
+  return (
+    b.length <= a.length &&
+    b.every((x, i) => {
+      const y = a[i] ?? "";
+      return segmentsMayBeSame(x, y) || segmentsMayBeSame(cut(x), cut(y));
+    })
+  );
 };
 
 function onEdit(
@@ -1138,8 +1151,16 @@ function onEdit(
     };
     const files = touchedFiles(input).map((f) => ({
       name: f.lex,
+      given: f.given,
+      raw: f.raw,
       readings: readingsOf(f),
     }));
+    // A spelling Windows reads differently is denied, not modelled (`oddSpelling`).
+    for (const f of files) {
+      const kind = oddSpelling(f.given) ?? oddSpelling(f.raw);
+      if (kind !== null)
+        return denyEdit(spellingWhy(rules.run.protectedWhy, f.name, kind));
+    }
     const loop = files.find((f) => f.readings.includes(null));
     if (loop !== undefined)
       return denyEdit(
@@ -1165,7 +1186,9 @@ function onEdit(
     // Relative to every directory with a .git above the cwd: the agent can plant one in a subdirectory.
     for (const f of files) {
       for (const root of roots) {
-        const bases = [slashes(root), realish(root) ?? slashes(root)];
+        const bases = [
+          ...new Set([slashes(root), realish(root) ?? slashes(root)]),
+        ];
         for (const file of f.readings) {
           for (const base of bases) {
             const rel = relativeInside(file ?? "", base);
