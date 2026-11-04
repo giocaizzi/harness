@@ -1536,13 +1536,15 @@ export function protectedWrite(command, protect, env = {}, limits = { globs: 256
                 full = protect.cwd
                     ? `${posixPath(protect.cwd).replace(/\/+$/, "")}/${full}`
                     : null;
-            // A `..` after a `**` or variable segment climbs out of an unknown number of directories, so normalising it away
-            // would drop that segment: only the rest of the path counts, as for an unknown start.
-            const segs = full?.split("/") ?? [];
-            const multi = segs.findIndex((x) => MULTI_SEG.test(x));
-            if (multi >= 0 && segs.slice(multi + 1).includes(".."))
-                full = null;
         }
+        // A `..` after a `**` or variable segment climbs out of an unknown number of directories, so the path may end
+        // anywhere below what comes before it: fail closed by shape and count it as naming the data directory.
+        // A leading substitution without nesting or a `/` (the documented `$(git rev-parse …)/../` start) is the start the
+        // reader understands, not such a segment.
+        const segs = (full ?? p).split("/");
+        const multi = segs.findIndex((x, i) => MULTI_SEG.test(x) && !(i === 0 && /^\$\([^()/]*\)$/.test(x)));
+        if (multi >= 0 && segs.slice(multi + 1).includes(".."))
+            return true;
         for (const d of dataDirs) {
             if (full !== null) {
                 const s = normalizeSegments(full.replace(/^\/(?=[a-z]:)/i, ""));

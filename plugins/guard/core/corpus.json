@@ -556,5 +556,7 @@
   ["ls /tmp/**/x", "allow", "G36", "control: a `**` segment outside the data directory's path", {"factory": "readable"}],
   ["cat /Users/me/.claude/**/../guard-acme/x", "deny:protected-path", "G36", "review: a `..` after a `**` segment must not cancel it", {"factory": "readable"}],
   ["touch /Users/me/$X/../guard-acme/x", "deny:protected-path", "G36", "review: a `..` after a variable segment must not cancel it", {"factory": "readable"}],
-  ["cat /Users/me/.claude/**/../other/x", "allow", "G36", "control: a `..` after a `**` segment, then a path that does not name the data directory", {"factory": "readable"}]
+  ["cat /Users/me/.claude/**/../other/x", "deny:protected-path", "G36", "review: a `..` after a `**` segment may land anywhere below, so it fails closed by shape", {"factory": "readable"}],
+  ["cd /tmp && cat $X/../result-gate/a.txt", "deny:protected-path", "G36", "review: a `..` after a variable segment fails closed by shape", {"factory": "readable"}],
+  ["cat /Users/me/repo/**/x", "allow", "G36", "control: a `**` segment with no `..` after it, under a directory that does not lead to the data directory", {"factory": "readable"}]
 ]
