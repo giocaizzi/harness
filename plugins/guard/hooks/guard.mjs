@@ -1029,7 +1029,7 @@ export function codexAsks(env, transcriptPath) {
 }
 // A PreToolUse payload that cannot be read whole is denied, never allowed: the guard did not see the tool call.
 function denyUnreadable(why, isAgy) {
-    const reason = `guard: could not read this tool call (${why}), so it is denied. Retry it; a tool input over 32 MiB is always denied, so split it.`;
+    const reason = `guard: could not read this tool call (${why}), so it is denied. Retry it once; a tool input over 32 MiB is always denied, so split it. If it is denied again, stop and tell the user that guard cannot read tool calls.`;
     try {
         appendDecision(process.env, { decision: "deny", rule: "guard-input" });
     }
