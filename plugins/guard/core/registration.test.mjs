@@ -112,6 +112,9 @@ void test("registration: protected_paths globs", () => {
     g("a/", /empty, "\." or "\.\." segment/);
     g("./a", /empty, "\." or "\.\." segment/);
     g("a/../b", /empty, "\." or "\.\." segment/);
+    g("a/.. /b", /empty, "\." or "\.\." segment/);
+    g("a/.../b", /empty, "\." or "\.\." segment/);
+    g("a/b::$DATA", /must not contain ":"/);
     g(1, /^protected_paths\.globs\[0\] must be a string/);
     bad((m) => (m.protected_paths.globs = "x"), /^protected_paths\.globs must be an array/);
     bad((m) => (m.protected_paths = null), /^protected_paths must be an object/);
@@ -191,7 +194,22 @@ void test("registration: result", () => {
     ]) {
         bad((m) => (m.result.file = file), /^result\.file must not be under \.git or \.github, got /);
     }
-    for (const file of ["a/.gitx/x.json", ".gitignore.json", "a/git/x.json"]) {
+    for (const file of ["GIT~1/x.json", "a/github~2/x.json"]) {
+        bad((m) => (m.result.file = file), /^result\.file must not be under \.git or \.github, got /);
+    }
+    for (const file of [".git::$INDEX_ALLOCATION/x.json", "x.json::$DATA"]) {
+        bad((m) => (m.result.file = file), /^result\.file must not contain ":"/);
+    }
+    for (const file of ["a/.. /x.json", "a/.../x.json", "... /x.json"]) {
+        bad((m) => (m.result.file = file), /^result\.file must not have an empty/);
+    }
+    for (const file of [
+        "a/.gitx/x.json",
+        ".gitignore.json",
+        "a/git/x.json",
+        "a/git~x/x.json",
+        "a/b.c/x.json",
+    ]) {
         const r = validateRegistration(mod((m) => (m.result.file = file)));
         assert.equal(r.ok, true, file);
     }
