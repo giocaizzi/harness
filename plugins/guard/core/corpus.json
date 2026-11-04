@@ -550,5 +550,7 @@
   ["echo x > '.github /workflows/g41.yml'", "deny:protected-path", "G41", "run contract v2: a trailing space does not hide the .github floor", {"run": "unsure"}],
   ["echo x > GITHUB~1/workflows/g41.yml", "deny:protected-path", "G41", "run contract v2: an 8.3 short name reaches the .github floor", {"run": "unsure"}],
   ["echo x > FACTOR~1/config.yaml", "deny:protected-path", "G41", "run contract v2: a short name reaches a registered glob's directory", {"run": "registered"}],
-  ["echo x > .factory/runs/12./r1/notes.md", "deny:protected-path", "G41", "run contract v2: a folded spelling is no exemption", {"run": "registered"}]
+  ["echo x > .factory/runs/12./r1/notes.md", "deny:protected-path", "G41", "run contract v2: a folded spelling is no exemption", {"run": "registered"}],
+  ["echo x > GITHUB~1/CI~1.YML", "deny:protected-path", "G41", "run contract v2: an 8.3 short name with an extension reaches the .github floor", {"run": "unsure"}],
+  ["echo x > GI1A2B~1/workflows/g41.yml", "deny:protected-path", "G41", "run contract v2: a hashed 8.3 name whose first letters agree is treated as the .github floor", {"run": "unsure"}]
 ]

@@ -3135,6 +3135,33 @@ void test("protectedWrite and protectedPathHit: Windows trailing dots and spaces
     assert.equal(protectedPathHit(".factory/runs/12./r1/a", g), true);
     assert.ok(protectedWrite("echo a > '.factory/runs/12 /r1/a'", g)?.target);
 });
+void test("protectedWrite and protectedPathHit: 8.3 short names with an extension and the hashed form (G41)", () => {
+    const g = {
+        globs: [".github/**"],
+        registered: [".factory/config.yaml", ".gitlab-ci.yml"],
+        exempt: [],
+        root: "/r",
+        cwd: "/r",
+    };
+    for (const name of [
+        ".factory/CONFIG~1.YAM",
+        "GITLAB~1.YML",
+        "gitlab~2.yml",
+        "GITHUB~1/CI~1.YML",
+        "GI1A2B~1/x",
+    ]) {
+        assert.equal(protectedPathHit(name, g), true, `edit ${name}`);
+        assert.ok(protectedWrite(`echo a > '${name}'`, g)?.target, `shell ${name}`);
+    }
+    for (const name of [
+        ".factory/OTHER~1.YAM",
+        "CONFIG~1.YAM",
+        "GITLAB~1.TXT",
+        "ZZ1A2B~1/x",
+        "ZZZZZZ~1.YML",
+    ])
+        assert.equal(protectedPathHit(name, g), false, `edit ${name}`);
+});
 void test("protectedWrite: a root or cwd that ends in a dot or space folds like the target (G41)", () => {
     for (const root of ["/w/proj.", "/w/proj ", "/w./proj", "/w/proj. "]) {
         const g = {

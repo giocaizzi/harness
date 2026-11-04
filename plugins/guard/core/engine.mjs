@@ -1441,11 +1441,17 @@ function globsMayMeet(a, b) {
 // Whether one target segment may be one protected-pattern segment.
 // A variable may hold a leading dot, so only a written `*`, `?` or `[` at the start keeps a dot file out.
 function segMayMatch(pat, seg) {
-    // A Windows 8.3 short name (`GITHUB~1`) stands for any name, dot dropped, that starts with its prefix.
-    const short = /^([^~./]{1,6})~\d+$/.exec(seg);
+    // A Windows 8.3 short name (`GITHUB~1`, `CONFIG~1.YAM`) stands for any name, dot dropped, that starts with its prefix
+    // and, when it has one, whose extension starts with the short one.
+    const short = /^([^~./]{1,6})~\d+(?:\.([^./]{1,3}))?$/.exec(seg);
     if (short) {
         const pre = defined(short[1]).toLowerCase();
-        if (segMayMatch(pat, `${pre}*`) || segMayMatch(pat, `.${pre}*`))
+        const ext = short[2] === undefined ? "" : `.${short[2].toLowerCase()}*`;
+        if (segMayMatch(pat, `${pre}*${ext}`) || segMayMatch(pat, `.${pre}*${ext}`))
+            return true;
+        // The hashed form (`GI1A2B~1`: two letters, four hash characters) cannot be mapped back: it may be the floor's
+        // `.github` whenever it starts with `gi` and goes on with four hexadecimal characters.
+        if (pat.toLowerCase() === ".github" && /^gi[0-9a-f]{4}$/.test(pre))
             return true;
     }
     const glob = seg.replace(/\$(?:\{[^}]*\}|\w+|\([^)]*\))|%\w+%|`[^`]*`/g, "*");
