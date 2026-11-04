@@ -835,6 +835,12 @@ if (entryArg && import.meta.url === pathToFileURL(entryArg).href) {
       // never exit non-zero by accident
     }
   }
-  // exits once it has answered, so a stuck checker thread cannot hold the hook open
+  // Exits once the answer is flushed (stdout to a pipe may be async), so idle handles cannot hold the hook open. A
+  // checker thread blocked in a system call still can: Node joins it on exit (docs/guard.md, Known limits).
+  await new Promise<void>((done) => {
+    process.stdout.write("", () => {
+      done();
+    });
+  });
   process.exit(0);
 }

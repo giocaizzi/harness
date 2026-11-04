@@ -146,6 +146,7 @@ What a launcher (any program that starts a harness for a ticket) sets and guard 
 - The Windows writability check looks at the read-only attribute only (see Refusals).
 - The hook runs guard's own installed files (the plugin directory, including its `.generated/` build copy of the checker, and `stop.mjs` and `checker-worker.mjs`), so they must be as far out of the session user's reach as the checker is; the trust model rests on it, and guard does not check it.
 - On opencode and pi the deny is a re-prompt, not a held stop ([compatibility.md](compatibility.md#matrix)).
+- A checker blocked in a system call (a read of a FIFO, say) cannot be interrupted in its worker thread: the gate answers with the timeout's deny after 10 s, but Node joins the thread on exit, so the hook process stays until the harness's hook timeout kills it, and a harness that drops the output of a killed hook then lets the stop through. The launcher's checker must not read paths the session can create or replace.
 
 ## Unattended and auto-approve runs
 
