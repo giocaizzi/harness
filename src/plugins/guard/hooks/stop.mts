@@ -410,7 +410,7 @@ export async function resultGate(
         : env
       : {};
     try {
-      const content = readFileSync(file, "utf8").replace(/^﻿/, "");
+      const content = readFileSync(file, "utf8").replace(/^\uFEFF/, "");
       parsed = JSON.parse(content);
       parsedOk = true;
     } catch (e: unknown) {

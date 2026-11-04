@@ -302,7 +302,7 @@ export async function resultGate(input, run = spawnSync, env = process.env, onEv
                 : env
             : {};
         try {
-            const content = readFileSync(file, "utf8").replace(/^﻿/, "");
+            const content = readFileSync(file, "utf8").replace(/^\uFEFF/, "");
             parsed = JSON.parse(content);
             parsedOk = true;
         }

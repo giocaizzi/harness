@@ -1022,7 +1022,7 @@ void test("result gate: strict mode never fails open on an internal error", asyn
 
 void test("result check: a BOM and CRLF line ends in result.json are read", async () => {
   try {
-    const text = `﻿${JSON.stringify(validResult(), null, 2).replace(/\n/g, "\r\n")}`;
+    const text = `\uFEFF${JSON.stringify(validResult(), null, 2).replace(/\n/g, "\r\n")}`;
     assert.equal(
       await resultGate({ cwd: gateRepo(text) }, undefined, RUNTIME),
       null,
