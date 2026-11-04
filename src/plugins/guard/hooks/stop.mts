@@ -496,12 +496,24 @@ export async function resultGate(
   try {
     const { ctx, dataDir } = stopContext(env, payload, checkerOpts);
     if (ctx.state === "deny") {
-      // not switched off by GUARD_RESULT_GATE, and not counted: a failed registration stays blocked
+      // Not switched off by GUARD_RESULT_GATE. Capped like result errors, per session: the agent cannot fix a
+      // registration and every tool call is already denied, so an uncapped block would only loop the session.
       if (ctx.rule === UNREGISTERED_RULE) {
         recordUnregistered(env, dataDir, payload.session_id);
       }
-      event("registration", { rule: ctx.rule });
-      return denyReason(ctx, "stop");
+      const key = `registration:${payload.session_id ?? ""}`;
+      if (blockCount(key) >= RESULT_GATE_MAX) {
+        event("capped", { rule: ctx.rule });
+        return null;
+      }
+      let n = blockCount(key) + 1;
+      try {
+        n = bumpBlocks(key);
+      } catch {
+        // a counter that cannot be written still blocks
+      }
+      event("registration", { rule: ctx.rule, blocks: n });
+      return `${denyReason(ctx, "stop")} (block ${String(n)} of ${String(RESULT_GATE_MAX)})`;
     }
     if (ctx.state === "none") return null;
     const { registration, runId } = ctx;

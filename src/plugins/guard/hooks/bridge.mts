@@ -87,6 +87,13 @@ export function createGuard({
     ...deps,
   };
 
+  // The stop gate's options: the same cache, data dir and (tests only) trust probes as the tool hooks.
+  const gateOpts = () => ({
+    ...d.runVet,
+    cache: registrationCache,
+    dataDir: d.dataDir,
+  });
+
   const call = async (input: HookInput): Promise<HookOutputPayload> => {
     try {
       const out = await handle(input, d);
@@ -251,7 +258,7 @@ export function createGuard({
             ? R
             : never,
           {
-            gate: { cache: registrationCache },
+            gate: gateOpts(),
             report: (attrs) => {
               void d.emit?.("guard.stop", { ...attrs, cmd_class: "stop" }, cwd);
             },
@@ -260,9 +267,12 @@ export function createGuard({
         return out?.decision === "block" ? (out.reason ?? null) : null;
       } catch {
         // stopCheck reads process.env: a registered run's result gate, or a failed registration, keeps the stop blocked
-        return gateFailClosed(process.env, { cwd }, "internal error", {
-          cache: registrationCache,
-        });
+        return gateFailClosed(
+          process.env,
+          { cwd },
+          "internal error",
+          gateOpts(),
+        );
       }
     },
 

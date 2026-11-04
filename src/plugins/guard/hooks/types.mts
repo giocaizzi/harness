@@ -204,6 +204,8 @@ export interface GuardDeps {
     attrs: Record<string, unknown>,
   ) => Promise<void> | void;
   rootTimeoutMs?: number;
+  // Tests only: the trust checks' probes for the run manifest and its checker, for tool calls and stops.
+  runVet?: PrepareOptions;
   run?: (
     argv: readonly string[],
     cwd?: string,

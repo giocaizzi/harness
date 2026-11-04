@@ -48,6 +48,12 @@ export function createGuard({ harness, noAsk = false, dataDir = DATA_DIR, deps =
         report: (event, attrs) => emit(process.env, event, attrs, fetch, harness),
         ...deps,
     };
+    // The stop gate's options: the same cache, data dir and (tests only) trust probes as the tool hooks.
+    const gateOpts = () => ({
+        ...d.runVet,
+        cache: registrationCache,
+        dataDir: d.dataDir,
+    });
     const call = async (input) => {
         try {
             const out = await handle(input, d);
@@ -126,7 +132,7 @@ export function createGuard({ harness, noAsk = false, dataDir = DATA_DIR, deps =
         async stop({ cwd, active, }) {
             try {
                 const out = await stopCheck({ cwd, stop_hook_active: active }, d.spawnSync, {
-                    gate: { cache: registrationCache },
+                    gate: gateOpts(),
                     report: (attrs) => {
                         void d.emit?.("guard.stop", { ...attrs, cmd_class: "stop" }, cwd);
                     },
@@ -135,9 +141,7 @@ export function createGuard({ harness, noAsk = false, dataDir = DATA_DIR, deps =
             }
             catch {
                 // stopCheck reads process.env: a registered run's result gate, or a failed registration, keeps the stop blocked
-                return gateFailClosed(process.env, { cwd }, "internal error", {
-                    cache: registrationCache,
-                });
+                return gateFailClosed(process.env, { cwd }, "internal error", gateOpts());
             }
         },
         // One model response: { sessionId, model, provider, tokens: { input, output, cacheRead, cacheWrite, reasoning }, costUsd }.
