@@ -1,0 +1,26 @@
+{
+  "contract": 2,
+  "runner": "acme-runner",
+  "requires": [
+    "events",
+    "gh-visibility",
+    "labels",
+    "modes",
+    "protected-paths",
+    "result-gate"
+  ],
+  "labels": {
+    "approval": "acme:approved",
+    "takeover": "acme:takeover",
+    "protected": ["acme:parked"]
+  },
+  "protected_paths": {
+    "globs": [".acme/**"],
+    "exempt": [".acme/runs/*/*/**"]
+  },
+  "result": {
+    "file": ".acme/runs/{ticket_number}/result.json",
+    "hint": "Write result.json with the runner's writer script."
+  },
+  "modes": ["attended", "unattended"]
+}

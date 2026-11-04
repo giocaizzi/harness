@@ -1,4 +1,4 @@
-.PHONY: help check lint typecheck format format-check test e2e install build validate new-agent new-skill clean agent-review pr-graph ci-health eval
+.PHONY: help check lint typecheck format format-check test e2e contract-test install build validate new-agent new-skill clean agent-review pr-graph ci-health eval
 
 help: ## Show this help.
 	@awk 'BEGIN {FS = ":.*##"; printf "Usage: make \033[36m<target>\033[0m\n\nTargets:\n"} /^[a-zA-Z0-9_-]+:.*?##/ { printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
@@ -44,7 +44,7 @@ endif
 test: export GUARD_OTEL := off
 test: export FACTORY_EVENTS_FILE :=
 test: ## Run the plugins' hook tests (Node 22+), their mod tests (`claude plugin test`), then the skill script tests.
-	@node --test $(wildcard plugins/*/core/*.test.mjs plugins/*/hooks/*.test.mjs plugins/*/pi/*.test.mjs tests/*.test.mjs)
+	@node --test $(wildcard plugins/*/core/*.test.mjs plugins/*/hooks/*.test.mjs plugins/*/pi/*.test.mjs tests/*.test.mjs tests/contract/*.test.mjs)
 ifneq ($(WIN_CMD),)
 	@pwsh -NoProfile -Command "$$env:CLAUDE_CODE_ENABLE_FUNCTION_HOOKS = '1'; $$dirs = Get-ChildItem -Path plugins -Recurse -Filter *.test.ts | ForEach-Object { Split-Path $$_.DirectoryName -Parent } | Sort-Object -Unique; foreach ($$dir in $$dirs) { claude plugin test $$dir; if ($$LASTEXITCODE -ne 0) { exit $$LASTEXITCODE } }"
 else
@@ -60,6 +60,13 @@ endif
 
 e2e: ## Drive each installed harness CLI (Copilot CLI, Codex, opencode, pi) against a scripted model in a throwaway home.
 	@node tests/e2e/run.mjs
+
+contract-test: export GUARD_OTEL := off
+contract-test: export GUARD_STOP_CHECK := off
+contract-test: export FACTORY_EVENTS_FILE :=
+contract-test: ## Run contract v2 kit against a runner's manifest (docs/guard.md).  Usage: make contract-test MANIFEST=<absolute path>
+	@test -n "$(MANIFEST)" || { echo "Usage: make contract-test MANIFEST=<absolute path>"; exit 2; }
+	@CONTRACT_MANIFEST="$(MANIFEST)" node --test tests/contract/
 
 eval: ## Run the plugins' skill evals (calls a model, costs money, not part of check or CI).  Usage: make eval [PLUGIN=<plugin>] [TAG=trigger|routing] [MODEL=<model>] [RUNS=<n>] [ALLOW=<tools>] [MAX_COST=<usd>]
 	@for d in $(if $(PLUGIN),plugins/$(PLUGIN),$(patsubst %/evals/,%,$(sort $(dir $(wildcard plugins/*/evals/))))); do \
