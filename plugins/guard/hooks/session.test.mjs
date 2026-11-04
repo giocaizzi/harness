@@ -320,26 +320,52 @@ const checkerFile = (body) => {
 const passes = "export const resultErrors = () => []";
 const strictEnv = (checker, extra = {}) => envFor(manifest({ file: TEMPLATE, checker }), extra);
 const STRICT = strictEnv(checkerFile(passes));
-void test("result gate: an unattended run with no result file is blocked twice, then may stop", async () => {
+const UNATTENDED_HEAD = (n) => new RegExp(`^Run result gate \\(block ${String(n)}; an unattended run's stop stays blocked until the result passes\\)`);
+void test("result gate: an unattended run with no result file stays blocked on every stop, then passes with a valid result", async () => {
     const cwd = gateRepo();
     try {
         const first = await gate({ cwd }, RUNTIME);
-        assert.match(first ?? "", /^Run result gate \(block 1 of 2\): .*result\.json is not a valid result for run run-1:\nno such file\n/);
+        assert.match(first ?? "", /^Run result gate \(block 1; an unattended run's stop stays blocked until the result passes\): .*result\.json is not a valid result for run run-1:\nno such file\n/);
         assert.match(first ?? "", /\nFix the result file until it passes the core check\.\nA subagent ignores this and ends its turn: the main session writes the file\.$/);
         assert.doesNotMatch(first ?? "", /factory|write-result|FACTORY_/i);
         const events = [];
-        assert.match((await gate({ cwd, stop_hook_active: true }, RUNTIME, undefined, (e) => events.push(e))) ?? "", /block 2 of 2/);
-        assert.equal(await gate({ cwd }, RUNTIME, undefined, (e) => events.push(e)), null);
+        assert.match((await gate({ cwd, stop_hook_active: true }, RUNTIME, undefined, (e) => events.push(e))) ?? "", UNATTENDED_HEAD(2));
+        for (let i = 3; i <= 10; i++) {
+            assert.match((await gate({ cwd }, RUNTIME, undefined, (e) => events.push(e))) ?? "", UNATTENDED_HEAD(i), `stop ${String(i)} stays blocked`);
+        }
+        assert.deepEqual(events.map((e) => e.result), Array(9).fill("block"));
+        assert.deepEqual(events[8], {
+            result: "block",
+            target: "result-gate",
+            mode: "unattended",
+            blocks: 10,
+        });
+        // another run has its own counter
+        assert.match((await gate({ cwd }, { ...RUNTIME, GUARD_RUN_ID: "run-2" })) ?? "", UNATTENDED_HEAD(1));
+        // the same run releases once its result passes
+        assert.equal(await gate({ cwd: gateRepo(validResult()) }, RUNTIME), null);
+    }
+    finally {
+        delete process.env.CLAUDE_PLUGIN_DATA;
+    }
+});
+void test("result gate: an attended run without a checker still releases after two blocks", async () => {
+    // an attended gate only holds a result file that names the run
+    const cwd = gateRepo(validResult({ ticket: 12 }));
+    try {
+        const events = [];
+        assert.match((await gate({ cwd }, ATTENDED)) ?? "", /^Run result gate \(block 1 of 2\)/);
+        assert.match((await gate({ cwd }, ATTENDED, undefined, (e) => events.push(e))) ?? "", /^Run result gate \(block 2 of 2\)/);
+        assert.equal(await gate({ cwd }, ATTENDED, undefined, (e) => events.push(e)), null);
         assert.deepEqual(events, [
             {
                 result: "block",
                 target: "result-gate",
-                mode: "unattended",
+                mode: "attended",
                 blocks: 2,
             },
-            { result: "capped", target: "result-gate", mode: "unattended" },
+            { result: "capped", target: "result-gate", mode: "attended" },
         ]);
-        assert.match((await gate({ cwd }, { ...RUNTIME, GUARD_RUN_ID: "run-2" })) ?? "", /block 1 of 2/);
     }
     finally {
         delete process.env.CLAUDE_PLUGIN_DATA;
@@ -438,8 +464,8 @@ void test("result gate: an unattended run never fails open on a missing checkout
         assert.match(out ?? "", UNATTENDED_BLOCK);
         assert.match(out ?? "", /token=\*\*\*/);
         assert.deepEqual(events.map((e) => [e.result, e.target]), [["error", "result-gate"]]);
-        // these blocks are not counted: the cap still allows two result blocks
-        assert.match((await gate({ cwd }, RUNTIME)) ?? "", /block 1 of 2/);
+        // these blocks are not counted: the first result block is still number 1
+        assert.match((await gate({ cwd }, RUNTIME)) ?? "", UNATTENDED_HEAD(1));
     }
     finally {
         delete process.env.CLAUDE_PLUGIN_DATA;
@@ -494,12 +520,22 @@ const plantCounter = (plant) => {
 const mkfifo = (file) => {
     assert.equal(spawnSync("mkfifo", [file]).status, 0);
 };
-void test("result gate: a counter set to 2 releases an unset unattended run (the unset trust model)", async () => {
+void test("result gate: a counter forged to 2 or 99 does not release an unattended run; an attended one still releases at 2", async () => {
     try {
+        for (const [forged, next] of [
+            ["2", 3],
+            ["99", 100],
+        ]) {
+            const cwd = plantCounter((f) => {
+                writeFileSync(f, forged);
+            });
+            assert.match((await gate({ cwd }, RUNTIME)) ?? "", UNATTENDED_HEAD(next), forged);
+            assert.equal(readFileSync(counterPath(), "utf8"), String(next));
+        }
         const cwd = plantCounter((f) => {
             writeFileSync(f, "2");
         });
-        assert.equal(await gate({ cwd }, RUNTIME), null);
+        assert.equal(await gate({ cwd }, ATTENDED), null);
     }
     finally {
         delete process.env.CLAUDE_PLUGIN_DATA;
@@ -511,13 +547,13 @@ void test("result gate: a malformed, empty or oversized counter counts as 0, so 
             const cwd = plantCounter((f) => {
                 writeFileSync(f, text);
             });
-            assert.match((await gate({ cwd }, RUNTIME)) ?? "", /block 1 of 2/, JSON.stringify(text));
+            assert.match((await gate({ cwd }, RUNTIME)) ?? "", UNATTENDED_HEAD(1), JSON.stringify(text));
             assert.equal(readFileSync(counterPath(), "utf8"), "1");
         }
         const cwd = plantCounter((f) => {
             writeFileSync(f, " 1\n");
         });
-        assert.match((await gate({ cwd }, RUNTIME)) ?? "", /block 2 of 2/);
+        assert.match((await gate({ cwd }, RUNTIME)) ?? "", UNATTENDED_HEAD(2));
     }
     finally {
         delete process.env.CLAUDE_PLUGIN_DATA;
@@ -527,7 +563,7 @@ void test("result gate: a FIFO at the counter path is read without hanging, repl
     try {
         const cwd = plantCounter(mkfifo);
         const started = Date.now();
-        assert.match((await gate({ cwd }, RUNTIME)) ?? "", /block 1 of 2/);
+        assert.match((await gate({ cwd }, RUNTIME)) ?? "", UNATTENDED_HEAD(1));
         assert.ok(Date.now() - started < 5000);
         assert.ok(lstatSync(counterPath()).isFile());
         assert.equal(readFileSync(counterPath(), "utf8"), "1");
@@ -544,7 +580,7 @@ void test("result gate: a symlink at the counter path is not followed: replaced,
             const cwd = plantCounter((f) => {
                 symlinkSync(to, f);
             });
-            assert.match((await gate({ cwd }, RUNTIME)) ?? "", /block 1 of 2/);
+            assert.match((await gate({ cwd }, RUNTIME)) ?? "", UNATTENDED_HEAD(1));
             assert.ok(lstatSync(counterPath()).isFile());
             assert.equal(readFileSync(counterPath(), "utf8"), "1");
         }
@@ -561,7 +597,7 @@ void test("result gate: a hardlink at the counter path is replaced and counted, 
         const cwd = plantCounter((f) => {
             linkSync(other, f);
         });
-        assert.match((await gate({ cwd }, RUNTIME)) ?? "", /block 1 of 2/);
+        assert.match((await gate({ cwd }, RUNTIME)) ?? "", UNATTENDED_HEAD(1));
         assert.equal(readFileSync(other, "utf8"), "9");
         assert.equal(readFileSync(counterPath(), "utf8"), "1");
         assert.equal(lstatSync(counterPath()).nlink, 1);
@@ -771,7 +807,7 @@ void test("result gate: runs before make check, and both reasons go in one block
         assert.deepEqual(events.map((e) => `${String(e.target)}:${String(e.result)}`), ["result-gate:block", "check:fail"]);
         assert.ok(out);
         assert.equal(out.decision, "block");
-        assert.match(out.reason ?? "", /^Run result gate \(block 1 of 2\)[\s\S]*\n\nmake check failed[\s\S]*FAIL z$/);
+        assert.match(out.reason ?? "", /^Run result gate \(block 1; an unattended run's stop stays blocked until the result passes\)[\s\S]*\n\nmake check failed[\s\S]*FAIL z$/);
         assert.deepEqual(out.hookSpecificOutput, {
             hookEventName: "Stop",
             decision: "block",
@@ -781,11 +817,13 @@ void test("result gate: runs before make check, and both reasons go in one block
             strain: () => null,
             gate: gateOpts,
         });
-        assert.match(activeOut?.reason ?? "", /^Run result gate \(block 2 of 2\)[\s\S]*Fix the result file[\s\S]*\.$/);
-        assert.equal(await stopCheck({ cwd, stop_hook_active: true }, run, {
+        assert.match(activeOut?.reason ?? "", /^Run result gate \(block 2; an unattended run's stop stays blocked until the result passes\)[\s\S]*Fix the result file[\s\S]*\.$/);
+        // no cap: a third stop with the result still failing stays blocked
+        const third = await stopCheck({ cwd, stop_hook_active: true }, run, {
             strain: () => null,
             gate: gateOpts,
-        }), null);
+        });
+        assert.match(third?.reason ?? "", /^Run result gate \(block 3;/);
     });
 });
 void test("result gate: a failing make check never denies a stop, whether or not the gate blocked", async () => {
@@ -805,7 +843,7 @@ void test("result gate: a failing make check never denies a stop, whether or not
             gate: gateOpts,
         });
         assert.equal(out?.decision, "block");
-        assert.match(out.reason ?? "", /^Run result gate \(block 1 of 2\)/);
+        assert.match(out.reason ?? "", /^Run result gate \(block 1;/);
         // the gate passed: a later make error does not deny the stop
         const ok = gateRepo(validResult());
         assert.equal(await stopCheck({ cwd: ok }, run, { strain: () => null, gate: gateOpts }), null);
@@ -886,7 +924,7 @@ void test("result gate: the checker gets the run's environment, GUARD_RUN_FILE r
         delete process.env.CLAUDE_PLUGIN_DATA;
     }
 });
-void test("result gate: strict mode is never capped, unset is capped after two blocks", async () => {
+void test("result gate: strict and unattended modes are never capped", async () => {
     try {
         const events = [];
         const cwd = gateRepo();
@@ -896,9 +934,9 @@ void test("result gate: strict mode is never capped, unset is capped after two b
         }
         assert.deepEqual(events.map((e) => e.result), ["block", "block", "block", "block"]);
         const plain = gateRepo();
-        assert.ok(await gate({ cwd: plain }, RUNTIME));
-        assert.ok(await gate({ cwd: plain }, RUNTIME));
-        assert.equal(await gate({ cwd: plain }, RUNTIME), null);
+        for (let i = 0; i < 10; i++) {
+            assert.ok(await gate({ cwd: plain }, RUNTIME));
+        }
     }
     finally {
         delete process.env.CLAUDE_PLUGIN_DATA;

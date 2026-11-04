@@ -357,6 +357,21 @@ void test("contract: a bad result blocks the stop", { skip: skipWithout(subjectJ
     assert.equal(out.decision, "block");
     assert.match(String(out.reason), /Run result gate/);
 });
+void test("contract: an unattended run's stop is never released on a count, only by a passing result", { skip: skipWithout(subjectJson().result, "result") }, () => {
+    const run = newRun("unattended");
+    const file = (subjectJson().result?.file ?? "")
+        .replaceAll("{ticket_number}", "1")
+        .replaceAll("{run_id}", run.env.GUARD_RUN_ID ?? "");
+    mkdirSync(path.join(run.cwd, path.dirname(file)), { recursive: true });
+    writeFileSync(path.join(run.cwd, file), JSON.stringify({ run_id: run.env.GUARD_RUN_ID }));
+    // more stops than any cap of two: every one stays blocked while the result fails
+    for (let i = 1; i <= 4; i++) {
+        const stdout = stopOf(run);
+        assert.notEqual(stdout.trim(), "", `stop ${String(i)} was released while the result still fails the core check`);
+        const out = JSON.parse(stdout);
+        assert.equal(out.decision, "block", `stop ${String(i)}`);
+    }
+});
 void test("contract: legacy run variables without a registration trip the legacy-only tripwire", () => {
     scenarioCount += 1;
     const legacy = path.join(scratch("legacy"), "events.jsonl");

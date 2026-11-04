@@ -517,7 +517,9 @@ export async function resultGate(input, run = spawnSync, env = process.env, onEv
         if (!errors.length)
             return null;
         const blocks = blockCount(runId);
-        if (!strict && blocks >= RESULT_GATE_MAX) {
+        // An unattended run is never released on a count: the counter lives in agent-writable state, so only a passing
+        // result (or the runner's timeout) ends the block. Attended and unregistered sessions keep the cap.
+        if (!strict && !runtime && blocks >= RESULT_GATE_MAX) {
             event("capped", { mode });
             return null;
         }
@@ -525,7 +527,9 @@ export async function resultGate(input, run = spawnSync, env = process.env, onEv
         event("block", { mode, blocks: n });
         const head = strict
             ? `Run result gate (block ${String(n)}; the registration names a result checker, so the stop stays blocked until the result passes)`
-            : `Run result gate (block ${String(n)} of ${String(RESULT_GATE_MAX)})`;
+            : runtime
+                ? `Run result gate (block ${String(n)}; an unattended run's stop stays blocked until the result passes)`
+                : `Run result gate (block ${String(n)} of ${String(RESULT_GATE_MAX)})`;
         return [
             `${head}: ${file} is not a valid result for run ${runId}:`,
             ...report(errors),
