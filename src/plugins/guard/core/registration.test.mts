@@ -289,6 +289,14 @@ void test("registration: result", () => {
     (m) => ((m.result as M).hint = "a\u2028b"),
     /^result\.hint must be 1 to 500/,
   );
+  bad(
+    (m) => ((m.result as M).hint = "a\u0085b"),
+    /^result\.hint must be 1 to 500/,
+  );
+  bad(
+    (m) => ((m.result as M).file = ".{run_id}/workflows/r.json"),
+    /^result\.file must not use a placeholder in its first segment, got /,
+  );
   for (const file of [".git/x.json", ".GITHUB/r.json"]) {
     bad(
       (m) => ((m.result as M).file = file),
@@ -385,6 +393,10 @@ void test("registration: resultFile expands and checks", () => {
     assert.ok("why" in r, JSON.stringify(r));
     return "why" in r ? r.why : "";
   };
+  assert.match(
+    why({ run_id: "github", ticket_number: "1" }, ".{run_id}/r.json"),
+    /^result file must not be under \.git or \.github, got /,
+  );
   assert.match(
     why({ run_id: "r", ticket_number: "0" }),
     /^ticket number must match/,

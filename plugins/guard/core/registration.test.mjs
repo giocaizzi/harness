@@ -174,6 +174,8 @@ void test("registration: result", () => {
     bad((m) => (m.result.hint = "a\tb"), /^result\.hint must be 1 to 500/);
     bad((m) => (m.result.hint = "a\u202eb"), /^result\.hint must be 1 to 500/);
     bad((m) => (m.result.hint = "a\u2028b"), /^result\.hint must be 1 to 500/);
+    bad((m) => (m.result.hint = "a\u0085b"), /^result\.hint must be 1 to 500/);
+    bad((m) => (m.result.file = ".{run_id}/workflows/r.json"), /^result\.file must not use a placeholder in its first segment, got /);
     for (const file of [".git/x.json", ".GITHUB/r.json"]) {
         bad((m) => (m.result.file = file), /^result\.file must not be under \.git or \.github, got /);
     }
@@ -238,6 +240,7 @@ void test("registration: resultFile expands and checks", () => {
         assert.ok("why" in r, JSON.stringify(r));
         return "why" in r ? r.why : "";
     };
+    assert.match(why({ run_id: "github", ticket_number: "1" }, ".{run_id}/r.json"), /^result file must not be under \.git or \.github, got /);
     assert.match(why({ run_id: "r", ticket_number: "0" }), /^ticket number must match/);
     assert.match(why({ run_id: "r", ticket_number: "01" }), /^ticket number must match/);
     assert.match(why({ run_id: "r", ticket_number: "12345678901" }), /^ticket number must match/);

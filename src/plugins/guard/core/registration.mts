@@ -62,8 +62,9 @@ const isStr = (v: unknown): v is string => typeof v === "string";
 
 const CONTROL = /[\u0000-\u001f\u007f]/;
 
-// Line separators and bidi controls, which can disguise text in a hint.
-const BIDI = /[\u2028\u2029\u200e\u200f\u202a-\u202e\u2066-\u2069]/;
+// C1 controls (NEL included), line separators and bidi controls, which can disguise text in a hint.
+const BIDI =
+  /[\u0080-\u009f\u2028\u2029\u200e\u200f\u202a-\u202e\u2066-\u2069]/;
 
 // Why a repo-relative path or glob is not acceptable, or null: 1..max characters, no control character, no
 // backslash, not absolute, no empty, "." or ".." segment.
@@ -157,6 +158,9 @@ const checkLabels = (v: unknown, errors: string[]): Registration["labels"] => {
   return out;
 };
 
+// A result file never lands in git's own directory or in .github.
+const GIT_DIR = /^\.git(hub)?$/i;
+
 const GLOB_CHARS = /[*?[\]{}!]/;
 
 const checkProtected = (
@@ -244,7 +248,11 @@ const checkResult = (
       .replaceAll("{ticket_number}", "")
       .replaceAll("{run_id}", "");
     if (why) errors.push(`result.file ${why}, got ${show(file)}`);
-    else if (/^\.git(hub)?$/i.test(file.split("/")[0] ?? "")) {
+    else if ((file.split("/")[0] ?? "").includes("{")) {
+      errors.push(
+        `result.file must not use a placeholder in its first segment, got ${show(file)}`,
+      );
+    } else if (GIT_DIR.test(file.split("/")[0] ?? "")) {
       errors.push(
         `result.file must not be under .git or .github, got ${show(file)}`,
       );
@@ -468,9 +476,13 @@ export function resultFile(
     .replaceAll("{ticket_number}", vars.ticket_number)
     .replaceAll("{run_id}", vars.run_id);
   const why = pathRuleError(expanded, DEFAULT_PROTECTED_LIMITS.chars);
-  return why
-    ? { why: `result file ${why}, got ${show(expanded)}` }
-    : { path: expanded };
+  if (why) return { why: `result file ${why}, got ${show(expanded)}` };
+  if (GIT_DIR.test(expanded.split("/")[0] ?? "")) {
+    return {
+      why: `result file must not be under .git or .github, got ${show(expanded)}`,
+    };
+  }
+  return { path: expanded };
 }
 
 // Errors in the run's GUARD_RUN_* variables against a valid registration (GUARD_RUN_ID, GUARD_RUN_MODE,

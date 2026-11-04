@@ -162,7 +162,7 @@ What a runner (any program that starts a harness for a ticket) registers and set
 | Variable | Set by the runner to | Guard does |
 |---|---|---|
 | `GUARD_RUN_MANIFEST` | Absolute path to the registration `.json` | Loads and validates it on every hook call (Trust). |
-| `GUARD_RUN_ID` | The run's id, matching `^[A-Za-z0-9_][\w.-]{0,99}$` | Marks a registered run; must equal `result.json`'s `run_id`. The `GUARD_RUN_*` values are checked as given, never trimmed. |
+| `GUARD_RUN_ID` | The run's id, matching `^[A-Za-z0-9_][\w.-]{0,99}$` | Marks a registered run; must equal `result.json`'s `run_id`. `GUARD_RUN_ID`, `GUARD_RUN_MODE` and `GUARD_RUN_TICKET` are checked as given (a padded value is refused); a blank `GUARD_RUN_ID` counts as unset, and `GUARD_RUN_MANIFEST` is trimmed as `FACTORY_RESULT_CHECKER` is. |
 | `GUARD_RUN_MODE` | `attended` or `unattended` (unset means `unattended`) | Must be in the manifest's `modes` (either, when `modes` is absent). |
 | `GUARD_RUN_TICKET` | `<owner>/<repo>#<number>` | Its number expands `{ticket_number}`; required when `result.file` uses it. |
 | `GUARD_RUN_FILE` | The runner's run file (may be relative) | Passed to the checker, resolved against the session's `cwd`. |
@@ -201,7 +201,7 @@ What a runner (any program that starts a harness for a ticket) registers and set
 | `requires` | Capabilities from `events`, `gh-visibility`, `labels`, `modes`, `protected-paths`, `result-gate`; an unknown one denies. At most 16, unique. |
 | `labels` | `approval`, `takeover`, `protected`: each name `^[\w.:-]{1,50}$`, `protected` at most 32. |
 | `protected_paths` | `globs` and `exempt`: together at most 256 globs of at most 1024 characters each (the existing `protectedLimits`); repo-relative, no backslash, no `.`, `..` or empty segment, no control character. An exempt glob may only narrow this registration's own globs: its first segment is literal, is neither `.github` nor the first segment of a built-in default protected path (case-insensitive), and is the first segment of one of its globs. Exemptions apply only to the registration's own globs. |
-| `result` | `file`: repo-relative template ending `.json`; only `{ticket_number}` and `{run_id}` expand; not under `.git` or `.github`; it stays inside the repo (checked on the text here; the real path is resolved when the gate reads it). `checker`: absolute `.mjs` path, with the rules and trust checks of `FACTORY_RESULT_CHECKER`. `hint`: at most 500 characters without control, bidi or line-separator characters, the hand-back line. |
+| `result` | `file`: repo-relative template ending `.json`; only `{ticket_number}` and `{run_id}` expand; no placeholder in its first segment, and neither the template nor the expanded path under `.git` or `.github`; it stays inside the repo (checked on the text here; the real path is resolved when the gate reads it). `checker`: absolute `.mjs` path, with the rules and trust checks of `FACTORY_RESULT_CHECKER`. `hint`: at most 500 characters without control (C0 or C1, NEL included), bidi or line-separator characters, the hand-back line. |
 | `modes` | A subset of `attended`, `unattended`. |
 
 Each section needs its capability in `requires`; requiring `result-gate` needs `result`.
