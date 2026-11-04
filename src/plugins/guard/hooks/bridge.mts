@@ -8,7 +8,13 @@ import { cmdClass } from "../core/engine.mjs";
 import { emit } from "../core/otel.mjs";
 import { keepAwake } from "./awake.mjs";
 import { fallbackDataDir } from "./data.mjs";
-import { handle, hostFacts, pythonManager, run } from "./guard.mjs";
+import {
+  crashResult,
+  handle,
+  hostFacts,
+  pythonManager,
+  run,
+} from "./guard.mjs";
 import { type SpawnSyncFn, lintFile } from "./lint.mjs";
 import { createRegistrationCache } from "./registration.mjs";
 import type { RegistrationCache } from "./registration.mjs";
@@ -103,7 +109,11 @@ export function createGuard({
         systemMessage: o.systemMessage,
       };
     } catch {
-      return {};
+      // A crash lets the call through, except a tool call in a run, which is denied (as in the command hook).
+      const o = JSON.parse(
+        crashResult(input, d.env, harness).stdout ?? "{}",
+      ) as { hookSpecificOutput?: object };
+      return { ...o.hookSpecificOutput };
     }
   };
 

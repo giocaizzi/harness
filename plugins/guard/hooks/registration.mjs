@@ -1,8 +1,8 @@
 // Run contract v2: loads the runner's registration from GUARD_RUN_MANIFEST, on every hook call. The manifest (and its
 // result.checker) must be out of this user's reach, vetted as the result checker is (hooks/checker.mjs), and its
 // realpath and sha256 are pinned in the session's state on first sight: a later change denies. Every failure is a
-// deny with rule run-registration (fails closed); nothing here throws. Not wired into decisions yet: contract v1
-// stays the enforced contract until guard 1.0.0.
+// deny with rule run-registration (fails closed); nothing here throws. Enforced from guard 1.0.0. The pin also holds
+// the run id, the mode and the ticket (GUARD_RUN_*) the session started with: a later change denies.
 import { createHash } from "node:crypto";
 import { appendFileSync, closeSync, constants, fstatSync, mkdirSync, openSync, readFileSync, readSync, } from "node:fs";
 import path from "node:path";
@@ -25,16 +25,21 @@ export function pinFile(dataDir, sessionId) {
 }
 const SHA = /^[0-9a-f]{64}$/;
 const codeOf = (e) => e.code ?? "error";
-// The pin is the first line that is an object with a string manifest and a 64-hex sha256; other lines are ignored.
+// The pin is the first line that is an object with string manifest, run_id, mode and ticket and a 64-hex sha256; other
+// lines are ignored.
 function firstPin(text) {
     for (const line of text.split("\n")) {
         try {
             const o = JSON.parse(line);
             if (typeof o === "object" && o !== null && !Array.isArray(o)) {
-                const { manifest, sha256 } = o;
-                if (typeof manifest === "string" && typeof sha256 === "string") {
-                    if (SHA.test(sha256))
-                        return { manifest, sha256 };
+                const { manifest, sha256, run_id, mode, ticket } = o;
+                if (typeof manifest === "string" &&
+                    typeof sha256 === "string" &&
+                    typeof run_id === "string" &&
+                    typeof mode === "string" &&
+                    typeof ticket === "string" &&
+                    SHA.test(sha256)) {
+                    return { manifest, sha256, run_id, mode, ticket };
                 }
             }
         }
@@ -130,6 +135,12 @@ export function loadRegistration(env, opts = {}) {
             checker = c.path;
         }
         if (opts.dataDir && opts.sessionId) {
+            const rawMode = env.GUARD_RUN_MODE ?? "";
+            const vars = {
+                run_id: env.GUARD_RUN_ID ?? "",
+                mode: rawMode === "" ? "unattended" : rawMode,
+                ticket: env.GUARD_RUN_TICKET ?? "",
+            };
             const file = pinFile(opts.dataDir, opts.sessionId);
             const read = () => {
                 try {
@@ -148,7 +159,7 @@ export function loadRegistration(env, opts = {}) {
             if (!r.pin) {
                 try {
                     mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
-                    appendFileSync(file, `${JSON.stringify({ manifest: real, sha256 })}\n`);
+                    appendFileSync(file, `${JSON.stringify({ manifest: real, sha256, ...vars })}\n`);
                 }
                 catch (e) {
                     return deny(`cannot pin the registration (${codeOf(e)})`);
@@ -165,6 +176,10 @@ export function loadRegistration(env, opts = {}) {
             }
             if (r.pin.sha256 !== sha256) {
                 return deny(`manifest changed during the session (sha256 ${r.pin.sha256.slice(0, 16)}… was pinned)`);
+            }
+            const changed = ["run_id", "mode", "ticket"].filter((k) => r.pin?.[k] !== vars[k]);
+            if (changed.length > 0) {
+                return deny(`run variables changed during the session (${changed.map((k) => `GUARD_RUN_${k === "run_id" ? "ID" : k.toUpperCase()}`).join(", ")})`);
             }
         }
         return {

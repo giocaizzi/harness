@@ -3932,3 +3932,72 @@ void test("protectedPathHit: an edit tool's repo-relative path against the floor
     "a throw fails closed",
   );
 });
+
+void test("protectedWrite: a target is protected relative to any directory with a .git above the cwd (G41)", () => {
+  const g = {
+    globs: [".github/**"],
+    registered: [".factory/**"],
+    root: "/r/x",
+    roots: ["/r/x", "/r"],
+    cwd: "/r/x",
+  };
+  for (const c of [
+    "echo a > ../.github/ci.yml",
+    "echo a > /r/.github/ci.yml",
+    "echo a > .github/ci.yml",
+    "rm -rf ../.github",
+    "echo a > ../.factory/config.yaml",
+  ])
+    assert.ok(protectedWrite(c, g)?.target, c);
+  for (const c of [
+    "echo a > ok.txt",
+    "echo a > ../ok.txt",
+    "echo a > /elsewhere/.github/x",
+  ])
+    assert.equal(protectedWrite(c, g), null, c);
+  assert.equal(
+    protectedWrite("echo a > ../.github/ci.yml", { ...g, roots: ["/r/x"] }),
+    null,
+    "without the outer root the planted one hides the floor",
+  );
+});
+
+void test("protectedWrite and protectedPathHit: Windows trailing dots and spaces and 8.3 short names reach the protected glob (G41)", () => {
+  const g = {
+    globs: [".github/**"],
+    registered: [".gitx/**", ".factory/**"],
+    exempt: [".factory/runs/*/*/**"],
+    root: "/r",
+    cwd: "/r",
+  };
+  for (const name of [
+    ".github./x",
+    ".github /x",
+    ".github../workflows/x.yml",
+    "GITHUB~1/workflows/x.yml",
+    "GITHU~1/x",
+    "github~2/x",
+    "GIT~1/y",
+    ".gitx./y",
+    "GITX~1/y",
+  ]) {
+    assert.equal(protectedPathHit(name, g), true, `edit ${name}`);
+    assert.ok(protectedWrite(`echo a > '${name}'`, g)?.target, `shell ${name}`);
+    assert.ok(
+      protectedWrite(`echo a > '/r/${name}'`, g)?.target,
+      `abs ${name}`,
+    );
+  }
+  for (const name of ["src/x", "docs./x", "ZZZZZZ~1/x", "OTHER~1/x", "a~b/x"]) {
+    assert.equal(protectedPathHit(name, g), false, `edit ${name}`);
+    assert.equal(
+      protectedWrite(`echo a > '${name}'`, g),
+      null,
+      `shell ${name}`,
+    );
+  }
+  // A folded spelling is no exemption: `.factory/runs/12/r1/a.` is the run's file, `.factory/runs/12./r1/a` is not trusted.
+  assert.equal(protectedPathHit(".factory/runs/12/r1/a", g), false);
+  assert.equal(protectedPathHit(".factory/runs/12./r1/a", g), true);
+  assert.ok(protectedWrite("echo a > '.factory/runs/12 /r1/a'", g)?.target);
+});

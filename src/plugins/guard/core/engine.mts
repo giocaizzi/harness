@@ -1708,14 +1708,39 @@ function normalizeSegments(path: string) {
   }
   return out;
 }
+// Windows drops the dots and spaces that end a name (`.github.`, `.github /x`, `.. `): each segment loses them, and an
+// emptied one stays `.` or `..` when it was one.
+function foldWindows(path: string) {
+  return path
+    .split("/")
+    .map((s) => {
+      if (s === "" || s === "." || s === "..") return s;
+      const t = s.replace(/[. ]+$/, "");
+      if (t !== "") return t;
+      return s.startsWith("..") ? ".." : s.startsWith(".") ? "." : "";
+    })
+    .join("/");
+}
 // The repo-relative segments of a target: { segs } from the root, { segs, suffix: true } when its start is unknown,
-// or null outside the repo.
+// or null outside the repo. Trailing dots and spaces of its segments are dropped first, as Windows does (`folded`).
 function repoSegments(
   target: string,
   dir: string,
   protect: ProtectConfig,
 ): RelativeSegments | null {
   const p = posixPath(target);
+  const fp = foldWindows(p);
+  const fd = dir === UNKNOWN_DIR ? dir : foldWindows(posixPath(dir));
+  const at = repoSegmentsOf(fp, fd, protect);
+  return at && (fp !== p || fd !== (dir === UNKNOWN_DIR ? dir : posixPath(dir)))
+    ? { ...at, folded: true }
+    : at;
+}
+function repoSegmentsOf(
+  p: string,
+  dir: string,
+  protect: ProtectConfig,
+): RelativeSegments | null {
   const cwdRel =
     protect.root && protect.cwd
       ? relativeTo(posixPath(protect.root), posixPath(protect.cwd))
@@ -1795,7 +1820,14 @@ function globsMayMeet(a: string, b: string) {
 }
 // Whether one target segment may be one protected-pattern segment.
 // A variable may hold a leading dot, so only a written `*`, `?` or `[` at the start keeps a dot file out.
-function segMayMatch(pat: string, seg: string) {
+function segMayMatch(pat: string, seg: string): boolean {
+  // A Windows 8.3 short name (`GITHUB~1`) stands for any name, dot dropped, that starts with its prefix.
+  const short = /^([^~./]{1,6})~\d+$/.exec(seg);
+  if (short) {
+    const pre = defined(short[1]).toLowerCase();
+    if (segMayMatch(pat, `${pre}*`) || segMayMatch(pat, `.${pre}*`))
+      return true;
+  }
   const glob = seg.replace(/\$(?:\{[^}]*\}|\w+|\([^)]*\))|%\w+%|`[^`]*`/g, "*");
   if (SEG_GLOB.test(glob)) {
     if (/^[*?[]/.test(seg) && pat.startsWith(".")) return false;
@@ -1971,21 +2003,29 @@ export function protectedWrite(
   };
   const hits: WriteHits = (target, dir, resolve, above) => {
     if (inData(dir, resolve(target), above)) return true;
-    const at = repoSegments(resolve(target), dir, protect);
-    if (at === null) return false;
-    const hit = globs.filter((g) =>
-      patternHits(g.segs, at.segs, above, at.suffix, tick),
-    );
-    if (hit.some((g) => !g.base)) return true;
-    // A registered glob is waived for the run's own files: the whole normalised path is spelled out (no wildcard, variable
-    // or brace, which could stand for `..`, nor a segment ending in a dot or space, which Windows strips: `12\.. ` is `12\..`) and starts at the root, so `runs/../config.yaml` is no exemption.
-    return (
-      hit.length > 0 &&
-      !(
-        at.segs.every((x) => !/[*?[\]{}$`%~]|[. ]$/.test(x)) &&
-        exempt.some((g) => patternHits(g, at.segs, false, false, tick))
+    const resolved = resolve(target);
+    // Relative to every directory with a .git above the cwd, not only the nearest: a planted `x/.git` moves no root.
+    for (const root of new Set([protect.root, ...(protect.roots ?? [])])) {
+      const at = repoSegments(resolved, dir, { ...protect, root });
+      if (at === null) continue;
+      const hit = globs.filter((g) =>
+        patternHits(g.segs, at.segs, above, at.suffix, tick),
+      );
+      if (hit.some((g) => !g.base)) return true;
+      // A registered glob is waived for the run's own files: the whole normalised path is spelled out (no wildcard,
+      // variable or brace, which could stand for `..`, nor a segment Windows would alter: `12\.. ` is `12\..`) and
+      // starts at the root, so `runs/../config.yaml` is no exemption.
+      if (
+        hit.length > 0 &&
+        !(
+          !at.folded &&
+          at.segs.every((x) => !/[*?[\]{}$`%~]|[. ]$/.test(x)) &&
+          exempt.some((g) => patternHits(g, at.segs, false, false, tick))
+        )
       )
-    );
+        return true;
+    }
+    return false;
   };
   try {
     const target = scanWrites(
@@ -2032,7 +2072,9 @@ export function protectedPathHit(
     const tick = () => {
       if ((++work & 255) === 0 && Date.now() > until) throw LIMITED;
     };
-    const segs = normalizeSegments(posixPath(path));
+    const slashed = posixPath(path);
+    const folded = foldWindows(slashed);
+    const segs = normalizeSegments(folded);
     const hit = tagged.filter((x) =>
       patternHits(segsOf(x.g), segs, false, false, tick),
     );
@@ -2040,6 +2082,7 @@ export function protectedPathHit(
     return (
       hit.length > 0 &&
       !(
+        folded === slashed &&
         segs.every((x) => !/[*?[\]{}$`%~]|[. ]$/.test(x)) &&
         exempt.some((g) => patternHits(g, segs, false, false, tick))
       )

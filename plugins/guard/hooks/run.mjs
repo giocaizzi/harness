@@ -86,11 +86,11 @@ export function runFacts(run, at) {
 export function denyReason(deny, at) {
     if (deny.rule === UNREGISTERED_RULE) {
         return at === "tool"
-            ? "Legacy run variables are set without a run registration. This guard enforces run contract v2 only, so it denies every tool call until the runner registers the run with GUARD_RUN_MANIFEST; stop and report it."
+            ? "Legacy run variables are set without a run registration. This guard enforces run contract v2 only, so it denies every tool call guard sees until the runner registers the run with GUARD_RUN_MANIFEST; stop and report it."
             : "Legacy run variables are set without a run registration (run contract v2 needs GUARD_RUN_MANIFEST), so every tool call in this run is denied; stop and report it.";
     }
     return at === "tool"
-        ? `Run registration failed: ${deny.why}. Guard denies every tool call in this run until the runner fixes its registration; stop and report it.`
+        ? `Run registration failed: ${deny.why}. Guard denies every tool call guard sees in this run until the runner fixes its registration; stop and report it.`
         : `Run registration failed: ${deny.why}. Every tool call in this run is denied until the runner fixes its registration; stop and report it.`;
 }
 // Where the tripwire line always goes: guard's own log, in its data directory.

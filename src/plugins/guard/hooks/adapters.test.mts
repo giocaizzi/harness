@@ -1787,6 +1787,85 @@ void test("pi: a failed registration or the legacy-only tripwire blocks every to
   }
 });
 
+// Tool arguments that make guard itself crash: every read throws.
+const boom = (): Record<string, unknown> =>
+  new Proxy(
+    {},
+    {
+      get() {
+        throw new Error("boom");
+      },
+    },
+  );
+const CRASH_RUNS: readonly {
+  name: string;
+  run: (fn: (cwd: string) => Promise<void>) => Promise<void>;
+}[] = [
+  {
+    name: "registered run",
+    run: (fn) => registeredRun(writeManifest({ requires: [] }), fn),
+  },
+  {
+    name: "tripwire",
+    run: (fn) =>
+      withEnv({ FACTORY_RUN_ID: "run-1", CLAUDE_PLUGIN_DATA: dir() }, () =>
+        fn(dir()),
+      ),
+  },
+];
+
+void test("opencode: a guard crash denies the tool call in a run and allows it outside one", async () => {
+  for (const c of CRASH_RUNS) {
+    await c.run(async (cwd) => {
+      const hooks = await GuardPlugin(
+        { client: ocClient(), directory: cwd },
+        trusted(),
+      );
+      await assert.rejects(
+        hooks["tool.execute.before"](
+          { tool: "bash", sessionID: "s", callID: "c" },
+          { args: boom() },
+        ),
+        /The command guard failed in a registered run/,
+        c.name,
+      );
+    });
+  }
+  const hooks = await GuardPlugin(
+    { client: ocClient(), directory: dir() },
+    trusted(),
+  );
+  await hooks["tool.execute.before"](
+    { tool: "bash", sessionID: "s", callID: "c" },
+    { args: boom() },
+  );
+});
+
+void test("pi: a guard crash blocks the tool call in a run and lets it through outside one", async () => {
+  for (const c of CRASH_RUNS) {
+    await c.run(async (cwd) => {
+      const { handlers, api } = fakePi();
+      guardExtension(api, trusted());
+      const out = (await handlers.tool_call?.(
+        { toolName: "bash", toolCallId: "c", input: boom() },
+        piCtx(cwd),
+      )) as { block?: boolean; reason?: string } | undefined;
+      assert.equal(out?.block, true, c.name);
+      assert.match(
+        out.reason ?? "",
+        /The command guard failed in a registered run/,
+      );
+    });
+  }
+  const { handlers, api } = fakePi();
+  guardExtension(api, trusted());
+  const out = await handlers.tool_call?.(
+    { toolName: "bash", toolCallId: "c", input: boom() },
+    piCtx(dir()),
+  );
+  assert.notEqual((out as { block?: boolean } | undefined)?.block, true);
+});
+
 // The real hook processes, as each harness's own hooks file starts them.
 const GUARD_PLUGIN = fileURLToPath(new URL("../", import.meta.url));
 const hookArgs = (file: string, event: string): string[] => {
