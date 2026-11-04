@@ -75,7 +75,9 @@ const pathRuleError = (v: string, max: number): string | null => {
   if (CONTROL.test(v)) return "must not contain control characters";
   if (v.includes("\\")) return "must not contain a backslash";
   if (v.startsWith("/") || /^[A-Za-z]:/.test(v)) return "must not be absolute";
-  if (v.split("/").some((seg) => seg === "" || seg === "." || seg === "..")) {
+  if (v.includes(":")) return 'must not contain ":"';
+  // Windows drops trailing dots and spaces from a segment, so ".. " and "..." name "..".
+  if (v.split("/").some((seg) => seg.replace(/[. ]+$/, "") === "")) {
     return 'must not have an empty, "." or ".." segment';
   }
   return null;
@@ -159,8 +161,8 @@ const checkLabels = (v: unknown, errors: string[]): Registration["labels"] => {
 };
 
 // A result file never lands in git's own directory or in .github, at any depth. Windows drops trailing dots and
-// spaces from a segment, so ".git." and ".git " name .git.
-const GIT_DIR = /^\.git(hub)?$/i;
+// spaces from a segment, so ".git." and ".git " name .git; the 8.3 short names GIT~1 and GITHUB~1 name .git and .github too.
+const GIT_DIR = /^(\.git(hub)?|git(hub)?~\d+)$/i;
 const inGitDir = (file: string): boolean =>
   file.split("/").some((seg) => GIT_DIR.test(seg.replace(/[. ]+$/, "")));
 
