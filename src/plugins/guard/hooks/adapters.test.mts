@@ -1,10 +1,11 @@
 // The in-process adapters (opencode, pi) over a fake harness API: the guard's decisions reach the harness.
 
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, test } from "node:test";
 
 import { createGuard } from "./bridge.mjs";
@@ -38,7 +39,16 @@ for (const k of [
   "FACTORY_ATTENDED_RUN_ID",
   "FACTORY_ATTENDED_TICKET",
   "FACTORY_RUN_FILE",
+  "FACTORY_EVENTS_FILE",
+  "FACTORY_PROTECTED_PATHS",
+  "FACTORY_RESULT_CHECKER",
   "GUARD_RESULT_GATE",
+  "GUARD_RUN_MANIFEST",
+  "GUARD_RUN_ID",
+  "GUARD_RUN_TICKET",
+  "GUARD_RUN_MODE",
+  "GUARD_RUN_FILE",
+  "GUARD_RUN_EVENTS_FILE",
 ]) {
   Reflect.deleteProperty(process.env, k);
 }
@@ -486,67 +496,115 @@ void test("opencode and pi: a docs-only change runs no check on idle or settle; 
   }
 });
 
-const factoryRun = async (
-  id: string,
+// A registered run: a trusted temp manifest (out of reach of this user through the PrepareOptions probes, as
+// hooks/session.test.mts does), its variables on process.env (the bridge's stop reads them there) and a data dir of
+// its own. Everything is restored afterwards.
+const OUT_OF_REACH = {
+  writable: () => false,
+  owner: () => false,
+  readOnlyMount: () => false,
+};
+const TEMPLATE = ".acme/runs/{ticket_number}/result.json";
+const trusted = (): GuardDeps => ({ ...deps(), runVet: OUT_OF_REACH });
+const writeManifest = (body: Record<string, unknown>): string => {
+  const file = join(dir(), "run.json");
+  writeFileSync(
+    file,
+    JSON.stringify({ contract: 2, runner: "acme-runner", ...body }),
+  );
+  return file;
+};
+const resultManifest = (checker?: string): string =>
+  writeManifest({
+    requires: ["result-gate"],
+    result: { file: TEMPLATE, ...(checker ? { checker } : {}) },
+  });
+const checkerFile = (body: string): string => {
+  const file = join(dir(), "checker.mjs");
+  writeFileSync(file, body);
+  return file;
+};
+const withEnv = async (
+  vars: Record<string, string>,
+  fn: () => Promise<void>,
+): Promise<void> => {
+  const saved = Object.entries(process.env).filter(([k]) => k in vars);
+  Object.assign(process.env, vars);
+  try {
+    await fn();
+  } finally {
+    for (const k of Object.keys(vars)) Reflect.deleteProperty(process.env, k);
+    for (const [k, v] of saved) process.env[k] = v;
+  }
+};
+const registeredRun = async (
+  manifest: string,
   fn: (cwd: string) => Promise<void>,
+  extra: Record<string, string> = {},
 ): Promise<void> => {
   const cwd = dir();
   execFileSync("git", ["init", "-q", cwd]);
-  Object.assign(process.env, {
-    FACTORY_RUN_ID: id,
-    FACTORY_TICKET: "acme/app#12",
-    CLAUDE_PLUGIN_DATA: dir(),
-  });
-  try {
-    await fn(cwd);
-  } finally {
-    for (const k of [
-      "FACTORY_RUN_ID",
-      "FACTORY_TICKET",
-      "CLAUDE_PLUGIN_DATA",
-    ]) {
-      Reflect.deleteProperty(process.env, k);
-    }
-  }
+  await withEnv(
+    {
+      GUARD_RUN_MANIFEST: manifest,
+      GUARD_RUN_ID: "run-1",
+      GUARD_RUN_TICKET: "acme/app#12",
+      CLAUDE_PLUGIN_DATA: dir(),
+      ...extra,
+    },
+    () => fn(cwd),
+  );
 };
+const ocClient = (sent?: string[]): OpencodeClient =>
+  ({
+    session: {
+      get: async () => {
+        await Promise.resolve();
+        return null;
+      },
+      prompt: async (p: { body: { parts: { text: string }[] } }) => {
+        await Promise.resolve();
+        sent?.push(p.body.parts[0]?.text ?? "");
+      },
+    },
+    tui: {
+      showToast: async () => {
+        await Promise.resolve();
+      },
+    },
+  }) as unknown as OpencodeClient;
+const piCtx = (cwd: string): PiContext => ({
+  cwd,
+  sessionManager: { getSessionId: () => "p1" },
+  ui: {
+    confirm: async () => {
+      await Promise.resolve();
+      return true;
+    },
+    notify: () => {
+      /* noop */
+    },
+  },
+});
+const idle = (hooks: Awaited<ReturnType<typeof GuardPlugin>>) =>
+  hooks.event({
+    event: { type: "session.idle", properties: { sessionID: "s" } },
+  });
 
-void test("opencode: a factory run without a valid result.json is sent the result gate on idle, twice at most", async () => {
-  await factoryRun("oc-run", async (cwd: string) => {
-    const sent: { body: { parts: { text: string; type: string }[] } }[] = [];
-    const client = {
-      session: {
-        get: async () => {
-          await Promise.resolve();
-          return null;
-        },
-        prompt: async (p: {
-          body: { parts: { text: string; type: string }[] };
-        }) => {
-          await Promise.resolve();
-          sent.push(p);
-        },
-      },
-      tui: {
-        showToast: async () => {
-          await Promise.resolve();
-        },
-      },
-    } as unknown as OpencodeClient;
-    const hooks = await GuardPlugin({ client, directory: cwd }, deps());
-    for (let i = 0; i < 3; i++) {
-      await hooks.event({
-        event: { type: "session.idle", properties: { sessionID: "s" } },
-      });
-    }
-    assert.equal(sent.length, 2);
-    assert.ok(sent[0]);
-    const msg0 = sent[0] as { body: { parts: { text: string }[] } };
-    const part0 = msg0.body.parts[0];
-    assert.ok(part0);
-    assert.match(
-      part0.text,
-      /^Factory result gate \(block 1 of 2\)[\s\S]*write-result\.mjs/,
+void test("opencode: a registered run without a valid result.json is sent the result gate on idle, twice at most", async () => {
+  await registeredRun(resultManifest(), async (cwd) => {
+    const sent: string[] = [];
+    const hooks = await GuardPlugin(
+      { client: ocClient(sent), directory: cwd },
+      trusted(),
     );
+    for (let i = 0; i < 3; i++) await idle(hooks);
+    assert.equal(sent.length, 2);
+    assert.match(
+      sent[0] ?? "",
+      /^Run result gate \(block 1 of 2\)[\s\S]*Fix the result file/,
+    );
+    assert.match(sent[1] ?? "", /^Run result gate \(block 2 of 2\)/);
   });
 });
 
@@ -680,7 +738,7 @@ void test("opencode and pi: GUARD_TRACEPARENT adds trace_id and span_id to the e
       { client: mockClient, directory: dir() },
       {
         ...deps(),
-        env: { FACTORY_EVENTS_FILE: ocFile, GUARD_TRACEPARENT: value },
+        env: { GUARD_RUN_EVENTS_FILE: ocFile, GUARD_TRACEPARENT: value },
       },
     );
     await assert.rejects(
@@ -694,7 +752,7 @@ void test("opencode and pi: GUARD_TRACEPARENT adds trace_id and span_id to the e
     const { handlers, api } = fakePi();
     guardExtension(api, {
       ...deps(),
-      env: { FACTORY_EVENTS_FILE: piFile, GUARD_TRACEPARENT: value },
+      env: { GUARD_RUN_EVENTS_FILE: piFile, GUARD_TRACEPARENT: value },
     });
     const blocked = (await handlers.tool_call?.(
       {
@@ -745,7 +803,7 @@ void test("pi: the default emit sends the guard.decision OTLP record with traceI
     "OTEL_EXPORTER_OTLP_ENDPOINT",
     "GUARD_OTEL_EXPORTER_OTLP_ENDPOINT",
     "GUARD_TRACEPARENT",
-    "FACTORY_EVENTS_FILE",
+    "GUARD_RUN_EVENTS_FILE",
   ];
   const saved = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
   const realFetch = globalThis.fetch;
@@ -755,7 +813,7 @@ void test("pi: the default emit sends the guard.decision OTLP record with traceI
     GUARD_OTEL_EXPORTER_OTLP_ENDPOINT: "http://collector.invalid",
     GUARD_TRACEPARENT:
       "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
-    FACTORY_EVENTS_FILE: "",
+    GUARD_RUN_EVENTS_FILE: "",
   });
   globalThis.fetch = (async (_: unknown, init: { body: string }) => {
     await Promise.resolve();
@@ -984,215 +1042,124 @@ void test("pi: a failing make check on settle is sent back once, an aborted run 
   assert.match(sent[0] ?? "", /make check failed/);
 });
 
-void test("pi: a factory run without a valid result.json is sent the result gate on settle, twice at most", async () => {
-  await factoryRun("pi-run", async (cwd: string) => {
+void test("pi: a registered run without a valid result.json is sent the result gate on settle, twice at most", async () => {
+  await registeredRun(resultManifest(), async (cwd) => {
     const { handlers, sent, api } = fakePi();
-    guardExtension(api, deps());
-    const ctx: PiContext = {
-      cwd,
-      ui: {
-        confirm: async () => {
-          await Promise.resolve();
-          return true;
-        },
-        notify: () => {
-          /* noop */
-        },
-      },
-    };
+    guardExtension(api, trusted());
     for (let i = 0; i < 3; i++) {
-      await handlers.agent_settled?.({ aborted: false }, ctx);
+      await handlers.agent_settled?.({ aborted: false }, piCtx(cwd));
     }
     assert.equal(sent.length, 2);
-    assert.match(sent[1] ?? "", /^Factory result gate \(block 2 of 2\)/);
+    assert.match(sent[0] ?? "", /^Run result gate \(block 1 of 2\)/);
+    assert.match(sent[1] ?? "", /^Run result gate \(block 2 of 2\)/);
   });
 });
 
-void test("opencode and pi: a refused FACTORY_RESULT_CHECKER is sent on every idle and settle, with no cap", async () => {
-  await factoryRun("strict-run", async (cwd: string) => {
-    process.env.FACTORY_RESULT_CHECKER = "rel/c.mjs";
-    try {
-      const sentOc: string[] = [];
-      const client = {
-        session: {
-          get: async () => {
-            await Promise.resolve();
-            return null;
-          },
-          prompt: async (p: {
-            body: { parts: { text: string; type: string }[] };
-          }) => {
-            await Promise.resolve();
-            sentOc.push(p.body.parts[0]?.text ?? "");
-          },
-        },
-        tui: {
-          showToast: async () => {
-            await Promise.resolve();
-          },
-        },
-      } as unknown as OpencodeClient;
-      const hooks = await GuardPlugin({ client, directory: cwd }, deps());
-      for (let i = 0; i < 4; i++) {
-        await hooks.event({
-          event: { type: "session.idle", properties: { sessionID: "s" } },
-        });
-      }
-      assert.equal(sentOc.length, 4);
-      for (const m of sentOc)
-        assert.match(m, /could not run: not an absolute path/);
-      assert.match(
-        sentOc[3] ?? "",
-        /^Factory result gate \(block 4; FACTORY_RESULT_CHECKER is set/,
-      );
+void test("opencode and pi: a registered run that names a checker is sent the result gate on every idle and settle, with no cap", async () => {
+  const checker = checkerFile("export const resultErrors = () => []");
+  await registeredRun(resultManifest(checker), async (cwd) => {
+    const sentOc: string[] = [];
+    const hooks = await GuardPlugin(
+      { client: ocClient(sentOc), directory: cwd },
+      trusted(),
+    );
+    for (let i = 0; i < 4; i++) await idle(hooks);
+    assert.equal(sentOc.length, 4);
+    assert.match(
+      sentOc[3] ?? "",
+      /^Run result gate \(block 4; the registration names a result checker/,
+    );
 
-      const { handlers, sent, api } = fakePi();
-      guardExtension(api, deps());
-      const ctx: PiContext = {
-        cwd,
-        ui: {
-          confirm: async () => {
-            await Promise.resolve();
-            return true;
-          },
-          notify: () => {
-            /* noop */
-          },
-        },
-      };
-      for (let i = 0; i < 4; i++) {
-        await handlers.agent_settled?.({ aborted: false }, ctx);
-      }
-      assert.equal(sent.length, 4);
-      assert.match(sent[3] ?? "", /could not run: not an absolute path/);
-    } finally {
-      delete process.env.FACTORY_RESULT_CHECKER;
+    const { handlers, sent, api } = fakePi();
+    guardExtension(api, trusted());
+    for (let i = 0; i < 4; i++) {
+      await handlers.agent_settled?.({ aborted: false }, piCtx(cwd));
     }
+    assert.equal(sent.length, 4);
+    assert.match(sent[3] ?? "", /^Run result gate \(block 8; /);
   });
 });
 
 void test("bridge: an internal error in strict mode is a reason, not null", async () => {
-  await factoryRun("strict-bridge", async (cwd: string) => {
-    const make = (strict: boolean) => {
-      if (strict) process.env.FACTORY_RESULT_CHECKER = "";
-      else delete process.env.FACTORY_RESULT_CHECKER;
-      const spawn = () => {
-        throw new Error("spawn exploded");
-      };
-      // the gate reports its own error through emit, which throws: that escapes the gate's catch and stopCheck, so
-      // only the bridge's own catch can answer
-      const emit = () => {
-        throw new Error("emit exploded");
-      };
-      return createGuard({
-        harness: "test",
-        deps: { ...deps(), spawnSync: spawn, emit },
-      });
+  const checker = checkerFile("export const resultErrors = () => []");
+  const make = (manifest: string) => {
+    const spawn = () => {
+      throw new Error("spawn exploded");
     };
-    try {
-      const strict = await make(true).stop({ cwd });
-      assert.match(
-        strict ?? "",
-        /^Factory result gate: could not check the result for run strict-bridge \(internal error\); FACTORY_RESULT_CHECKER is set/,
-      );
-      assert.match(
-        (await make(false).stop({ cwd })) ?? "",
-        /^Factory result gate: could not check the result for run strict-bridge \(internal error\); a runtime run never fails open, so the stop stays blocked\.$/,
-      );
-      // an attended run still fails open
-      Reflect.deleteProperty(process.env, "FACTORY_RUN_ID");
-      Reflect.deleteProperty(process.env, "FACTORY_TICKET");
-      Object.assign(process.env, {
-        FACTORY_ATTENDED_RUN_ID: "strict-bridge",
-        FACTORY_ATTENDED_TICKET: "acme/app#12",
-      });
-      assert.equal(await make(false).stop({ cwd }), null);
-    } finally {
-      delete process.env.FACTORY_RESULT_CHECKER;
-      Reflect.deleteProperty(process.env, "FACTORY_ATTENDED_RUN_ID");
-      Reflect.deleteProperty(process.env, "FACTORY_ATTENDED_TICKET");
-    }
+    // the gate reports its own error through emit, which throws: that escapes the gate's catch and stopCheck, so
+    // only the bridge's own catch can answer
+    const emit = () => {
+      throw new Error("emit exploded");
+    };
+    return {
+      manifest,
+      guard: createGuard({
+        harness: "test",
+        deps: { ...trusted(), spawnSync: spawn, emit },
+      }),
+    };
+  };
+  const strict = make(resultManifest(checker));
+  await registeredRun(strict.manifest, async (cwd) => {
+    assert.match(
+      (await strict.guard.stop({ cwd })) ?? "",
+      /^Run result gate: could not check the result for run run-1 \(internal error\); the registration names a result checker, so the stop stays blocked\.$/,
+    );
   });
+  const plain = make(resultManifest());
+  await registeredRun(plain.manifest, async (cwd) => {
+    assert.match(
+      (await plain.guard.stop({ cwd })) ?? "",
+      /^Run result gate: could not check the result for run run-1 \(internal error\); an unattended run never fails open, so the stop stays blocked\.$/,
+    );
+  });
+  // an attended run still fails open
+  const attended = make(resultManifest());
+  await registeredRun(
+    attended.manifest,
+    async (cwd) => {
+      assert.equal(await attended.guard.stop({ cwd }), null);
+    },
+    { GUARD_RUN_MODE: "attended" },
+  );
 });
 
-void test("opencode and pi: a throwing gate in a runtime run with no checker named is sent the runtime reason, an attended run nothing", async () => {
+void test("opencode and pi: a throwing gate in an unattended run is sent the unattended reason, an attended run nothing", async () => {
   const throwing = () => {
     throw new Error("spawn exploded");
   };
-  const runtimeReason =
-    /^Factory result gate: could not check the result for run rt-run \(spawn exploded\); a runtime run never fails open, so the stop stays blocked\.$/;
+  const unattendedReason =
+    /^Run result gate: could not check the result for run run-1 \(spawn exploded\); an unattended run never fails open, so the stop stays blocked\.$/;
   const send = async (cwd: string) => {
     const sentOc: string[] = [];
-    const client = {
-      session: {
-        get: async () => {
-          await Promise.resolve();
-          return null;
-        },
-        prompt: async (p: {
-          body: { parts: { text: string; type: string }[] };
-        }) => {
-          await Promise.resolve();
-          sentOc.push(p.body.parts[0]?.text ?? "");
-        },
-      },
-      tui: {
-        showToast: async () => {
-          await Promise.resolve();
-        },
-      },
-    } as unknown as OpencodeClient;
     const hooks = await GuardPlugin(
-      { client, directory: cwd },
-      { ...deps(), spawnSync: throwing },
+      { client: ocClient(sentOc), directory: cwd },
+      { ...trusted(), spawnSync: throwing },
     );
-    for (let i = 0; i < 3; i++) {
-      await hooks.event({
-        event: { type: "session.idle", properties: { sessionID: "s" } },
-      });
-    }
+    for (let i = 0; i < 3; i++) await idle(hooks);
     const { handlers, sent, api } = fakePi();
-    guardExtension(api, { ...deps(), spawnSync: throwing });
-    const ctx: PiContext = {
-      cwd,
-      ui: {
-        confirm: async () => {
-          await Promise.resolve();
-          return true;
-        },
-        notify: () => {
-          /* noop */
-        },
-      },
-    };
+    guardExtension(api, { ...trusted(), spawnSync: throwing });
     for (let i = 0; i < 3; i++) {
-      await handlers.agent_settled?.({ aborted: false }, ctx);
+      await handlers.agent_settled?.({ aborted: false }, piCtx(cwd));
     }
     return { sent, sentOc };
   };
-  await factoryRun("rt-run", async (cwd: string) => {
-    delete process.env.FACTORY_RESULT_CHECKER;
+  await registeredRun(resultManifest(), async (cwd) => {
     const { sent, sentOc } = await send(cwd);
     // no cap on a failed check
     assert.equal(sentOc.length, 3);
     assert.equal(sent.length, 3);
-    for (const m of [...sentOc, ...sent]) assert.match(m, runtimeReason);
-
-    Reflect.deleteProperty(process.env, "FACTORY_RUN_ID");
-    Reflect.deleteProperty(process.env, "FACTORY_TICKET");
-    Object.assign(process.env, {
-      FACTORY_ATTENDED_RUN_ID: "rt-run",
-      FACTORY_ATTENDED_TICKET: "acme/app#12",
-    });
-    try {
+    for (const m of [...sentOc, ...sent]) assert.match(m, unattendedReason);
+  });
+  await registeredRun(
+    resultManifest(),
+    async (cwd) => {
       const attended = await send(cwd);
       assert.equal(attended.sentOc.length, 0);
       assert.equal(attended.sent.length, 0);
-    } finally {
-      Reflect.deleteProperty(process.env, "FACTORY_ATTENDED_RUN_ID");
-      Reflect.deleteProperty(process.env, "FACTORY_ATTENDED_TICKET");
-    }
-  });
+    },
+    { GUARD_RUN_MODE: "attended" },
+  );
 });
 
 void test("usage: opencode and pi report each assistant message once, as their own service", async () => {
@@ -1303,124 +1270,94 @@ void test("usage: opencode and pi report each assistant message once, as their o
   ]);
 });
 
-void test("opencode and pi: the approval label is denied while FACTORY_RUN_ID is set, allowed without", async () => {
-  const command = "gh issue edit 70 --add-label agent-ok";
-  const mockClient = {
-    session: {
-      get: async () => {
-        await Promise.resolve();
-        return null;
-      },
-      prompt: async () => {
-        await Promise.resolve();
-      },
-    },
-    tui: {
-      showToast: async () => {
-        await Promise.resolve();
-      },
-    },
-  } as unknown as OpencodeClient;
+void test("opencode and pi: the approval label is denied in a registered run, allowed without", async () => {
+  const command = "gh issue edit 70 --add-label acme:approved";
+  const manifest = writeManifest({
+    requires: ["labels"],
+    labels: { approval: "acme:approved", takeover: "acme:takeover" },
+  });
+  const env = { GUARD_RUN_MANIFEST: manifest, GUARD_RUN_ID: "run-1" };
+  const why = /`acme:approved` label is registered for this run/;
   const oc = await GuardPlugin(
-    { client: mockClient, directory: dir() },
-    { ...deps(), env: { FACTORY_RUN_ID: "r1" } },
+    { client: ocClient(), directory: dir() },
+    { ...trusted(), env },
   );
   await assert.rejects(
     oc["tool.execute.before"](
       { tool: "bash", sessionID: "s", callID: "c" },
       { args: { command } },
     ),
-    /approval label/,
+    why,
   );
   const free = await GuardPlugin(
-    { client: mockClient, directory: dir() },
-    { ...deps(), env: {} },
+    { client: ocClient(), directory: dir() },
+    { ...trusted(), env: {} },
   );
   await free["tool.execute.before"](
     { tool: "bash", sessionID: "s", callID: "c" },
     { args: { command } },
   );
   const { handlers, api } = fakePi();
-  guardExtension(api, { ...deps(), env: { FACTORY_RUN_ID: "r1" } });
+  guardExtension(api, { ...trusted(), env });
   const blocked = (await handlers.tool_call?.(
     { toolName: "bash", toolCallId: "c", input: { command } },
-    {
-      cwd: dir(),
-      sessionManager: { getSessionId: () => "p1" },
-      ui: {
-        confirm: async () => {
-          await Promise.resolve();
-          return true;
-        },
-        notify: () => {
-          /* noop */
-        },
-      },
-    },
+    piCtx(dir()),
   )) as { block?: boolean; reason?: string } | undefined;
   assert.ok(blocked);
   assert.equal(blocked.block, true);
-  assert.match(blocked.reason ?? "", /approval label/);
+  assert.match(blocked.reason ?? "", why);
+  const piFree = fakePi();
+  guardExtension(piFree.api, { ...trusted(), env: {} });
+  const allowed = (await piFree.handlers.tool_call?.(
+    { toolName: "bash", toolCallId: "c", input: { command } },
+    piCtx(dir()),
+  )) as { block?: boolean } | undefined;
+  assert.notEqual(allowed?.block, true);
 });
 
-void test("opencode and pi: the takeover label is denied while FACTORY_RUN_ID is set, allowed without", async () => {
-  const command = "gh issue edit 70 --add-label factory-takeover";
-  const mockClient = {
-    session: {
-      get: async () => {
-        await Promise.resolve();
-        return null;
-      },
-      prompt: async () => {
-        await Promise.resolve();
-      },
-    },
-    tui: {
-      showToast: async () => {
-        await Promise.resolve();
-      },
-    },
-  } as unknown as OpencodeClient;
+void test("opencode and pi: the takeover label is denied in a registered run, allowed without", async () => {
+  const command = "gh issue edit 70 --add-label acme:takeover";
+  const manifest = writeManifest({
+    requires: ["labels"],
+    labels: { approval: "acme:approved", takeover: "acme:takeover" },
+  });
+  const env = { GUARD_RUN_MANIFEST: manifest, GUARD_RUN_ID: "run-1" };
+  const why = /`acme:takeover` label is registered for this run/;
   const oc = await GuardPlugin(
-    { client: mockClient, directory: dir() },
-    { ...deps(), env: { FACTORY_RUN_ID: "r1" } },
+    { client: ocClient(), directory: dir() },
+    { ...trusted(), env },
   );
   await assert.rejects(
     oc["tool.execute.before"](
       { tool: "bash", sessionID: "s", callID: "c" },
       { args: { command } },
     ),
-    /takeover label/,
+    why,
   );
   const free = await GuardPlugin(
-    { client: mockClient, directory: dir() },
-    { ...deps(), env: {} },
+    { client: ocClient(), directory: dir() },
+    { ...trusted(), env: {} },
   );
   await free["tool.execute.before"](
     { tool: "bash", sessionID: "s", callID: "c" },
     { args: { command } },
   );
   const { handlers, api } = fakePi();
-  guardExtension(api, { ...deps(), env: { FACTORY_RUN_ID: "r1" } });
+  guardExtension(api, { ...trusted(), env });
   const blocked = (await handlers.tool_call?.(
     { toolName: "bash", toolCallId: "c", input: { command } },
-    {
-      cwd: dir(),
-      sessionManager: { getSessionId: () => "p1" },
-      ui: {
-        confirm: async () => {
-          await Promise.resolve();
-          return true;
-        },
-        notify: () => {
-          /* noop */
-        },
-      },
-    },
+    piCtx(dir()),
   )) as { block?: boolean; reason?: string } | undefined;
   assert.ok(blocked);
   assert.equal(blocked.block, true);
-  assert.match(blocked.reason ?? "", /takeover label/);
+  assert.match(blocked.reason ?? "", why);
+  const piFree = fakePi();
+  guardExtension(piFree.api, { ...trusted(), env: {} });
+  const allowed = (await piFree.handlers.tool_call?.(
+    { toolName: "bash", toolCallId: "c", input: { command } },
+    piCtx(dir()),
+  )) as { block?: boolean } | undefined;
+  assert.notEqual(allowed?.block, true);
 });
 
 void test("opencode and pi: a stale-plugin notice reaches the user (toast, notify) and the agent (the tool output)", async () => {
@@ -1742,4 +1679,308 @@ void test("pi: session_start sends guard.session, a dev-tools subagent child doe
     delete process.env.GUARD_PARENT_SESSION;
   }
   assert.equal(events.length, 1);
+});
+
+// A run whose registration cannot be trusted (GUARD_RUN_ID without a manifest), and a session that sets only the
+// legacy run variables (the tripwire): both deny every tool call and block the stop twice at most, in every adapter,
+// with no trusted file involved.
+const FAILED_RUNS: readonly {
+  env: Record<string, string>;
+  name: string;
+  stop: RegExp;
+  tool: RegExp;
+}[] = [
+  {
+    name: "registration",
+    env: { GUARD_RUN_ID: "run-1" },
+    tool: /^Run registration failed: GUARD_RUN_ID is set but GUARD_RUN_MANIFEST is not\./,
+    stop: /^Run registration failed: GUARD_RUN_ID is set but GUARD_RUN_MANIFEST is not\./,
+  },
+  {
+    name: "tripwire",
+    env: { FACTORY_RUN_ID: "run-1" },
+    tool: /^Legacy run variables are set without a run registration/,
+    stop: /^Legacy run variables are set without a run registration/,
+  },
+];
+
+const eventLines = (file: string): Record<string, unknown>[] =>
+  readFileSync(file, "utf8")
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((l) => JSON.parse(l) as Record<string, unknown>);
+
+// The tripwire's line: fixed keys, no path and no env value.
+const assertTripwireLine = (file: string): void => {
+  const lines = eventLines(file);
+  assert.equal(lines.length, 1, "the tripwire writes its line once");
+  assert.deepEqual(Object.keys(lines[0] ?? {}), [
+    "ts",
+    "event",
+    "decision",
+    "rule",
+    "reason",
+  ]);
+  assert.equal(lines[0]?.rule, "run-unregistered");
+  assert.equal(lines[0]?.decision, "deny");
+};
+
+void test("opencode: a failed registration or the legacy-only tripwire denies every tool call and re-prompts the idle twice at most", async () => {
+  for (const c of FAILED_RUNS) {
+    const events = join(dir(), "events.jsonl");
+    await withEnv(
+      { ...c.env, CLAUDE_PLUGIN_DATA: dir(), FACTORY_EVENTS_FILE: events },
+      async () => {
+        const sent: string[] = [];
+        const hooks = await GuardPlugin(
+          { client: ocClient(sent), directory: dir() },
+          deps(),
+        );
+        for (let i = 0; i < 2; i++) {
+          await assert.rejects(
+            hooks["tool.execute.before"](
+              { tool: "bash", sessionID: "s", callID: "c" },
+              { args: { command: "ls" } },
+            ),
+            new RegExp(c.tool.source.replace(/^\^/, "")),
+            c.name,
+          );
+        }
+        if (c.name === "tripwire") assertTripwireLine(events);
+        for (let i = 0; i < 3; i++) await idle(hooks);
+        assert.equal(sent.length, 2, c.name);
+        assert.match(sent[0] ?? "", c.stop);
+        assert.match(sent[0] ?? "", / \(block 1 of 2\)$/);
+        assert.match(sent[1] ?? "", / \(block 2 of 2\)$/);
+      },
+    );
+  }
+});
+
+void test("pi: a failed registration or the legacy-only tripwire blocks every tool call and re-prompts the settle twice at most", async () => {
+  for (const c of FAILED_RUNS) {
+    const events = join(dir(), "events.jsonl");
+    await withEnv(
+      { ...c.env, CLAUDE_PLUGIN_DATA: dir(), FACTORY_EVENTS_FILE: events },
+      async () => {
+        const { handlers, sent, api } = fakePi();
+        guardExtension(api, deps());
+        for (let i = 0; i < 2; i++) {
+          const blocked = (await handlers.tool_call?.(
+            { toolName: "bash", toolCallId: "c", input: { command: "ls" } },
+            piCtx(dir()),
+          )) as { block?: boolean; reason?: string } | undefined;
+          assert.equal(blocked?.block, true, c.name);
+          assert.match(blocked?.reason ?? "", c.tool);
+        }
+        if (c.name === "tripwire") assertTripwireLine(events);
+        const ctx = piCtx(dir());
+        for (let i = 0; i < 3; i++) {
+          await handlers.agent_settled?.({ aborted: false }, ctx);
+        }
+        assert.equal(sent.length, 2, c.name);
+        assert.match(sent[0] ?? "", c.stop);
+        assert.match(sent[0] ?? "", / \(block 1 of 2\)$/);
+        assert.match(sent[1] ?? "", / \(block 2 of 2\)$/);
+      },
+    );
+  }
+});
+
+// The real hook processes, as each harness's own hooks file starts them.
+const GUARD_PLUGIN = fileURLToPath(new URL("../", import.meta.url));
+const hookArgs = (file: string, event: string): string[] => {
+  const json = JSON.parse(readFileSync(join(GUARD_PLUGIN, file), "utf8")) as {
+    hooks: Record<string, { hooks: { command: string }[] }[]>;
+  };
+  const command = json.hooks[event]?.[0]?.hooks[0]?.command ?? "";
+  const tokens = (
+    command
+      .replaceAll("${CLAUDE_PLUGIN_ROOT}", GUARD_PLUGIN.replace(/[\\/]$/, ""))
+      .match(/"[^"]*"|\S+/g) ?? []
+  ).map((t) => t.replace(/^"|"$/g, ""));
+  assert.equal(tokens[0], "node", command);
+  return tokens.slice(1);
+};
+let sessionCounter = 0;
+const spawnHook = (
+  args: string[],
+  payload: Record<string, unknown>,
+  env: Record<string, string>,
+) => {
+  const clean = Object.fromEntries(
+    Object.entries(process.env).filter(
+      ([k]) =>
+        !k.startsWith("FACTORY_") &&
+        !k.startsWith("GUARD_") &&
+        !k.endsWith("_PLUGIN_DATA") &&
+        k !== "CLAUDE_PLUGIN_ROOT",
+    ),
+  );
+  sessionCounter += 1;
+  const r = spawnSync(process.execPath, args, {
+    input: JSON.stringify({
+      cwd: dir(),
+      session_id: `adapters-${String(process.pid)}-${String(sessionCounter)}`,
+      ...payload,
+    }),
+    encoding: "utf8",
+    env: {
+      ...clean,
+      GUARD_OTEL: "off",
+      GUARD_STOP_CHECK: "off",
+      GUARD_RUN_EVENTS_FILE: "",
+      ...env,
+    },
+  });
+  assert.equal(r.status, 0, r.stderr);
+  return JSON.parse(r.stdout) as Record<string, unknown>;
+};
+const shell = (tool: string, command = "ls") => ({
+  hook_event_name: "PreToolUse",
+  tool_name: tool,
+  tool_input: { command },
+});
+
+void test("command harnesses: a failed registration or the legacy-only tripwire denies PreToolUse in each harness's shape", () => {
+  const claudeArgs = hookArgs("hooks/hooks.json", "PreToolUse");
+  const codexArgs = hookArgs(".generated/codex/hooks.json", "PreToolUse");
+  assert.ok(codexArgs.includes("--harness=codex"));
+  const antigravityArgs = [
+    join(GUARD_PLUGIN, "hooks", "guard.mjs"),
+    "PreToolUse",
+    "--harness=antigravity",
+  ];
+  for (const c of FAILED_RUNS) {
+    const events = join(dir(), "events.jsonl");
+    const withEvents = (extra: Record<string, string>) => ({
+      ...c.env,
+      FACTORY_EVENTS_FILE: events,
+      ...extra,
+    });
+    const harnesses: [
+      string,
+      string[],
+      Record<string, unknown>,
+      Record<string, string>,
+    ][] = [
+      ["claude", claudeArgs, shell("Bash"), { CLAUDE_PLUGIN_DATA: dir() }],
+      ["copilot", claudeArgs, shell("bash"), { COPILOT_PLUGIN_DATA: dir() }],
+      [
+        "vscode",
+        claudeArgs,
+        shell("run_in_terminal"),
+        { CLAUDE_PLUGIN_ROOT: GUARD_PLUGIN },
+      ],
+      ["codex", codexArgs, shell("Bash"), { CLAUDE_PLUGIN_DATA: dir() }],
+    ];
+    for (const [name, args, payload, extra] of harnesses) {
+      const out = spawnHook(args, payload, withEvents(extra)) as {
+        hookSpecificOutput?: {
+          permissionDecision?: string;
+          permissionDecisionReason?: string;
+        };
+      };
+      assert.equal(
+        out.hookSpecificOutput?.permissionDecision,
+        "deny",
+        `${c.name} ${name}`,
+      );
+      assert.match(
+        out.hookSpecificOutput?.permissionDecisionReason ?? "",
+        c.tool,
+        `${c.name} ${name}`,
+      );
+    }
+    const anti = spawnHook(
+      antigravityArgs,
+      {
+        hook_event_name: "PreToolUse",
+        toolCall: { name: "run_command", args: { CommandLine: "ls" } },
+      },
+      withEvents({ CLAUDE_PLUGIN_DATA: dir() }),
+    );
+    assert.equal(anti.decision, "deny", c.name);
+    assert.match(String(anti.reason), c.tool);
+    // each spawned session writes its own tripwire line, one per session and none from a failed registration
+    if (c.name === "tripwire") {
+      const lines = eventLines(events);
+      assert.equal(lines.length, 5);
+      for (const l of lines) assert.equal(l.rule, "run-unregistered");
+    }
+  }
+});
+
+void test("command harnesses: the legacy-only tripwire writes its line once per session", () => {
+  const events = join(dir(), "events.jsonl");
+  const data = dir();
+  const args = hookArgs("hooks/hooks.json", "PreToolUse");
+  const env = {
+    FACTORY_RUN_ID: "run-1",
+    FACTORY_EVENTS_FILE: events,
+    CLAUDE_PLUGIN_DATA: data,
+  };
+  for (let i = 0; i < 3; i++) {
+    const out = spawnHook(
+      args,
+      { ...shell("Bash"), session_id: "adapters-one-session" },
+      env,
+    ) as { hookSpecificOutput?: { permissionDecision?: string } };
+    assert.equal(out.hookSpecificOutput?.permissionDecision, "deny");
+  }
+  assertTripwireLine(events);
+});
+
+void test("command harnesses: a failed registration or the legacy-only tripwire blocks Stop in each harness's shape, twice at most", () => {
+  const claudeArgs = hookArgs("hooks/hooks.json", "Stop");
+  const codexArgs = hookArgs(".generated/codex/hooks.json", "Stop");
+  const antigravityArgs = [
+    join(GUARD_PLUGIN, "hooks", "stop.mjs"),
+    "Stop",
+    "--harness=antigravity",
+  ];
+  const stop = { hook_event_name: "Stop" };
+  for (const c of FAILED_RUNS) {
+    const claude = spawnHook(claudeArgs, stop, {
+      ...c.env,
+      CLAUDE_PLUGIN_DATA: dir(),
+    });
+    assert.equal(claude.decision, "block", c.name);
+    assert.match(String(claude.reason), c.stop);
+    assert.match(String(claude.reason), / \(block 1 of 2\)$/);
+    const codex = spawnHook(codexArgs, stop, {
+      ...c.env,
+      CLAUDE_PLUGIN_DATA: dir(),
+    });
+    assert.deepEqual(Object.keys(codex).sort(), ["decision", "reason"]);
+    assert.equal(codex.decision, "block");
+    assert.match(String(codex.reason), c.stop);
+    const anti = spawnHook(antigravityArgs, stop, {
+      ...c.env,
+      CLAUDE_PLUGIN_DATA: dir(),
+    });
+    assert.equal(anti.decision, "continue", c.name);
+    assert.match(String(anti.reason), c.stop);
+    // the cap: the same session and data dir blocks twice, then lets go
+    const data = dir();
+    const capped = { ...c.env, CLAUDE_PLUGIN_DATA: data };
+    const session = { ...stop, session_id: `adapters-cap-${c.name}` };
+    const first = spawnHook(claudeArgs, session, capped);
+    const second = spawnHook(claudeArgs, session, capped);
+    assert.match(String(first.reason), / \(block 1 of 2\)$/);
+    assert.match(String(second.reason), / \(block 2 of 2\)$/);
+    const third = spawnSync(process.execPath, claudeArgs, {
+      input: JSON.stringify({ cwd: dir(), ...session }),
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        ...capped,
+        GUARD_OTEL: "off",
+        GUARD_STOP_CHECK: "off",
+      },
+    });
+    assert.equal(third.status, 0, third.stderr);
+    assert.equal(third.stdout.trim(), "", c.name);
+  }
 });

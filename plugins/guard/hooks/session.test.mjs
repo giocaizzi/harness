@@ -841,10 +841,11 @@ void test("result gate: a checker the trust checks refuse fails the registration
             writable: (t) => t.endsWith("checker.mjs"),
             owner: () => false,
         };
-        for (const cwd of [gateRepo(validResult()), gateRepo()]) {
+        for (const make of [() => gateRepo(validResult()), () => gateRepo()]) {
+            const cwd = make();
             const out = await gate({ cwd }, env, undefined, undefined, refuseChecker);
             assert.match(out ?? "", /^Run registration failed: .*result\.checker .*writable by this user/);
-            assert.doesNotMatch(out ?? "", /block \d/);
+            assert.match(out ?? "", / \(block 1 of 2\)$/);
         }
         // the gate switch does not turn it off
         const off = await gate({ cwd: gateRepo(validResult()) }, { ...env, GUARD_RESULT_GATE: "off" }, undefined, undefined, refuseChecker);
@@ -997,24 +998,39 @@ void test("result gate: a result file over 1 MiB is blocked as too large, not re
         delete process.env.CLAUDE_PLUGIN_DATA;
     }
 });
-void test("result gate: a failed registration blocks even with the gate off, uncounted; a changed manifest fails it", async () => {
+void test("result gate: a failed registration blocks twice per session even with the gate off, then is capped; a changed manifest fails it", async () => {
     try {
         const cwd = gateRepo();
         const events = [];
-        const out = await gate({ cwd }, { GUARD_RUN_ID: "run-1", GUARD_RESULT_GATE: "off" }, undefined, (e) => events.push(e));
-        assert.equal(out, "Run registration failed: GUARD_RUN_ID is set but GUARD_RUN_MANIFEST is not; the stop stays blocked until the runner fixes its registration.");
+        const why = "Run registration failed: GUARD_RUN_ID is set but GUARD_RUN_MANIFEST is not. Every tool call in this run is denied until the runner fixes its registration; stop and report it.";
+        const offEnv = { GUARD_RUN_ID: "run-1", GUARD_RESULT_GATE: "off" };
+        const first = { cwd, session_id: "s-reg-a" };
+        const onEvent = (e) => {
+            events.push(e);
+        };
+        assert.equal(await gate(first, offEnv, undefined, onEvent), `${why} (block 1 of 2)`);
+        assert.equal(await gate(first, offEnv, undefined, onEvent), `${why} (block 2 of 2)`);
+        assert.equal(await gate(first, offEnv, undefined, onEvent), null);
         assert.deepEqual(events, [
             {
                 result: "registration",
                 target: "result-gate",
                 rule: "run-registration",
+                blocks: 1,
             },
+            {
+                result: "registration",
+                target: "result-gate",
+                rule: "run-registration",
+                blocks: 2,
+            },
+            { result: "capped", target: "result-gate", rule: "run-registration" },
         ]);
-        // uncapped: it never lets go
-        for (let i = 0; i < 3; i++) {
-            assert.match((await gate({ cwd }, { GUARD_RUN_ID: "run-1" })) ?? "", /^Run registration failed/);
-        }
-        assert.equal(existsSync(counterPath()), false);
+        // another session starts again
+        assert.match((await gate({ cwd, session_id: "s-reg-b" }, offEnv)) ?? "", / \(block 1 of 2\)$/);
+        // still blocks with the gate on
+        assert.match((await gate({ cwd, session_id: "s-reg-c" }, { GUARD_RUN_ID: "run-1" })) ??
+            "", /^Run registration failed: .* \(block 1 of 2\)$/);
         // a manifest that changes after the session pinned it
         const m = manifest();
         const env = envFor(m);
@@ -1047,13 +1063,26 @@ void test("result gate: a stop that sets only legacy run variables is blocked an
         const first = await gate(input, env, undefined, (e) => events.push(e));
         assert.match(first ?? "", /^Legacy run variables are set without a run registration/);
         assert.match(first ?? "", /GUARD_RUN_MANIFEST/);
-        assert.match((await gate(input, env)) ?? "", /^Legacy run variables are set/);
+        assert.match(first ?? "", / \(block 1 of 2\)$/);
+        const second = await gate(input, env, undefined, (e) => events.push(e));
+        assert.match(second ?? "", /^Legacy run variables are set/);
+        assert.match(second ?? "", / \(block 2 of 2\)$/);
+        // capped like a failed registration
+        assert.equal(await gate(input, env, undefined, (e) => events.push(e)), null);
         assert.deepEqual(events, [
             {
                 result: "registration",
                 target: "result-gate",
                 rule: "run-unregistered",
+                blocks: 1,
             },
+            {
+                result: "registration",
+                target: "result-gate",
+                rule: "run-unregistered",
+                blocks: 2,
+            },
+            { result: "capped", target: "result-gate", rule: "run-unregistered" },
         ]);
         for (const file of [eventsFile, join(dataDir, "run-unregistered.jsonl")]) {
             const lines = readFileSync(file, "utf8").trim().split("\n");
@@ -1068,6 +1097,24 @@ void test("result gate: a stop that sets only legacy run variables is blocked an
         delete process.env.CLAUDE_PLUGIN_DATA;
     }
 });
+void test("stop hook CLI: a failed registration block is capped at two per session", () => {
+    const cwd = gateRepo();
+    const data = tmp();
+    const payload = JSON.stringify({
+        cwd,
+        hook_event_name: "Stop",
+        session_id: "s-cli-cap",
+    });
+    const env = { GUARD_RUN_ID: "run-1", CLAUDE_PLUGIN_DATA: data };
+    for (const n of [1, 2]) {
+        const r = runStopHook(payload, [], env);
+        assert.match(String(JSON.parse(r.stdout).reason), new RegExp(`\\(block ${String(n)} of 2\\)$`));
+    }
+    assert.equal(runStopHook(payload, [], env).stdout, "");
+    // a new session starts again
+    const other = runStopHook(payload.replace("s-cli-cap", "s-cli-2"), [], env);
+    assert.match(other.stdout, /block 1 of 2/);
+});
 void test("result check: the stop hook CLI blocks a failed registration, once, in each harness's shape", () => {
     const cwd = gateRepo();
     delete process.env.CLAUDE_PLUGIN_DATA;
@@ -1079,6 +1126,7 @@ void test("result check: the stop hook CLI blocks a failed registration, once, i
     const c = JSON.parse(claude.stdout);
     assert.equal(c.decision, "block");
     assert.match(String(c.reason), reason);
+    assert.match(String(c.reason), / \(block 1 of 2\)$/);
     assert.equal(c.hookSpecificOutput.decision, "block");
     const codex = runStopHook(payload, ["--harness=codex"], env);
     assert.equal(codex.status, 0, codex.stderr);

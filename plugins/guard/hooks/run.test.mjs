@@ -156,9 +156,9 @@ void test("denyReason: the texts say what to do and carry no env value", () => {
     const trip = denied(runContext({ FACTORY_RUN_ID: "legacy-secret" }, { vet }));
     const bad = denied(runContext(env, { vet }));
     assert.match(denyReason(trip, "tool"), /GUARD_RUN_MANIFEST/);
-    assert.match(denyReason(trip, "stop"), /stop stays blocked/);
+    assert.match(denyReason(trip, "stop"), /^Legacy run variables are set without a run registration/);
     assert.match(denyReason(bad, "tool"), /^Run registration failed: /);
-    assert.match(denyReason(bad, "stop"), /stop stays blocked/);
+    assert.match(denyReason(bad, "stop"), /^Run registration failed: .*stop and report it\.$/);
     for (const d of [trip, bad])
         for (const at of ["tool", "stop"])
             assert.doesNotMatch(denyReason(d, at), /secret-run-id|legacy-secret/, `${d.rule} ${at}`);
