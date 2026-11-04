@@ -572,7 +572,7 @@ async function check(name: string): Promise<string[]> {
         command.startsWith("pip")
           ? {
               ...env,
-              FACTORY_EVENTS_FILE: events,
+              GUARD_RUN_EVENTS_FILE: events,
               GUARD_TRACEPARENT: TRACEPARENT,
             }
           : env,
@@ -649,8 +649,7 @@ async function check(name: string): Promise<string[]> {
       const out = h.run(
         {
           ...env,
-          FACTORY_RUN_ID: `e2e-${name}`,
-          FACTORY_TICKET: "acme/app#12",
+          GUARD_RUN_ID: `e2e-${name}`,
         },
         dir,
         m.port,
@@ -659,10 +658,10 @@ async function check(name: string): Promise<string[]> {
       if (
         !m
           .entries()
-          .some((e) => e.prompt.includes("Factory result gate (block 1 of 2)"))
+          .some((e) => e.prompt.includes("Run registration failed"))
       )
         failures.push(
-          `result gate: the block did not reach the model\n${out.stdout.slice(-600)}\n${out.stderr.slice(-600)}`,
+          `run registration: the stop block did not reach the model\n${out.stdout.slice(-600)}\n${out.stderr.slice(-600)}`,
         );
       rmSync(join(root, "mock.jsonl"), { force: true });
     }
