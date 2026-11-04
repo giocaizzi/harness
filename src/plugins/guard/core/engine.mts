@@ -1684,7 +1684,11 @@ export function shellEdit(command: string, env: GuardEnv = {}) {
 // a dot file), a brace list is expanded (one group a level, 64 words at most), and one whose start is a variable or a
 // `cd` not followed is matched by the rest of its path anywhere (`$ROOT/.github/x`). A default glob is waived for
 // `protect.exempt` (`.factory/runs/*/*/**`: files inside a run directory) when the normalised path is spelled out;
-// a glob in FACTORY_PROTECTED_PATHS (`protect.globs`) is never waived. A command that may write fails
+// a glob in FACTORY_PROTECTED_PATHS (`protect.globs`) is never waived. Guard's own data directories (`protect.data`,
+// absolute: the result gate's block counter and the make-check state live there) are protected the same way and before
+// any glob: a write inside one, or a remove or move of one or of a directory above it, hits whatever the exemptions say;
+// a target whose start is unknown (a variable, `~`, a `cd` not followed) hits when it ends in the data directory's name
+// followed by anything (`~/.claude/plugins/data/<name>/result-gate/x`). A command that may write fails
 // closed past the limits (`rules.factory.protectedLimits`: targets, characters, milliseconds) or when the check throws,
 // since a hook that times out or emits nothing lets the command through; globs past the limits are ignored. Returns { target } (the first protected target as written), { unsure } (a limit it hit) or null.
 const PROTECT_RM = /^(?:rm|rmdir|unlink|remove-item|ri|del|erase|rd)$/;
@@ -1892,7 +1896,53 @@ export function protectedWrite(
     if (++targets > limits.targets || w.val.length > limits.chars)
       throw LIMITED;
   };
+  const dataDirs = (protect.data ?? [])
+    .filter((d) => d.length <= limits.chars)
+    .slice(0, limits.globs)
+    .map((d) => normalizeSegments(posixPath(d).replace(/^\/(?=[a-z]:)/i, "")));
+  // Guard's own data directory: a write inside it, or a remove or move of it or a directory above it.
+  const inData = (dir: string, resolved: string, above: boolean) => {
+    if (!dataDirs.length) return false;
+    const p = posixPath(resolved);
+    const unknown =
+      /^[$~%`]/.test(p) || (dir === UNKNOWN_DIR && !ABS_DIR.test(p));
+    let full: string | null = null;
+    if (!unknown) {
+      full =
+        dir && !ABS_DIR.test(p)
+          ? `${posixPath(dir).replace(/\/+$/, "")}/${p}`
+          : p;
+      if (!ABS_DIR.test(full))
+        full = protect.cwd
+          ? `${posixPath(protect.cwd).replace(/\/+$/, "")}/${full}`
+          : null;
+    }
+    for (const d of dataDirs) {
+      if (full !== null) {
+        const s = normalizeSegments(full.replace(/^\/(?=[a-z]:)/i, ""));
+        const same = (a: string[], b: string[]) =>
+          a.every((x, i) => x.toLowerCase() === defined(b[i]).toLowerCase());
+        if (d.length <= s.length ? same(d, s) : above && same(s, d))
+          return true;
+        continue;
+      }
+      const base = d.at(-1);
+      if (
+        base !== undefined &&
+        patternHits(
+          [base, "**"],
+          repoSegments(p, dir, { ...protect, root: undefined })?.segs ?? [],
+          above,
+          true,
+          tick,
+        )
+      )
+        return true;
+    }
+    return false;
+  };
   const hits: WriteHits = (target, dir, resolve, above) => {
+    if (inData(dir, resolve(target), above)) return true;
     const at = repoSegments(resolve(target), dir, protect);
     if (at === null) return false;
     const hit = globs.filter((g) =>
@@ -2691,11 +2741,16 @@ export function evaluateCommand({
   rules,
 }: CommandEvaluationInput): CommandDecision {
   // While a factory run is active the agent never touches the approval label: with an owner token it would count as the owner's.
-  if (factory && touchesApprovalLabel(command, factory.approval))
+  const approvalHit = factory
+    ? [factory.approval, ...(factory.approvals ?? [])].find((name) =>
+        touchesApprovalLabel(command, name),
+      )
+    : undefined;
+  if (factory && approvalHit !== undefined)
     return {
       action: "deny",
       rule: "factory-approval",
-      reason: `${rules.factory.why} The \`${factory.approval}\` label is the owner's to apply or remove; ask on the ticket instead.`,
+      reason: `${rules.factory.why} The \`${approvalHit}\` label is the owner's to apply or remove; ask on the ticket instead.`,
     };
   if (factory && ghHidden(command))
     return {
@@ -2710,11 +2765,16 @@ export function evaluateCommand({
       reason: `${rules.factory.ghUnseenWhy} Use gh's own subcommand (\`gh issue|pr|api …\`) instead of an alias or extension.`,
     };
   // Nor the takeover label: an approver sets it to hand the ticket to an attended run, which removes it once it claimed.
-  if (factory?.takeover && touchesApprovalLabel(command, factory.takeover))
+  const takeoverHit = factory
+    ? [factory.takeover, ...(factory.takeovers ?? [])].find(
+        (name) => name && touchesApprovalLabel(command, name),
+      )
+    : undefined;
+  if (factory && takeoverHit)
     return {
       action: "deny",
       rule: "factory-takeover",
-      reason: `${rules.factory.takeoverWhy} The \`${factory.takeover}\` label is the owner's to apply; ask on the ticket instead.`,
+      reason: `${rules.factory.takeoverWhy} The \`${takeoverHit}\` label is the owner's to apply; ask on the ticket instead.`,
     };
   // Nor a protected path (`.github/**`, `.factory/**`, FACTORY_PROTECTED_PATHS) through a shell write: the runtime counts the deny.
   const shielded =

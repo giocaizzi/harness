@@ -513,5 +513,18 @@
   ["env -- - bash -c 'rm -rf x'", "ask:rm", "G33", "#282 review: a shell payload behind env -- -"],
   ["gh pr create --fill", "allow:stack", "CTRL", "control: the head builds on an open PR but targets the default branch", {"stack": {"below": {"number": 7, "branch": "feat/a"}, "base": "main"}}],
   ["gh pr create --base feat/a --fill", "allow", "CTRL", "control: already stacked, no facts", {"stack": {}}],
-  ["gh pr merge 12 --auto --squash", "allow:stack", "CTRL", "control: merging a PR that carries an open PR's commits", {"stack": {"below": {"number": 7, "branch": "feat/a"}, "base": "main"}}]
+  ["gh pr merge 12 --auto --squash", "allow:stack", "CTRL", "control: merging a PR that carries an open PR's commits", {"stack": {"below": {"number": 7, "branch": "feat/a"}, "base": "main"}}],
+  ["echo 2 > /Users/me/.claude/plugins/data/guard-acme/result-gate/0123456789abcdef.txt", "deny:protected-path", "G34", "code audit: the block counter written by redirection", {"factory": "readable"}],
+  ["printf 2 | tee ~/.claude/plugins/data/guard-acme/result-gate/a.txt", "deny:protected-path", "G34", "code audit: tee to the counter through ~", {"factory": "readable"}],
+  ["cd /Users/me/.claude/plugins/data/guard-acme && echo 2 > result-gate/a.txt", "deny:protected-path", "G34", "code audit: a relative write after a followed cd", {"factory": "readable"}],
+  ["cp /tmp/two /Users/me/.claude/plugins/data/guard-acme/result-gate/a.txt", "deny:protected-path", "G34", "code audit: cp onto the counter", {"factory": "readable"}],
+  ["sed -i s/1/2/ /Users/me/.claude/plugins/data/guard-acme/result-gate/a.txt", "deny:protected-path", "G34", "code audit: sed -i on the counter", {"factory": "readable"}],
+  ["rm -rf /Users/me/.claude/plugins/data/guard-acme", "deny:protected-path", "G34", "code audit: removing the data directory", {"factory": "readable"}],
+  ["rm -rf /Users/me/.claude/plugins", "deny:protected-path", "G34", "code audit: removing a directory above the data directory", {"factory": "readable"}],
+  ["cat /Users/me/.claude/plugins/data/guard-acme/result-gate/a.txt", "allow", "G34", "control: reading the counter", {"factory": "readable"}],
+  ["echo 2 > /tmp/a.txt", "allow", "G34", "control: a write elsewhere", {"factory": "readable"}],
+  ["echo 2 > /Users/me/.claude/plugins/data/guard-acme/result-gate/a.txt", "allow", "G34", "control: the same write outside a factory run"],
+  ["gh issue edit 12 --add-label agent-ok", "deny:factory-approval", "G35", "code audit: the default approval label stays protected beside a configured one", {"factory": "configured"}],
+  ["gh issue edit 12 --remove-label factory-takeover", "deny:factory-takeover", "G35", "code audit: the default takeover label stays protected beside a configured one", {"factory": "configured"}],
+  ["gh issue edit 12 --add-label go-ahead", "deny:factory-approval", "G35", "code audit: the configured approval label", {"factory": "configured"}]
 ]

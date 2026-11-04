@@ -2832,3 +2832,84 @@ void test("factory run: the label check never throws and fails fast on a hang", 
 function tuple(...values) {
     return values;
 }
+void test("factory run: configured label names add to the defaults, which stay protected", () => {
+    const facts = {
+        approval: "agent-ok",
+        takeover: "factory-takeover",
+        approvals: ["go-ahead"],
+        takeovers: ["hand-over"],
+    };
+    const run = (command) => evaluateCommand({
+        command,
+        state: fresh(),
+        host: calm,
+        factory: facts,
+        rules,
+    });
+    for (const c of [
+        "gh issue edit 1 --add-label agent-ok",
+        "gh issue edit 1 --add-label go-ahead",
+    ]) {
+        const d = run(c);
+        assert.equal(d.action, "deny", c);
+        assert.equal(d.rule, "factory-approval", c);
+    }
+    assert.match(defined(run("gh issue edit 1 --add-label go-ahead").reason), /`go-ahead`/);
+    for (const c of [
+        "gh issue edit 1 --add-label factory-takeover",
+        "gh issue edit 1 --remove-label hand-over",
+    ]) {
+        const d = run(c);
+        assert.equal(d.action, "deny", c);
+        assert.equal(d.rule, "factory-takeover", c);
+    }
+    for (const c of [
+        "gh issue view 1 --json labels",
+        "gh issue list --label go-ahead --json number",
+        "gh issue edit 1 --add-label needs-owner",
+    ])
+        assert.equal(run(c).action, "allow", c);
+});
+void test("factory run: guard's data directory is a protected write target", () => {
+    const data = "/Users/me/.claude/plugins/data/guard-acme";
+    const factory = {
+        approval: "agent-ok",
+        protect: { root: "/Users/me/repo", cwd: "/Users/me/repo", data: [data] },
+    };
+    const run = (command, f = factory) => evaluateCommand({
+        command,
+        state: fresh(),
+        host: calm,
+        factory: f,
+        env: { HOME: "/Users/me", dirs: { has: () => true } },
+        rules,
+    });
+    for (const c of [
+        `echo 2 > ${data}/result-gate/x.txt`,
+        `echo 2 > ${data.toUpperCase()}/result-gate/x.txt`,
+        `printf 2 | tee ${data}/stop/state.json`,
+        "printf 2 | tee ~/.claude/plugins/data/guard-acme/result-gate/x.txt",
+        "echo 2 > $X/guard-acme/result-gate/x.txt",
+        `cd ${data} && echo 2 > result-gate/x.txt`,
+        `cp /tmp/two ${data}/result-gate/x.txt`,
+        `mv /tmp/two ${data}/result-gate/x.txt`,
+        `sed -i s/1/2/ ${data}/result-gate/x.txt`,
+        `rm -rf ${data}`,
+        `rm -rf ${data}/`,
+        "rm -rf /Users/me/.claude/plugins",
+        "rm -rf /Users/me/.claude",
+    ]) {
+        const d = run(c);
+        assert.equal(d.action, "deny", c);
+        assert.equal(d.rule, "protected-path", c);
+    }
+    for (const c of [
+        `cat ${data}/result-gate/x.txt`,
+        "echo 2 > /tmp/a.txt",
+        "echo 2 > /Users/me/.claude/plugins/data/other/x.txt",
+        "echo 2 > result-gate/x.txt",
+    ])
+        assert.equal(run(c).action, "allow", c);
+    assert.notEqual(run("rm -rf /Users/me/.claude/plugins/data/other").rule, "protected-path", "a sibling directory is not protected (the generic rm ask applies)");
+    assert.equal(run(`echo 2 > ${data}/result-gate/x.txt`, null).action, "allow", "no factory run: allowed");
+});

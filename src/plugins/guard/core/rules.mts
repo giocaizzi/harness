@@ -450,8 +450,8 @@ export const rules: GuardRules = {
       why: "runs a command the guard cannot read (encoded, decoded at run time, or nested too deep)",
     },
   ],
-  // The factory approval and takeover labels (config `labels.approval`, `labels.takeover`, defaults below) are never touched
-  // (applied or removed) while FACTORY_RUN_ID is set.
+  // The factory approval and takeover labels (the defaults below, never replaced; a config's `labels.approval` and
+  // `labels.takeover` add to them) are never touched (applied or removed) while FACTORY_RUN_ID is set.
   factory: {
     approval: "agent-ok",
     why: "A factory run must not touch the approval label: with an owner token the runtime would read it as the owner's approval.",

@@ -11,7 +11,7 @@ import type {
 // Row: [command, expected ('allow' | 'allow:<hint>' | 'ask:<rule>' | 'deny:<rule>'), bug id, source, options?]
 // options: { python: 'uv' } the repo's Python manager; { hints: true } the read and edit hints not yet shown;
 // { read: false } the command must not get the plain-read allow (`pureRead`), so the harness's own prompt decides.
-// { factory: 'readable' | 'unsure' } a factory run whose config was read, or could not be.
+// { factory: 'readable' | 'configured' | 'unsure' } a factory run whose config was read (with extra configured label names, for 'configured'), or could not be.
 // { stack: <facts> } the stacked-PR facts `stackFacts` gathered: { below: { number, branch }, base }, or {} for none.
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -60,8 +60,24 @@ const run = (argv: string[]) => {
   return null;
 };
 
-const FACTORY: Record<"readable" | "unsure", FactoryFacts> = {
-  readable: { approval: "agent-ok", takeover: "factory-takeover" },
+const PROTECT = {
+  root: "/Users/me/repo",
+  cwd: "/Users/me/repo",
+  data: ["/Users/me/.claude/plugins/data/guard-acme"],
+};
+const FACTORY: Record<"readable" | "configured" | "unsure", FactoryFacts> = {
+  readable: {
+    approval: "agent-ok",
+    takeover: "factory-takeover",
+    protect: PROTECT,
+  },
+  configured: {
+    approval: "agent-ok",
+    takeover: "factory-takeover",
+    approvals: ["go-ahead"],
+    takeovers: ["hand-over"],
+    protect: PROTECT,
+  },
   unsure: {
     approval: "agent-ok",
     takeover: "factory-takeover",
@@ -154,6 +170,7 @@ function isOptions(value: unknown): value is CorpusOptions {
     (value.factory === undefined ||
       value.factory === null ||
       value.factory === "readable" ||
+      value.factory === "configured" ||
       value.factory === "unsure") &&
     (value.stack === undefined || value.stack === null || isStack(value.stack))
   );
