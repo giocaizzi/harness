@@ -444,7 +444,7 @@ process.stdout.write(JSON.stringify(await runChecker(c.path, {}, {}, { timeoutMs
 );
 
 void test(
-  "result check: a checker killed by a signal is a why",
+  "posix checker: a checker killed by a signal is a why",
   posixOnly,
   async () => {
     assert.match(

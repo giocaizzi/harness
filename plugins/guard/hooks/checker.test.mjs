@@ -258,6 +258,6 @@ process.stdout.write(JSON.stringify(await runChecker(c.path, {}, {}, { timeoutMs
     assert.equal(out.status, 0, out.stderr);
     assert.deepEqual(JSON.parse(out.stdout), { why: "timed out after 0.5 s" });
 });
-void test("result check: a checker killed by a signal is a why", posixOnly, async () => {
+void test("posix checker: a checker killed by a signal is a why", posixOnly, async () => {
     assert.match(why(await run("export const resultErrors = () => process.kill(process.pid, 'SIGKILL')")), /^exited with signal SIGKILL before answering/);
 });
