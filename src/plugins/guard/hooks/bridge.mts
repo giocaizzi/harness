@@ -10,6 +10,8 @@ import { keepAwake } from "./awake.mjs";
 import { fallbackDataDir } from "./data.mjs";
 import { handle, hostFacts, pythonManager, run } from "./guard.mjs";
 import { type SpawnSyncFn, lintFile } from "./lint.mjs";
+import { createRegistrationCache } from "./registration.mjs";
+import type { RegistrationCache } from "./registration.mjs";
 import { gateFailClosed, stopCheck } from "./stop.mjs";
 import { recordAttrs } from "./telemetry.mjs";
 import type {
@@ -56,6 +58,8 @@ export function createGuard({
   dataDir = DATA_DIR,
   deps = {},
 }: CreateGuardOptions): GuardBridge {
+  // one per bridge: the parsed run manifest is reused while its file is unchanged
+  const registrationCache = createRegistrationCache();
   const d: GuardDeps & {
     dataDir: string;
     env: NodeJS.ProcessEnv;
@@ -64,6 +68,7 @@ export function createGuard({
     noAsk: boolean;
     processId: number;
     pythonManager: typeof pythonManager;
+    registrationCache: RegistrationCache;
     run: typeof run;
   } = {
     dataDir,
@@ -74,6 +79,7 @@ export function createGuard({
     run,
     pythonManager,
     noAsk,
+    registrationCache,
     emit: (event, attrs, cwd) =>
       emit(process.env, event, recordAttrs(attrs, cwd, harness)),
     // The harness's own usage, as the harness (service.name opencode or pi): neither exports telemetry itself.
@@ -226,7 +232,7 @@ export function createGuard({
       }
     },
 
-    // The reason to keep going (the factory result gate or make check), or null. `active` is true when the last stop was already blocked.
+    // The reason to keep going (the run result gate or make check), or null. `active` is true when the last stop was already blocked.
     // Async: make runs detached, so the harness's event loop keeps going meanwhile.
     async stop({
       cwd,
@@ -245,6 +251,7 @@ export function createGuard({
             ? R
             : never,
           {
+            gate: { cache: registrationCache },
             report: (attrs) => {
               void d.emit?.("guard.stop", { ...attrs, cmd_class: "stop" }, cwd);
             },
@@ -252,8 +259,10 @@ export function createGuard({
         );
         return out?.decision === "block" ? (out.reason ?? null) : null;
       } catch {
-        // stopCheck reads process.env: a launcher-named checker or a runtime run keeps the stop blocked
-        return gateFailClosed(process.env, { cwd }, "internal error");
+        // stopCheck reads process.env: a registered run's result gate, or a failed registration, keeps the stop blocked
+        return gateFailClosed(process.env, { cwd }, "internal error", {
+          cache: registrationCache,
+        });
       }
     },
 

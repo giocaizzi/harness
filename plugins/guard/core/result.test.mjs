@@ -3,7 +3,6 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import { test } from "node:test";
 import { checkerOutput, checkerPathError, coreErrors, couldNotRun, report, show, } from "./result.mjs";
-const factory = (await import(new URL("../../factory/skills/ticket-run/scripts/check-result.mjs", import.meta.url).href));
 const good = { run_id: "run-1", ticket: "acme/app#12", end_state: "done" };
 void test("result check: a valid core passes, each field is named when wrong", () => {
     assert.deepEqual(coreErrors(good, {}), []);
@@ -14,37 +13,18 @@ void test("result check: a valid core passes, each field is named when wrong", (
     assert.equal(coreErrors({}).length, 3);
 });
 void test("result check: the run id and ticket must equal the environment's", () => {
-    const env = { FACTORY_RUN_ID: " run-2 ", FACTORY_TICKET: "acme/app#13" };
+    const env = { GUARD_RUN_ID: " run-2 ", GUARD_RUN_TICKET: "acme/app#13" };
     assert.deepEqual(coreErrors(good, env), [
-        'run_id "run-1" differs from FACTORY_RUN_ID "run-2"',
-        'ticket "acme/app#12" differs from FACTORY_TICKET "acme/app#13"',
+        'run_id "run-1" differs from GUARD_RUN_ID "run-2"',
+        'ticket "acme/app#12" differs from GUARD_RUN_TICKET "acme/app#13"',
     ]);
-    assert.deepEqual(coreErrors(good, { FACTORY_RUN_ID: "  " }), []);
+    assert.deepEqual(coreErrors(good, { GUARD_RUN_ID: "  " }), []);
 });
 void test("result check: anything but an object is one error", () => {
     for (const v of [null, [], "x", 3, undefined]) {
         const errors = coreErrors(v, {});
         assert.equal(errors.length, 1);
         assert.match(errors[0] ?? "", /^result\.json must hold a JSON object, got /);
-    }
-});
-void test("result check: the texts equal the factory checker's, so a duplicate dedupes", () => {
-    const env = { FACTORY_RUN_ID: "run-2", FACTORY_TICKET: "acme/app#13" };
-    const cases = [
-        good,
-        { ...good, run_id: 5, ticket: "nope" },
-        { ...good, run_id: "", ticket: undefined },
-        null,
-        [],
-        "text",
-    ];
-    for (const c of cases) {
-        for (const e of [env, {}]) {
-            const theirs = factory.resultErrors(c, e);
-            for (const line of coreErrors(c, e)) {
-                assert.ok(theirs.includes(line), `${line} not in ${theirs.join("|")}`);
-            }
-        }
     }
 });
 void test("result check: show and report cap what they echo", () => {
@@ -108,13 +88,13 @@ void test("result check: a checker's output is bounded", () => {
 });
 void test("result check: could-not-run prints the path raw, cut and without control characters", () => {
     assert.deepEqual(couldNotRun("/x/c.mjs", "no such file"), [
-        "result checker /x/c.mjs (FACTORY_RESULT_CHECKER) could not run: no such file",
+        "result checker /x/c.mjs (result.checker) could not run: no such file",
     ]);
     assert.deepEqual(couldNotRun("C:\\x\\c.mjs", "no such file"), [
-        "result checker C:\\x\\c.mjs (FACTORY_RESULT_CHECKER) could not run: no such file",
+        "result checker C:\\x\\c.mjs (result.checker) could not run: no such file",
     ]);
     const cut = couldNotRun(`/${"a".repeat(300)}`, "x")[0] ?? "";
     assert.ok(cut.includes(`${"a".repeat(199)}… (`));
     assert.ok(!cut.includes("a".repeat(201)));
-    assert.equal(couldNotRun("/a\n\u001b[31m\0b\u007f", "x")[0], "result checker /a??[31m?b? (FACTORY_RESULT_CHECKER) could not run: x");
+    assert.equal(couldNotRun("/a\n\u001b[31m\0b\u007f", "x")[0], "result checker /a??[31m?b? (result.checker) could not run: x");
 });

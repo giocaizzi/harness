@@ -33,7 +33,8 @@ import {
   stopCheck,
   takeLock,
 } from "./stop.mjs";
-import type { SyncRunner } from "./stop.mjs";
+import type { CheckerOpts, SyncRunner } from "./stop.mjs";
+import type { HookInput } from "./types.mjs";
 
 const tmp = (): string => mkdtempSync(join(tmpdir(), "guard-test-"));
 const LINT_ROOT = fileURLToPath(new URL("./.lint-test/", import.meta.url));
@@ -49,10 +50,11 @@ delete process.env.GUARD_STOP_CHECK;
 delete process.env.GUARD_STOP_TIMEOUT_MS;
 for (const k of [
   "FACTORY_RUN_ID",
-  "FACTORY_TICKET",
-  "FACTORY_ATTENDED_RUN_ID",
-  "FACTORY_ATTENDED_TICKET",
-  "FACTORY_RUN_FILE",
+  "FACTORY_EVENTS_FILE",
+  "GUARD_RUN_ID",
+  "GUARD_RUN_MANIFEST",
+  "GUARD_RUN_TICKET",
+  "GUARD_RUN_MODE",
   "GUARD_RESULT_GATE",
 ]) {
   Reflect.deleteProperty(process.env, k);
@@ -337,13 +339,19 @@ void test("stop: GUARD_STOP_CHECK=off disables it", async () => {
   }
 });
 
-const gateRepo = (result?: unknown): string => {
+// The result gate. A registered run needs a trusted manifest: written to its own temp dir and made out of reach
+// through the PrepareOptions probes (OUT_OF_REACH), as hooks/registration.test.mts does.
+const TEMPLATE = ".acme/runs/{ticket_number}/result.json";
+const RESULT_REL = ".acme/runs/12/result.json";
+const posix = process.platform === "win32" ? { skip: "no posix" } : {};
+
+const gateRepo = (result?: unknown, rel: string = RESULT_REL): string => {
   const repo = tmp();
   execFileSync("git", ["init", "-q", repo]);
   if (result !== undefined) {
-    mkdirSync(join(repo, ".factory", "runs", "12"), { recursive: true });
+    mkdirSync(dirname(join(repo, rel)), { recursive: true });
     writeFileSync(
-      join(repo, ".factory", "runs", "12", "result.json"),
+      join(repo, rel),
       typeof result === "string" ? result : JSON.stringify(result),
     );
   }
@@ -369,52 +377,106 @@ const validResult = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
-const RUNTIME: Record<string, string> = {
-  FACTORY_RUN_ID: "run-1",
-  FACTORY_TICKET: "acme/app#12",
+const OUT_OF_REACH = {
+  writable: () => false,
+  owner: () => false,
+  readOnlyMount: () => false,
 };
-const ATTENDED: Record<string, string> = {
-  FACTORY_ATTENDED_RUN_ID: "run-1",
-  FACTORY_ATTENDED_TICKET: "acme/app#12",
+const manifest = (
+  result: Record<string, unknown> | null = { file: TEMPLATE },
+): string => {
+  const p = join(tmp(), "run.json");
+  writeFileSync(
+    p,
+    JSON.stringify({
+      contract: 2,
+      runner: "acme-runner",
+      requires: result ? ["result-gate"] : [],
+      ...(result ? { result } : {}),
+    }),
+  );
+  return p;
 };
+const envFor = (
+  m: string,
+  extra: Record<string, string> = {},
+): Record<string, string> => ({
+  GUARD_RUN_MANIFEST: m,
+  GUARD_RUN_ID: "run-1",
+  GUARD_RUN_TICKET: "acme/app#12",
+  ...extra,
+});
+const RUNTIME = envFor(manifest());
+const ATTENDED = { ...RUNTIME, GUARD_RUN_MODE: "attended" };
 
-void test("result gate: a runtime run with no result.json is blocked twice, then may stop", async () => {
+const gate = (
+  input: HookInput,
+  env: NodeJS.ProcessEnv,
+  run?: SyncRunner,
+  onEvent?: (attrs: Record<string, unknown>) => void,
+  opts: CheckerOpts = {},
+): Promise<string | null> =>
+  resultGate(input, run, env, onEvent, {
+    ...OUT_OF_REACH,
+    dataDir: process.env.CLAUDE_PLUGIN_DATA,
+    ...opts,
+  });
+const gitFails: SyncRunner = () =>
+  ({
+    status: 128,
+    stdout: "",
+    stderr: "",
+  }) as unknown as SpawnSyncReturns<string>;
+
+// A checker module written into its own temp dir, and a registration that names it.
+const checkerFile = (body: string): string => {
+  const p = join(tmp(), "checker.mjs");
+  writeFileSync(p, body);
+  return p;
+};
+const passes = "export const resultErrors = () => []";
+const strictEnv = (
+  checker: string,
+  extra: Record<string, string> = {},
+): Record<string, string> =>
+  envFor(manifest({ file: TEMPLATE, checker }), extra);
+const STRICT = strictEnv(checkerFile(passes));
+
+void test("result gate: an unattended run with no result file is blocked twice, then may stop", async () => {
   const cwd = gateRepo();
   try {
-    const first = await resultGate({ cwd }, undefined, RUNTIME);
+    const first = await gate({ cwd }, RUNTIME);
     assert.match(
       first ?? "",
-      /block 1 of 2\): .*result\.json is not a valid result for run run-1:\nno such file\n/,
+      /^Run result gate \(block 1 of 2\): .*result\.json is not a valid result for run run-1:\nno such file\n/,
     );
-    assert.match(first ?? "", /write-result\.mjs, never by hand/);
+    assert.match(
+      first ?? "",
+      /\nFix the result file until it passes the core check\.\nA subagent ignores this and ends its turn: the main session writes the file\.$/,
+    );
+    assert.doesNotMatch(first ?? "", /factory|write-result|FACTORY_/i);
     const events: Record<string, unknown>[] = [];
     assert.match(
-      (await resultGate(
-        { cwd, stop_hook_active: true },
-        undefined,
-        RUNTIME,
-        (e) => events.push(e),
+      (await gate({ cwd, stop_hook_active: true }, RUNTIME, undefined, (e) =>
+        events.push(e),
       )) ?? "",
-      /block 2 of 2[\s\S]*A subagent \(such as the verifier\) ignores this/,
+      /block 2 of 2/,
     );
     assert.equal(
-      await resultGate({ cwd }, undefined, RUNTIME, (e) => events.push(e)),
+      await gate({ cwd }, RUNTIME, undefined, (e) => events.push(e)),
       null,
     );
     assert.deepEqual(events, [
       {
         result: "block",
         target: "result-gate",
-        runner: "runtime",
+        mode: "unattended",
         blocks: 2,
       },
-      { result: "capped", target: "result-gate", runner: "runtime" },
+      { result: "capped", target: "result-gate", mode: "unattended" },
     ]);
     assert.match(
-      (await resultGate({ cwd }, undefined, {
-        ...RUNTIME,
-        FACTORY_RUN_ID: "run-2",
-      })) ?? "",
+      (await gate({ cwd }, { ...RUNTIME, GUARD_RUN_ID: "run-2" })) ?? "",
       /block 1 of 2/,
     );
   } finally {
@@ -422,181 +484,77 @@ void test("result gate: a runtime run with no result.json is blocked twice, then
   }
 });
 
-void test("result gate: a runtime run's invalid result, broken JSON or another run's file blocks with the errors; a valid one passes", async () => {
+void test("result gate: an unattended run's invalid result, broken JSON, another run's or ticket's file blocks with the errors; a valid one passes", async () => {
   try {
     assert.match(
-      (await resultGate(
-        { cwd: gateRepo(validResult({ ticket: 12 })) },
-        undefined,
-        RUNTIME,
-      )) ?? "",
+      (await gate({ cwd: gateRepo(validResult({ ticket: 12 })) }, RUNTIME)) ??
+        "",
       /ticket must be a string of the form/,
     );
     assert.match(
-      (await resultGate(
-        { cwd: gateRepo('{"schema": 2,') },
-        undefined,
-        RUNTIME,
-      )) ?? "",
+      (await gate({ cwd: gateRepo('{"schema": 2,') }, RUNTIME)) ?? "",
       /not valid JSON/,
     );
     assert.match(
-      (await resultGate(
+      (await gate(
         { cwd: gateRepo(validResult({ run_id: "run-0" })) },
-        undefined,
         RUNTIME,
       )) ?? "",
-      /run_id "run-0" differs from FACTORY_RUN_ID "run-1"/,
+      /run_id "run-0" differs from GUARD_RUN_ID "run-1"/,
     );
-    assert.equal(
-      await resultGate({ cwd: gateRepo(validResult()) }, undefined, RUNTIME),
-      null,
+    assert.match(
+      (await gate(
+        { cwd: gateRepo(validResult({ ticket: "acme/app#13" })) },
+        RUNTIME,
+      )) ?? "",
+      /ticket "acme\/app#13" differs from GUARD_RUN_TICKET "acme\/app#12"/,
     );
+    assert.equal(await gate({ cwd: gateRepo(validResult()) }, RUNTIME), null);
   } finally {
     delete process.env.CLAUDE_PLUGIN_DATA;
   }
 });
 
-void test("result gate: a group run's tasks follow FACTORY_RUN_FILE, a relative path read from the session's directory", async () => {
-  const task = (n: number) => ({
-    ticket: "acme/app#" + String(n),
-    outcome: "done",
-    reason: "",
-    reason_code: null,
-    pr_link: "closes",
-  });
-  const group = validResult({
-    schema: 3,
-    pr: "https://github.com/acme/app/pull/20",
-    tasks: [task(12), task(13)],
-  });
-  const withRun = (members: readonly number[]): string => {
-    const cwd = gateRepo(group);
-    writeFileSync(
-      join(cwd, "run.json"),
-      JSON.stringify({
-        schema: 1,
-        run_id: "run-1",
-        lead: "acme/app#12",
-        members: members.map((n) => ({ ticket: "acme/app#" + String(n) })),
-      }),
-    );
-    return cwd;
-  };
-  const env = { ...RUNTIME, FACTORY_RUN_FILE: "run.json" };
+void test("result gate: the manifest's hint replaces the default one, and strict has its own default", async () => {
   try {
-    assert.equal(
-      await resultGate({ cwd: withRun([12, 13]) }, undefined, env),
-      null,
+    const hint = "Write it with `acme-write`, then run `acme-verify`.";
+    const out = await gate(
+      { cwd: gateRepo() },
+      envFor(manifest({ file: TEMPLATE, hint })),
     );
     assert.match(
-      (await resultGate({ cwd: withRun([12, 14]) }, undefined, env)) ?? "",
-      /block 1 of 2[\s\S]*differ from the run file's members/,
+      out ?? "",
+      /\nno such file\nWrite it with `acme-write`, then run `acme-verify`\.\nA subagent ignores this/,
     );
+    assert.doesNotMatch(out ?? "", /Fix the result file/);
+    const strict = await gate({ cwd: gateRepo() }, STRICT);
     assert.match(
-      (await resultGate({ cwd: gateRepo(group) }, undefined, env)) ?? "",
-      /block 1 of 2[\s\S]*cannot check against the run file/,
+      strict ?? "",
+      /\nFix the result file until it passes the core check and the runner's checker; never edit the checker\.\nA subagent/,
     );
-    const single = (over?: Record<string, unknown>): string => {
-      const cwd = gateRepo(validResult(over));
-      writeFileSync(
-        join(cwd, "run.json"),
-        JSON.stringify({
-          schema: 1,
-          run_id: "run-1",
-          lead: "acme/app#12",
-          members: [{ ticket: "acme/app#12" }],
-        }),
-      );
-      return cwd;
-    };
-    assert.match(
-      (await resultGate({ cwd: single() }, undefined, env)) ?? "",
-      /block 1 of 2[\s\S]*FACTORY_RUN_FILE is set, so this group run's result needs tasks/,
+    const strictHint = await gate(
+      { cwd: gateRepo() },
+      envFor(manifest({ file: TEMPLATE, hint, checker: checkerFile(passes) })),
     );
-    assert.equal(
-      await resultGate(
-        {
-          cwd: single({
-            end_state: "failed",
-            reason: "refuse: not approved",
-            reason_code: "auth",
-          }),
-        },
-        undefined,
-        env,
-      ),
-      null,
-    );
-    assert.match(
-      (await resultGate(
-        {
-          cwd: single({
-            end_state: "failed",
-            reason: "refuse: not approved",
-            reason_code: "auth",
-            pr: "https://github.com/acme/app/pull/20",
-          }),
-        },
-        undefined,
-        env,
-      )) ?? "",
-      /block 1 of 2[\s\S]*needs tasks/,
-    );
+    assert.match(strictHint ?? "", /\nWrite it with `acme-write`/);
+    assert.doesNotMatch(strictHint ?? "", /never edit the checker/);
+  } finally {
+    delete process.env.CLAUDE_PLUGIN_DATA;
+  }
+});
 
-    const merged = validResult({
-      schema: 3,
-      end_state: "parked",
-      reason: "the PR waits on an owner merge",
-      reason_code: "merge_gate",
-      pr: "https://github.com/acme/app/pull/20",
-      tasks: [task(12), task(13)],
-    });
-    const mergedRepo = (): string => {
-      const cwd = gateRepo(merged);
-      writeFileSync(
-        join(cwd, "run.json"),
-        JSON.stringify({
-          schema: 1,
-          run_id: "run-1",
-          lead: "acme/app#12",
-          members: [{ ticket: "acme/app#12" }, { ticket: "acme/app#13" }],
-        }),
-      );
-      return cwd;
-    };
-    assert.equal(await resultGate({ cwd: mergedRepo() }, undefined, env), null);
-
-    const mixed = validResult({
-      schema: 3,
-      pr: "https://github.com/acme/app/pull/20",
-      tasks: [
-        task(12),
-        {
-          ...task(13),
-          outcome: "parked",
-          reason: "waits",
-          reason_code: "question",
-          pr_link: "refs",
-        },
-      ],
-    });
-    const mixedRepo = (): string => {
-      const cwd = gateRepo(mixed);
-      writeFileSync(
-        join(cwd, "run.json"),
-        JSON.stringify({
-          schema: 1,
-          run_id: "run-1",
-          lead: "acme/app#12",
-          members: [{ ticket: "acme/app#12" }, { ticket: "acme/app#13" }],
-        }),
-      );
-      return cwd;
-    };
+void test("result gate: a result.file with {run_id} only works without GUARD_RUN_TICKET, and compares no ticket", async () => {
+  try {
+    const env: Record<string, string | undefined> = envFor(
+      manifest({ file: ".acme/runs/{run_id}/result.json" }),
+    );
+    delete env.GUARD_RUN_TICKET;
+    const rel = ".acme/runs/run-1/result.json";
+    const other = validResult({ ticket: "acme/app#99" });
+    assert.equal(await gate({ cwd: gateRepo(other, rel) }, env), null);
     assert.match(
-      (await resultGate({ cwd: mixedRepo() }, undefined, env)) ?? "",
-      /block 1 of 2[\s\S]*allow end_state parked at most, got "done"/,
+      (await gate({ cwd: gateRepo(undefined, rel) }, env)) ?? "",
+      /\.acme\/runs\/run-1\/result\.json is not a valid result[\s\S]*no such file/,
     );
   } finally {
     delete process.env.CLAUDE_PLUGIN_DATA;
@@ -605,82 +563,55 @@ void test("result gate: a group run's tasks follow FACTORY_RUN_FILE, a relative 
 
 void test("result gate: an attended run is held only to an invalid file carrying its own run id", async () => {
   try {
+    assert.equal(await gate({ cwd: gateRepo() }, ATTENDED), null);
+    assert.equal(await gate({ cwd: gateRepo("not json") }, ATTENDED), null);
     assert.equal(
-      await resultGate({ cwd: gateRepo() }, undefined, ATTENDED),
-      null,
-    );
-    assert.equal(
-      await resultGate({ cwd: gateRepo("not json") }, undefined, ATTENDED),
-      null,
-    );
-    assert.equal(
-      await resultGate(
+      await gate(
         { cwd: gateRepo(validResult({ run_id: "other", ticket: 12 })) },
-        undefined,
         ATTENDED,
       ),
       null,
     );
-    assert.equal(
-      await resultGate({ cwd: gateRepo(validResult()) }, undefined, ATTENDED),
-      null,
-    );
+    assert.equal(await gate({ cwd: gateRepo(validResult()) }, ATTENDED), null);
+    const events: Record<string, unknown>[] = [];
     assert.match(
-      (await resultGate(
+      (await gate(
         { cwd: gateRepo(validResult({ ticket: 12 })) },
-        undefined,
         ATTENDED,
+        undefined,
+        (e) => events.push(e),
       )) ?? "",
       /block 1 of 2[\s\S]*ticket must be a string/,
     );
+    assert.deepEqual(events, [
+      { result: "block", target: "result-gate", mode: "attended", blocks: 1 },
+    ]);
   } finally {
     delete process.env.CLAUDE_PLUGIN_DATA;
   }
 });
 
-void test("result gate: off, a subagent, no factory run or a bad ticket pass; an attended run passes without a git checkout", async () => {
+void test("result gate: off, a subagent, no run or a registration without a result pass; an attended run passes without a git checkout", async () => {
   try {
     const cwd = gateRepo();
     assert.equal(
-      await resultGate({ cwd }, undefined, {
-        ...RUNTIME,
-        GUARD_RESULT_GATE: "off",
-      }),
+      await gate({ cwd }, { ...RUNTIME, GUARD_RESULT_GATE: "off" }),
       null,
     );
+    assert.equal(await gate({ cwd, agent_id: "a1" }, RUNTIME), null);
     assert.equal(
-      await resultGate({ cwd, agent_id: "a1" }, undefined, RUNTIME),
+      await gate({ cwd, hook_event_name: "SubagentStop" }, RUNTIME),
       null,
     );
-    assert.equal(
-      await resultGate(
-        { cwd, hook_event_name: "SubagentStop" },
-        undefined,
-        RUNTIME,
-      ),
-      null,
-    );
-    assert.equal(await resultGate({ cwd }, undefined, {}), null);
-    assert.equal(
-      await resultGate({ cwd }, undefined, {
-        ...RUNTIME,
-        FACTORY_TICKET: "12",
-      }),
-      null,
-    );
-    const mockGitFail: SyncRunner = () =>
-      ({
-        status: 128,
-        stdout: "",
-        stderr: "",
-      }) as unknown as SpawnSyncReturns<string>;
-    assert.equal(await resultGate({ cwd }, mockGitFail, ATTENDED), null);
+    assert.equal(await gate({ cwd }, {}), null);
+    assert.equal(await gate({ cwd }, envFor(manifest(null))), null);
+    assert.equal(await gate({ cwd }, ATTENDED, gitFails), null);
     const events: Record<string, unknown>[] = [];
     const assertFail: SyncRunner = () => {
       assert.fail("an attended gate error fails open");
     };
     assert.equal(
-      await resultGate({ cwd }, assertFail, ATTENDED, (e) => events.push(e)),
+      await gate({ cwd }, ATTENDED, assertFail, (e) => events.push(e)),
       null,
     );
     assert.deepEqual(
@@ -692,43 +623,77 @@ void test("result gate: off, a subagent, no factory run or a bad ticket pass; an
   }
 });
 
-const RUNTIME_BLOCK =
-  /^Factory result gate: could not check the result for run run-1 \((.*)\); a runtime run never fails open, so the stop stays blocked\.$/;
+const UNATTENDED_BLOCK =
+  /^Run result gate: could not check the result for run run-1 \((.*)\); an unattended run never fails open, so the stop stays blocked\.$/;
 
-void test("result gate: a runtime run never fails open on a missing checkout or a throwing runner", async () => {
+void test("result gate: an unattended run never fails open on a missing checkout or a throwing runner", async () => {
   try {
     const cwd = gateRepo();
-    const mockGitFail: SyncRunner = () =>
-      ({
-        status: 128,
-        stdout: "",
-        stderr: "",
-      }) as unknown as SpawnSyncReturns<string>;
-    const gitOut = await resultGate({ cwd }, mockGitFail, RUNTIME);
-    assert.match(gitOut ?? "", RUNTIME_BLOCK);
+    const gitOut = await gate({ cwd }, RUNTIME, gitFails);
+    assert.match(gitOut ?? "", UNATTENDED_BLOCK);
     assert.match(gitOut ?? "", /git rev-parse failed/);
     const events: Record<string, unknown>[] = [];
     const throwing: SyncRunner = () => {
       throw new Error("spawn failed token=abc123");
     };
-    const out = await resultGate({ cwd }, throwing, RUNTIME, (e) =>
-      events.push(e),
-    );
-    assert.match(out ?? "", RUNTIME_BLOCK);
+    const out = await gate({ cwd }, RUNTIME, throwing, (e) => events.push(e));
+    assert.match(out ?? "", UNATTENDED_BLOCK);
     assert.match(out ?? "", /token=\*\*\*/);
     assert.deepEqual(
       events.map((e) => [e.result, e.target]),
       [["error", "result-gate"]],
     );
     // these blocks are not counted: the cap still allows two result blocks
-    assert.match(
-      (await resultGate({ cwd }, undefined, RUNTIME)) ?? "",
-      /block 1 of 2/,
-    );
+    assert.match((await gate({ cwd }, RUNTIME)) ?? "", /block 1 of 2/);
   } finally {
     delete process.env.CLAUDE_PLUGIN_DATA;
   }
 });
+
+// A result file path that leaves the repo or lands in .git or .github is a gate error: an unattended run stays blocked.
+void test(
+  "result gate: a result file path through a symlink outside the repo or into .git or .github blocks an unattended run",
+  posix,
+  async () => {
+    try {
+      const outside = tmp();
+      const out = gateRepo();
+      symlinkSync(outside, join(out, ".acme"));
+      const outOut = await gate({ cwd: out }, RUNTIME);
+      assert.match(outOut ?? "", UNATTENDED_BLOCK);
+      assert.match(outOut ?? "", /result file resolves outside the repo/);
+      assert.doesNotMatch(outOut ?? "", /block \d of 2/);
+      assert.deepEqual(readdirSync(outside), []);
+      // an attended gate error fails open
+      assert.equal(await gate({ cwd: out }, ATTENDED), null);
+      for (const name of [
+        ".git",
+        ".github",
+        ".GIT",
+        "GIT~1",
+        "github~2",
+        ".git.",
+        ".git ",
+        ".github. .",
+      ]) {
+        const repo = gateRepo();
+        mkdirSync(join(repo, name), { recursive: true });
+        symlinkSync(name, join(repo, ".acme"));
+        assert.match(
+          (await gate({ cwd: repo }, RUNTIME)) ?? "",
+          /result file resolves under \.git or \.github/,
+          name,
+        );
+      }
+      // a symlink that stays inside the repo is followed
+      const inside = gateRepo(validResult(), "real/runs/12/result.json");
+      symlinkSync("real", join(inside, ".acme"));
+      assert.equal(await gate({ cwd: inside }, RUNTIME), null);
+    } finally {
+      delete process.env.CLAUDE_PLUGIN_DATA;
+    }
+  },
+);
 
 // The block counter of run-1, where stop.mts keeps it.
 const counterPath = (): string =>
@@ -747,14 +712,13 @@ const plantCounter = (plant: (file: string) => void): string => {
 const mkfifo = (file: string): void => {
   assert.equal(spawnSync("mkfifo", [file]).status, 0);
 };
-const posix = process.platform === "win32" ? { skip: "no mkfifo" } : {};
 
-void test("result gate: a counter set to 2 releases an unset runtime run (the unset trust model)", async () => {
+void test("result gate: a counter set to 2 releases an unset unattended run (the unset trust model)", async () => {
   try {
     const cwd = plantCounter((f) => {
       writeFileSync(f, "2");
     });
-    assert.equal(await resultGate({ cwd }, undefined, RUNTIME), null);
+    assert.equal(await gate({ cwd }, RUNTIME), null);
   } finally {
     delete process.env.CLAUDE_PLUGIN_DATA;
   }
@@ -767,7 +731,7 @@ void test("result gate: a malformed, empty or oversized counter counts as 0, so 
         writeFileSync(f, text);
       });
       assert.match(
-        (await resultGate({ cwd }, undefined, RUNTIME)) ?? "",
+        (await gate({ cwd }, RUNTIME)) ?? "",
         /block 1 of 2/,
         JSON.stringify(text),
       );
@@ -776,10 +740,7 @@ void test("result gate: a malformed, empty or oversized counter counts as 0, so 
     const cwd = plantCounter((f) => {
       writeFileSync(f, " 1\n");
     });
-    assert.match(
-      (await resultGate({ cwd }, undefined, RUNTIME)) ?? "",
-      /block 2 of 2/,
-    );
+    assert.match((await gate({ cwd }, RUNTIME)) ?? "", /block 2 of 2/);
   } finally {
     delete process.env.CLAUDE_PLUGIN_DATA;
   }
@@ -792,10 +753,7 @@ void test(
     try {
       const cwd = plantCounter(mkfifo);
       const started = Date.now();
-      assert.match(
-        (await resultGate({ cwd }, undefined, RUNTIME)) ?? "",
-        /block 1 of 2/,
-      );
+      assert.match((await gate({ cwd }, RUNTIME)) ?? "", /block 1 of 2/);
       assert.ok(Date.now() - started < 5000);
       assert.ok(lstatSync(counterPath()).isFile());
       assert.equal(readFileSync(counterPath(), "utf8"), "1");
@@ -816,10 +774,7 @@ void test(
         const cwd = plantCounter((f) => {
           symlinkSync(to, f);
         });
-        assert.match(
-          (await resultGate({ cwd }, undefined, RUNTIME)) ?? "",
-          /block 1 of 2/,
-        );
+        assert.match((await gate({ cwd }, RUNTIME)) ?? "", /block 1 of 2/);
         assert.ok(lstatSync(counterPath()).isFile());
         assert.equal(readFileSync(counterPath(), "utf8"), "1");
       }
@@ -837,10 +792,7 @@ void test("result gate: a hardlink at the counter path is replaced and counted, 
     const cwd = plantCounter((f) => {
       linkSync(other, f);
     });
-    assert.match(
-      (await resultGate({ cwd }, undefined, RUNTIME)) ?? "",
-      /block 1 of 2/,
-    );
+    assert.match((await gate({ cwd }, RUNTIME)) ?? "", /block 1 of 2/);
     assert.equal(readFileSync(other, "utf8"), "9");
     assert.equal(readFileSync(counterPath(), "utf8"), "1");
     assert.equal(lstatSync(counterPath()).nlink, 1);
@@ -849,26 +801,26 @@ void test("result gate: a hardlink at the counter path is replaced and counted, 
   }
 });
 
-void test("result gate: a directory at the counter path fails the write: a runtime run blocks closed, an attended one goes", async () => {
+void test("result gate: a directory at the counter path fails the write: an unattended run blocks closed, an attended one goes", async () => {
   try {
     const cwd = plantCounter((f) => {
       mkdirSync(f);
     });
-    const out = (await resultGate({ cwd }, undefined, RUNTIME)) ?? "";
-    assert.match(out, RUNTIME_BLOCK);
+    const out = (await gate({ cwd }, RUNTIME)) ?? "";
+    assert.match(out, UNATTENDED_BLOCK);
     assert.doesNotMatch(out, /block \d of 2/);
     assert.deepEqual(
       readdirSync(dirname(counterPath())).filter((n) => n.endsWith(".tmp")),
       [],
     );
-    assert.equal(await resultGate({ cwd }, undefined, ATTENDED), null);
+    assert.equal(await gate({ cwd }, ATTENDED), null);
   } finally {
     delete process.env.CLAUDE_PLUGIN_DATA;
   }
 });
 
 void test(
-  "result gate: an unwritable counter directory blocks a runtime run closed",
+  "result gate: an unwritable counter directory blocks an unattended run closed",
   {
     skip:
       process.platform === "win32" ||
@@ -882,10 +834,7 @@ void test(
       });
       chmodSync(dirname(counterPath()), 0);
       try {
-        assert.match(
-          (await resultGate({ cwd }, undefined, RUNTIME)) ?? "",
-          RUNTIME_BLOCK,
-        );
+        assert.match((await gate({ cwd }, RUNTIME)) ?? "", UNATTENDED_BLOCK);
       } finally {
         chmodSync(dirname(counterPath()), 0o700);
       }
@@ -906,17 +855,16 @@ void test("result gate: strict mode is never capped whatever sits at the counter
         writeFileSync(f, text);
       });
       assert.match(
-        (await resultGate({ cwd }, undefined, strictEnv(""))) ?? "",
-        new RegExp(`block ${String(n)}; FACTORY_RESULT_CHECKER is set`),
+        (await gate({ cwd }, STRICT)) ?? "",
+        new RegExp(
+          `block ${String(n)}; the registration names a result checker`,
+        ),
         text,
       );
     }
     if (process.platform !== "win32") {
       const cwd = plantCounter(mkfifo);
-      assert.match(
-        (await resultGate({ cwd }, undefined, strictEnv(""))) ?? "",
-        /block 1; FACTORY_RESULT_CHECKER is set/,
-      );
+      assert.match((await gate({ cwd }, STRICT)) ?? "", /block 1; the reg/);
       assert.ok(lstatSync(counterPath()).isFile());
       assert.equal(readFileSync(counterPath(), "utf8"), "1");
 
@@ -926,8 +874,8 @@ void test("result gate: strict mode is never capped whatever sits at the counter
         symlinkSync(target, f);
       });
       assert.match(
-        (await resultGate({ cwd: linked }, undefined, strictEnv(""))) ?? "",
-        /block 1; FACTORY_RESULT_CHECKER is set/,
+        (await gate({ cwd: linked }, STRICT)) ?? "",
+        /block 1; the reg/,
       );
       assert.ok(lstatSync(counterPath()).isFile());
       assert.equal(readFileSync(target, "utf8"), "untouched");
@@ -937,11 +885,12 @@ void test("result gate: strict mode is never capped whatever sits at the counter
   }
 });
 
-void test("result gate: a failure in the gate's own failure path still blocks a runtime run", () => {
-  const flaky = (extra: Record<string, string>): NodeJS.ProcessEnv => {
+void test("result gate: a failure in the gate's own failure path still blocks a run", () => {
+  // the first read of the payload's session id throws: the fallback decides from the environment alone
+  const flaky = (agentId?: string): HookInput => {
     let reads = 0;
-    const env: NodeJS.ProcessEnv = { ...extra };
-    Object.defineProperty(env, "GUARD_RESULT_GATE", {
+    const input: HookInput = { agent_id: agentId };
+    Object.defineProperty(input, "session_id", {
       enumerable: true,
       get() {
         reads += 1;
@@ -949,24 +898,89 @@ void test("result gate: a failure in the gate's own failure path still blocks a 
         return undefined;
       },
     });
-    return env;
+    return input;
   };
-  assert.equal(
-    gateFailClosed(flaky(RUNTIME), { cwd: "x" }, "why"),
-    "Factory result gate: could not check the result for this run (internal error); the stop stays blocked.",
-  );
-  assert.match(
-    gateFailClosed(flaky({ FACTORY_RESULT_CHECKER: "" }), {}, "why") ?? "",
-    /internal error/,
-  );
-  assert.equal(gateFailClosed(flaky(ATTENDED), {}, "why"), null);
-  assert.equal(
-    gateFailClosed({ ...RUNTIME, GUARD_RESULT_GATE: "off" }, {}, "why"),
-    null,
-  );
+  const internal =
+    "Run result gate: could not check the result for this run (internal error); the stop stays blocked.";
+  for (const env of [
+    RUNTIME,
+    { GUARD_RUN_ID: "r" },
+    { GUARD_RUN_MANIFEST: "/m.json" },
+    { FACTORY_RUN_ID: "r" },
+  ]) {
+    assert.equal(gateFailClosed(env, flaky(), "why"), internal);
+  }
+  assert.equal(gateFailClosed({}, flaky(), "why"), null);
+  assert.equal(gateFailClosed(RUNTIME, flaky("a"), "why"), null);
 });
 
-void test("result gate: the stop hook CLI blocks a runtime run on an uncaught exception and exits 0, an attended one stays silent", () => {
+void test("result gate: gateFailClosed blocks an unattended or strict run, and nothing else", () => {
+  const opts = { ...OUT_OF_REACH, dataDir: tmp() };
+  assert.match(
+    gateFailClosed(RUNTIME, { cwd: "x" }, "x", opts) ?? "",
+    UNATTENDED_BLOCK,
+  );
+  assert.match(
+    gateFailClosed(STRICT, { cwd: "x" }, "x", opts) ?? "",
+    /^Run result gate: could not check the result for run run-1 \(x\); the registration names a result checker, so the stop stays blocked\.$/,
+  );
+  assert.equal(gateFailClosed(ATTENDED, { cwd: "x" }, "x", opts), null);
+  assert.equal(
+    gateFailClosed({ ...RUNTIME, GUARD_RESULT_GATE: "off" }, {}, "x", opts),
+    null,
+  );
+  assert.equal(gateFailClosed(envFor(manifest(null)), {}, "x", opts), null);
+  assert.equal(gateFailClosed(RUNTIME, { agent_id: "a" }, "x", opts), null);
+  assert.equal(gateFailClosed({}, {}, "x", opts), null);
+  // a failed registration blocks whatever the switch says
+  assert.match(
+    gateFailClosed(
+      { GUARD_RUN_ID: "r", GUARD_RESULT_GATE: "off" },
+      {},
+      "x",
+      opts,
+    ) ?? "",
+    /^Run registration failed: GUARD_RUN_ID is set but GUARD_RUN_MANIFEST is not/,
+  );
+  // a payload that is not an object counts as an empty one
+  for (const bad of [null, 5, [], "x"]) {
+    assert.match(
+      gateFailClosed(STRICT, bad as never, "x", opts) ?? "",
+      /could not check the result for run run-1/,
+    );
+  }
+});
+
+const STOP_HOOK = fileURLToPath(new URL("./stop.mjs", import.meta.url));
+// The emitted stop hook as a harness runs it: payload on stdin, one JSON object on stdout, exit 0. No FACTORY_ or
+// GUARD_ variable but the ones passed leaks in.
+const runStopHook = (
+  payload: string,
+  extraArgs: string[],
+  env: Record<string, string>,
+  nodeArgs: string[] = [],
+) => {
+  const clean = Object.fromEntries(
+    Object.entries(process.env).filter(
+      ([k]) => !k.startsWith("FACTORY_") && !k.startsWith("GUARD_"),
+    ),
+  );
+  return spawnSync(process.execPath, [...nodeArgs, STOP_HOOK, ...extraArgs], {
+    input: payload,
+    encoding: "utf8",
+    env: {
+      ...clean,
+      GUARD_STOP_CHECK: "off",
+      GUARD_OTEL: "off",
+      GUARD_RUN_EVENTS_FILE: "",
+      FACTORY_EVENTS_FILE: "",
+      CLAUDE_PLUGIN_DATA: tmp(),
+      ...env,
+    },
+  });
+};
+
+void test("result gate: the stop hook CLI blocks a run on an uncaught exception and exits 0, a run-less stop stays silent", () => {
   const dir = tmp();
   const preload = join(dir, "crash.mjs");
   writeFileSync(
@@ -977,37 +991,18 @@ void test("result gate: the stop hook CLI blocks a runtime run on an uncaught ex
   delete process.env.CLAUDE_PLUGIN_DATA;
   const payload = JSON.stringify({ cwd, hook_event_name: "Stop" });
   const run = (env: Record<string, string>) =>
-    spawnSync(
-      process.execPath,
-      ["--import", pathToFileURL(preload).href, STOP_HOOK],
-      {
-        input: payload,
-        encoding: "utf8",
-        env: {
-          ...Object.fromEntries(
-            Object.entries(process.env).filter(
-              ([k]) => !k.startsWith("FACTORY_") && !k.startsWith("GUARD_"),
-            ),
-          ),
-          GUARD_STOP_CHECK: "off",
-          GUARD_OTEL: "off",
-          FACTORY_EVENTS_FILE: "",
-          CLAUDE_PLUGIN_DATA: tmp(),
-          ...env,
-        },
-      },
-    );
-  const runtime = run(RUNTIME);
-  assert.equal(runtime.status, 0, runtime.stderr);
-  const out = JSON.parse(runtime.stdout) as Record<string, unknown>;
+    runStopHook(payload, [], env, ["--import", pathToFileURL(preload).href]);
+  const blocked = run({ GUARD_RUN_ID: "run-1" });
+  assert.equal(blocked.status, 0, blocked.stderr);
+  const out = JSON.parse(blocked.stdout) as Record<string, unknown>;
   assert.equal(out.decision, "block");
-  assert.match(String(out.reason), /^Factory result gate: could not check/);
-  const attended = run(ATTENDED);
-  assert.equal(attended.status, 0, attended.stderr);
-  assert.equal(attended.stdout, "");
+  assert.match(String(out.reason), /^Run registration failed/);
+  const free = run({});
+  assert.equal(free.status, 0, free.stderr);
+  assert.equal(free.stdout, "");
 });
 
-void test("result gate: a crash after the gate passed a runtime run does not block it", () => {
+void test("result gate: a crash after the gate answered does not block the stop", () => {
   const dir = tmp();
   const preload = join(dir, "flush.mjs");
   // the final flush throws: after the gate answered, outside every try
@@ -1015,69 +1010,71 @@ void test("result gate: a crash after the gate passed a runtime run does not blo
     preload,
     'const w = process.stdout.write.bind(process.stdout);\nprocess.stdout.write = (c, ...a) => { if (c === "") throw new Error("boom"); return w(c, ...a); };\n',
   );
-  const cwd = gateRepo(validResult());
+  const cwd = gateRepo();
   delete process.env.CLAUDE_PLUGIN_DATA;
-  const r = spawnSync(
-    process.execPath,
-    ["--import", pathToFileURL(preload).href, STOP_HOOK],
-    {
-      input: JSON.stringify({ cwd, hook_event_name: "Stop" }),
-      encoding: "utf8",
-      env: {
-        ...Object.fromEntries(
-          Object.entries(process.env).filter(
-            ([k]) => !k.startsWith("FACTORY_") && !k.startsWith("GUARD_"),
-          ),
-        ),
-        GUARD_STOP_CHECK: "off",
-        GUARD_OTEL: "off",
-        FACTORY_EVENTS_FILE: "",
-        CLAUDE_PLUGIN_DATA: tmp(),
-        ...RUNTIME,
-      },
-    },
+  const r = runStopHook(
+    JSON.stringify({ cwd, hook_event_name: "Stop" }),
+    [],
+    {},
+    ["--import", pathToFileURL(preload).href],
   );
   assert.equal(r.status, 0, r.stderr);
   assert.equal(r.stdout, "");
 });
 
-void test("result gate: a counter that cannot be written blocks a runtime run and lets an attended one go", async () => {
+void test("result gate: a counter that cannot be written blocks an unattended run and lets an attended one go", async () => {
   try {
     const cwd = gateRepo(validResult({ ticket: 12 }));
     writeFileSync(
       join(process.env.CLAUDE_PLUGIN_DATA ?? "", "result-gate"),
       "",
     );
-    assert.match(
-      (await resultGate({ cwd }, undefined, RUNTIME)) ?? "",
-      RUNTIME_BLOCK,
-    );
-    assert.equal(await resultGate({ cwd }, undefined, ATTENDED), null);
+    assert.match((await gate({ cwd }, RUNTIME)) ?? "", UNATTENDED_BLOCK);
+    assert.equal(await gate({ cwd }, ATTENDED), null);
   } finally {
     delete process.env.CLAUDE_PLUGIN_DATA;
   }
 });
 
+// stopCheck reads process.env, so a run is set there for these.
+const withRunEnv = async (
+  env: Record<string, string>,
+  fn: () => Promise<void>,
+): Promise<void> => {
+  Object.assign(process.env, env);
+  try {
+    await fn();
+  } finally {
+    for (const k of Object.keys(env)) Reflect.deleteProperty(process.env, k);
+    delete process.env.CLAUDE_PLUGIN_DATA;
+  }
+};
+const realGit =
+  (make: () => SyncRunner): SyncRunner =>
+  (cmd, args, opts) =>
+    cmd === "make"
+      ? make()(cmd, args)
+      : (spawnSync(
+          cmd,
+          args as string[],
+          opts as object,
+        ) as unknown as SpawnSyncReturns<string>);
+
 void test("result gate: runs before make check, and both reasons go in one block", async () => {
   const cwd = gateRepo();
-  Object.assign(process.env, RUNTIME);
-  try {
-    const run: SyncRunner = (cmd, args, opts) =>
-      cmd === "make"
-        ? stopRun(
-            [],
-            { status: 2, stdout: "FAIL z\n" },
-            { status: 2 },
-          )(cmd, args)
-        : (spawnSync(
-            cmd,
-            args as string[],
-            opts as object,
-          ) as unknown as SpawnSyncReturns<string>);
+  await withRunEnv(RUNTIME, async () => {
+    const run = realGit(() =>
+      stopRun([], { status: 2, stdout: "FAIL z\n" }, { status: 2 }),
+    );
+    const gateOpts = {
+      ...OUT_OF_REACH,
+      dataDir: process.env.CLAUDE_PLUGIN_DATA,
+    };
     const events: Record<string, unknown>[] = [];
     const out = await stopCheck({ cwd }, run, {
       strain: () => null,
       report: (e) => events.push(e),
+      gate: gateOpts,
     });
     assert.deepEqual(
       events.map((e) => `${String(e.target)}:${String(e.result)}`),
@@ -1087,7 +1084,7 @@ void test("result gate: runs before make check, and both reasons go in one block
     assert.equal(out.decision, "block");
     assert.match(
       out.reason ?? "",
-      /^Factory result gate \(block 1 of 2\)[\s\S]*\n\nmake check failed[\s\S]*FAIL z$/,
+      /^Run result gate \(block 1 of 2\)[\s\S]*\n\nmake check failed[\s\S]*FAIL z$/,
     );
     assert.deepEqual(out.hookSpecificOutput, {
       hookEventName: "Stop",
@@ -1096,38 +1093,59 @@ void test("result gate: runs before make check, and both reasons go in one block
     });
     const activeOut = await stopCheck({ cwd, stop_hook_active: true }, run, {
       strain: () => null,
+      gate: gateOpts,
     });
     assert.match(
       activeOut?.reason ?? "",
-      /^Factory result gate \(block 2 of 2\)[\s\S]*write-result\.mjs[\s\S]*\.$/,
+      /^Run result gate \(block 2 of 2\)[\s\S]*Fix the result file[\s\S]*\.$/,
     );
     assert.equal(
       await stopCheck({ cwd, stop_hook_active: true }, run, {
         strain: () => null,
+        gate: gateOpts,
       }),
       null,
     );
-  } finally {
-    for (const k of Object.keys(RUNTIME))
-      Reflect.deleteProperty(process.env, k);
-    delete process.env.CLAUDE_PLUGIN_DATA;
-  }
+  });
 });
 
-// A checker module written into its own temp dir, and the hooks that make prepareChecker treat it as out of reach.
-const checkerFile = (body: string): string => {
-  const p = join(tmp(), "checker.mjs");
-  writeFileSync(p, body);
-  return p;
-};
-const OUT_OF_REACH = { writable: () => false, owner: () => false };
-const strictEnv = (checker: string): Record<string, string> => ({
-  ...RUNTIME,
-  FACTORY_RESULT_CHECKER: checker,
+void test("result gate: a failing make check never denies a stop, whether or not the gate blocked", async () => {
+  const cwd = gateRepo();
+  await withRunEnv(RUNTIME, async () => {
+    const run: SyncRunner = (cmd, args, opts) => {
+      if (cmd === "make") throw new Error("make exploded");
+      return spawnSync(
+        cmd,
+        args as string[],
+        opts as object,
+      ) as unknown as SpawnSyncReturns<string>;
+    };
+    const gateOpts = {
+      ...OUT_OF_REACH,
+      dataDir: process.env.CLAUDE_PLUGIN_DATA,
+    };
+    const out = await stopCheck({ cwd }, run, {
+      strain: () => null,
+      gate: gateOpts,
+    });
+    assert.equal(out?.decision, "block");
+    assert.match(out.reason ?? "", /^Run result gate \(block 1 of 2\)/);
+    // the gate passed: a later make error does not deny the stop
+    const ok = gateRepo(validResult());
+    assert.equal(
+      await stopCheck({ cwd: ok }, run, { strain: () => null, gate: gateOpts }),
+      null,
+    );
+    delete process.env.GUARD_RUN_ID;
+    delete process.env.GUARD_RUN_MANIFEST;
+    assert.equal(
+      await stopCheck({ cwd }, run, { strain: () => null, gate: gateOpts }),
+      null,
+    );
+  });
 });
-const passes = "export const resultErrors = () => []";
 
-void test("result gate: a broken build copy blocks with the reason, a missing one means the core check alone", async () => {
+void test("result gate: a broken checker blocks with the reason, and the core errors stay", async () => {
   try {
     for (const [body, reason] of [
       ["throw new Error('at import')", /did not load \(at import\)/],
@@ -1137,98 +1155,51 @@ void test("result gate: a broken build copy blocks with the reason, a missing on
         /threw \(boom\)/,
       ],
     ] as const) {
-      const out = await resultGate(
+      const out = await gate(
         { cwd: gateRepo(validResult()) },
-        undefined,
-        RUNTIME,
-        undefined,
-        { buildCopy: checkerFile(body) },
+        strictEnv(checkerFile(body)),
       );
-      assert.match(out ?? "", /block 1 of 2/);
-      assert.match(out ?? "", /\(FACTORY_RESULT_CHECKER\) could not run: /);
+      assert.match(
+        out ?? "",
+        /block 1; the registration names a result checker/,
+      );
+      assert.match(out ?? "", /\(result\.checker\) could not run: /);
       assert.match(out ?? "", reason);
     }
-    assert.equal(
-      await resultGate(
-        { cwd: gateRepo(validResult()) },
-        undefined,
-        RUNTIME,
-        undefined,
-        { buildCopy: join(tmp(), "none.mjs") },
-      ),
-      null,
-    );
   } finally {
     delete process.env.CLAUDE_PLUGIN_DATA;
   }
 });
 
-void test("result gate: unset keeps the write-result hand-back, strict gives the generic one", async () => {
+void test("result gate: a checker the trust checks refuse fails the registration, and the stop stays blocked", async () => {
   try {
-    const unset = await resultGate({ cwd: gateRepo() }, undefined, RUNTIME);
-    assert.match(unset ?? "", /write-result\.mjs, never by hand/);
-    const strict = await resultGate(
-      { cwd: gateRepo() },
-      undefined,
-      strictEnv(checkerFile(passes)),
-      undefined,
-      OUT_OF_REACH,
-    );
-    assert.match(
-      strict ?? "",
-      /\nFix result\.json until it passes the core check and the launcher's checker; never edit the checker\.\nA subagent/,
-    );
-    assert.doesNotMatch(strict ?? "", /write-result/);
-  } finally {
-    delete process.env.CLAUDE_PLUGIN_DATA;
-  }
-});
-
-void test("result gate: a refused FACTORY_RESULT_CHECKER blocks with the reason and the core errors", async () => {
-  try {
-    const dir = tmp();
-    const cases: [string, RegExp][] = [
-      ["", /could not run: empty$/m],
-      ["   ", /could not run: empty$/m],
-      ["rel/c.mjs", /could not run: not an absolute path$/m],
-      ["file:///x/c.mjs", /could not run: a URL or module specifier/],
-      ["node:fs", /could not run: a URL or module specifier/],
-      [join(dir, "missing.mjs"), /could not run: no such file$/m],
-      [dir, /could not run: not a \.mjs file$/m],
-    ];
-    for (const [raw, reason] of cases) {
-      const valid = await resultGate(
-        { cwd: gateRepo(validResult()) },
-        undefined,
-        strictEnv(raw),
+    const env = strictEnv(checkerFile(passes));
+    const refuseChecker = {
+      writable: (t: string) => t.endsWith("checker.mjs"),
+      owner: () => false,
+    };
+    for (const cwd of [gateRepo(validResult()), gateRepo()]) {
+      const out = await gate({ cwd }, env, undefined, undefined, refuseChecker);
+      assert.match(
+        out ?? "",
+        /^Run registration failed: .*result\.checker .*writable by this user/,
       );
-      assert.match(valid ?? "", /block 1; FACTORY_RESULT_CHECKER is set/);
-      assert.match(valid ?? "", reason);
-      assert.doesNotMatch(valid ?? "", /differs from/);
-      const bad = await resultGate(
-        { cwd: gateRepo(validResult({ ticket: 12, run_id: "other" })) },
-        undefined,
-        strictEnv(raw),
-      );
-      assert.match(bad ?? "", reason);
-      assert.match(bad ?? "", /ticket must be a string/);
-      assert.match(bad ?? "", /run_id "other" differs from FACTORY_RUN_ID/);
-      const missing = await resultGate(
-        { cwd: gateRepo() },
-        undefined,
-        strictEnv(raw),
-      );
-      assert.match(missing ?? "", /\nno such file\n/);
-      assert.match(missing ?? "", reason);
+      assert.doesNotMatch(out ?? "", /block \d/);
     }
-    const unwritable = await resultGate(
+    // the gate switch does not turn it off
+    const off = await gate(
       { cwd: gateRepo(validResult()) },
+      { ...env, GUARD_RESULT_GATE: "off" },
       undefined,
-      strictEnv(checkerFile(passes)),
       undefined,
-      { writable: () => true, owner: () => false },
+      refuseChecker,
     );
-    assert.match(unwritable ?? "", /could not run: writable by this user/);
+    assert.match(off ?? "", /^Run registration failed/);
+    const missing = await gate(
+      { cwd: gateRepo(validResult()) },
+      strictEnv(join(tmp(), "missing.mjs")),
+    );
+    assert.match(missing ?? "", /^Run registration failed: .*no such file/);
   } finally {
     delete process.env.CLAUDE_PLUGIN_DATA;
   }
@@ -1236,48 +1207,30 @@ void test("result gate: a refused FACTORY_RESULT_CHECKER blocks with the reason 
 
 void test("result gate: a vetted checker passes a valid result, adds its errors and cannot loosen the core", async () => {
   try {
-    assert.equal(
-      await resultGate(
-        { cwd: gateRepo(validResult()) },
-        undefined,
-        strictEnv(checkerFile(passes)),
-        undefined,
-        OUT_OF_REACH,
-      ),
-      null,
-    );
-    const added = await resultGate(
+    assert.equal(await gate({ cwd: gateRepo(validResult()) }, STRICT), null);
+    const added = await gate(
       { cwd: gateRepo(validResult()) },
-      undefined,
       strictEnv(checkerFile("export const resultErrors = () => ['custom']")),
-      undefined,
-      OUT_OF_REACH,
     );
     assert.match(
       added ?? "",
-      /block 1; FACTORY_RESULT_CHECKER is set[\s\S]*\ncustom\n/,
+      /block 1; the registration names a result checker[\s\S]*\ncustom\n/,
     );
-    const loose = await resultGate(
+    const loose = await gate(
       { cwd: gateRepo(validResult({ run_id: "other" })) },
-      undefined,
-      strictEnv(checkerFile(passes)),
-      undefined,
-      OUT_OF_REACH,
+      STRICT,
     );
     assert.match(
       loose ?? "",
-      /run_id "other" differs from FACTORY_RUN_ID "run-1"/,
+      /run_id "other" differs from GUARD_RUN_ID "run-1"/,
     );
-    const dup = await resultGate(
+    const dup = await gate(
       { cwd: gateRepo(validResult({ end_state: "" })) },
-      undefined,
       strictEnv(
         checkerFile(
           "export const resultErrors = () => ['end_state must be a non-empty string, got \"\"', 'custom', 'custom']",
         ),
       ),
-      undefined,
-      OUT_OF_REACH,
     );
     assert.equal(
       (dup ?? "").split("\n").filter((l) => l.startsWith("end_state must"))
@@ -1288,14 +1241,33 @@ void test("result gate: a vetted checker passes a valid result, adds its errors 
       (dup ?? "").split("\n").filter((l) => l === "custom").length,
       1,
     );
-    const throws = await resultGate(
+    const slow = await gate(
       { cwd: gateRepo(validResult()) },
-      undefined,
       strictEnv(checkerFile("export const resultErrors = () => { for (;;); }")),
       undefined,
-      { ...OUT_OF_REACH, timeoutMs: 300 },
+      undefined,
+      { timeoutMs: 300 },
     );
-    assert.match(throws ?? "", /could not run: timed out after 0\.3 s/);
+    assert.match(slow ?? "", /could not run: timed out after 0\.3 s/);
+  } finally {
+    delete process.env.CLAUDE_PLUGIN_DATA;
+  }
+});
+
+void test("result gate: the checker gets the run's environment, GUARD_RUN_FILE resolved against the session's directory", async () => {
+  try {
+    const cwd = gateRepo(validResult());
+    const checker = checkerFile(
+      "export const resultErrors = (r, env) => [`id=${env.GUARD_RUN_ID} file=${env.GUARD_RUN_FILE}`]",
+    );
+    const out = await gate(
+      { cwd },
+      strictEnv(checker, { GUARD_RUN_FILE: "run.json" }),
+    );
+    assert.ok(
+      (out ?? "").includes(`id=run-1 file=${join(cwd, "run.json")}`),
+      out ?? "null",
+    );
   } finally {
     delete process.env.CLAUDE_PLUGIN_DATA;
   }
@@ -1305,14 +1277,11 @@ void test("result gate: strict mode is never capped, unset is capped after two b
   try {
     const events: Record<string, unknown>[] = [];
     const cwd = gateRepo();
-    const env = strictEnv("");
     for (let i = 1; i <= 4; i++) {
-      const out = await resultGate({ cwd }, undefined, env, (e) =>
-        events.push(e),
-      );
+      const out = await gate({ cwd }, STRICT, undefined, (e) => events.push(e));
       assert.ok(
         out?.startsWith(
-          `Factory result gate (block ${String(i)}; FACTORY_RESULT_CHECKER is set, so the stop stays blocked until the result passes)`,
+          `Run result gate (block ${String(i)}; the registration names a result checker, so the stop stays blocked until the result passes)`,
         ),
         out ?? "null",
       );
@@ -1322,9 +1291,9 @@ void test("result gate: strict mode is never capped, unset is capped after two b
       ["block", "block", "block", "block"],
     );
     const plain = gateRepo();
-    assert.ok(await resultGate({ cwd: plain }, undefined, RUNTIME));
-    assert.ok(await resultGate({ cwd: plain }, undefined, RUNTIME));
-    assert.equal(await resultGate({ cwd: plain }, undefined, RUNTIME), null);
+    assert.ok(await gate({ cwd: plain }, RUNTIME));
+    assert.ok(await gate({ cwd: plain }, RUNTIME));
+    assert.equal(await gate({ cwd: plain }, RUNTIME), null);
   } finally {
     delete process.env.CLAUDE_PLUGIN_DATA;
   }
@@ -1337,25 +1306,17 @@ void test("result gate: strict mode never fails open on an internal error", asyn
     const throwing: SyncRunner = () => {
       throw new Error("spawn failed token=abc123");
     };
-    const out = await resultGate({ cwd }, throwing, strictEnv(""), (e) =>
-      events.push(e),
-    );
+    const out = await gate({ cwd }, STRICT, throwing, (e) => events.push(e));
     assert.match(
       out ?? "",
-      /^Factory result gate: could not check the result for run run-1 \(spawn failed token=\*\*\*\); FACTORY_RESULT_CHECKER is set, so the stop stays blocked\.$/,
+      /^Run result gate: could not check the result for run run-1 \(spawn failed token=\*\*\*\); the registration names a result checker, so the stop stays blocked\.$/,
     );
     assert.deepEqual(
       events.map((e) => e.result),
       ["error"],
     );
-    const gitFails: SyncRunner = () =>
-      ({
-        status: 128,
-        stdout: "",
-        stderr: "",
-      }) as unknown as SpawnSyncReturns<string>;
     assert.match(
-      (await resultGate({ cwd }, gitFails, strictEnv(""))) ?? "",
+      (await gate({ cwd }, STRICT, gitFails)) ?? "",
       /could not check the result for run run-1 \(git rev-parse failed\)/,
     );
     // the counter cannot be written: a file where the data dir should be
@@ -1365,242 +1326,221 @@ void test("result gate: strict mode never fails open on an internal error", asyn
       "",
     );
     assert.match(
-      (await resultGate({ cwd: blocked }, undefined, strictEnv(""))) ?? "",
-      /^Factory result gate: could not check the result/,
+      (await gate({ cwd: blocked }, STRICT)) ?? "",
+      /^Run result gate: could not check the result/,
     );
-    // exempt or unidentified stops stay free, and unset still fails open
-    assert.equal(
-      await resultGate({ cwd, agent_id: "a" }, throwing, strictEnv("")),
-      null,
-    );
-    assert.equal(
-      await resultGate({ cwd }, throwing, { FACTORY_RESULT_CHECKER: "" }),
-      null,
-    );
-    assert.match(
-      (await resultGate({ cwd }, throwing, RUNTIME)) ?? "",
-      RUNTIME_BLOCK,
-    );
-    assert.equal(await resultGate({ cwd }, throwing, ATTENDED), null);
-    assert.match(gateFailClosed(RUNTIME, { cwd }, "x") ?? "", RUNTIME_BLOCK);
-    assert.equal(gateFailClosed(ATTENDED, { cwd }, "x"), null);
-    assert.equal(
-      gateFailClosed(
-        { ...RUNTIME, GUARD_RESULT_GATE: "off", FACTORY_RESULT_CHECKER: "" },
-        {},
-        "x",
-      ),
-      null,
-    );
+    // exempt stops stay free, and an attended run without a checker still fails open
+    assert.equal(await gate({ cwd, agent_id: "a" }, STRICT, throwing), null);
+    assert.equal(await gate({ cwd }, ATTENDED, throwing), null);
   } finally {
     delete process.env.CLAUDE_PLUGIN_DATA;
   }
 });
 
-void test("result check: a BOM and CRLF line ends in result.json are read", async () => {
+void test("result check: a BOM and CRLF line ends in the result file are read", async () => {
   try {
-    const text = `\uFEFF${JSON.stringify(validResult(), null, 2).replace(/\n/g, "\r\n")}`;
-    assert.equal(
-      await resultGate({ cwd: gateRepo(text) }, undefined, RUNTIME),
-      null,
-    );
-    assert.equal(
-      await resultGate(
-        { cwd: gateRepo(text) },
-        undefined,
-        strictEnv(checkerFile(passes)),
-        undefined,
-        OUT_OF_REACH,
-      ),
-      null,
-    );
+    const text = `﻿${JSON.stringify(validResult(), null, 2).replace(/\n/g, "\r\n")}`;
+    assert.equal(await gate({ cwd: gateRepo(text) }, RUNTIME), null);
+    assert.equal(await gate({ cwd: gateRepo(text) }, STRICT), null);
   } finally {
     delete process.env.CLAUDE_PLUGIN_DATA;
   }
 });
 
-void test("result gate: an attended run keeps its semantics in strict mode", async () => {
+void test("result gate: an attended run keeps its semantics when the registration names a checker", async () => {
   try {
-    const env = { ...ATTENDED, FACTORY_RESULT_CHECKER: "" };
-    assert.equal(await resultGate({ cwd: gateRepo() }, undefined, env), null);
+    const env = { ...STRICT, GUARD_RUN_MODE: "attended" };
+    assert.equal(await gate({ cwd: gateRepo() }, env), null);
+    assert.equal(await gate({ cwd: gateRepo("not json") }, env), null);
     assert.equal(
-      await resultGate({ cwd: gateRepo("not json") }, undefined, env),
-      null,
-    );
-    assert.equal(
-      await resultGate(
+      await gate(
         { cwd: gateRepo(validResult({ run_id: "other", ticket: 12 })) },
-        undefined,
         env,
       ),
       null,
     );
-    assert.equal(
-      await resultGate({ cwd: gateRepo("[]") }, undefined, env),
-      null,
-    );
-    const out = await resultGate(
+    assert.equal(await gate({ cwd: gateRepo("[]") }, env), null);
+    assert.equal(await gate({ cwd: gateRepo(validResult()) }, env), null);
+    const out = await gate(
       { cwd: gateRepo(validResult({ ticket: 12 })) },
-      undefined,
-      env,
+      strictEnv(checkerFile("export const resultErrors = () => ['custom']"), {
+        GUARD_RUN_MODE: "attended",
+      }),
     );
     assert.match(
       out ?? "",
-      /block 1; FACTORY_RESULT_CHECKER is set[\s\S]*ticket must be a string[\s\S]*could not run: empty/,
+      /block 1; the registration names a result checker[\s\S]*ticket must be a string[\s\S]*\ncustom\n/,
     );
-    assert.equal(
-      await resultGate(
-        { cwd: gateRepo(validResult()) },
-        undefined,
-        {
-          ...ATTENDED,
-          FACTORY_RESULT_CHECKER: checkerFile(passes),
-        },
-        undefined,
-        OUT_OF_REACH,
-      ),
-      null,
+    // strict: its own errors do not fail open
+    assert.match(
+      (await gate({ cwd: gateRepo() }, env, gitFails)) ?? "",
+      /could not check the result for run run-1 \(git rev-parse failed\)/,
     );
   } finally {
     delete process.env.CLAUDE_PLUGIN_DATA;
   }
 });
 
-void test("result gate: a failing make check never denies a stop, whether or not the gate blocked", async () => {
-  const cwd = gateRepo();
-  Object.assign(process.env, RUNTIME);
-  try {
-    const run: SyncRunner = (cmd, args, opts) => {
-      if (cmd === "make") throw new Error("make exploded");
-      return spawnSync(
-        cmd,
-        args as string[],
-        opts as object,
-      ) as unknown as SpawnSyncReturns<string>;
-    };
-    const out = await stopCheck({ cwd }, run, { strain: () => null });
-    assert.equal(out?.decision, "block");
-    assert.match(out.reason ?? "", /^Factory result gate \(block 1 of 2\)/);
-    // the gate passed: a later make error does not deny the stop
-    const ok = gateRepo(validResult());
-    assert.equal(
-      await stopCheck({ cwd: ok }, run, { strain: () => null }),
-      null,
-    );
-    delete process.env.FACTORY_RUN_ID;
-    assert.equal(await stopCheck({ cwd }, run, { strain: () => null }), null);
-  } finally {
-    for (const k of Object.keys(RUNTIME))
-      Reflect.deleteProperty(process.env, k);
-    delete process.env.CLAUDE_PLUGIN_DATA;
-  }
-});
-
-// A result.json the agent could plant: the gate must answer promptly with a block, never hang or read it.
+// A result file the agent could plant: the gate must answer promptly with a block, never hang or read it.
 const plantResult = (make: (file: string) => void): string => {
   const cwd = gateRepo();
-  const dir = join(cwd, ".factory", "runs", "12");
-  mkdirSync(dir, { recursive: true });
-  make(join(dir, "result.json"));
+  const file = join(cwd, RESULT_REL);
+  mkdirSync(dirname(file), { recursive: true });
+  make(file);
   return cwd;
 };
 
 void test(
-  "result gate: a FIFO or a device at result.json is a read error, never a hang",
+  "result gate: a FIFO or a device at the result file is a read error, never a hang",
   { skip: process.platform === "win32", timeout: 30_000 },
   async () => {
     try {
-      const fifo = plantResult((f) => {
-        assert.equal(spawnSync("mkfifo", [f]).status, 0);
-      });
+      const fifo = plantResult(mkfifo);
+      for (const env of [RUNTIME, STRICT]) {
+        const started = Date.now();
+        const out = await gate({ cwd: fifo }, env);
+        assert.match(
+          out ?? "",
+          /result\.json is not a valid result[\s\S]*\nnot a regular file\n/,
+        );
+        assert.ok(Date.now() - started < 10_000);
+      }
+      // a symlink to /dev/zero resolves outside the repo: a gate error, not a read
       const zero = plantResult((f) => {
         symlinkSync("/dev/zero", f);
       });
-      for (const checker of [undefined, ""]) {
-        const env = checker === undefined ? RUNTIME : strictEnv(checker);
-        for (const cwd of [fifo, zero]) {
-          const started = Date.now();
-          const out = await resultGate({ cwd }, undefined, env);
-          assert.match(
-            out ?? "",
-            /result\.json is not a valid result[\s\S]*\nnot a regular file\n/,
-          );
-          assert.ok(Date.now() - started < 10_000);
-        }
-      }
+      assert.match(
+        (await gate({ cwd: zero }, RUNTIME)) ?? "",
+        /result file resolves outside the repo/,
+      );
     } finally {
       delete process.env.CLAUDE_PLUGIN_DATA;
     }
   },
 );
 
-void test("result gate: a result.json over 1 MiB is blocked as too large, not read", async () => {
+void test("result gate: a result file over 1 MiB is blocked as too large, not read", async () => {
   try {
     const cwd = plantResult((f) => {
       writeFileSync(f, ` ${"x".repeat(1024 * 1024)}`);
     });
-    for (const env of [RUNTIME, strictEnv("")]) {
+    for (const env of [RUNTIME, STRICT]) {
       assert.match(
-        (await resultGate({ cwd }, undefined, env)) ?? "",
+        (await gate({ cwd }, env)) ?? "",
         /\ntoo large \(over 1 MiB\)\n/,
       );
     }
     // an attended run keeps returning null on any read failure
+    assert.equal(await gate({ cwd }, ATTENDED), null);
+  } finally {
+    delete process.env.CLAUDE_PLUGIN_DATA;
+  }
+});
+
+void test("result gate: a failed registration blocks even with the gate off, uncounted; a changed manifest fails it", async () => {
+  try {
+    const cwd = gateRepo();
+    const events: Record<string, unknown>[] = [];
+    const out = await gate(
+      { cwd },
+      { GUARD_RUN_ID: "run-1", GUARD_RESULT_GATE: "off" },
+      undefined,
+      (e) => events.push(e),
+    );
     assert.equal(
-      await resultGate({ cwd }, undefined, {
-        ...ATTENDED,
-        FACTORY_RESULT_CHECKER: "",
+      out,
+      "Run registration failed: GUARD_RUN_ID is set but GUARD_RUN_MANIFEST is not; the stop stays blocked until the runner fixes its registration.",
+    );
+    assert.deepEqual(events, [
+      {
+        result: "registration",
+        target: "result-gate",
+        rule: "run-registration",
+      },
+    ]);
+    // uncapped: it never lets go
+    for (let i = 0; i < 3; i++) {
+      assert.match(
+        (await gate({ cwd }, { GUARD_RUN_ID: "run-1" })) ?? "",
+        /^Run registration failed/,
+      );
+    }
+    assert.equal(existsSync(counterPath()), false);
+
+    // a manifest that changes after the session pinned it
+    const m = manifest();
+    const env = envFor(m);
+    const input = { cwd, session_id: "s-pin" };
+    assert.equal(await gate(input, { ...env, GUARD_RESULT_GATE: "off" }), null);
+    writeFileSync(
+      m,
+      JSON.stringify({
+        contract: 2,
+        runner: "acme-runner",
+        requires: ["result-gate"],
+        result: { file: ".acme/other/{ticket_number}.json" },
       }),
-      null,
+    );
+    assert.match(
+      (await gate(input, { ...env, GUARD_RESULT_GATE: "off" })) ?? "",
+      /^Run registration failed: manifest changed during the session/,
     );
   } finally {
     delete process.env.CLAUDE_PLUGIN_DATA;
   }
 });
 
-void test("result gate: a null or non-object input counts as an empty payload and a strict stop stays blocked", () => {
-  for (const bad of [null, 5, [], "x"]) {
-    const reason = gateFailClosed(
-      { ...RUNTIME, FACTORY_RESULT_CHECKER: "" },
-      bad as never,
-      "x",
+void test("result gate: a stop that sets only legacy run variables is blocked and records one line, even with the gate off", async () => {
+  try {
+    const cwd = gateRepo();
+    const dataDir = process.env.CLAUDE_PLUGIN_DATA ?? "";
+    const eventsFile = join(tmp(), "events.jsonl");
+    const env = {
+      FACTORY_RUN_ID: "run-1",
+      FACTORY_EVENTS_FILE: eventsFile,
+      GUARD_RESULT_GATE: "off",
+    };
+    const events: Record<string, unknown>[] = [];
+    const input = { cwd, session_id: "s-legacy" };
+    const first = await gate(input, env, undefined, (e) => events.push(e));
+    assert.match(
+      first ?? "",
+      /^Legacy run variables are set without a run registration/,
     );
-    assert.match(reason ?? "", /could not check the result for run run-1/);
+    assert.match(first ?? "", /GUARD_RUN_MANIFEST/);
+    assert.match(
+      (await gate(input, env)) ?? "",
+      /^Legacy run variables are set/,
+    );
+    assert.deepEqual(events, [
+      {
+        result: "registration",
+        target: "result-gate",
+        rule: "run-unregistered",
+      },
+    ]);
+    for (const file of [eventsFile, join(dataDir, "run-unregistered.jsonl")]) {
+      const lines = readFileSync(file, "utf8").trim().split("\n");
+      assert.equal(lines.length, 1, file);
+      assert.equal(
+        (JSON.parse(lines[0] ?? "") as { rule: string }).rule,
+        "run-unregistered",
+      );
+    }
+    // a subagent's stop is exempt, and so is a session with no run
+    assert.equal(await gate({ ...input, agent_id: "a" }, env), null);
+    assert.equal(await gate(input, { GUARD_RESULT_GATE: "off" }), null);
+  } finally {
+    delete process.env.CLAUDE_PLUGIN_DATA;
   }
 });
 
-// The emitted stop hook as a harness runs it: payload on stdin, one JSON object on stdout, exit 0.
-const STOP_HOOK = fileURLToPath(new URL("./stop.mjs", import.meta.url));
-const runStopHook = (
-  payload: string,
-  extraArgs: string[],
-  env: Record<string, string>,
-) => {
-  const clean = Object.fromEntries(
-    Object.entries(process.env).filter(
-      ([k]) => !k.startsWith("FACTORY_") && !k.startsWith("GUARD_"),
-    ),
-  );
-  return spawnSync(process.execPath, [STOP_HOOK, ...extraArgs], {
-    input: payload,
-    encoding: "utf8",
-    env: {
-      ...clean,
-      GUARD_STOP_CHECK: "off",
-      GUARD_OTEL: "off",
-      FACTORY_EVENTS_FILE: "",
-      CLAUDE_PLUGIN_DATA: tmp(),
-      ...env,
-    },
-  });
-};
-
-void test("result check: the stop hook CLI blocks on a refused checker, once, in each harness's shape", () => {
+void test("result check: the stop hook CLI blocks a failed registration, once, in each harness's shape", () => {
   const cwd = gateRepo();
   delete process.env.CLAUDE_PLUGIN_DATA;
-  const env = { ...RUNTIME, FACTORY_RESULT_CHECKER: "rel/c.mjs" };
+  const env = { GUARD_RUN_ID: "run-1" };
   const payload = JSON.stringify({ cwd, hook_event_name: "Stop" });
-  const reason = /could not run: not an absolute path/;
+  const reason = /^Run registration failed: GUARD_RUN_ID is set but/;
 
   const claude = runStopHook(payload, [], env);
   assert.equal(claude.status, 0, claude.stderr);
@@ -1625,60 +1565,58 @@ void test("result check: the stop hook CLI blocks on a refused checker, once, in
   assert.equal(a.decision, "continue");
   assert.match(String(a.reason), reason);
 
-  const free = runStopHook(payload, [], { ...RUNTIME });
-  assert.equal(free.status, 0, free.stderr);
+  // the gate switch does not turn it off
+  const off = runStopHook(payload, [], { ...env, GUARD_RESULT_GATE: "off" });
+  assert.equal(
+    (JSON.parse(off.stdout) as { decision: string }).decision,
+    "block",
+  );
 });
 
-void test("result check: the stop hook CLI keeps a strict stop blocked on an unreadable payload, and lets an unset one go", () => {
-  const strict = runStopHook("{", [], {
-    ...RUNTIME,
-    FACTORY_RESULT_CHECKER: "",
+void test("result check: the stop hook CLI blocks the legacy-only tripwire and lets a stop with no run go", () => {
+  const cwd = gateRepo();
+  delete process.env.CLAUDE_PLUGIN_DATA;
+  const payload = JSON.stringify({ cwd, hook_event_name: "Stop" });
+  const eventsFile = join(tmp(), "events.jsonl");
+  const blocked = runStopHook(payload, [], {
+    FACTORY_RUN_ID: "run-1",
+    FACTORY_EVENTS_FILE: eventsFile,
   });
-  assert.equal(strict.status, 0, strict.stderr);
-  const out = JSON.parse(strict.stdout) as { decision: string; reason: string };
-  assert.equal(out.decision, "block");
-  assert.match(
-    out.reason,
-    /could not check the result for run run-1 \(internal error\)/,
-  );
-
-  const unset = runStopHook("{", [], { ...RUNTIME });
-  assert.equal(unset.status, 0, unset.stderr);
-  const runtime = JSON.parse(unset.stdout) as {
+  assert.equal(blocked.status, 0, blocked.stderr);
+  const out = JSON.parse(blocked.stdout) as {
     decision: string;
     reason: string;
   };
-  assert.equal(runtime.decision, "block");
+  assert.equal(out.decision, "block");
   assert.match(
-    runtime.reason,
-    /could not check the result for run run-1 \(internal error\); a runtime run never fails open, so the stop stays blocked\./,
+    out.reason,
+    /^Legacy run variables are set without a run registration/,
   );
+  assert.equal(readFileSync(eventsFile, "utf8").trim().split("\n").length, 1);
 
-  const attended = runStopHook("{", [], { ...ATTENDED });
-  assert.equal(attended.status, 0, attended.stderr);
-  assert.equal(attended.stdout, "");
+  const free = runStopHook(payload, [], {});
+  assert.equal(free.status, 0, free.stderr);
+  assert.equal(free.stdout, "");
 });
 
-void test("result check: the stop hook CLI blocks a runtime run on an internal error, in each harness's shape", () => {
-  const reason = /a runtime run never fails open/;
-  const claude = runStopHook("{", [], { ...RUNTIME });
-  assert.equal(claude.status, 0, claude.stderr);
-  const c = JSON.parse(claude.stdout) as Record<string, unknown>;
-  assert.equal(c.decision, "block");
-  assert.match(String(c.reason), reason);
-
-  const codex = runStopHook("{", ["--harness=codex"], { ...RUNTIME });
-  assert.equal(codex.status, 0, codex.stderr);
-  const x = JSON.parse(codex.stdout) as Record<string, unknown>;
-  assert.deepEqual(Object.keys(x).sort(), ["decision", "reason"]);
-  assert.equal(x.decision, "block");
-  assert.match(String(x.reason), reason);
-
-  const anti = runStopHook("{", ["--harness=antigravity"], { ...RUNTIME });
-  assert.equal(anti.status, 0, anti.stderr);
-  const a = JSON.parse(anti.stdout) as Record<string, unknown>;
-  assert.equal(a.decision, "continue");
-  assert.match(String(a.reason), reason);
+void test("result check: the stop hook CLI keeps a stop blocked on an unreadable payload when a run is identified, and lets a run-less one go", () => {
+  for (const [args, decision] of [
+    [[], "block"],
+    [["--harness=codex"], "block"],
+    [["--harness=antigravity"], "continue"],
+  ] as const) {
+    const blocked = runStopHook("{", [...args], { GUARD_RUN_ID: "run-1" });
+    assert.equal(blocked.status, 0, blocked.stderr);
+    const out = JSON.parse(blocked.stdout) as {
+      decision: string;
+      reason: string;
+    };
+    assert.equal(out.decision, decision);
+    assert.match(out.reason, /^Run registration failed/);
+  }
+  const free = runStopHook("{", [], {});
+  assert.equal(free.status, 0, free.stderr);
+  assert.equal(free.stdout, "");
 });
 
 void test("lint: shellcheck findings come back as context; clean, missing tool or other files pass", () => {
@@ -2164,11 +2102,12 @@ void test('stop check: Antigravity hook receives { decision: "continue", reason 
   assert.equal(res.stdout, "");
 });
 
-void test("result check: the stop hook CLI keeps a strict stop blocked on a payload that is not an object", () => {
+void test("result check: the stop hook CLI keeps a stop blocked on a payload that is not an object when a run is identified", () => {
   for (const payload of ["null", "5", "[]", '"x"']) {
-    const strict = runStopHook(payload, [], strictEnv(""));
-    assert.equal(strict.status, 0, strict.stderr);
-    const out = JSON.parse(strict.stdout) as { decision: string };
+    const blocked = runStopHook(payload, [], { GUARD_RUN_ID: "run-1" });
+    assert.equal(blocked.status, 0, blocked.stderr);
+    const out = JSON.parse(blocked.stdout) as { decision: string };
     assert.equal(out.decision, "block");
+    assert.equal(runStopHook(payload, [], {}).stdout, "");
   }
 });
