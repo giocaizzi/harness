@@ -63,6 +63,11 @@ Device command examples (set them in the repo's runbook or env, not in the scrip
 - `lsof` exits 1 both for "nothing found" and on harmless warnings: judge by the output past the header line, not the exit status.
 - Never install dependencies into another task's worktree. When a fresh worktree has the same lockfile as an existing one, symlinking its dependency dir is faster and costs no disk.
 
+## Caches
+
+- A shared host's Go build cache reached about 99 GB and filled the disk. Builds without `-trimpath` key each package built from a local directory by its absolute path, so every worktree compiled and stored the same sources again; race, cover, `CGO_ENABLED=0` and cross-`GOOS` variants multiplied that, and Go's own trim (entries unused for 5 days) was too slow for that many active worktrees. The fixes: `GOFLAGS=-trimpath` everywhere, the variant matrix in CI, and a size check with `go clean -cache` above a cap.
+- `go clean -cache` goes through the heavy semaphore so it queues with the builds it would slow down. It deletes the entry subdirectories but keeps the cache root, which may carry permissions set on purpose, and a build that loses an entry rebuilds it, so it costs only rebuild time. Below the disk floor `heavy.sh` refuses, so run it directly.
+
 ## Agents
 
 - After a quota reset, stagger resumes: waking every agent at once spikes load past the cap.
