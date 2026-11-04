@@ -720,6 +720,7 @@ async function onShell(
       TEMP: deps.env?.TEMP,
       TMP: deps.env?.TMP,
       HOME: deps.env?.HOME ?? deps.env?.USERPROFILE,
+      CDPATH: deps.env?.CDPATH,
     };
     envObj.dirs = existingDirs(command, envObj, input.cwd);
 

@@ -496,6 +496,7 @@ async function onShell(input, state, deps) {
             TEMP: deps.env?.TEMP,
             TMP: deps.env?.TMP,
             HOME: deps.env?.HOME ?? deps.env?.USERPROFILE,
+            CDPATH: deps.env?.CDPATH,
         };
         envObj.dirs = existingDirs(command, envObj, input.cwd);
         const facts = { env: envObj };
