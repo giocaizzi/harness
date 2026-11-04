@@ -9,7 +9,7 @@ import { cpus, homedir, loadavg, platform } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { analysis, branchFacts, cdDirs, cmdClass, codexRules, deniedBy, deniedDir, evaluateCommand, evaluateEdit, evaluateRouting, hostJudged, isHeavy, isRisky, nativeAsk, previewCommand, pureRead, refFacts, regenFacts, stackFacts, stackTargets, tagFacts, tagTargets, unattendedSet, withPreview, worktreeFacts, } from "../core/engine.mjs";
-import { cpuPercentFrom } from "../core/host.mjs";
+import { cpuPercentFrom, hostCaps } from "../core/host.mjs";
 import { emit } from "../core/otel.mjs";
 import { rules } from "../core/rules.mjs";
 import { commandWords, units } from "../core/shell.mjs";
@@ -485,7 +485,8 @@ async function onShell(input, state, deps) {
     const fromEnv = ON.test(deps.env?.GUARD_UNATTENDED ?? "");
     const unattended = fromEnv || (set ?? state.unattended) === true;
     try {
-        const host = isHeavy(command, rules)
+        const caps = hostCaps(deps.env, rules.host);
+        const host = !caps.off && isHeavy(command, rules)
             ? await (deps.hostFacts ?? hostFacts)(input.cwd)
             : {};
         let unfinished = false;
@@ -538,7 +539,7 @@ async function onShell(input, state, deps) {
             ? ["read", "edit"].filter((r) => !state.reminded.includes(r))
             : [];
         const reminded = new Set([...state.reminded, ...held]);
-        const judged = hostJudged(command, rules, reminded);
+        const judged = !caps.off && hostJudged(command, rules, reminded);
         const d = evaluateCommand({
             command,
             loadedSkills: new Set(state.loaded),
@@ -555,7 +556,15 @@ async function onShell(input, state, deps) {
                     },
                 }
                 : null,
-            rules,
+            rules: {
+                ...rules,
+                host: {
+                    ...rules.host,
+                    loadCap: caps.loadCap,
+                    cpuPercentCap: caps.cpuPercentCap,
+                    freeFloorGb: caps.freeFloorGb,
+                },
+            },
         });
         state.reminded = [...reminded].filter((r) => !held.includes(r));
         if (unfinished && d.action !== "allow") {

@@ -15,6 +15,7 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  statfsSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -28,6 +29,7 @@ import { lintFile } from "./lint.mjs";
 import {
   fingerprint,
   gateFailClosed,
+  hostStrain,
   resultGate,
   runDetached,
   stopCheck,
@@ -2170,5 +2172,22 @@ void test("result check: the stop hook CLI keeps a strict stop blocked on a payl
     assert.equal(strict.status, 0, strict.stderr);
     const out = JSON.parse(strict.stdout) as { decision: string };
     assert.equal(out.decision, "block");
+  }
+});
+
+void test("stop: the strain check reads its caps and off switch from the given environment", () => {
+  const cwd = tmp();
+  const calm = { GUARD_HOST_LOAD_CAP: "999999" };
+  assert.equal(hostStrain(cwd, { GUARD_HOST_CHECK: "off" }), null);
+  assert.match(
+    hostStrain(cwd, { ...calm, GUARD_HOST_DISK_FLOOR_GB: "999999999" }) ?? "",
+    /GB free$/,
+  );
+  const fs = statfsSync(cwd);
+  if ((fs.bavail * fs.bsize) / 1073741824 > 20) {
+    assert.equal(
+      hostStrain(cwd, { ...calm, GUARD_HOST_DISK_FLOOR_GB: "abc" }),
+      null,
+    );
   }
 });

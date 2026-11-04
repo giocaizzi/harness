@@ -488,6 +488,82 @@ void test("heavy command on a strained host is denied once", async () => {
   assert.equal(decision(await h(pre("Bash", "npm run build"))), undefined);
 });
 
+const hostCase = async (
+  facts: HostFacts,
+  env: Record<string, string>,
+  command = "npm run build",
+) => {
+  let calls = 0;
+  const h = setup({
+    env,
+    hostFacts: async () => {
+      await Promise.resolve();
+      calls += 1;
+      return facts;
+    },
+  });
+  const d = decision(await h(pre("Bash", command)));
+  return { d, calls };
+};
+const hostDenied = (d: HookSpecificOutput | undefined) =>
+  d?.permissionDecision === "deny" &&
+  (d.permissionDecisionReason ?? "").includes("host is strained");
+
+void test("host caps: defaults unchanged, and the environment overrides them", async () => {
+  const strained = { load1: 50, freeGb: 100 };
+  const base = await hostCase(strained, {});
+  assert.ok(hostDenied(base.d));
+  assert.match(base.d?.permissionDecisionReason ?? "", /caps 30 /);
+  assert.ok(
+    !hostDenied((await hostCase(strained, { GUARD_HOST_LOAD_CAP: "100" })).d),
+  );
+  const low = { load1: 2, freeGb: 5 };
+  assert.ok(hostDenied((await hostCase(low, {})).d));
+  assert.ok(
+    !hostDenied((await hostCase(low, { GUARD_HOST_DISK_FLOOR_GB: "1" })).d),
+  );
+  const cpu = { cpuPercent: 95, freeGb: 100 };
+  assert.ok(hostDenied((await hostCase(cpu, {})).d));
+  assert.ok(!hostDenied((await hostCase(cpu, { GUARD_HOST_CPU_CAP: "99" })).d));
+});
+
+void test("host caps: an invalid override keeps the default", async () => {
+  for (const bad of ["-1", "0", "abc", ""]) {
+    assert.ok(
+      hostDenied(
+        (
+          await hostCase(
+            { load1: 50, freeGb: 100 },
+            { GUARD_HOST_LOAD_CAP: bad },
+          )
+        ).d,
+      ),
+      JSON.stringify(bad),
+    );
+  }
+});
+
+void test("host caps: GUARD_HOST_CHECK=off skips the facts and the rule", async () => {
+  const r = await hostCase(
+    { load1: 999, freeGb: 0 },
+    { GUARD_HOST_CHECK: "off" },
+  );
+  assert.ok(!hostDenied(r.d));
+  assert.equal(r.calls, 0);
+});
+
+void test("host caps: the agent cannot set them through the command", async () => {
+  for (const command of [
+    "GUARD_HOST_CHECK=off npm run build",
+    "GUARD_HOST_LOAD_CAP=999 npm run build",
+    "export GUARD_HOST_CHECK=off; npm run build",
+    "env GUARD_HOST_CHECK=off npm run build",
+  ]) {
+    const r = await hostCase({ load1: 50, freeGb: 100 }, {}, command);
+    assert.ok(hostDenied(r.d), command);
+  }
+});
+
 void test("blast radius: the ask carries a preview; a failing preview still asks", async () => {
   const h = setup({
     run: async (argv) => {
