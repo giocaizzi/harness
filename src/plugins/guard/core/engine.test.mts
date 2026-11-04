@@ -3825,7 +3825,7 @@ void test("factory run: the data directory matcher reads a path as the shell may
   for (const c of [
     "cd $D && echo 0 > count",
     "cd gu* && echo 0 > count",
-    "cd src && echo 0 > guard-acme/count",
+    "cd src && echo 0 > ../guard-acme/count",
   ])
     assert.equal(run(c, true, cdpath).rule, "protected-path", c);
   for (const c of ["cd src && make", "cd ./guard-acme && make"])
@@ -3835,10 +3835,22 @@ void test("factory run: the data directory matcher reads a path as the shell may
     "protected-path",
     "a variable target in a CDPATH directory away from the data directory",
   );
+  for (const c of [
+    'cd "$REPO" && ls',
+    'cd "$(git rev-parse --show-toplevel)" && make',
+    "cd $D && echo 0 > count",
+  ])
+    assert.notEqual(
+      run(c, true, { CDPATH: ".:/Users/me" }).rule,
+      "protected-path",
+      `${c}: a lone variable names one entry of a CDPATH directory, not the data directory below it`,
+    );
   assert.equal(
-    run("cd $D && echo 0 > count", true, { CDPATH: "/Users/me" }).rule,
+    run("cd $D && echo 0 > count", true, {
+      CDPATH: "/Users/me/.claude/plugins/data",
+    }).rule,
     "protected-path",
-    "a CDPATH directory above the data directory",
+    "a CDPATH directory right above the data directory",
   );
 });
 

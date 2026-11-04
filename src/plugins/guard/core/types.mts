@@ -449,7 +449,7 @@ export interface Segment {
   words: ShellWord[];
   redirs: ShellWord[];
   dir: string;
-  viaCdpath: boolean;
+  cdChains: string[];
   remote: boolean;
   resolve: (path: string) => string;
 }

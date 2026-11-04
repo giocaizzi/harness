@@ -400,13 +400,15 @@ function assign(cmd, vars, env, pwd) {
 // every local `cd`'s words as written, followed or not, with the directory they are read in (see cdCommands).
 const CHAIN_BREAK = new Set([";", "\n", "&"]);
 const ABS_DIR = /^(?:\/|[a-z]:[\\/])/i;
-function levelSegments(a, baseDir, remote, env, outer = {}, frozen = null, cds = null, ranBefore = false, cdWords = null, cdpathBefore = false) {
+function levelSegments(a, baseDir, remote, env, outer = {}, frozen = null, cds = null, ranBefore = false, cdWords = null, chainsBefore = []) {
     const vars = { ...outer };
     let ran = ranBefore;
     let dir = baseDir;
-    // The directory was reached by a relative `cd` that a CDPATH the engine cannot see (a startup file) may have resolved
-    // elsewhere: a relative path in it is also read by its tail.
-    let viaCdpath = cdpathBefore;
+    // The relative paths from each `cd` a CDPATH the engine cannot see (a startup file) may have resolved elsewhere, to
+    // the directory now reached (`cd src && cd lib` is `src/lib` from the first and `lib` from the second): a relative
+    // word in it is also read at the end of each, after an unknown start. Past 16 chains every such word counts as
+    // reaching anything.
+    let cdChains = chainsBefore;
     let followCd = true;
     let sure = true;
     let chainSure = !ranBefore;
@@ -424,6 +426,8 @@ function levelSegments(a, baseDir, remote, env, outer = {}, frozen = null, cds =
             if (dir !== baseDir)
                 dir = UNKNOWN_DIR;
         }
+        if (dir === UNKNOWN_DIR)
+            cdChains = [];
         const pwd = frozen
             ? frozen.pwd
             : ABS_DIR.test(dir) && PLAIN_PATH.test(dir)
@@ -439,7 +443,7 @@ function levelSegments(a, baseDir, remote, env, outer = {}, frozen = null, cds =
                     words: cmd.words,
                     redirs: cmd.redirs,
                     dir,
-                    viaCdpath,
+                    cdChains,
                     cdpath: "CDPATH" in vars
                         ? vars.CDPATH
                         : "cdpath" in vars
@@ -473,11 +477,15 @@ function levelSegments(a, baseDir, remote, env, outer = {}, frozen = null, cds =
                 to && !cdpath && PLAIN_DIR.test(to) && !to.startsWith("~")
                     ? inDir(dir, to)
                     : UNKNOWN_DIR;
-            viaCdpath =
-                dir !== UNKNOWN_DIR &&
-                    to !== null &&
-                    to !== undefined &&
-                    !NOT_VIA_CDPATH.test(to);
+            if (dir === UNKNOWN_DIR || !to || ABS_DIR.test(to) || to.startsWith("~"))
+                cdChains = [];
+            else {
+                cdChains = cdChains.map((c) => `${c}/${to}`);
+                if (!NOT_VIA_CDPATH.test(to))
+                    cdChains.push(to);
+                if (cdChains.length > 16)
+                    cdChains = ["**"];
+            }
             if (cds && dir !== UNKNOWN_DIR)
                 cds.push(dir);
             sure = chainSure =
@@ -498,7 +506,7 @@ function levelSegments(a, baseDir, remote, env, outer = {}, frozen = null, cds =
                     words: cmd.words,
                     redirs: cmd.redirs,
                     dir: gitDirs(seg).map(resolve).reduce(inDir, dir),
-                    viaCdpath,
+                    cdChains,
                     remote,
                     resolve,
                 });
@@ -545,7 +553,7 @@ function levelSegments(a, baseDir, remote, env, outer = {}, frozen = null, cds =
                     ? snapshot
                     : p.expanded
                         ? expandedVars
-                        : prefixed, inner, cds, ranHere, cdWords, viaCdpath)));
+                        : prefixed, inner, cds, ranHere, cdWords, cdChains)));
         }
     }
     return out;
@@ -573,7 +581,7 @@ function shellEnv(command, env) {
     return {
         ...env,
         ...(home ? { HOME: undefined } : {}),
-        ...(cdpath ? { CDPATH: env.CDPATH ?? "?" } : {}),
+        ...(cdpath ? { CDPATH: "?" } : {}),
     };
 }
 const prepared = (command) => analysis(expandLoops(command).replace(SIMPLE_QUOTED, "$1"));
@@ -1593,12 +1601,12 @@ function fallbackReadings(p, depth = 0) {
     return [p];
 }
 // A path's first token that is a start the engine cannot know: a variable or special parameter (`$X`, `$1`, `$@`, a
-// substitution or expansion as one `spans` token), a Windows `%VAR%`, or `~` with a user name or alone.
+// substitution or expansion as one `spans` token), a Windows `%VAR%`, or `~` with a user name, `+` or `-`, or alone.
 // A segment that matches no name: no file is named by an empty string.
 const NO_NAME = "\0";
 // A segment of nothing but variables and substitutions, which spells no name (a written wildcard does).
 const TOKENS_ONLY = new RegExp(`^(?:${SEG_VAR.source})+$`);
-const START_TOKEN = /^(?:\$(?:[=^~]?\w+|[@*#?!$-])|%\w+%|~[\w.-]*)$/;
+const START_TOKEN = /^(?:\$(?:[=^~]?\w+|[@*#?!$-])|%\w+%|~[\w.+-]*)$/;
 // A segment that may stand for any number of directories: `**` (zsh, bash with globstar), or one holding a variable or
 // substitution, whose value may hold a `/`.
 const MULTI_SEG = new RegExp(`\\*\\*|${SEG_VAR.source}`);
@@ -1840,21 +1848,30 @@ export function protectedWrite(command, protect, env = {}, limits = { globs: 256
             const paths = whole ? [] : dataPaths(rest, literal);
             if (paths === null)
                 return true;
-            // A segment made of nothing but variables and substitutions (`$X/$Y`) spells no name, like a lone `$X`: it may
-            // stand for anything after the data directory's name, never for that name itself.
-            const tail = dataDirs.some((d) => {
-                const base = d.at(-1);
-                return (base !== undefined &&
-                    paths.some((segs) => patternHits([base, "**"], segs.map((x) => anySeg(x)
-                        ? TOKENS_ONLY.test(x.slice(1))
-                            ? NO_NAME
-                            : x.slice(1)
-                        : x), above, true, tick)));
-            });
+            // The path is the unknown start then these segments: it lies inside the data directory when the start is a
+            // directory above it and the segments spell the rest of its path, so when a leading run of them may be the
+            // directory's last one, two, … segments (`$X/guard-acme/x`, `$X/data/guard-acme/x`; `$X/src/*` cannot: `src`
+            // is none of them). A segment made of nothing but variables and substitutions spells no name, like a lone
+            // `$X` (`$X/$Y/x` passes); a written wildcard or text glued to a variable may be one name (`$X:` is `*:`, so
+            // `$PWD:/w` passes; a value holding a `/` is the path the guard does not see).
+            const tail = dataDirs.some((d) => paths.some((segs) => {
+                const s = segs.map((x) => anySeg(x)
+                    ? TOKENS_ONLY.test(x.slice(1))
+                        ? NO_NAME
+                        : x.slice(1)
+                    : x);
+                for (let k = 1; k <= d.length; k++)
+                    if (reachData(d.slice(d.length - k), s, above, tick))
+                        return true;
+                return false;
+            }));
             // A variable or substitution first may also hold a path relative to the directory the word is read in
-            // (`cd data && cat $X/count`): read there too, the token as any number of directories.
+            // (`cd data && cat $X/count`): read there too, the token as any number of directories; alone, it names one
+            // entry of that directory (`cd data && rm -rf $X`), its deeper values being the path the guard does not see.
             if (tail || p.startsWith("~") || dir === UNKNOWN_DIR)
                 return tail;
+            if (whole)
+                return inDataReading(dir, "*", above, true);
         }
         let full = dir && !ABS_DIR.test(p)
             ? `${posixPath(dir).replace(/\/+$/, "")}/${p}`
@@ -1944,7 +1961,9 @@ export function protectedWrite(command, protect, env = {}, limits = { globs: 256
     if (ref && dataDirs.length)
         return { target: ref[0], data: true };
     try {
-        const target = scanWrites(command, env, count, hits, dataDirs.length ? named : null);
+        const target = scanWrites(command, env, count, hits, dataDirs.length ? named : null, () => {
+            dataHit = true;
+        });
         return target === null ? null : { target, data: dataHit };
     }
     catch (e) {
@@ -1977,7 +1996,7 @@ function spellings(w) {
 const POSIX_MOVERS = /^(?:cp|mv)$/;
 // The plugin-data variable in any shell's spelling, at the start of a word and followed by its end or a separator.
 const DATA_VAR = /^(?:\$\{?(?:env:)?|%)(?:claude|copilot)_plugin_data(?:\}|%)?(?:$|[\\/])/i;
-function scanWrites(command, env, count, hits, named) {
+function scanWrites(command, env, count, hits, named, dataUnknown = () => undefined) {
     // A word the shell does not expand is literal text: no glob, variable or `**` in it stands for anything else. An
     // unquoted `(`, `^` or `#` counts as expansion too: a zsh qualifier, extendedglob operator or a bash extglob (`@(x)`)
     // is a glob the reader keeps whole.
@@ -1994,18 +2013,18 @@ function scanWrites(command, env, count, hits, named) {
             words: s.words,
             redirs: s.redirs,
             dir: s.dir,
-            viaCdpath: s.viaCdpath,
+            cdChains: s.cdChains,
             cdpath: undefined,
             resolve: s.resolve,
         })),
     ];
     for (const entry of entries) {
-        const { cd, words, redirs, dir, viaCdpath, resolve } = entry;
+        const { cd, words, redirs, dir, cdChains, resolve } = entry;
         // Any command naming a path inside guard's data directory, whatever its program (a redirection target too).
         // A `cd` operand is also read by its tail: a literal relative one always (CDPATH may be set in a way the engine
         // cannot see) and every operand of a `cd` with two or more (zsh `cd old new` edits the directory's path), the
-        // resolved value deciding what CDPATH never looks up. So is
-        // every word in a directory such a `cd` reached (`viaCdpath`). A target CDPATH may look up (relative, or a
+        // resolved value deciding what CDPATH never looks up. A relative word in a directory such a `cd` reached is read
+        // at the end of each relative path from such a `cd` (`cdChains`). A target CDPATH may look up (relative, or a
         // variable or substitution first) is also read in each directory of a CDPATH the engine knows; one it knows
         // is set to a value it cannot read makes such a variable target unknowable.
         const cdOperands = cd
@@ -2017,20 +2036,29 @@ function scanWrites(command, env, count, hits, named) {
                     if (named(defined(t), dir, resolve, false, literal(w)))
                         return t;
                     const r = resolve(defined(t));
-                    if ((viaCdpath ||
-                        (cd &&
-                            i > redirs.length &&
-                            (cdOperands > 1 ||
-                                (!NOT_VIA_CDPATH.test(r) && !MULTI_SEG.test(spans(r)))))) &&
+                    if (cd &&
+                        i > redirs.length &&
+                        (cdOperands > 1 ||
+                            (!NOT_VIA_CDPATH.test(r) && !MULTI_SEG.test(spans(r)))) &&
                         named(defined(t), UNKNOWN_DIR, resolve, false, literal(w)))
                         return t;
+                    // A `key=value` word goes by its value, which the chain cannot precede as a whole.
+                    const part = defined(t).includes("=")
+                        ? defined(t).slice(defined(t).indexOf("=") + 1)
+                        : defined(t);
+                    if (!/^(?:[$~%`\\/]|[a-z]:[\\/])/i.test(resolve(part)))
+                        for (const c of cdChains)
+                            if (named(`${c}/${part}`, UNKNOWN_DIR, resolve, false, literal(w)))
+                                return t;
                     if (cd &&
                         i > redirs.length &&
                         entry.cdpath !== undefined &&
                         MAY_CDPATH.test(r)) {
                         if (entry.cdpath === null) {
-                            if (MULTI_SEG.test(spans(r)))
+                            if (MULTI_SEG.test(spans(r))) {
+                                dataUnknown();
                                 return t;
+                            }
                         }
                         else
                             for (const e of cdpathDirs(entry.cdpath))
@@ -2764,7 +2792,7 @@ export function evaluateCommand({ command, loadedSkills = new Set(), state, host
             action: "deny",
             rule: "protected-path",
             reason: shielded.data
-                ? `${rules.factory.protectedWhy} \`${shielded.target}\` could not be proven to stay outside guard's own data directory in this run (the guard reads every spelling the shell could expand it to); spell the path as a literal absolute path, or without a variable, glob or \`..\` near that directory.`
+                ? `A factory run must not read or change guard's own data directory (its block counter), and \`${shielded.target}\` could not be proven to stay outside it (the guard reads every spelling the shell could expand it to); spell the path as a literal absolute path, or without a variable, glob or \`..\` that may reach that directory.`
                 : `${rules.factory.protectedWhy} \`${shielded.target}\` is a protected path in this run; leave it to the owner and say on the ticket what should change.`,
         };
     if (shielded?.unsure)
