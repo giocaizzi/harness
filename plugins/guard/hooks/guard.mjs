@@ -13,6 +13,7 @@ import { cpuPercentFrom } from "../core/host.mjs";
 import { emit } from "../core/otel.mjs";
 import { rules } from "../core/rules.mjs";
 import { commandWords, units } from "../core/shell.mjs";
+import { contractProbe } from "./contract.mjs";
 import { pluginDataDir } from "./data.mjs";
 import { editedFiles } from "./lint.mjs";
 import { isEditTool, isReadTool, isShellTool, isTaskTool, } from "./harnesses.mjs";
@@ -1060,6 +1061,10 @@ function readInput() {
     });
 }
 async function main() {
+    if (process.argv.includes("--contract")) {
+        process.stdout.write(`${JSON.stringify(contractProbe())}\n`);
+        return;
+    }
     const flagHarness = process.argv
         .find((a) => a.startsWith("--harness="))
         ?.slice(10);

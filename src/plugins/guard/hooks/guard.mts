@@ -61,6 +61,7 @@ import type {
   StackFact,
   TagFact,
 } from "../core/types.mjs";
+import { contractProbe } from "./contract.mjs";
 import { pluginDataDir } from "./data.mjs";
 import { editedFiles } from "./lint.mjs";
 import {
@@ -1520,6 +1521,10 @@ function readInput(): Promise<string> {
 }
 
 async function main(): Promise<void> {
+  if (process.argv.includes("--contract")) {
+    process.stdout.write(`${JSON.stringify(contractProbe())}\n`);
+    return;
+  }
   const flagHarness = process.argv
     .find((a) => a.startsWith("--harness="))
     ?.slice(10);
