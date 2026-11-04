@@ -1411,8 +1411,11 @@ function globsMayMeet(a, b) {
 // Whether one target segment may be one protected-pattern segment.
 // A variable may hold a leading dot, so only a written `*`, `?` or `[` at the start keeps a dot file out.
 // `dots` takes a leading wildcard to match a dot file too (a session can `shopt -s dotglob`).
+const SEG_VAR = /\$(?:\{[^}]*\}|\w+|\([^)]*\))|%\w+%|`[^`]*`/;
+// A segment that may stand for several directories: a `**`, or a variable whose value may hold a `/`.
+const MULTI_SEG = new RegExp(`\\*\\*|${SEG_VAR.source}`);
 function segMayMatch(pat, seg, dots = false) {
-    const glob = seg.replace(/\$(?:\{[^}]*\}|\w+|\([^)]*\))|%\w+%|`[^`]*`/g, "*");
+    const glob = seg.replace(new RegExp(SEG_VAR.source, "g"), "*");
     if (SEG_GLOB.test(glob)) {
         if (!dots && /^[*?[]/.test(seg) && pat.startsWith("."))
             return false;
@@ -1538,18 +1541,33 @@ export function protectedWrite(command, protect, env = {}, limits = { globs: 256
             if (full !== null) {
                 const s = normalizeSegments(full.replace(/^\/(?=[a-z]:)/i, ""));
                 // The data directory's segments are literal; the path's may hold a glob or a variable (a leading wildcard may be a dot).
-                const same = (lit, path) => path
-                    .slice(0, lit.length)
-                    .every((x, i) => segMayMatch(defined(lit[i]), x, true));
-                const cover = (lit, path) => lit
-                    .slice(0, path.length)
-                    .every((x, i) => segMayMatch(x, defined(path[i]), true));
-                if (d.length <= s.length ? same(d, s) : above && cover(d, s))
+                // A `**` or variable segment may stand for several directories (a variable's value may hold a `/`).
+                const reach = (d2, path) => {
+                    const memo = new Map();
+                    const f = (i, j) => {
+                        if (j === d2.length)
+                            return true;
+                        if (i === path.length)
+                            return above;
+                        const key = i * (d2.length + 1) + j;
+                        if (memo.has(key))
+                            return defined(memo.get(key));
+                        tick();
+                        const seg = defined(path[i]);
+                        const r = MULTI_SEG.test(seg)
+                            ? f(i + 1, j) || f(i, j + 1)
+                            : segMayMatch(defined(d2[j]), seg, true) && f(i + 1, j + 1);
+                        memo.set(key, r);
+                        return r;
+                    };
+                    return f(0, 0);
+                };
+                if (reach(d, s))
                     return true;
                 const git = /^\/([a-z])(?:\/|$)/i.exec(full);
                 if (git && /^[a-z]:$/i.test(d[0] ?? "")) {
                     const g = [`${defined(git[1])}:`, ...s.slice(1)];
-                    if (d.length <= g.length ? same(d, g) : above && cover(d, g))
+                    if (reach(d, g))
                         return true;
                 }
                 continue;
@@ -1605,7 +1623,14 @@ export function protectedWrite(command, protect, env = {}, limits = { globs: 256
                     const base = d.at(-1)?.toLowerCase();
                     return base !== undefined && base !== "" && low.includes(base);
                 }));
-        if (!names && !MAY_WRITE.test(command))
+        // Or a glob word that may match that last segment (`guard-a*`).
+        const globs = dataDirs.length > 0 &&
+            low.split(/[\s/\\'"=;|&<>()]+/).some((w) => /[*?[]/.test(w) &&
+                dataDirs.some((d) => {
+                    const base = d.at(-1)?.toLowerCase();
+                    return (base !== undefined && base !== "" && segMayMatch(base, w, true));
+                }));
+        if (!names && !globs && !MAY_WRITE.test(command))
             return null;
         return {
             unsure: e === LIMITED

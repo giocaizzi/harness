@@ -3771,6 +3771,41 @@ void test("factory run: a glob or variable in the data directory's path still na
   );
 });
 
+void test("factory run: a `**` or variable segment may stand for several directories down to the data directory", () => {
+  const protect = {
+    root: "/Users/me/repo",
+    cwd: "/Users/me/repo",
+    data: ["/Users/me/.claude/plugins/data/guard-acme"],
+  };
+  const run = (command: string, on = true) =>
+    evaluateCommand({
+      command,
+      state: fresh(),
+      host: calm,
+      factory: on ? { approval: "agent-ok", protect } : null,
+      env: { HOME: "/Users/me", dirs: { has: () => true } },
+      rules,
+    });
+  for (const c of [
+    "tee /Users/me/**/result-gate/a.txt",
+    "cat /Users/me/.claude/**/guard-acme/x",
+    "touch /Users/me/$D/result-gate/a.txt",
+    "touch /Users/me/${D}/result-gate/a.txt",
+    "ls /Users/me/**/other-plugin/x",
+  ]) {
+    const d = run(c);
+    assert.equal(d.action, "deny", c);
+    assert.equal(d.rule, "protected-path", c);
+  }
+  for (const c of ["ls /Users/other/**/x", "ls /tmp/**/x"])
+    assert.equal(run(c).action, "allow", c);
+  assert.equal(
+    run("tee /Users/me/**/result-gate/a.txt", false).action,
+    "allow",
+    "no factory run: allowed",
+  );
+});
+
 void test("protectedWrite: a command past the scan limits that names the data directory fails closed", () => {
   const data = "/Users/me/.claude/plugins/data/guard-acme";
   const env = { HOME: "/Users/me", TMPDIR: "/tmp/" };
@@ -3792,6 +3827,8 @@ void test("protectedWrite: a command past the scan limits that names the data di
   assert.ok(hit("touch $copilot_plugin_data/x")?.unsure);
   assert.ok(hit("touch /tmp/GUARD-ACME/x")?.unsure);
   assert.equal(hit("touch /tmp/x"), null);
+  assert.ok(hit("touch /Users/me/.claude/plugins/data/guard-a*/x")?.unsure);
+  assert.equal(hit("touch /tmp/x*"), null);
   assert.equal(hit(`dd of=${data}/x`, []), null);
 });
 
