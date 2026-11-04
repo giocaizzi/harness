@@ -1,4 +1,4 @@
-// The result gate's own check and the helpers around the checker the launcher names (FACTORY_RESULT_CHECKER).
+// The result gate's own check and the helpers around the checker the run registration names (result.checker).
 // Pure: no fs or process I/O. The core check holds the fields the gate itself relies on; the rest of the schema is
 // the delegated checker's job, and a checker can only add errors.
 import path from "node:path";
@@ -29,20 +29,20 @@ export const coreErrors = (result, env = {}) => {
     }
     const r = result;
     const errors = [];
-    const wantRun = (env.FACTORY_RUN_ID ?? "").trim();
+    const wantRun = (env.GUARD_RUN_ID ?? "").trim();
     if (typeof r.run_id !== "string" || r.run_id.trim() === "") {
         errors.push(`run_id must be a non-empty string, got ${show(r.run_id)}`);
     }
     else if (wantRun && r.run_id !== wantRun) {
-        errors.push(`run_id ${show(r.run_id)} differs from FACTORY_RUN_ID ${show(wantRun)}`);
+        errors.push(`run_id ${show(r.run_id)} differs from GUARD_RUN_ID ${show(wantRun)}`);
     }
     if (typeof r.ticket !== "string" || !TICKET.test(r.ticket)) {
         errors.push(`ticket must be a string of the form "<owner>/<repo>#<number>", got ${show(r.ticket)}`);
     }
     else {
-        const wantTicket = (env.FACTORY_TICKET ?? "").trim();
+        const wantTicket = (env.GUARD_RUN_TICKET ?? "").trim();
         if (wantTicket && r.ticket !== wantTicket) {
-            errors.push(`ticket ${show(r.ticket)} differs from FACTORY_TICKET ${show(wantTicket)}`);
+            errors.push(`ticket ${show(r.ticket)} differs from GUARD_RUN_TICKET ${show(wantTicket)}`);
         }
     }
     if (typeof r.end_state !== "string" || r.end_state.trim() === "") {
@@ -82,5 +82,5 @@ export const rawPath = (v) => {
     return text.replace(/[\u0000-\u001F\u007F]/g, "?");
 };
 export const couldNotRun = (checkerPath, why) => [
-    `result checker ${rawPath(checkerPath)} (FACTORY_RESULT_CHECKER) could not run: ${why}`,
+    `result checker ${rawPath(checkerPath)} (result.checker) could not run: ${why}`,
 ];

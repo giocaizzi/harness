@@ -7,18 +7,20 @@
 // reads /dev/tty fails at once instead of hanging the session.
 import { spawn, spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { closeSync, constants, fstatSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statfsSync, writeFileSync, } from "node:fs";
+import { closeSync, constants, fstatSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, rmSync, statfsSync, writeFileSync, } from "node:fs";
 import { loadavg, platform } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep, } from "node:path";
 import { pathToFileURL } from "node:url";
 import { docsOnly } from "../core/docsonly.mjs";
 import { emit } from "../core/otel.mjs";
+import { UNREGISTERED_RULE, resultFile } from "../core/registration.mjs";
 import { coreErrors, couldNotRun, report } from "../core/result.mjs";
 import { rules } from "../core/rules.mjs";
-import { DEFAULT_WRITE_HINT, defaultChecker, prepareChecker, runChecker, } from "./checker.mjs";
+import { prepareChecker, runChecker } from "./checker.mjs";
 import { pluginDataDir } from "./data.mjs";
 import { sessionStore } from "./guard.mjs";
 import { detectHarnessName } from "./harnesses.mjs";
+import { denyReason, legacySet, recordUnregistered, runContext, } from "./run.mjs";
 import { emitAntigravityUsage, failedTarget, harnessName, recordAttrs, scrub, } from "./telemetry.mjs";
 const DEFAULT_TIMEOUT_MS = 300_000;
 const MAX_UNTRACKED = 2000;
@@ -236,50 +238,58 @@ function readRegularFile(file, maxBytes, tooLarge) {
     }
 }
 const readResultFile = (file) => readRegularFile(file, RESULT_MAX_BYTES, "too large (over 1 MiB)");
-const TICKET_NUMBER = /^[\w.-]+\/[\w.-]+#([1-9]\d*)$/;
-const STRICT_WRITE_HINT = "Fix result.json until it passes the core check and the launcher's checker; never edit the checker.";
-const SUBAGENT_HINT = "A subagent (such as the verifier) ignores this and ends its turn: the main session writes the file.";
-// The factory run this stop belongs to, or null: the gate is off, a subagent is stopping, or no run is identified
-// (the runtime's FACTORY_RUN_ID and FACTORY_TICKET, or an attended run's pair).
+const SUBAGENT_HINT = "A subagent ignores this and ends its turn: the main session writes the file.";
+const DEFAULT_HINT = "Fix the result file until it passes the core check.";
+const STRICT_HINT = "Fix the result file until it passes the core check and the runner's checker; never edit the checker.";
 // A payload that is not a plain object counts as an empty one.
 const plainInput = (v) => v !== null && typeof v === "object" && !Array.isArray(v) ? v : {};
-function gateRun(raw, env) {
-    const input = plainInput(raw);
-    if (env.GUARD_RESULT_GATE === "off" ||
-        input.agent_id ||
-        /^subagentstop$/i.test(input.hook_event_name ?? "")) {
-        return null;
-    }
-    const runtime = (env.FACTORY_RUN_ID ?? "").trim();
-    const runId = runtime || (env.FACTORY_ATTENDED_RUN_ID ?? "").trim();
-    const ticketRef = (runtime ? env.FACTORY_TICKET : env.FACTORY_ATTENDED_TICKET)?.trim() ?? "";
-    const number = TICKET_NUMBER.exec(ticketRef)?.[1];
-    return runId && number ? { runId, number, runtime: Boolean(runtime) } : null;
+// A subagent's stop is never held: the main session owns the run.
+const isSubagentStop = (input) => Boolean(input.agent_id) ||
+    /^subagentstop$/i.test(input.hook_event_name ?? "");
+// The run's context for this stop, and the PrepareOptions part of `opts` that vets the manifest and its checker.
+function stopContext(env, input, opts) {
+    const dataDir = opts.dataDir ?? pluginDataDir(env);
+    // the probes in `opts` are the PrepareOptions; its other keys are not read by the vetting
+    const ctx = runContext(env, {
+        dataDir,
+        sessionId: input.session_id,
+        cache: opts.cache,
+        vet: opts,
+    });
+    return { ctx, dataDir };
 }
-// Strict mode: the launcher named a checker (FACTORY_RESULT_CHECKER present, even empty). Read from the hook's own
-// environment only, never from the result file or project config.
-const isStrict = (env) => env.FACTORY_RESULT_CHECKER !== undefined;
-// In strict mode and in a runtime run the gate never fails open: the block reason for a stop whose check could not
-// be made, or null for an attended run with no named checker, an exempt stop or no identified run.
-export function gateFailClosed(env, input, why) {
+// The gate never fails open once a registered run names a checker (strict) or runs unattended: the block reason for
+// a stop whose check could not be made, or null for an attended run with no named checker, an exempt stop, a gate
+// switched off or no run. A failed registration blocks whatever the switch says.
+export function gateFailClosed(env, input, why, opts = {}) {
     try {
-        const strict = isStrict(env);
-        const run = gateRun(input, env);
-        if (!run || !(strict || run.runtime))
+        const raw = plainInput(input);
+        if (isSubagentStop(raw))
+            return null;
+        const { ctx } = stopContext(env, raw, opts);
+        if (ctx.state === "deny")
+            return denyReason(ctx, "stop");
+        if (ctx.state === "none")
+            return null;
+        const result = ctx.registration.result;
+        if (env.GUARD_RESULT_GATE === "off" || !result)
+            return null;
+        const strict = result.checker !== undefined;
+        if (!(strict || ctx.mode === "unattended"))
             return null;
         const shown = scrub(why).slice(0, 200);
         return strict
-            ? `Factory result gate: could not check the result for run ${run.runId} (${shown}); FACTORY_RESULT_CHECKER is set, so the stop stays blocked.`
-            : `Factory result gate: could not check the result for run ${run.runId} (${shown}); a runtime run never fails open, so the stop stays blocked.`;
+            ? `Run result gate: could not check the result for run ${ctx.runId} (${shown}); the registration names a result checker, so the stop stays blocked.`
+            : `Run result gate: could not check the result for run ${ctx.runId} (${shown}); an unattended run never fails open, so the stop stays blocked.`;
     }
     catch {
-        // the gate's own failure must not open a runtime run
+        // the gate's own failure must not open a run
         try {
-            const guarded = ((env.FACTORY_RUN_ID ?? "").trim() ||
-                env.FACTORY_RESULT_CHECKER !== undefined) &&
-                env.GUARD_RESULT_GATE !== "off";
-            return guarded
-                ? "Factory result gate: could not check the result for this run (internal error); the stop stays blocked."
+            const raw = plainInput(input);
+            const set = (k) => (env[k] ?? "").trim() !== "";
+            return !isSubagentStop(raw) &&
+                (set("GUARD_RUN_ID") || set("GUARD_RUN_MANIFEST") || legacySet(env))
+                ? "Run result gate: could not check the result for this run (internal error); the stop stays blocked."
                 : null;
         }
         catch {
@@ -328,25 +338,73 @@ function bumpBlocks(runId) {
     }
     return n;
 }
+// No result file path segment may be a git directory under any spelling a filesystem folds onto it: trailing dots and
+// spaces (Windows), case (macOS, Windows) and 8.3 short names.
+const GIT_SEGMENT = /^(\.git(hub)?|git(hub)?~\d+)$/i;
+// The real path of `rel` under `root`: symlinks resolved through the nearest existing ancestor, the missing rest
+// appended. Throws when it leaves the repo or goes under .git or .github.
+function resolveResultFile(root, rel) {
+    const realRoot = realpathSync(root);
+    let existing = join(root, rel);
+    const rest = [];
+    let real;
+    for (;;) {
+        try {
+            real = realpathSync(existing);
+            break;
+        }
+        catch (e) {
+            const code = e.code;
+            const up = dirname(existing);
+            if ((code !== "ENOENT" && code !== "ENOTDIR") || up === existing)
+                throw e;
+            rest.unshift(basename(existing));
+            existing = up;
+        }
+    }
+    const resolved = join(real, ...rest);
+    const inside = relative(realRoot, resolved);
+    if (inside === ".." || inside.startsWith(`..${sep}`) || isAbsolute(inside)) {
+        throw new Error("result file resolves outside the repo");
+    }
+    if (inside.split(sep).some((seg) => GIT_SEGMENT.test(seg.replace(/[. ]+$/, "")))) {
+        throw new Error("result file resolves under .git or .github");
+    }
+    return resolved;
+}
 export async function resultGate(input, run = spawnSync, env = process.env, onEvent = () => {
     // default event ignore
 }, checkerOpts = {}) {
     const event = (result, attrs = {}) => {
         onEvent({ result, target: "result-gate", ...attrs });
     };
-    const strict = isStrict(env);
+    const payload = plainInput(input);
+    if (isSubagentStop(payload))
+        return null;
     try {
-        const gate = gateRun(input, env);
-        if (!gate)
+        const { ctx, dataDir } = stopContext(env, payload, checkerOpts);
+        if (ctx.state === "deny") {
+            // not switched off by GUARD_RESULT_GATE, and not counted: a failed registration stays blocked
+            if (ctx.rule === UNREGISTERED_RULE) {
+                recordUnregistered(env, dataDir, payload.session_id);
+            }
+            event("registration", { rule: ctx.rule });
+            return denyReason(ctx, "stop");
+        }
+        if (ctx.state === "none")
             return null;
-        const cwd = plainInput(input).cwd ?? process.cwd();
-        const { runId, number, runtime } = gate;
-        const runner = runtime ? "runtime" : "attended";
+        const { registration, runId } = ctx;
+        const spec = registration.result;
+        if (env.GUARD_RESULT_GATE === "off" || !spec)
+            return null;
+        const cwd = payload.cwd ?? process.cwd();
+        const strict = spec.checker !== undefined;
+        const runtime = ctx.mode === "unattended";
+        const mode = ctx.mode;
         // Resolved once, before the result is read.
-        const dflt = strict ? null : defaultChecker(checkerOpts.buildCopy);
-        const checker = strict
-            ? prepareChecker(env.FACTORY_RESULT_CHECKER, checkerOpts)
-            : dflt && { path: dflt.path, shown: dflt.path };
+        const checker = spec.checker === undefined
+            ? null
+            : prepareChecker(spec.checker, checkerOpts);
         const checkerShown = checker?.shown ?? "";
         const git = run("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], { cwd, encoding: "utf8", windowsHide: true });
         if (git.status !== 0 || !git.stdout.trim()) {
@@ -354,18 +412,28 @@ export async function resultGate(input, run = spawnSync, env = process.env, onEv
                 throw new Error("git rev-parse failed");
             return null;
         }
-        const file = join(dirname(git.stdout.trim()), ".factory", "runs", number, "result.json");
+        const root = dirname(git.stdout.trim());
+        const template = resultFile(spec.file, {
+            run_id: runId,
+            ticket_number: ctx.ticketNumber,
+        });
+        if ("why" in template)
+            throw new Error(template.why);
+        const file = resolveResultFile(root, template.path);
         let errors = [];
         let parsed;
         let parsedOk = false;
-        const runFile = (env.FACTORY_RUN_FILE ?? "").trim();
+        const coreEnv = runtime
+            ? {
+                GUARD_RUN_ID: runId,
+                ...(ctx.ticket ? { GUARD_RUN_TICKET: ctx.ticket } : {}),
+            }
+            : {};
         const checkEnv = runtime
-            ? runFile
-                ? {
-                    ...env,
-                    FACTORY_RUN_FILE: resolve(cwd, runFile),
-                }
-                : env
+            ? {
+                ...env,
+                ...(ctx.runFile ? { GUARD_RUN_FILE: resolve(cwd, ctx.runFile) } : {}),
+            }
             : {};
         try {
             const content = readResultFile(file).replace(/^\uFEFF/, "");
@@ -393,7 +461,7 @@ export async function resultGate(input, run = spawnSync, env = process.env, onEv
                     parsed.run_id !== runId)) {
                 return null;
             }
-            errors = coreErrors(parsed, checkEnv);
+            errors = coreErrors(parsed, coreEnv);
         }
         // The checker can only add errors: the core ones always stay.
         if (checker && "why" in checker) {
@@ -410,18 +478,18 @@ export async function resultGate(input, run = spawnSync, env = process.env, onEv
             return null;
         const blocks = blockCount(runId);
         if (!strict && blocks >= RESULT_GATE_MAX) {
-            event("capped", { runner });
+            event("capped", { mode });
             return null;
         }
         const n = bumpBlocks(runId);
-        event("block", { runner, blocks: n });
+        event("block", { mode, blocks: n });
         const head = strict
-            ? `Factory result gate (block ${String(n)}; FACTORY_RESULT_CHECKER is set, so the stop stays blocked until the result passes)`
-            : `Factory result gate (block ${String(n)} of ${String(RESULT_GATE_MAX)})`;
+            ? `Run result gate (block ${String(n)}; the registration names a result checker, so the stop stays blocked until the result passes)`
+            : `Run result gate (block ${String(n)} of ${String(RESULT_GATE_MAX)})`;
         return [
             `${head}: ${file} is not a valid result for run ${runId}:`,
             ...report(errors),
-            strict ? STRICT_WRITE_HINT : DEFAULT_WRITE_HINT,
+            spec.hint ?? (strict ? STRICT_HINT : DEFAULT_HINT),
             SUBAGENT_HINT,
         ].join("\n");
     }
@@ -430,11 +498,11 @@ export async function resultGate(input, run = spawnSync, env = process.env, onEv
             ? e.message
             : String(e);
         event("error", { why: scrub(err).slice(0, 200) });
-        return gateFailClosed(env, input, err);
+        return gateFailClosed(env, input, err, checkerOpts);
     }
 }
 export async function stopCheck(input, run = spawnSync, opts = {}) {
-    const gate = await resultGate(input, run, process.env, opts.report);
+    const gate = await resultGate(input, run, process.env, opts.report, opts.gate);
     let check = null;
     try {
         check = await makeCheck(input, run, opts);
@@ -692,8 +760,8 @@ if (entryArg && import.meta.url === pathToFileURL(entryArg).href) {
         }
     }
     catch {
-        // unreadable payload or an internal error in the gate: let the agent stop, unless the launcher named a result
-        // checker or this is a runtime run, in which case the stop stays blocked
+        // unreadable payload or an internal error in the gate: let the agent stop, unless a run is identified, in which
+        // case the stop stays blocked
         try {
             const reason = answered
                 ? null
