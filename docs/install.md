@@ -75,6 +75,26 @@ That copies the skills to `~/.gemini/config/skills/`, the agents to `~/.gemini/c
 
 Update: `git pull` in the checkout, then `make install HARNESS=antigravity` again. Check: `/agents` shows `scout`; running `pip install x` in a uv repo is denied with the guard's reason.
 
+## A plugin removed from the marketplace
+
+A plugin can leave this marketplace, for example when it moves to a separate plugin repository (the `factory` plugin did in 4.0.0). In Claude Code (checked with 2.1.318 in a throwaway `HOME`, with a git-sourced marketplace):
+
+- After `claude plugin marketplace update giocaizzi-harness`, the installed copy stays in the plugin cache but no longer loads: `claude plugin list` shows `failed to load: Plugin <name> not found in marketplace giocaizzi-harness`. `claude plugin update <name>@giocaizzi-harness` fails with `Plugin "<name>" not found`, and so does a fresh install.
+- A plugin from any marketplace that depends on `<name>@giocaizzi-harness` (or on the bare `<name>` inside this marketplace) fails to load too, with `Dependency "<name>@giocaizzi-harness" is not installed`. Installing the moved plugin from its new marketplace does not satisfy it: a dependency names its marketplace, so the depending plugin's manifest has to name the new one.
+- While the stale entry is installed, `claude plugin prune` refuses to run (`cannot determine orphans`).
+
+To move over:
+
+```bash
+claude plugin marketplace add <owner>/<new-repo>
+claude plugin install <name>@<new-marketplace>
+claude plugin uninstall <name>@giocaizzi-harness
+```
+
+Install the new one before uninstalling the old one when the moved plugin depends on plugins from here (as `factory` does on `dev-tools` and `guard`). Those were auto-installed as its dependencies, and uninstalling the old copy with nothing else depending on them marks them unneeded, so a later `claude plugin prune` would remove them. Once the new copy declares them (as `dev-tools@giocaizzi-harness`, with `allowCrossMarketplaceDependenciesOn` in its marketplace, or Claude Code installs the plugin but does not fetch them), they stay. The uninstalled version's cache directory is marked orphaned and cleaned up by Claude Code later.
+
+Copilot CLI and Codex were not probed: uninstall the plugin there with their own plugin command, then install it from its new marketplace. For Codex agents, opencode and Antigravity, re-running `make install` after `git pull` removes the files an earlier run installed that the checkout no longer ships. pi installs the whole repo, so the plugin's skills and agents leave with `pi update`.
+
 ## From a checkout (development)
 
 ```bash
