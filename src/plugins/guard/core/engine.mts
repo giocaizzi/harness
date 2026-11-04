@@ -1786,6 +1786,8 @@ function* dynamicReadings(at: RelativeSegments): Generator<RelativeSegments> {
   for (const [i, x] of at.segs.entries()) {
     if (!DYNAMIC_SEGMENT.test(x)) continue;
     const tail = at.segs.slice(i + 1);
+    // A variable last in the path has no segment after it to re-root: `build/$DIR` is no reading of the root.
+    if (tail.length === 0) continue;
     for (let kept = 0; kept < i; kept++)
       yield {
         ...at,
@@ -2019,8 +2021,9 @@ const LIMITED = new Error("limited");
 // A spelling the guard denies in a run instead of modelling it: a path segment made only of dots and spaces (other than
 // `.` and `..`), which Windows drops or reads as `..`; a Windows device path (`//?/C:/...`), a network or admin share
 // (`//host/share`), a drive-relative path (`C:dir`) or an NTFS stream (`.github::$INDEX_ALLOCATION`, `name:stream`), which no
-// repo root can be compared with. It is read on a spelling that keeps its separators: a backslash word the shell read
-// as escapes (`C:\temp\x` is `C:tempx`) is no such spelling.
+// repo root can be compared with (a share, a drive-relative path and a stream only in a Windows run, see `oddSpelling`).
+// It is read on a spelling that keeps its separators: a backslash word the shell read as escapes (`C:\temp\x` is
+// `C:tempx`) is no such spelling, but is modelled (`unescaped`).
 export function spellingWhy(
   why: string,
   target: string,
@@ -2030,27 +2033,66 @@ export function spellingWhy(
     ? `${why} \`${target}\` has a path segment of only dots and spaces, which Windows reads differently; spell the path plainly.`
     : `${why} \`${target}\` is a Windows path spelling (a device or share path, a drive-relative one or an NTFS stream) the guard cannot place in the repo; spell the path plainly.`;
 }
-// With `strict` off, a network share and a stream are not looked for: the path was made absolute by the hook, so its
-// colons and double slash are not the agent's spelling.
+// A dots-only segment and a device path (`//?/C:/`) are denied whatever the platform. A drive-relative path
+// (`C:dir`), a network share (`//host/share`) and a stream (`name:stream`) exist only on Windows, where
+// `windows` (the default) reads them: elsewhere a colon or a double slash is an ordinary name. With `streams` off a
+// share and a stream are not looked for either: an edit tool's path was made absolute by the hook, so its colons and
+// double slash are not the agent's spelling. With `powershell`, a leading provider drive (`Env:FOO`,
+// `HKCU:\Software`) is no stream: it names no file.
+const PROVIDER_DRIVE =
+  /^(?:env|variable|function|alias|hkcu|hklm|cert|wsman):$/i;
 export function oddSpelling(
   path: string,
-  strict = true,
+  { windows = true, streams = true, powershell = false } = {},
 ): "dots" | "drive" | null {
   const p = posixPath(path);
   if (p.split("/").some((x) => x !== "." && x !== ".." && /^[. ]+$/.test(x)))
     return "dots";
-  if (/^\/\/[?.]\//.test(p) || /^[a-z]:[^\\/]/i.test(p)) return "drive";
-  if (!strict) return null;
+  if (/^\/\/[?.]\//.test(p)) return "drive";
+  if (!windows) return null;
+  if (/^[a-z]:[^\\/]/i.test(p)) return "drive";
+  if (!streams) return null;
   if (/^\/\/[^/]/.test(p)) return "drive";
   // A colon in a segment other than a leading drive letter; a variable or substitution (`$env:TEMP`) is no stream.
   const named = p
     .replace(/^\/(?=[a-z]:)/i, "")
     .replace(/\$env:\w+|\$\{[^}]*\}|\$\([^)]*\)|`[^`]*`|%\w+%/gi, "_");
-  return named
-    .split("/")
-    .some((x, i) => x.includes(":") && !(i === 0 && /^[a-z]:$/i.test(x)))
+  return named.split("/").some((x, i) => {
+    if (!x.includes(":")) return false;
+    if (i !== 0) return true;
+    // `Env:FOO` is one segment and `Env:\FOO` is `Env:` then `FOO`: the provider drive is what precedes the first colon.
+    return !(
+      /^[a-z]:$/i.test(x) ||
+      (powershell && PROVIDER_DRIVE.test(x.slice(0, x.indexOf(":") + 1)))
+    );
+  })
     ? "drive"
     : null;
+}
+// What `oddSpelling` would deny in a backslash word's unescaped value, as the path it stands for: a drive-relative
+// `C:rest` is `rest` in the directory, and a dots-only segment is dropped, as Windows drops it.
+function unescaped(path: string, windows: boolean): string {
+  const out = posixPath(path)
+    .replace(windows ? /^[a-z]:(?![\\/])/i : /^(?!)/, "")
+    .split("/")
+    .filter((x) => x === "" || x === "." || x === ".." || !/^[. ]+$/.test(x))
+    .join("/");
+  return out === "" ? "." : out;
+}
+// Whether the run is on Windows: the hook's platform, or a drive-letter root or directory (a Windows path does not exist
+// on another platform).
+export function windowsRun(protect: {
+  cwd?: string;
+  root?: string;
+  roots?: string[];
+  windows?: boolean;
+}): boolean {
+  return (
+    protect.windows === true ||
+    [protect.root, protect.cwd, ...(protect.roots ?? [])].some((x) =>
+      /^[a-z]:/i.test(x ?? ""),
+    )
+  );
 }
 // A command that may write at all: an output redirection or a writer's name. Only such a command can fail closed.
 const MAY_WRITE =
@@ -2092,6 +2134,11 @@ export function protectedWrite(
     if (++targets > limits.targets || w.val.length > limits.chars)
       throw LIMITED;
   };
+  // Only a Windows run reads a share or a stream in a spelling: elsewhere a colon or a double slash is an ordinary name.
+  const shape = {
+    windows: windowsRun(protect),
+    powershell: protect.powershell === true,
+  };
   const hits: WriteHits = (spelling, dir, resolve, above, path = true) => {
     const kept = path && plain.has(spelling);
     let target = spelling;
@@ -2107,13 +2154,34 @@ export function protectedWrite(
     const resolved = resolve(target);
     // A spelling the guard will not model is denied outright, before any reading of the path is tried.
     const odd =
-      (kept ? (oddSpelling(target) ?? oddSpelling(resolved)) : null) ??
-      oddSpelling(dir);
+      (kept
+        ? (oddSpelling(target, shape) ?? oddSpelling(resolved, shape))
+        : null) ?? oddSpelling(dir, shape);
     if (odd !== null) {
       spelled = odd;
       return true;
     }
-    // Relative to every directory with a .git above the cwd, not only the nearest: a planted `x/.git` moves no root.
+    if (inRepo(resolved, dir, above)) return true;
+    // A backslash word's unescaped reading (the one a POSIX shell, Git Bash on Windows, passes) that is no plain
+    // spelling is modelled, not denied for its spelling: `C:\.github/x` is `C:.github/x`, drive-relative, so the
+    // directory's `.github/x`, and `.\../x` is `.../x`, a dots-only segment Windows drops. Only the Bash tool really
+    // unescapes, but the tool named PowerShell is read this way too: a path it denied before is still denied.
+    if (path && !kept) {
+      const model = unescaped(target, shape.windows);
+      if (model !== target && inRepo(resolve(model), dir, above, false))
+        return true;
+    }
+    return false;
+  };
+  // Whether a resolved target is a protected path, relative to every directory with a .git above the cwd, not only the
+  // nearest: a planted `x/.git` moves no root. A `modelled` reading (a guess at what a spelling stands for) is never
+  // exempted.
+  const inRepo = (
+    resolved: string,
+    dir: string,
+    above: boolean,
+    exemptable = true,
+  ) => {
     for (const root of new Set([protect.root, ...(protect.roots ?? [])])) {
       for (const at of withDynamic(
         repoSegments(resolved, dir, { ...protect, root }),
@@ -2128,6 +2196,7 @@ export function protectedWrite(
         if (
           hit.length > 0 &&
           !(
+            exemptable &&
             !at.folded &&
             at.segs.every((x) => !/[*?[\]{}$`%~]|[. ]$/.test(x)) &&
             exempt.some((g) => patternHits(g, at.segs, false, false, tick))
@@ -2206,7 +2275,8 @@ export function protectedPathHit(
 // PowerShell and cmd keep a backslash (`.github\ci.yml`) that a POSIX shell reads as an escape: both spellings count. A
 // brace list the shell expands counts as each word it yields; past the limit, the command fails closed.
 // `plain` collects the spellings that keep their separators (the word as written, braces expanded when it has no
-// backslash): a backslash word's other reading has its escapes gone, so `oddSpelling` is not read on it.
+// backslash): a backslash word's other reading has its escapes gone, so `oddSpelling` is not read on it, but `unescaped`
+// is matched.
 function spellings(w: ShellWord, plain: Set<string>) {
   const raw = w.raw.includes("\\") ? w.raw.replace(/['"]/g, "") : null;
   const out: string[] = [w.val, ...(raw === null ? [] : [raw])];
@@ -2275,28 +2345,68 @@ function scanWrites(
       const files = inPlaceFiles(name, args.join(" "));
       writes = files.length ? files : operands;
     } else if (PROTECT_PS.test(name)) {
-      const k = args.findIndex((a) =>
-        /^-(?:path|filepath|literalpath)$/i.test(defined(a)),
+      const first = (i: number) => defined(per[i]?.[0]);
+      const k = per.findIndex((_, i) =>
+        /^-(?:path|filepath|literalpath)$/i.test(first(i)),
       );
-      const end = args.findIndex((x, i) => i > k && defined(x).startsWith("-"));
-      if (k >= 0) writes = args.slice(k + 1, end < 0 ? undefined : end);
-      else {
-        // The value is the word after `-Value`, else the second positional word.
-        const flag = per.findIndex((p) =>
-          /^-v(?:a(?:l(?:ue?)?)?)?$/i.test(defined(p[0])),
+      if (k >= 0) {
+        // One path word follows the flag, with its comma list (`-Path a, b`); the words after it up to the next
+        // flag are the value (`-Path log.txt "error: x"`).
+        let last = k + 1;
+        while (
+          last + 1 < per.length &&
+          (first(last).endsWith(",") || first(last + 1).startsWith(","))
+        )
+          last++;
+        const rest = per.findIndex(
+          (_, i) => i > last && first(i).startsWith("-"),
+        );
+        for (const [i, p] of per
+          .slice(k + 1, rest < 0 ? undefined : rest)
+          .entries()) {
+          const isValue = k + 1 + i > last;
+          for (const t of p) {
+            if (isValue) value.add(writes.length);
+            writes.push(t);
+            // `-Path a.txt,b.txt` is two paths: each is read as the word is.
+            if (!isValue && t.includes(","))
+              for (const part of t.split(",").filter(Boolean)) {
+                if (plain.has(t)) plain.add(part);
+                writes.push(part);
+              }
+          }
+        }
+      } else {
+        // The value is the word after `-Value`. With no `-Value` and no option but switches, the second positional
+        // word is the value too; another option may take a word (`-Encoding utf8`), so no position is read.
+        const flag = per.findIndex((_, i) =>
+          /^-v(?:a(?:l(?:ue?)?)?)?$/i.test(first(i)),
+        );
+        const switches = per.every(
+          (_, i) =>
+            !first(i).startsWith("-") ||
+            /^-(?:force|nonewline|passthru|append|noclobber|confirm|whatif|asbytestream)$/i.test(
+              first(i),
+            ),
         );
         const positional = per
-          .map((p, i) => i)
-          .filter((i) => !defined(per[i]?.[0]).startsWith("-"));
-        const at = flag >= 0 ? flag + 1 : positional[1];
-        const tagged = per.flatMap((p, i) =>
-          p
-            .filter((x) => !x.startsWith("-"))
-            .map((t) => ({ t, value: i === at })),
-        );
-        writes = tagged.slice(0, 2).map((x) => x.t);
-        for (const [i, x] of tagged.slice(0, 2).entries())
-          if (x.value) value.add(i);
+          .map((_, i) => i)
+          .filter((i) => !first(i).startsWith("-"));
+        const at =
+          flag >= 0 ? flag + 1 : ((switches ? positional[1] : undefined) ?? -1);
+        // The first two words, each with all its spellings; the `-Value` word is one more.
+        const picked =
+          flag >= 0
+            ? [
+                ...positional.filter((i) => i !== at).slice(0, 2),
+                ...(positional.includes(at) ? [at] : []),
+              ]
+            : positional.slice(0, 2);
+        for (const i of picked)
+          for (const t of defined(per[i]).filter((x) => !x.startsWith("-"))) {
+            if (i === at) value.add(writes.length);
+            writes.push(t);
+          }
       }
     } else if (PROTECT_RM.test(name)) removes = operands;
     else {

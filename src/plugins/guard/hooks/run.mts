@@ -121,6 +121,7 @@ export function runFacts(
     powershell?: boolean;
     root?: string;
     roots?: string[];
+    windows?: boolean;
   },
 ): RunFacts | null {
   if (run.mode === "attended") return null;

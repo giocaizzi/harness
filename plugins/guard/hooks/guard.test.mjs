@@ -1479,7 +1479,7 @@ void test("a registered run: a device path or a drive-relative path is denied; a
     const outer = realpathSync(mkdtempSync(join(tmpdir(), "guard-globroot-")));
     const repo = join(outer, "runneradmin", "repo");
     mkdirSync(join(repo, ".git"), { recursive: true });
-    const run = registered();
+    const run = registered(DEFAULT_REG, {}, { platform: "win32" });
     const shell = async (command) => run({ ...pre("Bash", command), cwd: repo });
     for (const command of [
         "echo a > //?/C:/Users/x/src/a.txt",
@@ -1503,7 +1503,7 @@ void test("a registered run: a device path or a drive-relative path is denied; a
 void test("a registered run: PowerShell writes to an ordinary Windows path are allowed; a path from a root, a share and a stream are not (G44)", async () => {
     const repo = realpathSync(mkdtempSync(join(tmpdir(), "guard-ps-")));
     mkdirSync(join(repo, ".git"));
-    const run = registered({ protected_paths: { globs: ["config/app.yaml"] } });
+    const run = registered({ protected_paths: { globs: ["config/app.yaml"] } }, {}, { platform: "win32" });
     const ps = (command) => run({ ...pre("PowerShell", command), cwd: repo });
     for (const command of [
         String.raw `Set-Content C:\temp\x.txt a`,
@@ -1535,6 +1535,79 @@ void test("a registered run: PowerShell writes to an ordinary Windows path are a
     assert.ok(denied(await run(edit("config/app.yaml::$DATA", repo))));
     assert.ok(denied(await run(edit("//host/share/x.txt", repo))));
     assert.ok(!denied(await run(edit(join(repo, "src", "x.txt"), repo))));
+});
+void test("a registered run: a colon or a leading double slash is an ordinary name off Windows, in the shell and the edit tool (G45)", async () => {
+    const repo = realpathSync(mkdtempSync(join(tmpdir(), "guard-colon-")));
+    mkdirSync(join(repo, ".git"));
+    const posix = registered(DEFAULT_REG, {}, { platform: "linux" });
+    const windows = registered(DEFAULT_REG, {}, { platform: "win32" });
+    const shell = (run, command, tool = "Bash") => run({ ...pre(tool, command), cwd: repo });
+    for (const command of [
+        "echo a > build/2026-11-04T10:30:00Z.log",
+        "tee build/run-10:30.log < in",
+        'echo a > "report 10:30.txt"',
+        "mv a.txt archive/a:b.txt",
+        "cp a b:c",
+        "echo a > //tmp/x",
+        "echo a > /tmp/x-10:30.log",
+    ]) {
+        assert.ok(!denied(await shell(posix, command)), `posix: ${command}`);
+        assert.ok(denied(await shell(windows, command)), `win32: ${command}`);
+    }
+    for (const file of [
+        join(repo, "build", "2026-11-04T10:30:00Z.log"),
+        "/tmp/x-10:30.log",
+        join(repo, "src", "a:b.txt"),
+        "build/x-10:30.log",
+    ])
+        assert.ok(!denied(await posix(edit(file, repo))), `posix edit ${file}`);
+    for (const file of [
+        join(repo, "build", "2026-11-04T10:30:00Z.log"),
+        join(repo, "src", "a:b.txt"),
+        "build/x-10:30.log",
+    ])
+        assert.ok(denied(await windows(edit(file, repo))), `win32 edit ${file}`);
+    // PowerShell's provider drives name no file: never a stream, under the PowerShell tool
+    for (const command of [
+        "Remove-Item Env:FOO",
+        "Remove-Item -Path Env:FOO",
+        "Set-Content Env:FOO bar",
+        String.raw `Remove-Item HKCU:\Software\Acme -Recurse`,
+        "Remove-Item Variable:x",
+    ]) {
+        assert.ok(!denied(await shell(windows, command, "PowerShell")), `powershell: ${command}`);
+        assert.ok(denied(await shell(windows, command)), `another tool on Windows: ${command}`);
+    }
+    // a stream or share is still denied in a Windows run
+    for (const command of [
+        "echo a > 'config/app.yaml::$DATA'",
+        "echo a > //localhost/C$/x",
+    ])
+        assert.ok(denied(await shell(windows, command, "PowerShell")), command);
+    // a variable last in a path stands for no ancestor of the root
+    for (const command of ["mv build/$OLD build/new", "rm -f out/$NAME"])
+        assert.ok(!denied(await shell(posix, command)), command);
+});
+void test("a registered run: the escape-stripped reading of a backslash word is matched on a Windows run under every shell tool (G45)", async () => {
+    const repo = realpathSync(mkdtempSync(join(tmpdir(), "guard-unescape-")));
+    mkdirSync(join(repo, ".git"));
+    const run = registered(DEFAULT_REG, {}, { platform: "win32" });
+    for (const tool of ["Bash", "PowerShell", "run_in_terminal", "run_command"]) {
+        for (const command of [
+            String.raw `Set-Content C:\temp\x.txt a`,
+            String.raw `echo a > C:\temp\x.txt`,
+            String.raw `Copy-Item x ..\..`,
+            String.raw `Remove-Item C:\Users\x\build -Recurse`,
+        ])
+            assert.ok(!denied(await run({ ...pre(tool, command), cwd: repo })), `${tool}: ${command}`);
+    }
+    for (const command of [
+        String.raw `echo a > C:\.github/x`,
+        String.raw `echo a > \.\.\./.github/x`,
+        String.raw `echo a > .\../.github/workflows/ci.yml`,
+        String.raw `echo a > ..\./.github/workflows/ci.yml`,
+    ])
+        assert.ok(denied(await run({ ...pre("Bash", command), cwd: repo })), command);
 });
 void test("a registered run: a checkout whose path ends in a dot or a space still protects its .github", async () => {
     const outer = realpathSync(mkdtempSync(join(tmpdir(), "guard-tail-")));

@@ -3404,5 +3404,216 @@ void test("protectedWrite: a share path, an NTFS stream, a root-relative PowerSh
     assert.equal(protectedWrite("Set-Content /tmp/x a", posix), null);
     assert.equal(oddSpelling("a/b:c"), "drive");
     assert.equal(oddSpelling("C:/a/b"), null);
-    assert.equal(oddSpelling("a/b:c", false), null);
+    assert.equal(oddSpelling("a/b:c", { streams: false }), null);
+    assert.equal(oddSpelling("a/b:c", { windows: false }), null);
+    assert.equal(oddSpelling("//host/share/x", { windows: false }), null);
+    assert.equal(oddSpelling("b:c", { windows: false }), null);
+    assert.equal(oddSpelling("b:c"), "drive");
+    assert.equal(oddSpelling("a/.../b", { windows: false }), "dots");
+    assert.equal(oddSpelling("//?/C:/x", { windows: false }), "drive");
+    assert.equal(oddSpelling("Env:FOO", { powershell: true }), null);
+    assert.equal(oddSpelling("Env:FOO"), "drive");
+    assert.equal(oddSpelling("env:/FOO", { powershell: true }), null);
+    assert.equal(oddSpelling("HKCU:/Software/Acme", { powershell: true }), null);
+    assert.equal(oddSpelling("a/Env:FOO", { powershell: true }), "drive");
+});
+void test("protectedWrite: a colon, a leading double slash and a drive-relative path are read only in a Windows run (G45)", () => {
+    const posix = {
+        globs: [".github/**"],
+        registered: ["config/app.yaml"],
+        root: "/home/runner/repo",
+        roots: ["/home/runner/repo"],
+        cwd: "/home/runner/repo",
+    };
+    const win = {
+        ...posix,
+        root: "C:/Users/runneradmin/repo",
+        roots: ["C:/Users/runneradmin/repo"],
+        cwd: "C:/Users/runneradmin/repo",
+    };
+    const ordinary = [
+        "echo a > build/2026-11-04T10:30:00Z.log",
+        "tee build/run-10:30.log < in",
+        'echo a > "report 10:30.txt"',
+        "mv a.txt archive/a:b.txt",
+        "cp a.txt dir/b:c",
+        "cp a b:c",
+        "echo a > foo:bar",
+        "echo a > //tmp/x",
+        "cp a //tmp/x",
+    ];
+    for (const command of ordinary) {
+        assert.equal(protectedWrite(command, posix), null, `posix: ${command}`);
+        assert.equal(protectedWrite(command, win)?.spelled, "drive", `windows: ${command}`);
+        assert.equal(protectedWrite(command, { ...posix, windows: true })?.spelled, "drive", `a Windows host: ${command}`);
+    }
+    // a dots-only segment and a device path are denied whatever the platform
+    for (const command of ["echo a > a/.../b", "echo a > //?/C:/x"])
+        assert.ok(protectedWrite(command, posix)?.spelled, command);
+    // a stream and a share of a protected path stay denied in a Windows run
+    for (const command of [
+        "echo a > '.github::$INDEX_ALLOCATION/workflows/ci.yml'",
+        "echo a > 'config/app.yaml::$DATA'",
+        "echo a > //localhost/C$/Users/runneradmin/repo/.github/x",
+    ])
+        assert.equal(protectedWrite(command, win)?.spelled, "drive", command);
+    // PowerShell's provider drives name no file: no stream, under the PowerShell tool only
+    const ps = { ...win, powershell: true };
+    for (const command of [
+        "Remove-Item Env:FOO",
+        "Remove-Item -Path Env:FOO",
+        String.raw `Remove-Item env:\FOO`,
+        "Remove-Item Variable:x",
+        "Remove-Item Function:foo",
+        "Remove-Item Alias:ls",
+        String.raw `Remove-Item Cert:\CurrentUser\My\ABC`,
+        String.raw `Remove-Item HKCU:\Software\Acme -Recurse`,
+        "Remove-Item HKLM:Software",
+        "Remove-Item WSMan:localhost",
+        "Set-Content Env:FOO bar",
+        "Set-Content -Path Variable:x -Value 1",
+    ]) {
+        assert.equal(protectedWrite(command, ps), null, command);
+        assert.equal(protectedWrite(command, win)?.spelled, "drive", command);
+    }
+    assert.equal(protectedWrite("Set-Content a/Env:FOO x", ps)?.spelled, "drive", "only a leading provider drive");
+    assert.equal(protectedWrite("Set-Content Envx:FOO x", ps)?.spelled, "drive", "only the named providers");
+});
+void test("protectedWrite: after -Path, -LiteralPath or -FilePath one path word (and its comma list) is read as a path, the rest is the value (G45)", () => {
+    const win = {
+        globs: [".github/**"],
+        registered: ["config/app.yaml"],
+        root: "C:/Users/runneradmin/repo",
+        roots: ["C:/Users/runneradmin/repo"],
+        cwd: "C:/Users/runneradmin/repo",
+        powershell: true,
+    };
+    for (const command of [
+        'Add-Content -Path log.txt "error: x"',
+        'Add-Content -LiteralPath log.txt "error: x"',
+        'Out-File -FilePath log.txt "error: x"',
+        'Set-Content -Path x.txt "a: b"',
+        'Set-Content -Path x.txt "[12:30] done" -Force',
+        'Add-Content -Path log.txt "status: ok" -Encoding utf8',
+        "Set-Content -Path a.txt, b.txt -Value x",
+        "Set-Content -Path a.txt,b.txt -Value x",
+    ])
+        assert.equal(protectedWrite(command, win), null, command);
+    // every path of the list is read, and so is a protected word after the path
+    for (const command of [
+        "Set-Content -Path a.txt, .github/x -Value c",
+        "Set-Content -Path a.txt,.github/x -Value c",
+        "Set-Content -Path a.txt ,.github/x -Value c",
+        "Set-Content -Path .github/x a",
+        "Set-Content -Path x.txt .github/x",
+        "Add-Content -LiteralPath config/app.yaml 'a: b'",
+    ])
+        assert.ok(protectedWrite(command, win)?.target, command);
+    assert.equal(protectedWrite("Set-Content -Path a.txt, 'b:c' -Value x", win)?.spelled, "drive", "a path of the list is no value");
+});
+void test("protectedWrite: a value is tagged only through -Value, or by position when no option but a switch is given (G45)", () => {
+    const win = {
+        globs: [".github/**"],
+        registered: ["deploy/main.tf"],
+        root: "C:/Users/runneradmin/repo",
+        roots: ["C:/Users/runneradmin/repo"],
+        cwd: "C:/Users/runneradmin/repo",
+    };
+    for (const command of [
+        'Set-Content log.txt "error: failed"',
+        'Add-Content -Value "status: ok" log.txt',
+        'Add-Content log.txt "error: x" -Force',
+        'Set-Content -NoNewline x.txt "a:$b"',
+        'Set-Content -Encoding utf8 x.txt "time: 10:30"',
+        'Set-Content -Value "time: 10:30" -Encoding utf8 x.txt',
+        'Set-Content -Encoding utf8 -Value "a: b" x.txt',
+    ])
+        assert.equal(protectedWrite(command, win), null, command);
+    // an option's argument (`-Encoding utf8`) is not the path: the path after it is still read as a path
+    for (const command of [
+        String.raw `Set-Content -Encoding utf8 C:.github\workflows\ci.yml a`,
+        String.raw `Set-Content -Encoding utf8 'C:.github\workflows\ci.yml' a`,
+        String.raw `Set-Content -Encoding utf8 'deploy\...\main.tf' a`,
+        String.raw `Set-Content -Encoding utf8 -Value a C:.github\x`,
+        String.raw `Set-Content -Encoding utf8 'deploy\...\main.tf'`,
+    ])
+        assert.ok(protectedWrite(command, win)?.spelled, command);
+});
+void test("protectedWrite: the unescaped reading of a backslash word is matched, not denied for its spelling, under every shell tool (G45)", () => {
+    const win = {
+        globs: [".github/**"],
+        registered: ["config/app.yaml", "deploy/main.tf"],
+        root: "C:/Users/runneradmin/repo",
+        roots: ["C:/Users/runneradmin/repo"],
+        cwd: "C:/Users/runneradmin/repo",
+    };
+    for (const powershell of [false, true]) {
+        const g = { ...win, powershell };
+        const label = (command) => `${String(powershell)}: ${command}`;
+        // Git Bash passes `C:.github/x` (drive-relative to the directory) and `.../.github/x` (a dots-only segment)
+        for (const command of [
+            String.raw `echo a > C:\.github/x`,
+            String.raw `echo a > C:\config/app.yaml`,
+            String.raw `echo a > \.\.\./.github/x`,
+            String.raw `echo a > .\../.github/workflows/ci.yml`,
+            String.raw `echo a > ..\./.github/workflows/ci.yml`,
+            String.raw `echo a > deploy/.\../main.tf`,
+            String.raw `echo a > C:/Users/runneradmin/repo/deploy/..\./main.tf`,
+            String.raw `echo a > config/..\./app.yaml`,
+        ])
+            assert.ok(protectedWrite(command, g)?.target, label(command));
+        // an ordinary path stays allowed under the PowerShell tool and every other tool name
+        for (const command of [
+            String.raw `Set-Content C:\temp\x.txt a`,
+            String.raw `Remove-Item C:\Users\x\build -Recurse`,
+            String.raw `echo a > C:\temp\x.txt`,
+            String.raw `cd C:\temp; echo a > x.txt`,
+            String.raw `Copy-Item x ..\..`,
+            String.raw `del C:\temp\x.txt`,
+            String.raw `type a.txt > C:\temp\b.txt`,
+            String.raw `Copy-Item -Path .\src -Destination C:\temp\src -Recurse`,
+            String.raw `Set-Content ..\..\x.txt a`,
+        ])
+            assert.equal(protectedWrite(command, g), null, label(command));
+    }
+    // a guess at a spelling is never exempt: the dropped segment does not make a run file
+    const run = {
+        globs: [".github/**"],
+        registered: [".factory/**"],
+        exempt: [".factory/runs/*/*/**"],
+        root: "C:/Users/runneradmin/repo",
+        cwd: "C:/Users/runneradmin/repo",
+    };
+    assert.ok(protectedWrite(String.raw `echo a > .factory/runs/1/r/.\../x.md`, run)
+        ?.target);
+    // off Windows a `C:` prefix is a name, so only the dots reading is modelled
+    const posix = { globs: [".github/**"], root: "/r", cwd: "/r" };
+    assert.equal(protectedWrite(String.raw `echo a > C:\.github/x`, posix), null);
+    assert.ok(protectedWrite(String.raw `echo a > \.\.\./.github/x`, posix)?.target);
+});
+void test("protectedWrite: a variable last in a path re-roots nothing; one before a segment still may stand for `..` (G45)", () => {
+    const g = {
+        globs: [".github/**"],
+        registered: ["config/app.yaml"],
+        root: "/r",
+        roots: ["/r"],
+        cwd: "/r",
+    };
+    for (const command of [
+        "mv build/$OLD build/new",
+        "rm -f out/$NAME",
+        "rm -rf node_modules/$PKG",
+        "rm -rf build/$DIR",
+        "rm -rf .cache/$USER",
+        "rm -rf src/a/$X",
+        "rm -rf dist/$(date +%s)",
+        "echo a > build/$NAME",
+    ])
+        assert.equal(protectedWrite(command, g), null, command);
+    for (const command of [
+        "echo a > src/$D/.github/x",
+        "rm -rf src/$D/.github",
+        "echo a > a/$D/config/app.yaml",
+    ])
+        assert.ok(protectedWrite(command, g)?.target, command);
 });
