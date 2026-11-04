@@ -1866,6 +1866,12 @@ const LIMITED = new Error("limited");
 // A command that may write at all: an output redirection or a writer's name. Only such a command can fail closed.
 const MAY_WRITE =
   /[>]|(?:^|[^\w-])(?:tee|sed|perl|rm|rmdir|unlink|mv|cp|move|copy|set-content|add-content|out-file|tee-object|remove-item|move-item|copy-item|ri|mi|ci|cpi|del|erase|rd|sc|ac)(?![\w-])/i;
+// A shell write to a protected path, or any command naming a path inside guard's data directory (`protect.data`):
+// whatever the program (touch, ln, dd of=, tar -C, a read), since no session needs that directory. The data check reads
+// every word and redirection target, `key=value` and `--opt=value` words by their value too, the plugin-data variable in
+// every shell's spelling, and a Git Bash `/c/...` path against a drive-letter directory. Merely naming a directory above
+// it (`ls ~/.claude`) is fine; only the writers' remove or move of one is denied. A link made earlier under another
+// name is out of reach (the `ln -s` that makes it names the directory, so it is denied itself).
 export function protectedWrite(
   command: string,
   protect: ProtectConfig,
@@ -1900,7 +1906,8 @@ export function protectedWrite(
     .filter((d) => d.length <= limits.chars)
     .slice(0, limits.globs)
     .map((d) => normalizeSegments(posixPath(d).replace(/^\/(?=[a-z]:)/i, "")));
-  // Guard's own data directory: a write inside it, or a remove or move of it or a directory above it.
+  // Guard's own data directory: a path inside it (any command, a read too), or, for the writers, a remove or move of it or
+  // a directory above it. A Git Bash drive path (`/c/Users/...`) also counts as `c:/Users/...` against a drive-letter dir.
   const inData = (dir: string, resolved: string, above: boolean) => {
     if (!dataDirs.length) return false;
     const p = posixPath(resolved);
@@ -1924,6 +1931,12 @@ export function protectedWrite(
           a.every((x, i) => x.toLowerCase() === defined(b[i]).toLowerCase());
         if (d.length <= s.length ? same(d, s) : above && same(s, d))
           return true;
+        const git = /^\/([a-z])(?:\/|$)/i.exec(full);
+        if (git && /^[a-z]:$/i.test(d[0] ?? "")) {
+          const g = [`${defined(git[1])}:`, ...s.slice(1)];
+          if (d.length <= g.length ? same(d, g) : above && same(g, d))
+            return true;
+        }
         continue;
       }
       const base = d.at(-1);
@@ -1938,6 +1951,19 @@ export function protectedWrite(
         )
       )
         return true;
+    }
+    return false;
+  };
+  // A word naming a path inside the data directory, as a path or through the plugin-data variable; `key=value` and
+  // `--opt=value` words count by their value too.
+  const named: WriteHits = (word, dir, resolve) => {
+    if (!dataDirs.length) return false;
+    for (const t of [
+      word,
+      ...(word.includes("=") ? [word.slice(word.indexOf("=") + 1)] : []),
+    ]) {
+      tick();
+      if (DATA_VAR.test(t) || inData(dir, resolve(t), false)) return true;
     }
     return false;
   };
@@ -1960,7 +1986,13 @@ export function protectedWrite(
     );
   };
   try {
-    const target = scanWrites(command, env, count, hits);
+    const target = scanWrites(
+      command,
+      env,
+      count,
+      hits,
+      dataDirs.length ? named : null,
+    );
     return target === null ? null : { target };
   } catch (e) {
     // Any failure (a limit, a stack overflow, a bug) denies a command that may write, and lets the rest through.
@@ -1986,17 +2018,26 @@ function spellings(w: ShellWord) {
   return [...out, ...words];
 }
 const POSIX_MOVERS = /^(?:cp|mv)$/;
+// The plugin-data variable in any shell's spelling, at the start of a word and followed by its end or a separator.
+const DATA_VAR =
+  /^(?:\$\{?|\$env:|%)(?:claude|copilot)_plugin_data(?:\}|%)?(?:$|[\\/])/i;
 function scanWrites(
   command: string,
   env: GuardEnv,
   count: (word: ShellWord) => void,
   hits: WriteHits,
+  named: WriteHits | null,
 ) {
   for (const { words, redirs = [], dir, remote, resolve } of segments(
     command,
     env,
   )) {
     if (remote) continue;
+    // Any command naming a path inside guard's data directory, whatever its program (a redirection target too).
+    if (named)
+      for (const w of [...redirs, ...words])
+        for (const t of spellings(w))
+          if (named(defined(t), dir, resolve, false)) return t;
     for (const w of redirs) {
       if (NOT_A_FILE.test(w.val)) continue;
       count(w);
