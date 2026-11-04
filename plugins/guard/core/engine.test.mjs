@@ -3135,3 +3135,30 @@ void test("protectedWrite and protectedPathHit: Windows trailing dots and spaces
     assert.equal(protectedPathHit(".factory/runs/12./r1/a", g), true);
     assert.ok(protectedWrite("echo a > '.factory/runs/12 /r1/a'", g)?.target);
 });
+void test("protectedWrite: a root or cwd that ends in a dot or space folds like the target (G41)", () => {
+    for (const root of ["/w/proj.", "/w/proj ", "/w./proj", "/w/proj. "]) {
+        const g = {
+            globs: [".github/**"],
+            registered: [".factory/**"],
+            exempt: [".factory/runs/*/*/**"],
+            root,
+            roots: [root],
+            cwd: root,
+        };
+        assert.ok(protectedWrite(`echo a > '${root}/.github/ci.yml'`, g)?.target, `abs write under ${root}`);
+        assert.ok(protectedWrite(`rm -rf '${root}/.github'`, g)?.target, `rm under ${root}`);
+        assert.ok(protectedWrite(`echo a > '${root.replace(/[. ]+$/, "")}/.github/ci.yml'`, g)?.target, `folded root spelling under ${root}`);
+        assert.equal(protectedWrite(`echo a > '${root}/.factory/runs/1/r/x.md'`, g), null, `run file stays exempt under ${root}`);
+        assert.equal(protectedWrite("echo a > .factory/runs/1/r/x.md", g), null, `relative run file stays exempt under ${root}`);
+        assert.ok(protectedWrite(`echo a > '${root}/.factory/runs/1./r/x.md'`, g)?.target, `a fold inside the repo is no exemption under ${root}`);
+    }
+    // A cwd segment that ends in a dot does not lose the run file's exemption.
+    const g = {
+        globs: [".github/**"],
+        registered: [".factory/**"],
+        exempt: [".factory/runs/*/*/**"],
+        root: "/w/proj",
+        cwd: "/w/proj/sub.",
+    };
+    assert.equal(protectedWrite("echo a > ../.factory/runs/1/r/x.md", g), null);
+});

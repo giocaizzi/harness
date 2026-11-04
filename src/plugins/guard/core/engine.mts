@@ -1729,10 +1729,21 @@ function repoSegments(
   protect: ProtectConfig,
 ): RelativeSegments | null {
   const p = posixPath(target);
-  const fp = foldWindows(p);
-  const fd = dir === UNKNOWN_DIR ? dir : foldWindows(posixPath(dir));
-  const at = repoSegmentsOf(fp, fd, protect);
-  return at && (fp !== p || fd !== (dir === UNKNOWN_DIR ? dir : posixPath(dir)))
+  const keep = dir === UNKNOWN_DIR ? dir : posixPath(dir);
+  const fold = (x: string | undefined) =>
+    x === undefined ? x : foldWindows(posixPath(x));
+  const at = repoSegmentsOf(
+    foldWindows(p),
+    dir === UNKNOWN_DIR ? dir : foldWindows(keep),
+    { ...protect, root: fold(protect.root), cwd: fold(protect.cwd) },
+  );
+  if (!at) return at;
+  // Only a fold inside the repo-relative part counts: a root or cwd that merely ends in a dot changes both spellings alike.
+  const raw = repoSegmentsOf(p, keep, protect);
+  return !raw ||
+    raw.suffix !== at.suffix ||
+    raw.segs.length !== at.segs.length ||
+    raw.segs.some((x, i) => x !== at.segs[i])
     ? { ...at, folded: true }
     : at;
 }
