@@ -545,5 +545,10 @@
   ["gh issue edit 1 --add-label acme-parked", "deny:run-label", "G40", "run contract v2: a label the registration protects", {"run": "protected"}],
   ["echo x > .factory/runs/12/r1/notes.md", "allow", "G40", "run contract v2: the runner's own exemption waives its registered glob", {"run": "registered"}],
   ["echo x > .github/runs/12/r1/notes.md", "deny:protected-path", "G40", "run contract v2: an exemption never waives the .github floor", {"run": "registered"}],
-  ["gh issue edit 1 --add-label ship-it", "deny:run-config", "G40", "run contract v2: a registration that requires labels but names none denies every label change", {"run": "unsure"}]
+  ["gh issue edit 1 --add-label ship-it", "deny:run-config", "G40", "run contract v2: a registration that requires labels but names none denies every label change", {"run": "unsure"}],
+  ["echo x > .github./workflows/g41.yml", "deny:protected-path", "G41", "run contract v2: a trailing dot (Windows drops it) does not hide the .github floor", {"run": "unsure"}],
+  ["echo x > '.github /workflows/g41.yml'", "deny:protected-path", "G41", "run contract v2: a trailing space does not hide the .github floor", {"run": "unsure"}],
+  ["echo x > GITHUB~1/workflows/g41.yml", "deny:protected-path", "G41", "run contract v2: an 8.3 short name reaches the .github floor", {"run": "unsure"}],
+  ["echo x > FACTOR~1/config.yaml", "deny:protected-path", "G41", "run contract v2: a short name reaches a registered glob's directory", {"run": "registered"}],
+  ["echo x > .factory/runs/12./r1/notes.md", "deny:protected-path", "G41", "run contract v2: a folded spelling is no exemption", {"run": "registered"}]
 ]

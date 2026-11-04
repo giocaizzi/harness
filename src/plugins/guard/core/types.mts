@@ -328,6 +328,8 @@ export interface ProtectConfig {
   // The registration's globs: waived by `exempt`.
   registered?: string[];
   root?: string;
+  // Every directory with a .git above the cwd, nearest first: a path is protected when it is relative to any of them.
+  roots?: string[];
 }
 
 export interface ProtectHit {
@@ -349,6 +351,7 @@ export interface RunFacts {
     // The registration's protected_paths.globs.
     registered?: string[];
     root?: string;
+    roots?: string[];
   };
   // The registration requires "labels" but names none: every label change is denied (rule run-config).
   unsure?: boolean;
@@ -460,6 +463,8 @@ export type ShellRun = (
   cwd?: string,
 ) => Promise<string | null | undefined>;
 export interface RelativeSegments {
+  // Windows folding (trailing dots and spaces) changed a segment: no exemption applies.
+  folded?: boolean;
   segs: string[];
   suffix?: boolean;
 }
