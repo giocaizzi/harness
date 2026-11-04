@@ -1,5 +1,6 @@
-// The launcher's result checker for the stop hook's result gate: vetting its path, running it in a worker thread.
+// The launcher's result checker for the stop hook's result gate: vetting its path, running it in a child process.
 
+import { type ChildProcess, spawn } from "node:child_process";
 import {
   accessSync,
   constants,
@@ -9,7 +10,6 @@ import {
 } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { Worker } from "node:worker_threads";
 
 import { checkerPathError, report } from "../core/result.mjs";
 import { scrub } from "./telemetry.mjs";
@@ -181,12 +181,12 @@ export type RunResult = { errors: string[] } | { why: string };
 const isStrings = (v: unknown): v is string[] =>
   Array.isArray(v) && v.every((e) => typeof e === "string");
 
-// The worker's message is re-validated here: the checker module could post one of its own.
+// The child's message is re-validated here: the checker module could post one of its own.
 function acceptMessage(m: unknown): RunResult {
   if (m !== null && typeof m === "object") {
     const o = m as { errors?: unknown; why?: unknown };
     if (isStrings(o.errors) && o.why === undefined) {
-      // the worker already capped it (50 lines and a "… and N more" marker): only a message that exceeds that is
+      // the child already capped it (50 lines and a "… and N more" marker): only a message that exceeds that is
       // re-capped, so the marker's count survives
       return {
         errors:
@@ -205,7 +205,18 @@ function acceptMessage(m: unknown): RunResult {
 const errText = (e: unknown): string =>
   scrub(e instanceof Error ? e.message : String(e)).slice(0, 200);
 
-// Runs the checker in a worker thread: resolves { errors } or { why }, never rejects. Its console output is discarded.
+// The runtime that runs the checker: this one when it is Node (opencode's host is Bun, whose execPath is the opencode
+// binary), else `node` from the PATH.
+const nodeBinary = (): string =>
+  !process.versions.bun &&
+  /^node(\.exe)?$/i.test(path.basename(process.execPath))
+    ? process.execPath
+    : "node";
+
+const RUNNER = fileURLToPath(new URL("./checker-run.mjs", import.meta.url));
+
+// Runs the checker in a child process: resolves { errors } or { why }, never rejects. Its console output is discarded.
+// A process, not a thread: one blocked in a syscall (a FIFO the session planted) can be killed.
 export function runChecker(
   checkerPath: string,
   result: unknown,
@@ -214,48 +225,49 @@ export function runChecker(
 ): Promise<RunResult> {
   return new Promise((resolve) => {
     let done = false;
-    let worker: Worker | undefined;
+    let child: ChildProcess | undefined;
     let timer: NodeJS.Timeout | undefined;
     const finish = (r: RunResult): void => {
       if (done) return;
       done = true;
       clearTimeout(timer);
       try {
-        worker?.terminate().catch(() => {
-          // already gone
-        });
+        if (child?.exitCode === null && child.signalCode === null) {
+          child.kill("SIGKILL");
+        }
+        if (child?.connected) child.disconnect();
+        child?.unref();
       } catch {
         // already gone
       }
       resolve(r);
     };
     try {
-      worker = new Worker(new URL("./checker-worker.mjs", import.meta.url), {
-        workerData: {
-          href: pathToFileURL(checkerPath).href,
-          result,
-          env: { ...env },
-        },
-        resourceLimits: { maxOldGenerationSizeMb: 128 },
-        stdout: true,
-        stderr: true,
+      child = spawn(nodeBinary(), ["--max-old-space-size=128", RUNNER], {
+        env: process.env,
+        stdio: ["ignore", "ignore", "ignore", "ipc"],
+        windowsHide: true,
       });
-      // a checker stuck in a blocking syscall cannot be terminated: it must not keep the process alive
-      worker.unref();
-      worker.stdout.resume();
-      worker.stderr.resume();
-      worker.on("message", (m: unknown) => {
+      child.on("message", (m: unknown) => {
         finish(acceptMessage(m));
       });
-      worker.on("error", (e: unknown) => {
-        finish({ why: `threw (${errText(e)})` });
+      child.on("error", (e: unknown) => {
+        finish({ why: `could not start (${errText(e)})` });
       });
-      worker.on("exit", (code) => {
-        finish({ why: `exited with code ${String(code)} before answering` });
+      // after the IPC channel closed, so a message sent just before the exit is not lost
+      child.on("close", (code, signal) => {
+        finish({
+          why: `exited with ${signal ? `signal ${signal}` : `code ${String(code)}`} before answering`,
+        });
       });
       timer = setTimeout(() => {
         finish({ why: `timed out after ${String(timeoutMs / 1000)} s` });
       }, timeoutMs);
+      child.send({
+        href: pathToFileURL(checkerPath).href,
+        result,
+        env: { ...env },
+      });
     } catch (e: unknown) {
       finish({ why: `could not start (${errText(e)})` });
     }

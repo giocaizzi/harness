@@ -3598,3 +3598,181 @@ void test("factory run: the label check never throws and fails fast on a hang", 
 function tuple<T extends unknown[]>(...values: T): T {
   return values;
 }
+
+void test("factory run: configured label names add to the defaults, which stay protected", () => {
+  const facts: FactoryFacts = {
+    approval: "agent-ok",
+    takeover: "factory-takeover",
+    approvals: ["go-ahead"],
+    takeovers: ["hand-over"],
+  };
+  const run = (command: string) =>
+    evaluateCommand({
+      command,
+      state: fresh(),
+      host: calm,
+      factory: facts,
+      rules,
+    });
+  for (const c of [
+    "gh issue edit 1 --add-label agent-ok",
+    "gh issue edit 1 --add-label go-ahead",
+  ]) {
+    const d = run(c);
+    assert.equal(d.action, "deny", c);
+    assert.equal(d.rule, "factory-approval", c);
+  }
+  assert.match(
+    defined(run("gh issue edit 1 --add-label go-ahead").reason),
+    /`go-ahead`/,
+  );
+  for (const c of [
+    "gh issue edit 1 --add-label factory-takeover",
+    "gh issue edit 1 --remove-label hand-over",
+  ]) {
+    const d = run(c);
+    assert.equal(d.action, "deny", c);
+    assert.equal(d.rule, "factory-takeover", c);
+  }
+  for (const c of [
+    "gh issue view 1 --json labels",
+    "gh issue list --label go-ahead --json number",
+    "gh issue edit 1 --add-label needs-owner",
+  ])
+    assert.equal(run(c).action, "allow", c);
+});
+
+void test("factory run: guard's data directory is a protected write target", () => {
+  const data = "/Users/me/.claude/plugins/data/guard-acme";
+  const factory: FactoryFacts = {
+    approval: "agent-ok",
+    protect: { root: "/Users/me/repo", cwd: "/Users/me/repo", data: [data] },
+  };
+  const run = (command: string, f: FactoryFacts | null = factory) =>
+    evaluateCommand({
+      command,
+      state: fresh(),
+      host: calm,
+      factory: f,
+      env: { HOME: "/Users/me", dirs: { has: () => true } },
+      rules,
+    });
+  for (const c of [
+    `echo 2 > ${data}/result-gate/x.txt`,
+    `echo 2 > ${data.toUpperCase()}/result-gate/x.txt`,
+    `printf 2 | tee ${data}/stop/state.json`,
+    "printf 2 | tee ~/.claude/plugins/data/guard-acme/result-gate/x.txt",
+    "echo 2 > $X/guard-acme/result-gate/x.txt",
+    `cd ${data} && echo 2 > result-gate/x.txt`,
+    `cp /tmp/two ${data}/result-gate/x.txt`,
+    `mv /tmp/two ${data}/result-gate/x.txt`,
+    `sed -i s/1/2/ ${data}/result-gate/x.txt`,
+    `rm -rf ${data}`,
+    `rm -rf ${data}/`,
+    "rm -rf /Users/me/.claude/plugins",
+    "rm -rf /Users/me/.claude",
+    `touch ${data}/result-gate/x.txt`,
+    `mkdir -p ${data}/result-gate`,
+    `mkfifo ${data}/result-gate/f`,
+    `ln -s /tmp/two ${data}/result-gate/x`,
+    `ln -s ${data} /tmp/d`,
+    `chmod 000 ${data}/result-gate`,
+    `truncate -s0 ${data}/result-gate/x.txt`,
+    `dd if=/tmp/two of=${data}/result-gate/x.txt`,
+    `install -m 644 /tmp/two ${data}/result-gate/x.txt`,
+    `rsync -a /tmp/two/ ${data}/result-gate/`,
+    `tar -C ${data} -xf x.tar`,
+    `tar -xf x.tar --directory=${data}`,
+    `git clone https://example.com/acme/app.git ${data}/x`,
+    `cat ${data}/result-gate/x.txt`,
+    "echo 2 > $CLAUDE_PLUGIN_DATA/result-gate/x",
+    "echo 2 > ${CLAUDE_PLUGIN_DATA}/result-gate/x",
+    'echo 2 > "$COPILOT_PLUGIN_DATA/result-gate/x"',
+    "touch $claude_plugin_data",
+    "Set-Content -Path $env:CLAUDE_PLUGIN_DATA\\result-gate\\x -Value 2",
+    "echo 2 > %CLAUDE_PLUGIN_DATA%/result-gate/x",
+  ]) {
+    const d = run(c);
+    assert.equal(d.action, "deny", c);
+    assert.equal(d.rule, "protected-path", c);
+  }
+  for (const c of [
+    "cat /tmp/a.txt",
+    "ls ~/.claude",
+    "cd ~/.claude && ls",
+    "ls /Users/me",
+    "echo 2 > /tmp/a.txt",
+    "echo 2 > /Users/me/.claude/plugins/data/other/x.txt",
+    "touch /Users/me/.claude/plugins/data/other/x.txt",
+    "echo 2 > result-gate/x.txt",
+    "echo $CLAUDE_PLUGIN_DATA_X",
+  ])
+    assert.equal(run(c).action, "allow", c);
+  assert.notEqual(
+    run("rm -rf node_modules").rule,
+    "protected-path",
+    "a remove elsewhere is not protected (the generic rm ask applies)",
+  );
+  assert.notEqual(
+    run("rm -rf /Users/me/.claude/plugins/data/other").rule,
+    "protected-path",
+    "a sibling directory is not protected (the generic rm ask applies)",
+  );
+  assert.equal(
+    run(`echo 2 > ${data}/result-gate/x.txt`, null).action,
+    "allow",
+    "no factory run: allowed",
+  );
+  assert.equal(
+    run(`touch ${data}/result-gate/x.txt`, null).action,
+    "allow",
+    "no factory run: allowed",
+  );
+});
+
+void test("factory run: a Git Bash drive path names a drive-letter data directory; a posix /c/ directory is its own", () => {
+  const run = (command: string, data: string, f = true) =>
+    evaluateCommand({
+      command,
+      state: fresh(),
+      host: calm,
+      factory: f
+        ? {
+            approval: "agent-ok",
+            protect: { root: "/work/repo", cwd: "/work/repo", data: [data] },
+          }
+        : null,
+      env: { dirs: { has: () => true } },
+      rules,
+    });
+  const win = "C:/Users/me/AppData/Local/Temp/guard-plugin-me";
+  for (const c of [
+    "touch /c/Users/me/AppData/Local/Temp/guard-plugin-me/x",
+    "echo 2 > /C/Users/me/AppData/Local/Temp/guard-plugin-me/result-gate/x",
+    `touch ${win}/x`,
+  ]) {
+    const d = run(c, win);
+    assert.equal(d.action, "deny", c);
+    assert.equal(d.rule, "protected-path", c);
+  }
+  assert.equal(
+    run("touch /c/Users/me/AppData/Local/Temp/guard-plugin-me/x", win, false)
+      .action,
+    "allow",
+    "no factory run: allowed",
+  );
+  assert.equal(
+    run("touch /d/Users/me/AppData/Local/Temp/guard-plugin-me/x", win).action,
+    "allow",
+    "another drive",
+  );
+  assert.equal(
+    run("touch /c/Users/me/x", "/c/Users/me/data").action,
+    "allow",
+    "a posix data dir is not matched as a drive path",
+  );
+  assert.equal(
+    run("touch /c/Users/me/data/x", "/c/Users/me/data").rule,
+    "protected-path",
+  );
+});

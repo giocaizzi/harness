@@ -129,7 +129,7 @@ export function createGuard({ harness, noAsk = false, dataDir = DATA_DIR, deps =
                 return out?.decision === "block" ? (out.reason ?? null) : null;
             }
             catch {
-                // stopCheck reads process.env: a launcher-named result checker keeps the stop blocked
+                // stopCheck reads process.env: a launcher-named checker or a runtime run keeps the stop blocked
                 return gateFailClosed(process.env, { cwd }, "internal error");
             }
         },

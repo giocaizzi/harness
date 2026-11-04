@@ -1321,7 +1321,11 @@ export function shellEdit(command, env = {}) {
 // a dot file), a brace list is expanded (one group a level, 64 words at most), and one whose start is a variable or a
 // `cd` not followed is matched by the rest of its path anywhere (`$ROOT/.github/x`). A default glob is waived for
 // `protect.exempt` (`.factory/runs/*/*/**`: files inside a run directory) when the normalised path is spelled out;
-// a glob in FACTORY_PROTECTED_PATHS (`protect.globs`) is never waived. A command that may write fails
+// a glob in FACTORY_PROTECTED_PATHS (`protect.globs`) is never waived. Guard's own data directories (`protect.data`,
+// absolute: the result gate's block counter and the make-check state live there) are protected the same way and before
+// any glob: a write inside one, or a remove or move of one or of a directory above it, hits whatever the exemptions say;
+// a target whose start is unknown (a variable, `~`, a `cd` not followed) hits when it ends in the data directory's name
+// followed by anything (`~/.claude/plugins/data/<name>/result-gate/x`). A command that may write fails
 // closed past the limits (`rules.factory.protectedLimits`: targets, characters, milliseconds) or when the check throws,
 // since a hook that times out or emits nothing lets the command through; globs past the limits are ignored. Returns { target } (the first protected target as written), { unsure } (a limit it hit) or null.
 const PROTECT_RM = /^(?:rm|rmdir|unlink|remove-item|ri|del|erase|rd)$/;
@@ -1476,6 +1480,12 @@ function expandBraces(text, limit = 64) {
 const LIMITED = new Error("limited");
 // A command that may write at all: an output redirection or a writer's name. Only such a command can fail closed.
 const MAY_WRITE = /[>]|(?:^|[^\w-])(?:tee|sed|perl|rm|rmdir|unlink|mv|cp|move|copy|set-content|add-content|out-file|tee-object|remove-item|move-item|copy-item|ri|mi|ci|cpi|del|erase|rd|sc|ac)(?![\w-])/i;
+// A shell write to a protected path, or any command naming a path inside guard's data directory (`protect.data`):
+// whatever the program (touch, ln, dd of=, tar -C, a read), since no session needs that directory. The data check reads
+// every word and redirection target, `key=value` and `--opt=value` words by their value too, the plugin-data variable in
+// every shell's spelling, and a Git Bash `/c/...` path against a drive-letter directory. Merely naming a directory above
+// it (`ls ~/.claude`) is fine; only the writers' remove or move of one is denied. A link made earlier under another
+// name is out of reach (the `ln -s` that makes it names the directory, so it is denied itself).
 export function protectedWrite(command, protect, env = {}, limits = { globs: 256, targets: 512, chars: 1024, ms: 2000 }) {
     // A setting past the limits is cut, not failed: globs over `chars` are dropped, then all past `globs` (defaults first).
     // `protect.defaults` come first and may be exempted (`protect.exempt`); `protect.globs` are explicit and never are.
@@ -1501,7 +1511,67 @@ export function protectedWrite(command, protect, env = {}, limits = { globs: 256
         if (++targets > limits.targets || w.val.length > limits.chars)
             throw LIMITED;
     };
+    const dataDirs = (protect.data ?? [])
+        .filter((d) => d.length <= limits.chars)
+        .slice(0, limits.globs)
+        .map((d) => normalizeSegments(posixPath(d).replace(/^\/(?=[a-z]:)/i, "")));
+    // Guard's own data directory: a path inside it (any command, a read too), or, for the writers, a remove or move of it or
+    // a directory above it. A Git Bash drive path (`/c/Users/...`) also counts as `c:/Users/...` against a drive-letter dir.
+    const inData = (dir, resolved, above) => {
+        if (!dataDirs.length)
+            return false;
+        const p = posixPath(resolved);
+        const unknown = /^[$~%`]/.test(p) || (dir === UNKNOWN_DIR && !ABS_DIR.test(p));
+        let full = null;
+        if (!unknown) {
+            full =
+                dir && !ABS_DIR.test(p)
+                    ? `${posixPath(dir).replace(/\/+$/, "")}/${p}`
+                    : p;
+            if (!ABS_DIR.test(full))
+                full = protect.cwd
+                    ? `${posixPath(protect.cwd).replace(/\/+$/, "")}/${full}`
+                    : null;
+        }
+        for (const d of dataDirs) {
+            if (full !== null) {
+                const s = normalizeSegments(full.replace(/^\/(?=[a-z]:)/i, ""));
+                const same = (a, b) => a.every((x, i) => x.toLowerCase() === defined(b[i]).toLowerCase());
+                if (d.length <= s.length ? same(d, s) : above && same(s, d))
+                    return true;
+                const git = /^\/([a-z])(?:\/|$)/i.exec(full);
+                if (git && /^[a-z]:$/i.test(d[0] ?? "")) {
+                    const g = [`${defined(git[1])}:`, ...s.slice(1)];
+                    if (d.length <= g.length ? same(d, g) : above && same(g, d))
+                        return true;
+                }
+                continue;
+            }
+            const base = d.at(-1);
+            if (base !== undefined &&
+                patternHits([base, "**"], repoSegments(p, dir, { ...protect, root: undefined })?.segs ?? [], above, true, tick))
+                return true;
+        }
+        return false;
+    };
+    // A word naming a path inside the data directory, as a path or through the plugin-data variable; `key=value` and
+    // `--opt=value` words count by their value too.
+    const named = (word, dir, resolve) => {
+        if (!dataDirs.length)
+            return false;
+        for (const t of [
+            word,
+            ...(word.includes("=") ? [word.slice(word.indexOf("=") + 1)] : []),
+        ]) {
+            tick();
+            if (DATA_VAR.test(t) || inData(dir, resolve(t), false))
+                return true;
+        }
+        return false;
+    };
     const hits = (target, dir, resolve, above) => {
+        if (inData(dir, resolve(target), above))
+            return true;
         const at = repoSegments(resolve(target), dir, protect);
         if (at === null)
             return false;
@@ -1515,7 +1585,7 @@ export function protectedWrite(command, protect, env = {}, limits = { globs: 256
                 exempt.some((g) => patternHits(g, at.segs, false, false, tick))));
     };
     try {
-        const target = scanWrites(command, env, count, hits);
+        const target = scanWrites(command, env, count, hits, dataDirs.length ? named : null);
         return target === null ? null : { target };
     }
     catch (e) {
@@ -1544,10 +1614,18 @@ function spellings(w) {
     return [...out, ...words];
 }
 const POSIX_MOVERS = /^(?:cp|mv)$/;
-function scanWrites(command, env, count, hits) {
+// The plugin-data variable in any shell's spelling, at the start of a word and followed by its end or a separator.
+const DATA_VAR = /^(?:\$\{?|\$env:|%)(?:claude|copilot)_plugin_data(?:\}|%)?(?:$|[\\/])/i;
+function scanWrites(command, env, count, hits, named) {
     for (const { words, redirs = [], dir, remote, resolve } of segments(command, env)) {
         if (remote)
             continue;
+        // Any command naming a path inside guard's data directory, whatever its program (a redirection target too).
+        if (named)
+            for (const w of [...redirs, ...words])
+                for (const t of spellings(w))
+                    if (named(defined(t), dir, resolve, false))
+                        return t;
         for (const w of redirs) {
             if (NOT_A_FILE.test(w.val))
                 continue;
@@ -2222,11 +2300,14 @@ function changesLabels(command) {
 // `worktrees`, `branches`, `regenerable`: facts the adapters gather (worktreeFacts, branchFacts, regenFacts).
 export function evaluateCommand({ command, loadedSkills = new Set(), state, host = {}, env = {}, worktrees = {}, branches = {}, regenerable = {}, refs = {}, tags = {}, stack = null, python = null, readTool = false, factory = null, rules, }) {
     // While a factory run is active the agent never touches the approval label: with an owner token it would count as the owner's.
-    if (factory && touchesApprovalLabel(command, factory.approval))
+    const approvalHit = factory
+        ? [factory.approval, ...(factory.approvals ?? [])].find((name) => touchesApprovalLabel(command, name))
+        : undefined;
+    if (factory && approvalHit !== undefined)
         return {
             action: "deny",
             rule: "factory-approval",
-            reason: `${rules.factory.why} The \`${factory.approval}\` label is the owner's to apply or remove; ask on the ticket instead.`,
+            reason: `${rules.factory.why} The \`${approvalHit}\` label is the owner's to apply or remove; ask on the ticket instead.`,
         };
     if (factory && ghHidden(command))
         return {
@@ -2241,11 +2322,14 @@ export function evaluateCommand({ command, loadedSkills = new Set(), state, host
             reason: `${rules.factory.ghUnseenWhy} Use gh's own subcommand (\`gh issue|pr|api …\`) instead of an alias or extension.`,
         };
     // Nor the takeover label: an approver sets it to hand the ticket to an attended run, which removes it once it claimed.
-    if (factory?.takeover && touchesApprovalLabel(command, factory.takeover))
+    const takeoverHit = factory
+        ? [factory.takeover, ...(factory.takeovers ?? [])].find((name) => name && touchesApprovalLabel(command, name))
+        : undefined;
+    if (factory && takeoverHit)
         return {
             action: "deny",
             rule: "factory-takeover",
-            reason: `${rules.factory.takeoverWhy} The \`${factory.takeover}\` label is the owner's to apply; ask on the ticket instead.`,
+            reason: `${rules.factory.takeoverWhy} The \`${takeoverHit}\` label is the owner's to apply; ask on the ticket instead.`,
         };
     // Nor a protected path (`.github/**`, `.factory/**`, FACTORY_PROTECTED_PATHS) through a shell write: the runtime counts the deny.
     const shielded = factory &&
