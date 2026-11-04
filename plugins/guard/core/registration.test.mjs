@@ -134,6 +134,8 @@ void test("registration: protected_paths exempt", () => {
     has(e("{a,b}/x"), re);
     has(e("other/x"), re);
     has(e("!x"), re);
+    has(e(".factory/**", [".factory/x/**"]), re);
+    has(e(".FACTORY/**", [".FACTORY/x/**"]), re);
     assert.equal(validateRegistration(mod((m) => (m.protected_paths = { globs: [".acme/**"], exempt: [".acme/x"] }))).ok, true);
 });
 void test("registration: result", () => {
@@ -166,6 +168,11 @@ void test("registration: result", () => {
     bad((m) => (m.result.hint = ""), /^result\.hint must be 1 to 500/);
     bad((m) => (m.result.hint = "x".repeat(501)), /^result\.hint must be 1 to 500/);
     bad((m) => (m.result.hint = "a\tb"), /^result\.hint must be 1 to 500/);
+    bad((m) => (m.result.hint = "a\u202eb"), /^result\.hint must be 1 to 500/);
+    bad((m) => (m.result.hint = "a\u2028b"), /^result\.hint must be 1 to 500/);
+    for (const file of [".git/x.json", ".GITHUB/r.json"]) {
+        bad((m) => (m.result.file = file), /^result\.file must not be under \.git or \.github, got /);
+    }
 });
 void test("registration: modes", () => {
     bad((m) => (m.modes = []), /^modes must have 1 to 2 entries/);
@@ -240,12 +247,13 @@ void test("registration: runEnvErrors", () => {
         .registration;
     const base = { GUARD_RUN_ID: "run-1", GUARD_RUN_TICKET: "acme/app#12" };
     assert.deepEqual(runEnvErrors(base, reg), []);
-    assert.deepEqual(runEnvErrors({ ...base, GUARD_RUN_ID: " run-1 " }, reg), []);
+    has(runEnvErrors({ ...base, GUARD_RUN_ID: "  run-1  " }, reg), /^GUARD_RUN_ID must match/);
     has(runEnvErrors({ ...base, GUARD_RUN_ID: "../x" }, reg), /^GUARD_RUN_ID must match .*, got "\.\.\/x"/);
     has(runEnvErrors({ GUARD_RUN_TICKET: base.GUARD_RUN_TICKET }, reg), /^GUARD_RUN_ID must match/);
     const only = { ...reg, modes: ["attended"] };
     has(runEnvErrors(base, only), /^GUARD_RUN_MODE "unattended" is not one of the registration's modes \["attended"\]/);
-    assert.deepEqual(runEnvErrors({ ...base, GUARD_RUN_MODE: " attended " }, only), []);
+    has(runEnvErrors({ ...base, GUARD_RUN_MODE: " attended " }, only), /^GUARD_RUN_MODE " attended " is not one of/);
+    assert.deepEqual(runEnvErrors({ ...base, GUARD_RUN_MODE: "attended" }, only), []);
     has(runEnvErrors({ ...base, GUARD_RUN_MODE: "x" }, reg), /^GUARD_RUN_MODE "x" is not one of/);
     assert.deepEqual(runEnvErrors({ ...base, GUARD_RUN_MODE: "" }, { ...reg, modes: undefined }), []);
     has(runEnvErrors({ ...base, GUARD_RUN_TICKET: "bad" }, reg), /^GUARD_RUN_TICKET must match/);
