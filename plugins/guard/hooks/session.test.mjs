@@ -695,6 +695,28 @@ void test("result gate: the stop hook CLI blocks a runtime run on an uncaught ex
     assert.equal(attended.status, 0, attended.stderr);
     assert.equal(attended.stdout, "");
 });
+void test("result gate: a crash after the gate passed a runtime run does not block it", () => {
+    const dir = tmp();
+    const preload = join(dir, "flush.mjs");
+    // the final flush throws: after the gate answered, outside every try
+    writeFileSync(preload, 'const w = process.stdout.write.bind(process.stdout);\nprocess.stdout.write = (c, ...a) => { if (c === "") throw new Error("boom"); return w(c, ...a); };\n');
+    const cwd = gateRepo(validResult());
+    delete process.env.CLAUDE_PLUGIN_DATA;
+    const r = spawnSync(process.execPath, ["--import", pathToFileURL(preload).href, STOP_HOOK], {
+        input: JSON.stringify({ cwd, hook_event_name: "Stop" }),
+        encoding: "utf8",
+        env: {
+            ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("FACTORY_") && !k.startsWith("GUARD_"))),
+            GUARD_STOP_CHECK: "off",
+            GUARD_OTEL: "off",
+            FACTORY_EVENTS_FILE: "",
+            CLAUDE_PLUGIN_DATA: tmp(),
+            ...RUNTIME,
+        },
+    });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.stdout, "");
+});
 void test("result gate: a counter that cannot be written blocks a runtime run and lets an attended one go", async () => {
     try {
         const cwd = gateRepo(validResult({ ticket: 12 }));

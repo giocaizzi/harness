@@ -797,13 +797,17 @@ if (entryArg && import.meta.url === pathToFileURL(entryArg).href) {
     }
   };
   // A crash outside the try below (an uncaught exception or rejection) answers like an internal error: a block when
-  // the gate never fails open, nothing otherwise, and always exit 0.
+  // the gate never fails open, nothing otherwise, and always exit 0. Once the gate answered, a crash in the usage or
+  // telemetry steps changes nothing: a passed result stays passed.
   let crashed = false;
+  let answered = false;
   const failClosedOnCrash = (): void => {
     if (crashed) process.exit(0);
     crashed = true;
     try {
-      const reason = gateFailClosed(process.env, input, "internal error");
+      const reason = answered
+        ? null
+        : gateFailClosed(process.env, input, "internal error");
       if (reason) {
         writeOut({
           decision: "block",
@@ -849,6 +853,7 @@ if (entryArg && import.meta.url === pathToFileURL(entryArg).href) {
 
     // written before the usage and telemetry steps, so a failure there cannot lose a block or deny a passed result
     writeOut(out);
+    answered = true;
 
     try {
       if (
@@ -897,7 +902,9 @@ if (entryArg && import.meta.url === pathToFileURL(entryArg).href) {
     // unreadable payload or an internal error in the gate: let the agent stop, unless the launcher named a result
     // checker or this is a runtime run, in which case the stop stays blocked
     try {
-      const reason = gateFailClosed(process.env, input, "internal error");
+      const reason = answered
+        ? null
+        : gateFailClosed(process.env, input, "internal error");
       if (reason) {
         writeOut({
           decision: "block",
