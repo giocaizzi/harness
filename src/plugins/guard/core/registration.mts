@@ -75,7 +75,9 @@ const pathRuleError = (v: string, max: number): string | null => {
   if (CONTROL.test(v)) return "must not contain control characters";
   if (v.includes("\\")) return "must not contain a backslash";
   if (v.startsWith("/") || /^[A-Za-z]:/.test(v)) return "must not be absolute";
-  if (v.split("/").some((seg) => seg === "" || seg === "." || seg === "..")) {
+  if (v.includes(":")) return 'must not contain ":"';
+  // Windows drops trailing dots and spaces from a segment, so ".. " and "..." name "..".
+  if (v.split("/").some((seg) => seg.replace(/[. ]+$/, "") === "")) {
     return 'must not have an empty, "." or ".." segment';
   }
   return null;
@@ -158,8 +160,11 @@ const checkLabels = (v: unknown, errors: string[]): Registration["labels"] => {
   return out;
 };
 
-// A result file never lands in git's own directory or in .github.
-const GIT_DIR = /^\.git(hub)?$/i;
+// A result file never lands in git's own directory or in .github, at any depth. Windows drops trailing dots and
+// spaces from a segment, so ".git." and ".git " name .git; the 8.3 short names GIT~1 and GITHUB~1 name .git and .github too.
+const GIT_DIR = /^(\.git(hub)?|git(hub)?~\d+)$/i;
+const inGitDir = (file: string): boolean =>
+  file.split("/").some((seg) => GIT_DIR.test(seg.replace(/[. ]+$/, "")));
 
 const GLOB_CHARS = /[*?[\]{}!]/;
 
@@ -248,11 +253,13 @@ const checkResult = (
       .replaceAll("{ticket_number}", "")
       .replaceAll("{run_id}", "");
     if (why) errors.push(`result.file ${why}, got ${show(file)}`);
-    else if ((file.split("/")[0] ?? "").includes("{")) {
+    // A placeholder in the first segment is fine for a root-level file only: it ends in .json and expands to a
+    // run id (^[A-Za-z0-9_]...) or a digit string, so it never names a directory such as .git or .github.
+    else if (file.includes("/") && (file.split("/")[0] ?? "").includes("{")) {
       errors.push(
-        `result.file must not use a placeholder in its first segment, got ${show(file)}`,
+        `result.file must not use a placeholder in the first segment of a multi-segment path, got ${show(file)}`,
       );
-    } else if (GIT_DIR.test(file.split("/")[0] ?? "")) {
+    } else if (inGitDir(file)) {
       errors.push(
         `result.file must not be under .git or .github, got ${show(file)}`,
       );
@@ -477,7 +484,7 @@ export function resultFile(
     .replaceAll("{run_id}", vars.run_id);
   const why = pathRuleError(expanded, DEFAULT_PROTECTED_LIMITS.chars);
   if (why) return { why: `result file ${why}, got ${show(expanded)}` };
-  if (GIT_DIR.test(expanded.split("/")[0] ?? "")) {
+  if (inGitDir(expanded)) {
     return {
       why: `result file must not be under .git or .github, got ${show(expanded)}`,
     };
