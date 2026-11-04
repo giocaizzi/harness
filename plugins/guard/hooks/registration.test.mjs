@@ -294,3 +294,43 @@ void test("registration: an unusable env value does not throw", () => {
     assert.equal(loadRegistration(env, { vet: ro }).state, "deny");
     assert.equal(loadRegistration(null).state, "deny");
 });
+// A consumer's read-only run: the manifest is a read-only bind-mounted 0444 file owned by another uid, the root
+// filesystem is read-only and the session user is not root. The ownership rule is "neither owned nor writable by the
+// session user": on a read-only mount the owner check is skipped, so every path is out of reach.
+void test("posix registration: a 0444 manifest owned by another uid on a read-only mount is accepted and pinned", posixOnly, () => {
+    const p = manifest();
+    chmodSync(p, 0o444);
+    assert.equal(statSync(p).mode & 0o777, 0o444);
+    const real = realpathSync(p);
+    const dataDir = fresh("data");
+    const opts = {
+        dataDir,
+        sessionId: "ro",
+        vet: {
+            writable: () => false,
+            owner: () => false,
+            readOnlyMount: () => true,
+        },
+    };
+    const got = loadRegistration(envFor(p), opts);
+    assert.equal(got.state, "registered", JSON.stringify(got));
+    assert.equal(got.path, real);
+    assert.ok(existsSync(pinFile(dataDir, "ro")));
+    // the pin holds on the next call
+    assert.equal(loadRegistration(envFor(p), opts).state, "registered");
+});
+void test("posix registration: control, the same read-only case with a file the user can write is denied", posixOnly, () => {
+    const p = manifest();
+    chmodSync(p, 0o444);
+    const real = realpathSync(p);
+    const why = denyWhy(loadRegistration(envFor(p), {
+        dataDir: fresh("data"),
+        sessionId: "ro",
+        vet: {
+            writable: (t) => t === real,
+            owner: () => false,
+            readOnlyMount: () => true,
+        },
+    }));
+    assert.match(why, /writable by this user \(the file\)/);
+});

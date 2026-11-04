@@ -185,6 +185,16 @@ void test(
   },
 );
 
+void test("checker: EROFS, EACCES and EPERM mean not writable, any other access error or none means writable", () => {
+  const code = (c: string | undefined) => () => c;
+  for (const c of ["EROFS", "EACCES", "EPERM"]) {
+    assert.equal(isWritableByMe("/x", "linux", code(c)), false, c);
+  }
+  for (const c of ["ENOENT", "EIO", "ELOOP", "unknown", undefined]) {
+    assert.equal(isWritableByMe("/x", "linux", code(c)), true, String(c));
+  }
+});
+
 void test("posix checker: an unreadable file is refused", posixOnly, () => {
   if (process.getuid?.() === 0) return;
   const p = file("export const resultErrors = () => []");

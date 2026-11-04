@@ -296,6 +296,24 @@ make contract-test MANIFEST=/opt/acme-runner/guard-registration.json
 - It runs every scenario for real: the probe and `enforced: true`, the manifest validates and loads, unknown capability, contract major, unknown key, missing manifest, variables out of step, writable manifest, writable checker, changed manifest (pin mismatch), label approval and takeover (when the manifest registers them), an unusable manifest denying a label change with `run-registration`, protected path and exemption, gh alias, the events decision line shape, a bad result blocking the stop (when the manifest has `result`), and the legacy-only tripwire firing and its line. Nothing is pending.
 - The scenarios that need the trusted `MANIFEST` skip without it. `make test` also runs the kit, with the bundled example manifest `tests/contract/fixtures/acme-runner.json`, skipping those.
 
+**Running the kit as a black box (supported).** The kit can run in a locked-down container, as a runner's CI job often does:
+
+- the manifest path is in `GUARD_RUN_MANIFEST` (and `CONTRACT_MANIFEST` for the kit);
+- the guard checkout is mounted read-only;
+- the user is not root;
+- only `/tmp` is writable (the root filesystem is read-only).
+
+The manifest may be a read-only bind-mounted regular file, mode 0444, owned by another uid. The ownership rule is "neither owned nor writable by the session user": ownership by another uid is fine, and on a read-only mount the owner check is skipped (Refusals). Nothing the kit runs writes outside its own `os.tmpdir()` directory: guard's data dir (`CLAUDE_PLUGIN_DATA`), the events file, the pins and every scenario repo live there, and the kit sets `GUARD_OTEL=off` and `GUARD_STOP_CHECK=off`. `HOME`, the checkout and the working directory are never written (the hooks read `HOME` only to resolve paths). A probe:
+
+```bash
+docker run --rm --read-only --tmpfs /tmp --user 1000:1000 \
+  -v "$PWD":/src:ro -v /opt/acme-runner/guard-registration.json:/run/manifest.json:ro \
+  -e GUARD_RUN_MANIFEST=/run/manifest.json -e CONTRACT_MANIFEST=/run/manifest.json \
+  -w /src node:22 node --test tests/contract/kit.test.mjs
+```
+
+Without `CONTRACT_MANIFEST` (or with a manifest in the user's reach) the trust scenarios skip: a run that skips them did not prove the black-box case. The registration test `a 0444 manifest owned by another uid on a read-only mount is accepted and pinned` (`hooks/registration.test.mts`) covers the same case without a container.
+
 ## Unattended and auto-approve runs
 
 Hooks run before the harness applies its permission mode, so a deny holds under accept-edits, bypass, `--allow-all`, `--auto` and `-a never` alike. Only the risky-command `ask` depends on the mode.

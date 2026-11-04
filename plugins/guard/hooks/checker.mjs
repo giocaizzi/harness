@@ -19,8 +19,8 @@ const accessCode = (target) => {
 // Whether this user can write `target` right now. EROFS (a read-only mount), EACCES and EPERM mean it cannot; any
 // other error is not known to be safe, so it counts as writable (fails closed). On win32 only the access result
 // counts (the read-only attribute): ACLs are the launcher's job, and the check does not prove them there.
-export function isWritableByMe(target, platform = process.platform) {
-    const code = accessCode(target);
+export function isWritableByMe(target, platform = process.platform, access = accessCode) {
+    const code = access(target);
     if (code === undefined)
         return true;
     if (platform === "win32")

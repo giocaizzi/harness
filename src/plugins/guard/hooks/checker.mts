@@ -28,8 +28,9 @@ const accessCode = (target: string): string | undefined => {
 export function isWritableByMe(
   target: string,
   platform: Platform = process.platform,
+  access: (target: string) => string | undefined = accessCode,
 ): boolean {
-  const code = accessCode(target);
+  const code = access(target);
   if (code === undefined) return true;
   if (platform === "win32") return false;
   return !["EROFS", "EACCES", "EPERM"].includes(code);
