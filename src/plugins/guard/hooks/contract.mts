@@ -1,6 +1,10 @@
 // `node hooks/guard.mjs --contract`: the run contract this guard speaks, so a launcher can refuse to start on an
 // older one.
 
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+
 import { CAPABILITIES, CONTRACT } from "../core/registration.mjs";
 import type { Capability } from "../core/registration.mjs";
 
@@ -11,8 +15,21 @@ export interface ContractProbe {
 }
 
 // guard's version from its own .claude-plugin/plugin.json, "unknown" when it cannot be read.
-export function guardVersion(pluginRoot?: string): string {
-  throw new Error("not implemented");
+export function guardVersion(
+  pluginRoot: string = fileURLToPath(new URL("..", import.meta.url)),
+): string {
+  try {
+    const manifest: unknown = JSON.parse(
+      readFileSync(join(pluginRoot, ".claude-plugin", "plugin.json"), "utf8"),
+    );
+    const version = (manifest as { version?: unknown } | null)?.version;
+    return typeof version === "string" &&
+      /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version)
+      ? version
+      : "unknown";
+  } catch {
+    return "unknown";
+  }
 }
 
 export function contractProbe(version: string = guardVersion()): ContractProbe {
