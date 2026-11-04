@@ -8,9 +8,11 @@ on:
     - cron: '17 3 * * *' # 03:17 UTC
   workflow_dispatch:
 
+# A new push cancels only its PR's superseded run; nightly and manual runs on `main` each get a group of their own
+# (a shared group would cancel a pending run even without cancel-in-progress), so neither cancels the other.
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   secrets:
