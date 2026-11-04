@@ -1232,7 +1232,7 @@ void test("result check: the stop hook CLI keeps a stop blocked on an unreadable
     assert.equal(free.status, 0, free.stderr);
     assert.equal(free.stdout, "");
 });
-void test("result check: an unreadable payload with no session id is capped per harness process, across spawned stop hooks", () => {
+void test("stop cap: an unreadable payload with no session id is capped per harness process, across spawned stop hooks", () => {
     const data = tmp();
     const run = () => runStopHook("{", [], { GUARD_RUN_ID: "run-1", CLAUDE_PLUGIN_DATA: data });
     const outs = [run(), run(), run()].map((r) => {

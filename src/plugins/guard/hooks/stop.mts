@@ -542,11 +542,7 @@ export async function resultGate(
       // Not switched off by GUARD_RESULT_GATE. Capped like result errors, per session: the agent cannot fix a
       // registration and every tool call is already denied, so an uncapped block would only loop the session.
       if (ctx.rule === UNREGISTERED_RULE) {
-        recordUnregistered(
-          env,
-          dataDir,
-          registrationKey(payload, checkerOpts),
-        );
+        recordUnregistered(env, dataDir, registrationKey(payload, checkerOpts));
       }
       const blocked = cappedRegistrationBlock(ctx, payload, checkerOpts);
       if (blocked === null) {
