@@ -254,13 +254,22 @@ export function createGuard({
     async stop({
       cwd,
       active,
+      sessionId,
+      agentId,
     }: {
       active?: boolean;
+      agentId?: string;
       cwd?: string;
+      sessionId?: string;
     }): Promise<string | null> {
       try {
         const out = await stopCheck(
-          { cwd, stop_hook_active: active },
+          {
+            cwd,
+            stop_hook_active: active,
+            session_id: sessionId,
+            agent_id: agentId,
+          },
           d.spawnSync as typeof import("./stop.mjs").fingerprint extends (
             c: string,
             r: infer R,
@@ -279,7 +288,7 @@ export function createGuard({
         // stopCheck reads process.env: a registered run's result gate, or a failed registration, keeps the stop blocked
         return gateFailClosed(
           process.env,
-          { cwd },
+          { cwd, session_id: sessionId, agent_id: agentId },
           "internal error",
           gateOpts(),
         );
