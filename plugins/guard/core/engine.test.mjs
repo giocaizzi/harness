@@ -2965,6 +2965,18 @@ void test("factory run: the data directory matcher reads a path as the shell may
         "python3 -c \"open('$HOME/.claude/plugins/data/guard-acme/result-gate/x','w')\"",
         'python3 -c \'open("/Users//me/.claude/plugins/data/guard-acme/x","w")\'',
         "cat /Users/me/.cl$Y/plugins/data/guard-acme/x",
+        // review round 2: writers on a cd-looking command, quoted groups, a headless variable segment, CDPATH with a dot
+        // target, quoted array elements, shell syntax inside quotes, a prefix assignment in a payload, extendedglob
+        "mv /Users/me/.claude/plugins/data cd",
+        "cat /Users/me/x\\(/../.claude/plugins/data/guard-acme/result-gate/a\\)$Z",
+        'tee "/Users/me/x(/../.claude/plugins/data/guard-acme/result-gate/a)$Z" </dev/null',
+        "cat /Users/me/.claude/plugins/data/${Y}x",
+        "CDPATH=/Users/me; cd .claude/plugins/data/guard-acme && cat result-gate/x",
+        "arr=( '/Users/me/.claude/plugins/data/guard-a'* ); cat \"${arr[0]}/x\"",
+        'echo hi > "/Users/me/x;/../.claude/plugins/data/guard-acme/result-gate/a"',
+        "HOME=/Users/me/.claude/plugins/data bash -c 'echo 0 > ~/guard-a\"\"cme/count'",
+        "python3 -c \"open('$HOME/.claude/plugins/data/guard-a\"\"cme/c','w')\"",
+        "setopt extendedglob; touch ~/.claude/plugins/data/^x/count",
     ];
     for (const c of denied) {
         const d = run(c);
@@ -3006,6 +3018,11 @@ void test("factory run: the data directory matcher reads a path as the shell may
         "cd src && make",
         "export CDPATH=/x; cd ./src && ls",
         "cat /tmp/*(.)",
+        `git commit -q -m "feat: ${"x".repeat(1100)}"`,
+        "i=$((i+1))",
+        "git log HEAD^..main",
+        "cd src/$PKG && make",
+        "CDPATH=/Users/me; cd ./src && make",
     ];
     // Known limits the reader sets: a `(` after a redirection target or a bare group is read as a subshell.
     for (const c of [
@@ -3038,11 +3055,14 @@ void test("protectedWrite: in a run with a data directory, a command past the sc
         assert.ok(hit(c)?.unsure, `${c}: past the limit nothing is proven`);
     assert.equal(hit("touch /tmp/x", []), null, "no data directory: a writer outside the list passes");
     assert.equal(hit(`dd of=${data}/x`, []), null);
-    // A word over the character limit, or one deep enough to overflow the matcher, is a limit too, so it is denied.
-    const deep = `truncate -s0 /Users/me/${"$E/".repeat(12000)}$D/result-gate/x`;
-    assert.ok(protectedWrite(deep, cfg([data]), env)?.unsure, "deep known start");
-    assert.ok(protectedWrite(`touch $X/${"$E/".repeat(12000)}$D/x`, cfg([data]), env)
-        ?.unsure, "deep unknown start");
+    // A word deep enough to overflow the matcher counts as reaching anything, so it is denied; a long word is not a
+    // limit by itself (a commit message or a body may run over 1024 characters).
+    const denied = (c) => protectedWrite(c, cfg([data]), env) !== null;
+    assert.ok(denied(`truncate -s0 /Users/me/${"$E/".repeat(12000)}$D/result-gate/x`), "deep known start");
+    assert.ok(denied(`touch $X/${"$E/".repeat(12000)}$D/x`), "deep unknown start");
+    assert.ok(denied(`touch /tmp/${"$E/".repeat(600)}x`), "past the segment cap");
+    assert.equal(protectedWrite(`git commit -m "${"x".repeat(1100)}"`, cfg([data]), env), null, "a long word is no limit");
+    assert.equal(protectedWrite(`touch /tmp/${"$E/".repeat(300)}x`, cfg([data]), env), null, "300 segments under /tmp");
 });
 void test("factory run: guard's data directory is a protected write target", () => {
     const data = "/Users/me/.claude/plugins/data/guard-acme";
