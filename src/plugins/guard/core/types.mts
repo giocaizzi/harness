@@ -324,6 +324,7 @@ export interface StackFact {
 
 export interface ProtectConfig {
   cwd?: string;
+  data?: string[];
   defaults?: string[];
   exempt?: string[];
   globs: string[];
@@ -337,13 +338,16 @@ export interface ProtectHit {
 
 export interface FactoryFacts {
   approval: string;
+  approvals?: string[];
   extra?: string[];
   protect?: {
     cwd?: string;
+    data?: string[];
     extra?: string[];
     root?: string;
   };
   takeover?: string;
+  takeovers?: string[];
   unsure?: boolean;
 }
 
@@ -500,7 +504,7 @@ export interface StackFixtureOptions {
 export interface CorpusOptions {
   python?: string | null;
   hints?: boolean;
-  factory?: "readable" | "unsure" | null;
+  factory?: "readable" | "configured" | "unsure" | null;
   stack?: StackFact | null;
   read?: boolean;
 }

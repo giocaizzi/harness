@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync, } from "node:fs";
+import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, writeFileSync, } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir, userInfo } from "node:os";
 import { join, resolve } from "node:path";
@@ -1420,15 +1420,19 @@ void test("through the real hook, time before a reserved word and chrt without a
 void test("a long chain of commands is judged in linear time, and the decision is the same as for a short one", () => {
     const script = fileURLToPath(new URL("./guard.mjs", import.meta.url));
     const run = (command) => {
+        // The input is a file the child reads to EOF: a pipe of ~160 KB can be read in chunks the hook's reader gives up between on a loaded host.
+        const inputFile = join(mkdtempSync(join(tmpdir(), "guard-test-")), "in.json");
+        writeFileSync(inputFile, JSON.stringify({
+            hook_event_name: "PreToolUse",
+            tool_name: "Bash",
+            tool_input: { command },
+            cwd: "/",
+            session_id: "s",
+        }));
+        const fd = openSync(inputFile, "r");
         const started = Date.now();
         const r = spawnSync(process.execPath, [script, "PreToolUse"], {
-            input: JSON.stringify({
-                hook_event_name: "PreToolUse",
-                tool_name: "Bash",
-                tool_input: { command },
-                cwd: "/",
-                session_id: "s",
-            }),
+            stdio: [fd, "pipe", "pipe"],
             encoding: "utf8",
             timeout: 20000,
             env: {
@@ -1438,6 +1442,7 @@ void test("a long chain of commands is judged in linear time, and the decision i
                 CLAUDE_PLUGIN_DATA: mkdtempSync(join(tmpdir(), "guard-test-")),
             },
         });
+        closeSync(fd);
         assert.equal(r.error, undefined, "spawn failed: " + (r.error?.message ?? ""));
         assert.equal(r.status, 0, r.stderr);
         return { out: r.stdout, ms: Date.now() - started };
@@ -1459,10 +1464,16 @@ void test("FACTORY_RUN_ID set: the approval and takeover labels (default or the 
     const crlf = mkdtempSync(join(tmpdir(), "guard-factory-"));
     mkdirSync(join(crlf, ".factory"));
     writeFileSync(join(crlf, ".factory", "config.yaml"), 'labels:\r\n  approval: "go ahead"\r\n  claimed: x\r\n');
-    assert.deepEqual(factoryLabels(crlf), { approval: "go ahead", takeover: "factory-takeover" }, "CRLF and a quoted name with a space; an unset key keeps its default");
+    assert.deepEqual(factoryLabels(crlf), {
+        approval: "agent-ok",
+        takeover: "factory-takeover",
+        approvals: ["go ahead"],
+    }, "CRLF and a quoted name with a space; an unset key keeps its default; configured names add");
     assert.deepEqual(factoryLabels(configured), {
-        approval: "go-ahead",
-        takeover: "hand-over",
+        approval: "agent-ok",
+        takeover: "factory-takeover",
+        approvals: ["go-ahead"],
+        takeovers: ["hand-over"],
     });
     assert.deepEqual(factoryLabels(cwd), { approval: "agent-ok", takeover: "factory-takeover" }, "no config: the defaults");
     const config = (text) => {
@@ -1474,6 +1485,8 @@ void test("FACTORY_RUN_ID set: the approval and takeover labels (default or the 
             writeFileSync(join(d, ".factory", "config.yaml"), text);
         return d;
     };
+    const same = config("labels:\n  approval: agent-ok\n  takeover: factory-takeover\n");
+    assert.deepEqual(factoryLabels(same), { approval: "agent-ok", takeover: "factory-takeover" }, "a configured name equal to the default adds nothing");
     assert.deepEqual(factoryLabels(config("version: 1\n")), { approval: "agent-ok", takeover: "factory-takeover" }, "no labels key: the defaults");
     assert.deepEqual(factoryLabels(config("labels: {approval: go-ahead, takeover: hand-over}\n")), {
         approval: "agent-ok",
@@ -1511,7 +1524,7 @@ void test("FACTORY_RUN_ID set: the approval and takeover labels (default or the 
         cwd,
     }))?.permissionDecision, "deny");
     assert.equal(decision(await inRun(add("go-ahead", configured)))?.permissionDecision, "deny");
-    assert.equal(decision(await inRun(add("agent-ok", configured))), undefined, "the configured name replaces the default");
+    assert.equal(decision(await inRun(add("agent-ok", configured)))?.permissionDecision, "deny", "the default stays protected beside the configured name");
     assert.equal(decision(await inRun(add("needs-owner", cwd))), undefined);
     const takeover = decision(await inRun(add("factory-takeover", cwd)));
     assert.ok(takeover);
@@ -1608,4 +1621,49 @@ void test("Antigravity payload: toolCall on run_command evaluates decisions and 
     const askJson = JSON.parse(askOut.stdout);
     assert.equal(askJson.decision, "ask");
     assert.match(askJson.reason ?? "", /git reset --hard/);
+});
+void test("FACTORY_RUN_ID set: guard's data directory is protected from shell writes and edit tools; unset, it is not", async () => {
+    const data = mkdtempSync(join(tmpdir(), "guard-data-"));
+    const repo = mkdtempSync(join(tmpdir(), "guard-repo-"));
+    const counter = join(data, "result-gate", "x.txt");
+    const inRun = setup({
+        env: { FACTORY_RUN_ID: "r1", CLAUDE_PLUGIN_DATA: data },
+    });
+    const outside = setup({ env: { CLAUDE_PLUGIN_DATA: data } });
+    const edit = (tool, tool_input, cwd = repo) => ({
+        hook_event_name: "PreToolUse",
+        tool_name: tool,
+        tool_input,
+        cwd,
+    });
+    const shell = {
+        ...pre("Bash", `echo 2 > ${counter}`),
+        cwd: repo,
+    };
+    assert.equal(decision(await inRun(shell))?.permissionDecision, "deny");
+    assert.equal(decision(await outside(shell)), undefined);
+    const calls = [
+        edit("Write", { file_path: counter, content: "2" }),
+        edit("Edit", { file_path: counter, old_string: "1", new_string: "2" }),
+        edit("MultiEdit", { file_path: counter, edits: [] }),
+        edit("create", { path: counter, file_text: "2" }),
+        edit("apply_patch", `*** Begin Patch\n*** Update File: ${counter}\n@@\n-1\n+2\n*** End Patch`),
+        edit("apply_patch", `*** Begin Patch\n*** Add File: ${join(repo, "ok.txt")}\n+x\n*** Delete File: ${counter}\n*** End Patch`),
+        edit("apply_patch", {
+            command: `*** Begin Patch\n*** Update File: ${join(repo, "a.txt")}\n*** Move to: ${counter}\n@@\n-1\n+2\n*** End Patch`,
+        }),
+    ];
+    for (const c of calls) {
+        const d = decision(await inRun(c));
+        assert.ok(d, JSON.stringify(c.tool_input));
+        assert.equal(d.permissionDecision, "deny", JSON.stringify(c.tool_input));
+        assert.match(d.permissionDecisionReason ?? "", /data directory/);
+        assert.equal(decision(await outside(c))?.permissionDecision, undefined, "outside a run: " + JSON.stringify(c.tool_input));
+    }
+    const repoEdit = edit("Edit", {
+        file_path: join(repo, "src", "a.ts"),
+        old_string: "1",
+        new_string: "2",
+    });
+    assert.equal(decision(await inRun(repoEdit))?.permissionDecision, undefined);
 });

@@ -3,10 +3,10 @@
 // and reads `hookSpecificOutput.permissionDecision`. A hook is a fresh process, so per-session facts
 // (loaded skills, rules already reminded) live in a JSON file under $CLAUDE_PLUGIN_DATA.
 import { execFile } from "node:child_process";
-import { appendFileSync, closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, rmSync, statSync, } from "node:fs";
+import { appendFileSync, closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, realpathSync, rmSync, statSync, } from "node:fs";
 import { statfs } from "node:fs/promises";
 import { cpus, homedir, loadavg, platform } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { analysis, branchFacts, cdDirs, cmdClass, codexRules, deniedBy, deniedDir, evaluateCommand, evaluateEdit, evaluateRouting, hostJudged, isHeavy, isRisky, nativeAsk, previewCommand, pureRead, refFacts, regenFacts, stackFacts, stackTargets, tagFacts, tagTargets, unattendedSet, withPreview, worktreeFacts, } from "../core/engine.mjs";
 import { cpuPercentFrom } from "../core/host.mjs";
@@ -14,6 +14,7 @@ import { emit } from "../core/otel.mjs";
 import { rules } from "../core/rules.mjs";
 import { commandWords, units } from "../core/shell.mjs";
 import { pluginDataDir } from "./data.mjs";
+import { editedFiles } from "./lint.mjs";
 import { isEditTool, isReadTool, isShellTool, isTaskTool, } from "./harnesses.mjs";
 import { installedVersions, staleCheck } from "./stale.mjs";
 import { appendDecision, commandHash, harnessName, recordAttrs, } from "./telemetry.mjs";
@@ -417,9 +418,14 @@ export function factoryLabels(cwd) {
                 const app = named.approval;
                 const take = named.takeover;
                 if (typeof app === "string") {
+                    // Configured names add to the defaults, which stay protected.
+                    const more = (name, dflt) => typeof name === "string" && name !== dflt ? [name] : [];
+                    const approvals = more(app, defaults.approval);
+                    const takeovers = more(take, defaults.takeover ?? "");
                     return {
-                        approval: app,
-                        ...(typeof take === "string" ? { takeover: take } : {}),
+                        ...defaults,
+                        ...(approvals.length ? { approvals } : {}),
+                        ...(takeovers.length ? { takeovers } : {}),
                     };
                 }
             }
@@ -449,6 +455,25 @@ export function protectFacts(env, cwd) {
     }
     const slash = (p) => p.replace(/\\/g, "/");
     return { extra, root: slash(root), cwd: slash(at) };
+}
+const slashes = (p) => p.replace(/\\/g, "/");
+// Guard's own data directories in this run (absolute, `/` separators): the one the hook keeps its files in and the one
+// the stop hook reads, each also by its real path when that differs (/tmp is /private/tmp on macOS).
+export function guardDataDirs(deps) {
+    const out = new Set();
+    for (const d of [pluginDataDir(deps.env ?? process.env), deps.dataDir]) {
+        if (!d)
+            continue;
+        const abs = slashes(resolve(d));
+        out.add(abs);
+        try {
+            out.add(slashes(realpathSync(abs)));
+        }
+        catch {
+            // not created yet
+        }
+    }
+    return [...out];
 }
 async function onShell(input, state, deps) {
     const rawCommand = input.tool_input?.command;
@@ -523,7 +548,10 @@ async function onShell(input, state, deps) {
             factory: deps.env?.FACTORY_RUN_ID
                 ? {
                     ...factoryLabels(input.cwd),
-                    protect: protectFacts(deps.env, input.cwd),
+                    protect: {
+                        ...protectFacts(deps.env, input.cwd),
+                        data: guardDataDirs(deps),
+                    },
                 }
                 : null,
             rules,
@@ -665,7 +693,70 @@ async function onShell(input, state, deps) {
             : {};
     }
 }
+// The files an edit tool call writes, moves or deletes: editedFiles, the `Path` spelling, and the `*** Delete File:`
+// and `*** Move to:` lines of an apply_patch text (the whole tool_input, `command` or `input`).
+function touchedFiles(input) {
+    const t = input.tool_input;
+    const obj = t && typeof t === "object"
+        ? t
+        : {};
+    const text = typeof t === "string"
+        ? t
+        : typeof obj.command === "string"
+            ? obj.command
+            : typeof obj.input === "string"
+                ? obj.input
+                : "";
+    const lines = [
+        ...text.matchAll(/^\*\*\* (?:Delete File|Move to): (.+)$/gm),
+    ].map((m) => m[1]?.trim() ?? "");
+    const base = input.cwd ?? ".";
+    return [
+        ...new Set([
+            ...editedFiles(input),
+            ...(typeof obj.Path === "string" ? [obj.Path] : []),
+            ...lines,
+        ]
+            .filter(Boolean)
+            .map((p) => resolve(base, p))),
+    ];
+}
+// `path` with the real path of its nearest existing ancestor, as `/` segments.
+function realish(path) {
+    const rest = [];
+    for (let p = resolve(path);; p = dirname(p)) {
+        try {
+            return slashes(join(realpathSync(p), ...rest));
+        }
+        catch {
+            rest.unshift(basename(p));
+        }
+        if (dirname(p) === p)
+            return slashes(resolve(path));
+    }
+}
+const insideDir = (path, dir) => {
+    const a = path.toLowerCase().split("/").filter(Boolean);
+    const b = dir.toLowerCase().split("/").filter(Boolean);
+    return b.length <= a.length && b.every((x, i) => x === a[i]);
+};
 function onEdit(input, state, deps) {
+    // In a factory run an edit tool never touches guard's own data directory (the result gate's block counter lives there).
+    if (deps.env?.FACTORY_RUN_ID) {
+        const dirs = guardDataDirs(deps);
+        const hit = touchedFiles(input).find((f) => [slashes(f), realish(f)].some((p) => dirs.some((d) => insideDir(p, d))));
+        if (hit !== undefined) {
+            fire(deps, "guard.decision", {
+                rule: "protected-path",
+                action: "deny",
+                cmd_class: "protected-path",
+                tool: input.tool_name ?? "",
+                session_id: input.session_id,
+                tool_use_id: input.tool_use_id,
+            }, input.cwd);
+            return preToolUse("deny", `${rules.factory.protectedWhy} \`${hit}\` is in guard's own data directory in this run; leave it alone.`, deps.harness);
+        }
+    }
     const t = input.tool_input ?? {};
     const reminded = new Set(state.reminded);
     const filePath = t.file_path ?? t.path ?? t.filePath ?? t.Path;
