@@ -175,6 +175,7 @@ export const GuardPlugin = ({ client, directory }, deps) => {
                 const t = info.tokens;
                 await guard.usage({
                     sessionId: info.sessionID,
+                    cwd: directory,
                     model: info.modelID ?? info.model?.id,
                     provider: info.providerID ?? info.model?.providerID,
                     tokens: {

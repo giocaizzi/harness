@@ -7,10 +7,11 @@ import { emit } from "../core/otel.mjs";
 import { keepAwake } from "./awake.mjs";
 import { fallbackDataDir } from "./data.mjs";
 import { crashResult, handle, hostFacts, pythonManager, run, } from "./guard.mjs";
+import { canonicalHarnessName } from "./harnesses.mjs";
 import { lintFile } from "./lint.mjs";
 import { createRegistrationCache } from "./registration.mjs";
 import { gateFailClosed, stopCheck } from "./stop.mjs";
-import { recordAttrs } from "./telemetry.mjs";
+import { recordAttrs, usageAttributes } from "./telemetry.mjs";
 // Neither harness gives plugins a data dir; the same fallback as VS Code.
 export const DATA_DIR = fallbackDataDir();
 const launchDetached = (argv) => {
@@ -31,21 +32,24 @@ const launchDetached = (argv) => {
 // `harness` names it in telemetry; `noAsk` turns an ask into a deny where the harness cannot ask, unless
 // `deps.nativeAsk(command, rule, input)` says the harness's own prompt covers it.
 export function createGuard({ harness, noAsk = false, dataDir = DATA_DIR, deps = {}, }) {
+    const env = deps.env ?? process.env;
+    const report = deps.report ??
+        ((event, attrs) => emit(env, event, attrs, fetch, canonicalHarnessName(harness)));
     // one per bridge: the parsed run manifest is reused while its file is unchanged
     const registrationCache = createRegistrationCache();
     const d = {
         dataDir,
         harness,
         processId: process.pid,
-        env: process.env,
+        env,
         hostFacts,
         run,
         pythonManager,
         noAsk,
         registrationCache,
-        emit: (event, attrs, cwd) => emit(process.env, event, recordAttrs(attrs, cwd, harness)),
-        // The harness's own usage, as the harness (service.name opencode or pi): neither exports telemetry itself.
-        report: (event, attrs) => emit(process.env, event, attrs, fetch, harness),
+        emit: (event, attrs, cwd) => emit(env, event, recordAttrs(attrs, cwd, harness, env)),
+        // The harness's own usage, as the harness: neither exports telemetry itself.
+        report,
         ...deps,
     };
     // The stop gate's options: the same cache, data dir and (tests only) trust probes as the tool hooks.
@@ -154,19 +158,24 @@ export function createGuard({ harness, noAsk = false, dataDir = DATA_DIR, deps =
         },
         // One model response: { sessionId, model, provider, tokens: { input, output, cacheRead, cacheWrite, reasoning }, costUsd }.
         // Named like Claude Code's api_request, so one query covers every harness. Never throws.
-        usage({ sessionId, model, provider, tokens = {}, costUsd, }) {
-            const n = (v) => Number.isFinite(Number(v)) ? Number(v) : undefined;
-            return Promise.resolve(d.report?.("api_request", {
-                "session.id": sessionId,
+        usage({ sessionId, cwd, model, provider, tokens = {}, costUsd, }) {
+            return Promise.resolve(d.report?.("api_request", usageAttributes({
+                harness,
+                cwd,
+                env: d.env,
+                sessionId,
                 model,
                 provider,
-                input_tokens: n(tokens.input),
-                output_tokens: n(tokens.output),
-                cache_read_tokens: n(tokens.cacheRead),
-                cache_creation_tokens: n(tokens.cacheWrite),
-                reasoning_tokens: n(tokens.reasoning),
-                cost_usd: n(costUsd),
-            })).catch(() => {
+                inputTokens: tokens.input,
+                outputTokens: tokens.output,
+                cacheReadTokens: tokens.cacheRead,
+                cacheCreationTokens: tokens.cacheWrite,
+                reasoningTokens: tokens.reasoning,
+                costUsd,
+                costSource: costUsd !== undefined && Number.isFinite(costUsd)
+                    ? "reported"
+                    : undefined,
+            }))).catch(() => {
                 // ignored
             });
         },

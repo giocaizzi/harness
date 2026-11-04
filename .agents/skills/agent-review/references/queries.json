@@ -21,7 +21,7 @@
   "agentLsp": "sum by (agent_id, tool_name) (count_over_time({service_name=\"claude-code\", deployment_environment_name!=\"test\"} | event_name=\"tool_result\" | tool_name=~\"LSP|Grep\" [$r]))",
   "agentGrep": "sum by (agent_id) (count_over_time({service_name=\"claude-code\", deployment_environment_name!=\"test\"} | event_name=\"tool_result\" | tool_name=\"Bash\" | line_format \"{{.tool_input}}\" |~ `^\\{\"command\":\"(?:cd [^&;|\"]+&& )?(?:rg|grep|egrep|ugrep|git grep) ` [$r]))",
   "lspOps": "sum by (op, success) (count_over_time({service_name=\"claude-code\", deployment_environment_name!=\"test\"} | event_name=\"tool_result\" | tool_name=\"LSP\" | line_format \"{{.tool_input}}\" | regexp `\"operation\":\"(?P<op>[A-Za-z]+)\"` [$r]))",
-  "sessionVersions": "sum by (session_id, plugin_version_dev_tools) (count_over_time({service_name=\"guard\", deployment_environment_name!=\"test\"} | event_name=\"guard.session\" | harness=\"claude\" [$r]))",
+  "sessionVersions": "sum by (session_id, plugin_version_dev_tools) (count_over_time({service_name=\"guard\", deployment_environment_name!=\"test\"} | event_name=\"guard.session\" | harness=~\"claude-code|claude\" [$r]))",
   "sessionCost": "sum by (session_id) (sum_over_time({service_name=\"claude-code\", deployment_environment_name!=\"test\"} | event_name=\"api_request\" | unwrap cost_usd | __error__=\"\" [$r]))",
   "sessionSubagentCost": "sum by (session_id, model, src) (sum_over_time({service_name=\"claude-code\", deployment_environment_name!=\"test\"} | event_name=\"api_request\" | query_source=~\"agent.*\" | label_format src=`{{ if eq .query_source \"agent_summary\" }}summary{{ else }}agent{{ end }}` | unwrap cost_usd | __error__=\"\" [$r]))"
 }

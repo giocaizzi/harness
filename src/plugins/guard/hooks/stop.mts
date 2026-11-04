@@ -58,6 +58,7 @@ import {
   failedTarget,
   harnessName,
   recordAttrs,
+  resolveAntigravityTranscriptPath,
   scrub,
 } from "./telemetry.mjs";
 import type { HookInput, HookSpecificOutput, StopDecision } from "./types.mjs";
@@ -895,6 +896,7 @@ interface AntigravityStopInput {
   session_id?: string;
   terminationReason?: unknown;
   transcriptPath?: string;
+  transcript_path?: string;
   workspacePaths?: readonly string[];
 }
 
@@ -983,22 +985,23 @@ if (entryArg && import.meta.url === pathToFileURL(entryArg).href) {
     answered = true;
 
     try {
-      if (
-        isAntigravity() &&
-        (input.transcriptPath ||
-          (input as { transcript_path?: string }).transcript_path)
-      ) {
-        const tPath =
-          input.transcriptPath ??
-          (input as { transcript_path?: string }).transcript_path;
+      const transcriptPath = isAntigravity()
+        ? resolveAntigravityTranscriptPath({
+            conversationId: input.conversationId,
+            transcriptPath: input.transcriptPath,
+            transcript_path: input.transcript_path,
+          })
+        : undefined;
+      if (transcriptPath) {
         const dataDir = pluginDataDir();
         const store = sessionStore(dataDir, input.session_id);
         const state = store.load();
         const newStep = await emitAntigravityUsage(
-          tPath,
+          transcriptPath,
           input.conversationId ?? input.session_id,
           input.modelName,
           state.lastTranscriptStep,
+          input.cwd,
           process.env,
         );
         if (newStep !== undefined && newStep !== state.lastTranscriptStep) {

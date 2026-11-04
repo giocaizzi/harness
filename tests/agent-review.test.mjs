@@ -21,6 +21,11 @@ void test("endpoint prefers the Grafana proxy, falls back to Loki, else null", (
     assert.equal(endpoint({}), null);
     assert.deepEqual(parsePairs(""), {});
 });
+void test("sessionVersions includes canonical and historical Claude harness values", () => {
+    const query = QUERIES.sessionVersions;
+    assert.ok(query);
+    assert.match(query, /harness=~"claude-code\|claude"/);
+});
 void test("collect substitutes the range and reads vector results", async () => {
     const seen = [];
     const fetchFn = (url) => {

@@ -1,21 +1,30 @@
 import assert from "node:assert/strict";
-import { appendFileSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import {
+  appendFileSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 
+import { canonicalHarnessName } from "./harnesses.mjs";
 import {
   appendDecision,
   commandHash,
   emitAntigravityUsage,
-  estimateGeminiCost,
   failedTarget,
   guardVersion,
   harnessName,
   recordAttrs,
   repoName,
   repoSlug,
+  resolveAntigravityTranscriptPath,
   scrub,
+  usageAttributes,
 } from "./telemetry.mjs";
 
 void test("harnessName: the --harness flag wins, then the data dir each harness sets", () => {
@@ -37,7 +46,24 @@ void test("harnessName: the --harness flag wins, then the data dir each harness 
   assert.equal(harnessName([], {}), "other");
 });
 
-void test("recordAttrs: harness, guard version and repo only when a record will be sent", () => {
+void test("canonicalHarnessName: every internal alias maps to its telemetry identity", () => {
+  const cases = [
+    { alias: "claude", canonical: "claude-code" },
+    { alias: "copilot", canonical: "copilot-cli" },
+    { alias: "vscode", canonical: "vscode-copilot" },
+    { alias: "codex", canonical: "codex-cli" },
+    { alias: "opencode", canonical: "opencode" },
+    { alias: "pi", canonical: "pi" },
+    { alias: "antigravity", canonical: "antigravity" },
+    { alias: "other", canonical: "other" },
+  ];
+  for (const item of cases)
+    assert.equal(canonicalHarnessName(item.alias), item.canonical, item.alias);
+  assert.equal(canonicalHarnessName("unknown"), "other");
+  assert.equal(canonicalHarnessName(undefined), "other");
+});
+
+void test("recordAttrs: canonical harness identity and changed legacy aliases are emitted only when enabled", () => {
   assert.deepEqual(recordAttrs({ a: 1 }, "/", "claude", {}), { a: 1 });
   assert.deepEqual(
     recordAttrs({ a: 1 }, "/", "claude", {
@@ -46,12 +72,167 @@ void test("recordAttrs: harness, guard version and repo only when a record will 
     }),
     { a: 1 },
   );
-  const r = recordAttrs({ a: 1 }, "/", "claude", {
+
+  const cases = [
+    { alias: "claude", canonical: "claude-code", legacy: "claude" },
+    { alias: "copilot", canonical: "copilot-cli", legacy: "copilot" },
+    { alias: "vscode", canonical: "vscode-copilot", legacy: "vscode" },
+    { alias: "codex", canonical: "codex-cli", legacy: "codex" },
+    { alias: "opencode", canonical: "opencode" },
+    { alias: "pi", canonical: "pi" },
+    { alias: "antigravity", canonical: "antigravity" },
+    { alias: "other", canonical: "other" },
+  ];
+  for (const item of cases) {
+    const attrs = recordAttrs({ a: 1 }, "/", item.alias, {
+      GUARD_OTEL_EXPORTER_OTLP_ENDPOINT: "http://c",
+    });
+    assert.equal(attrs.harness, item.canonical, item.alias);
+    assert.equal(attrs.harness_legacy, item.legacy, item.alias);
+    assert.equal(
+      "harness_legacy" in attrs,
+      item.legacy !== undefined,
+      item.alias,
+    );
+    assert.equal(attrs.guard_version, guardVersion());
+    assert.match(String(attrs.guard_version), /^\d+\.\d+\.\d+$/);
+  }
+});
+
+void test("recordAttrs: a guard.decision keeps its tool_use_id, enabled or not", () => {
+  const decision = { rule: "r", tool_use_id: "toolu_1" };
+  assert.deepEqual(recordAttrs(decision, "/", "claude", {}), decision);
+  const attrs = recordAttrs(decision, "/", "claude", {
     GUARD_OTEL_EXPORTER_OTLP_ENDPOINT: "http://c",
   });
-  assert.equal(r.harness, "claude");
-  assert.equal(r.guard_version, guardVersion());
-  assert.match(String(r.guard_version), /^\d+\.\d+\.\d+$/);
+  assert.equal(attrs.tool_use_id, "toolu_1");
+  assert.ok(!("trace_id" in attrs) && !("span_id" in attrs));
+});
+
+void test("usageAttributes: schema, enrichment, finite supplied numbers and zero are preserved", () => {
+  const attrs = usageAttributes({
+    harness: "copilot",
+    cwd: "/",
+    env: { GUARD_OTEL_EXPORTER_OTLP_ENDPOINT: "http://collector.invalid" },
+    sessionId: " session-1 ",
+    model: " model-1 ",
+    provider: " provider-1 ",
+    inputTokens: 0,
+    outputTokens: 12,
+    cacheReadTokens: 0,
+    cacheCreationTokens: null,
+    reasoningTokens: Number.NaN,
+    costUsd: 0,
+    costSource: "reported",
+  });
+  assert.deepEqual(attrs, {
+    usage_schema: "guard.usage.v1",
+    "session.id": "session-1",
+    model: "model-1",
+    provider: "provider-1",
+    input_tokens: 0,
+    output_tokens: 12,
+    cache_read_tokens: 0,
+    cost_usd: 0,
+    cost_source: "reported",
+    harness: "copilot-cli",
+    harness_legacy: "copilot",
+    guard_version: guardVersion(),
+    repo: null,
+  });
+});
+
+void test("usageAttributes: null, empty, unavailable and non-finite values are omitted", () => {
+  const attrs = usageAttributes({
+    harness: "pi",
+    cwd: "/",
+    env: { GUARD_OTEL_EXPORTER_OTLP_ENDPOINT: "http://collector.invalid" },
+    sessionId: null,
+    model: "  ",
+    provider: "",
+    inputTokens: undefined,
+    outputTokens: Number.POSITIVE_INFINITY,
+    cacheReadTokens: null,
+    cacheCreationTokens: Number.NEGATIVE_INFINITY,
+    reasoningTokens: Number.NaN,
+    costUsd: null,
+    costSource: null,
+  });
+  assert.deepEqual(attrs, {
+    usage_schema: "guard.usage.v1",
+    harness: "pi",
+    guard_version: guardVersion(),
+    repo: null,
+  });
+});
+
+void test("usageAttributes: enrichment uses only the observed workspace and omits an absent repo", () => {
+  const observedCwds: (string | undefined)[] = [];
+  const enrichment = {
+    guardVersion: () => "1.2.3",
+    repoName: (cwd?: string) => {
+      observedCwds.push(cwd);
+      return "acme/workspace";
+    },
+  };
+  const env = {
+    GUARD_OTEL_EXPORTER_OTLP_ENDPOINT: "http://collector.invalid",
+  };
+
+  assert.deepEqual(
+    usageAttributes(
+      { harness: "antigravity", cwd: "/observed/workspace", env },
+      enrichment,
+    ),
+    {
+      usage_schema: "guard.usage.v1",
+      harness: "antigravity",
+      guard_version: "1.2.3",
+      repo: "acme/workspace",
+    },
+  );
+  assert.deepEqual(
+    usageAttributes({ harness: "antigravity", env }, enrichment),
+    {
+      usage_schema: "guard.usage.v1",
+      harness: "antigravity",
+      guard_version: "1.2.3",
+    },
+  );
+  assert.deepEqual(observedCwds, ["/observed/workspace"]);
+});
+
+void test("usageAttributes: enrichment performs no version or repo lookup when telemetry is disabled or has no endpoint", () => {
+  for (const env of [
+    {
+      GUARD_OTEL: "off",
+      GUARD_OTEL_EXPORTER_OTLP_ENDPOINT: "http://collector.invalid",
+    },
+    {},
+  ]) {
+    let lookups = 0;
+    const failLookup = (): never => {
+      lookups++;
+      throw new Error("enrichment must not run");
+    };
+    const attrs = usageAttributes(
+      {
+        cwd: "/not-used",
+        env,
+        harness: "opencode",
+        inputTokens: 0,
+        model: "model-1",
+      },
+      { guardVersion: failLookup, repoName: failLookup },
+    );
+    assert.deepEqual(attrs, {
+      usage_schema: "guard.usage.v1",
+      model: "model-1",
+      input_tokens: 0,
+      harness: "opencode",
+    });
+    assert.equal(lookups, 0);
+  }
 });
 
 void test("repoName: owner/name of the origin remote, else the first remote, once per directory; null outside git", () => {
@@ -136,29 +317,113 @@ void test("commandHash: whitespace does not change it, the command text never sh
   assert.match(commandHash("rm -rf x"), /^[0-9a-f]{12}$/);
 });
 
-void test("estimateGeminiCost: calculates pro, flash, flash-lite and auto pricing", () => {
-  // Pro: 1M in = $1.25, 1M out = $5.00, 1M cache = $0.3125
+void test("resolveAntigravityTranscriptPath: explicit camel or snake case path wins", () => {
+  const noLookup = (): never => {
+    throw new Error("explicit paths must not inspect recovered artifacts");
+  };
   assert.equal(
-    estimateGeminiCost("gemini-2.5-pro", 1_000_000, 1_000_000, 1_000_000),
-    6.5625,
+    resolveAntigravityTranscriptPath(
+      {
+        conversationId: "conversation-1",
+        homeDir: "/unused",
+        transcriptPath: "/explicit/transcript.jsonl",
+        transcript_path: "/legacy/transcript.jsonl",
+      },
+      noLookup,
+    ),
+    "/explicit/transcript.jsonl",
   );
-  assert.equal(estimateGeminiCost("gemini-1.5-pro", 10_000, 1_000, 0), 0.0175);
-  // Flash: 1M in = $0.15, 1M out = $0.60, 1M cache = $0.0375
   assert.equal(
-    estimateGeminiCost("gemini-2.5-flash", 1_000_000, 1_000_000, 1_000_000),
-    0.7875,
+    resolveAntigravityTranscriptPath(
+      { transcript_path: "/legacy/transcript.jsonl" },
+      noLookup,
+    ),
+    "/legacy/transcript.jsonl",
   );
-  // Flash-lite: 1M in = $0.075, 1M out = $0.30
-  assert.equal(
-    estimateGeminiCost("gemini-2.5-flash-lite", 1_000_000, 1_000_000, 0),
-    0.375,
-  );
-  // Auto / fallback defaults to pro
-  assert.equal(estimateGeminiCost("auto", 10_000, 1_000, 0), 0.0175);
-  assert.equal(estimateGeminiCost(undefined, 0, 0, 0), 0);
 });
 
-void test("emitAntigravityUsage: parses transcript.jsonl, emits api_request and advances step", async () => {
+void test("resolveAntigravityTranscriptPath: prefers the recovered transcript.jsonl", () => {
+  const home = mkdtempSync(join(tmpdir(), "guard-antigravity-home-"));
+  const logs = join(
+    home,
+    ".gemini",
+    "antigravity-cli",
+    "brain",
+    "conversation-1",
+    ".system_generated",
+    "logs",
+  );
+  mkdirSync(logs, { recursive: true });
+  const transcript = join(logs, "transcript.jsonl");
+  writeFileSync(transcript, "");
+  writeFileSync(join(logs, "transcript_full.jsonl"), "");
+  try {
+    assert.equal(
+      resolveAntigravityTranscriptPath({
+        conversationId: "conversation-1",
+        homeDir: home,
+      }),
+      transcript,
+    );
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+void test("resolveAntigravityTranscriptPath: falls back to recovered transcript_full.jsonl", () => {
+  const home = mkdtempSync(join(tmpdir(), "guard-antigravity-home-"));
+  const logs = join(
+    home,
+    ".gemini",
+    "antigravity-cli",
+    "brain",
+    "conversation-1",
+    ".system_generated",
+    "logs",
+  );
+  mkdirSync(logs, { recursive: true });
+  const transcript = join(logs, "transcript_full.jsonl");
+  writeFileSync(transcript, "");
+  try {
+    assert.equal(
+      resolveAntigravityTranscriptPath({
+        conversationId: "conversation-1",
+        homeDir: home,
+      }),
+      transcript,
+    );
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+void test("resolveAntigravityTranscriptPath: rejects missing, unsafe, or absent recovered IDs", () => {
+  const home = mkdtempSync(join(tmpdir(), "guard-antigravity-home-"));
+  try {
+    for (const conversationId of [
+      undefined,
+      "",
+      " ",
+      ".",
+      "..",
+      "../escape",
+      "nested/id",
+      "nested\\id",
+      "nul\0id",
+      "missing-conversation",
+    ]) {
+      assert.equal(
+        resolveAntigravityTranscriptPath({ conversationId, homeDir: home }),
+        undefined,
+        conversationId ?? "undefined",
+      );
+    }
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+void test("emitAntigravityUsage: preserves tokens without emitting cost and advances step", async () => {
   const dir = tmpdir();
   const transcript = join(
     dir,
@@ -205,6 +470,7 @@ void test("emitAntigravityUsage: parses transcript.jsonl, emits api_request and 
     "session-123",
     "gemini-2.5-flash",
     undefined,
+    undefined,
     {},
     emitFn,
   );
@@ -213,12 +479,24 @@ void test("emitAntigravityUsage: parses transcript.jsonl, emits api_request and 
   const first = emitted[0];
   assert.ok(first);
   assert.equal(first.event, "api_request");
+  assert.equal(first.usage_schema, "guard.usage.v1");
+  assert.equal(first.harness, "antigravity");
+  assert.ok(!("harness_legacy" in first));
   assert.equal(first["session.id"], "session-123");
   assert.equal(first.model, "gemini-2.5-flash");
   assert.equal(first.provider, "google");
   assert.equal(first.input_tokens, 1000);
   assert.equal(first.output_tokens, 200);
   assert.equal(first.cache_read_tokens, 100);
+  assert.ok(!("cost_usd" in first));
+  assert.ok(!("cost_source" in first));
+  assert.ok(!("cache_creation_tokens" in first));
+  assert.ok(!("reasoning_tokens" in first));
+  const second = emitted[1];
+  assert.ok(second);
+  assert.equal(second.cache_read_tokens, 0);
+  assert.ok(!("cost_usd" in second));
+  assert.ok(!("cost_source" in second));
 
   // Second run with lastStep=2: nothing new emitted
   emitted.length = 0;
@@ -227,6 +505,7 @@ void test("emitAntigravityUsage: parses transcript.jsonl, emits api_request and 
     "session-123",
     "gemini-2.5-flash",
     2,
+    undefined,
     {},
     emitFn,
   );
@@ -249,6 +528,7 @@ void test("emitAntigravityUsage: parses transcript.jsonl, emits api_request and 
     "session-123",
     "gemini-2.5-flash",
     2,
+    undefined,
     {},
     emitFn,
   );
@@ -257,8 +537,118 @@ void test("emitAntigravityUsage: parses transcript.jsonl, emits api_request and 
   const third = emitted[0];
   assert.ok(third);
   assert.equal(third.input_tokens, 500);
+  assert.equal(third.output_tokens, 50);
+  assert.ok(!("cache_read_tokens" in third));
+  assert.ok(!("cache_creation_tokens" in third));
+  assert.ok(!("reasoning_tokens" in third));
+  assert.ok(!("cost_usd" in third));
+  assert.ok(!("cost_source" in third));
 
   rmSync(transcript, { force: true });
+});
+
+void test("emitAntigravityUsage: enriches from the observed workspace and does not infer a missing cwd", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "guard-antigravity-repo-"));
+  const transcript = join(dir, "transcript.jsonl");
+  const workspace = join(dir, "workspace");
+  mkdirSync(workspace);
+  execFileSync("git", ["init", "-q", workspace]);
+  execFileSync("git", [
+    "-C",
+    workspace,
+    "remote",
+    "add",
+    "origin",
+    "https://example.com/acme/observed.git",
+  ]);
+  writeFileSync(
+    transcript,
+    `${JSON.stringify({
+      step_index: 1,
+      type: "PLANNER_RESPONSE",
+      input_tokens: 1,
+      output_tokens: 2,
+      cache_read_tokens: 3,
+    })}\n`,
+  );
+  const env = {
+    GUARD_OTEL_EXPORTER_OTLP_ENDPOINT: "http://collector.invalid",
+  };
+  const observed: Record<string, unknown>[] = [];
+  const absent: Record<string, unknown>[] = [];
+  try {
+    await emitAntigravityUsage(
+      transcript,
+      "conversation-observed",
+      "gemini-2.5-flash",
+      undefined,
+      workspace,
+      env,
+      async (_event, attrs) => {
+        observed.push(attrs);
+        await Promise.resolve();
+      },
+    );
+    await emitAntigravityUsage(
+      transcript,
+      "conversation-absent",
+      "gemini-2.5-flash",
+      undefined,
+      undefined,
+      env,
+      async (_event, attrs) => {
+        absent.push(attrs);
+        await Promise.resolve();
+      },
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+  assert.equal(observed[0]?.repo, "acme/observed");
+  assert.equal("repo" in (absent[0] ?? {}), false);
+});
+
+void test("emitAntigravityUsage: preserves observed tokens without guessing a missing model or cost", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "guard-antigravity-usage-"));
+  const transcript = join(dir, "transcript.jsonl");
+  writeFileSync(
+    transcript,
+    `${JSON.stringify({
+      step_index: 1,
+      type: "PLANNER_RESPONSE",
+      input_tokens: 123,
+      output_tokens: 45,
+      cache_read_tokens: 6,
+    })}\n`,
+  );
+  const emitted: Record<string, unknown>[] = [];
+  try {
+    await emitAntigravityUsage(
+      transcript,
+      "conversation-1",
+      undefined,
+      undefined,
+      undefined,
+      {},
+      async (_event, attrs) => {
+        emitted.push(attrs);
+        await Promise.resolve();
+      },
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+  assert.deepEqual(emitted, [
+    {
+      usage_schema: "guard.usage.v1",
+      "session.id": "conversation-1",
+      provider: "google",
+      input_tokens: 123,
+      output_tokens: 45,
+      cache_read_tokens: 6,
+      harness: "antigravity",
+    },
+  ]);
 });
 
 void test("appendDecision: one line to GUARD_RUN_EVENTS_FILE, nothing when it is blank or unset, no legacy variable", () => {
