@@ -106,10 +106,10 @@ void test("payloads: $(…) and backticks, double-quoted too; a quoted assignmen
     ]);
 });
 void test("payloads: ssh and exec run elsewhere and are marked remote, with the host", () => {
-    const ssh = units(analyze("ssh -p 2222 -i k deploy@pi.local 'cd /srv && rm -rf data'"));
+    const ssh = units(analyze("ssh -p 2222 -i k deploy@host.example 'cd /srv && rm -rf data'"));
     assert.deepEqual(ssh.slice(1).map((u) => [u.remote, u.host, u.cmd.code.trim()]), [
-        [true, "pi.local", "cd /srv"],
-        [true, "pi.local", "rm -rf data"],
+        [true, "host.example", "cd /srv"],
+        [true, "host.example", "rm -rf data"],
     ]);
     assert.deepEqual(flat("ssh host \"docker exec c sh -c 'rm -rf /data'\"").at(-1), [3, true, false, "rm -rf /data"]);
     assert.deepEqual(defined(units(analyze("docker exec -it db rm -rf /var/lib/x")).at(-1)).host, "docker:db");
