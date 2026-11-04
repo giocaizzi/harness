@@ -33,6 +33,23 @@ const pre = (tool_name, command) => ({
     tool_name,
     tool_input: { command },
 });
+// Runs the hook as a child with `payload` as a file on its stdin: a pipe can be read in chunks that the hook's reader
+// gives up between on a loaded host (EPIPE), a file reads to EOF at once.
+const hookSync = (script, args, payload, opts) => {
+    const file = join(mkdtempSync(join(tmpdir(), "guard-in-")), "in.json");
+    writeFileSync(file, payload);
+    const fd = openSync(file, "r");
+    try {
+        return spawnSync(process.execPath, [script, ...args], {
+            stdio: [fd, "pipe", "pipe"],
+            encoding: "utf8",
+            ...opts,
+        });
+    }
+    finally {
+        closeSync(fd);
+    }
+};
 const decision = (out) => {
     if (!out.stdout)
         return undefined;
@@ -595,15 +612,13 @@ void test("through the real hook (Claude, Copilot CLI, VS Code; Codex with --har
     const script = fileURLToPath(new URL("./guard.mjs", import.meta.url));
     for (const args of [["PreToolUse"], ["PreToolUse", "--harness=codex"]]) {
         const file = join(mkdtempSync(join(tmpdir(), "guard-events-")), "events.jsonl");
-        const r = spawnSync(process.execPath, [script, ...args], {
-            input: JSON.stringify({
-                hook_event_name: "PreToolUse",
-                tool_name: "Bash",
-                tool_input: { command: 'git commit -m "bad title"' },
-                cwd: tmpdir(),
-                session_id: "s",
-            }),
-            encoding: "utf8",
+        const r = hookSync(script, args, JSON.stringify({
+            hook_event_name: "PreToolUse",
+            tool_name: "Bash",
+            tool_input: { command: 'git commit -m "bad title"' },
+            cwd: tmpdir(),
+            session_id: "s",
+        }), {
             timeout: 20000,
             env: {
                 ...process.env,
@@ -761,9 +776,7 @@ void test("a malformed spawn input gets no decision and keeps the session state"
 void test("a payload that is not an object exits 0 with no output", () => {
     const script = fileURLToPath(new URL("./guard.mjs", import.meta.url));
     for (const payload of ["null", "42", '"x"', "[]", "true"]) {
-        const r = spawnSync(process.execPath, [script, "PreToolUse"], {
-            input: payload,
-            encoding: "utf8",
+        const r = hookSync(script, ["PreToolUse"], payload, {
             env: {
                 ...process.env,
                 CLAUDE_PLUGIN_DATA: mkdtempSync(join(tmpdir(), "guard-test-")),
@@ -1276,15 +1289,13 @@ void test("FACTORY_RUN_ID set: the protected-path check denies within the hook b
         // Each case ends in a protected write, so the only right answer is a deny, whatever limit it hits first.
         const command = `${plain}; echo x > .github/workflows/ci.yml`;
         const started = Date.now();
-        const r = spawnSync(process.execPath, [script, "PreToolUse"], {
-            input: JSON.stringify({
-                hook_event_name: "PreToolUse",
-                tool_name: "Bash",
-                tool_input: { command },
-                cwd: testRepo,
-                session_id: "s",
-            }),
-            encoding: "utf8",
+        const r = hookSync(script, ["PreToolUse"], JSON.stringify({
+            hook_event_name: "PreToolUse",
+            tool_name: "Bash",
+            tool_input: { command },
+            cwd: testRepo,
+            session_id: "s",
+        }), {
             timeout: 20000,
             env: {
                 ...process.env,
@@ -1305,15 +1316,13 @@ void test("FACTORY_RUN_ID set: the protected-path check denies within the hook b
 void test("through the real hook, a risky command behind a wrapper option asks; the safe one passes (#282)", () => {
     const script = fileURLToPath(new URL("./guard.mjs", import.meta.url));
     const run = (command) => {
-        const r = spawnSync(process.execPath, [script, "PreToolUse"], {
-            input: JSON.stringify({
-                hook_event_name: "PreToolUse",
-                tool_name: "Bash",
-                tool_input: { command },
-                cwd: "/",
-                session_id: "s",
-            }),
-            encoding: "utf8",
+        const r = hookSync(script, ["PreToolUse"], JSON.stringify({
+            hook_event_name: "PreToolUse",
+            tool_name: "Bash",
+            tool_input: { command },
+            cwd: "/",
+            session_id: "s",
+        }), {
             timeout: 20000,
             env: {
                 ...process.env,
@@ -1356,15 +1365,13 @@ void test("through the real hook, time before a reserved word and chrt without a
     const testRepo = mkdtempSync(join(tmpdir(), "guard-time-"));
     mkdirSync(join(testRepo, ".git"));
     const run = (command, factory) => {
-        const r = spawnSync(process.execPath, [script, "PreToolUse"], {
-            input: JSON.stringify({
-                hook_event_name: "PreToolUse",
-                tool_name: "Bash",
-                tool_input: { command },
-                cwd: testRepo,
-                session_id: "s",
-            }),
-            encoding: "utf8",
+        const r = hookSync(script, ["PreToolUse"], JSON.stringify({
+            hook_event_name: "PreToolUse",
+            tool_name: "Bash",
+            tool_input: { command },
+            cwd: testRepo,
+            session_id: "s",
+        }), {
             timeout: 20000,
             env: {
                 ...process.env,
@@ -1420,20 +1427,14 @@ void test("through the real hook, time before a reserved word and chrt without a
 void test("a long chain of commands is judged in linear time, and the decision is the same as for a short one", () => {
     const script = fileURLToPath(new URL("./guard.mjs", import.meta.url));
     const run = (command) => {
-        // The input is a file the child reads to EOF: a pipe of ~160 KB can be read in chunks the hook's reader gives up between on a loaded host.
-        const inputFile = join(mkdtempSync(join(tmpdir(), "guard-test-")), "in.json");
-        writeFileSync(inputFile, JSON.stringify({
+        const started = Date.now();
+        const r = hookSync(script, ["PreToolUse"], JSON.stringify({
             hook_event_name: "PreToolUse",
             tool_name: "Bash",
             tool_input: { command },
             cwd: "/",
             session_id: "s",
-        }));
-        const fd = openSync(inputFile, "r");
-        const started = Date.now();
-        const r = spawnSync(process.execPath, [script, "PreToolUse"], {
-            stdio: [fd, "pipe", "pipe"],
-            encoding: "utf8",
+        }), {
             timeout: 20000,
             env: {
                 ...process.env,
@@ -1442,7 +1443,6 @@ void test("a long chain of commands is judged in linear time, and the decision i
                 CLAUDE_PLUGIN_DATA: mkdtempSync(join(tmpdir(), "guard-test-")),
             },
         });
-        closeSync(fd);
         assert.equal(r.error, undefined, "spawn failed: " + (r.error?.message ?? ""));
         assert.equal(r.status, 0, r.stderr);
         return { out: r.stdout, ms: Date.now() - started };
