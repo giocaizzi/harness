@@ -81,7 +81,7 @@ void test("contract: the probe says whether the contract is enforced", () => {
     });
     assert.equal(r.status, 0, `probe exited ${String(r.status)}: ${r.stderr}`);
     const probe = JSON.parse(r.stdout.split("\n")[0] ?? "");
-    assert.equal(typeof probe.enforced, "boolean", "the probe must report a boolean `enforced`; a runner must refuse to start unless `enforced` is true");
+    assert.equal(probe.enforced, true, "the probe must report `enforced: true`; a runner must refuse to start unless it does");
 });
 void test("contract: the manifest validates", () => {
     const v = parseRegistration(readFileSync(subject), DEFAULT_PROTECTED_LIMITS, pathApi);
@@ -272,7 +272,7 @@ void test("contract: a label takeover change is denied", { skip: skipWithout(lab
     const run = newRun();
     assertDenied(bash(run, `gh issue edit 1 --add-label ${labelOf("takeover") ?? ""}`), "run-label", run);
 });
-void test("contract: an unreadable label config denies label changes", () => {
+void test("contract: an unusable manifest denies label changes", () => {
     const run = newRun();
     const copy = path.join(scratch("writable"), "run.json");
     copyFileSync(subject, copy);
@@ -323,8 +323,11 @@ void test("contract: a bad result blocks the stop", { skip: skipWithout(subjectJ
         .replaceAll("{ticket_number}", "1")
         .replaceAll("{run_id}", run.env.GUARD_RUN_ID ?? "");
     mkdirSync(path.join(run.cwd, path.dirname(file)), { recursive: true });
-    writeFileSync(path.join(run.cwd, file), "{ not json");
-    const out = JSON.parse(stopOf(run));
+    // valid JSON carrying the run id that fails the core check (no ticket, no end_state): both modes block on it
+    writeFileSync(path.join(run.cwd, file), JSON.stringify({ run_id: run.env.GUARD_RUN_ID }));
+    const stdout = stopOf(run);
+    assert.notEqual(stdout.trim(), "", "the stop hook printed nothing for a result that fails the core check");
+    const out = JSON.parse(stdout);
     assert.equal(out.decision, "block");
     assert.match(String(out.reason), /Run result gate/);
 });
