@@ -15,7 +15,11 @@ export const CONCURRENCY = 4;
 // The shim. SHIM_SCENARIO is { required: [ruleset names], classic: [protection names], prs: { <n>: [step...] },
 // noAutoMerge?, expected?: { <n>: count } }; each GraphQL query for a PR takes its next step (the last one repeats).
 // A step is 'error' or { state, merge, base, queue, queued, checks: {name: bucket}, runs: {workflow: suite status} };
-// every head also carries a queued app suite with no workflow run, which never blocks. noAutoMerge refuses
+// every head also carries a queued app suite with no workflow run, which never blocks. Each check is one CheckRun
+// of workflow 'ci' and event 'pull_request' with an increasing databaseId; a step's \`runsOf: { <name>: [run...] }\`
+// lists several runs of one check oldest-first, a run being a bucket ('pass', 'fail', 'pending', 'cancel',
+// 'timed_out', 'skipped') or { bucket, workflow, event } to put it in another workflow or event. \`suites: [{ workflow,
+// event, status, conclusion }]\` adds workflow-run suites in order (event defaults to 'pull_request', conclusion to null) next to \`runs\`. noAutoMerge refuses
 // `gh pr merge --auto`; expected refuses that PR's first <count> enqueues and merges with gh's
 // `Required status check ... is expected`. A step with `queued: 'after-enqueue'` reports true once that PR was
 // enqueued. stacked: [n...] refuses those PRs' enqueues and merges as part of a stack; async: { <n>: [reply...] }
@@ -101,10 +105,21 @@ if (argv[0] === 'api' && argv[1] === 'graphql') {
   log('poll ' + n)
   if (s === 'error') { process.stderr.write('HTTP 502: bad gateway\\n'); process.exit(1) }
   const queued = s.queued === 'after-enqueue' ? existsSync(file + '.enq-' + n) : !!s.queued
-  const nodes = Object.entries(s.checks ?? {}).map(([name, b]) => b === 'status-fail'
-    ? { __typename: 'StatusContext', context: name, state: 'FAILURE', targetUrl: 'https://ci.example/' + name }
-    : { __typename: 'CheckRun', name, status: b === 'pending' ? 'IN_PROGRESS' : 'COMPLETED', conclusion: b === 'pending' ? null : b === 'pass' ? 'SUCCESS' : 'FAILURE', detailsUrl: 'https://ci.example/' + name })
-  const suites = [{ status: 'QUEUED', workflowRun: null }, ...Object.entries(s.runs ?? {}).map(([name, status]) => ({ status, workflowRun: { workflow: { name } } }))]
+  let id = 1000
+  const conclusions = { pass: 'SUCCESS', cancel: 'CANCELLED', timed_out: 'TIMED_OUT', skipped: 'SKIPPED' }
+  const run = (name, r) => {
+    const o = typeof r === 'string' ? { bucket: r } : r
+    return { __typename: 'CheckRun', databaseId: id++, name, status: o.bucket === 'pending' ? 'IN_PROGRESS' : 'COMPLETED', conclusion: o.bucket === 'pending' ? null : conclusions[o.bucket] ?? 'FAILURE', detailsUrl: 'https://ci.example/' + name,
+      checkSuite: { workflowRun: { event: o.event ?? 'pull_request', workflow: { name: o.workflow ?? 'ci' } } } }
+  }
+  const nodes = [
+    ...Object.entries(s.checks ?? {}).map(([name, b]) => b === 'status-fail'
+      ? { __typename: 'StatusContext', context: name, state: 'FAILURE', targetUrl: 'https://ci.example/' + name }
+      : run(name, b)),
+    ...Object.entries(s.runsOf ?? {}).flatMap(([name, list]) => list.map((r) => run(name, r))),
+  ]
+  const suites = [{ status: 'QUEUED', workflowRun: null }, ...Object.entries(s.runs ?? {}).map(([name, status]) => ({ status, workflowRun: { event: 'pull_request', workflow: { name } } })),
+    ...(s.suites ?? []).map((x) => ({ status: x.status, conclusion: x.conclusion ?? null, workflowRun: { event: x.event ?? 'pull_request', workflow: { name: x.workflow } } }))]
   out({ data: { repository: { pullRequest: { id: 'PR_' + n, state: s.state ?? 'OPEN', mergeStateStatus: s.merge ?? 'BLOCKED', headRefOid: 'head' + n, baseRefName: s.base ?? 'main',
     isInMergeQueue: queued, isMergeQueueEnabled: s.queue ?? true, mergeCommit: s.state === 'MERGED' ? { oid: 'sha' + n } : null,
     commits: { nodes: [{ commit: { checkSuites: { nodes: suites } } }] }, statusCheckRollup: { contexts: { nodes } } } } } })
@@ -310,6 +325,168 @@ export function landManyTests(kind) {
         assert.match(r.out, /PR 11: TIMEOUT after 2s, OPEN BLOCKED, running: e2e\n/);
         assert.match(r.out, /PR 12: TIMEOUT after 2s, OPEN BLOCKED, running: e2e\n/);
         assert.ok(!r.log.some((l) => l.startsWith("merge")));
+    });
+    const title = "Validate PR title";
+    const of = (...list) => ({ runsOf: { [title]: list } });
+    void test(`${kind} land-many: a cancelled run superseded by a newer run of the same check is ignored`, async () => {
+        const r = await landMany(kind, {
+            required: [title],
+            prs: {
+                11: [
+                    of("cancel", "pass"),
+                    { ...of("cancel", "pass"), queued: "after-enqueue" },
+                    merged,
+                ],
+            },
+        });
+        assert.equal(r.code, 0, r.err);
+        assert.match(r.out, /^PR 11: MERGED sha11\n$/);
+        assert.ok(r.log.includes("enqueue 11 head11"));
+    });
+    void test(`${kind} land-many: a cancelled newest run still fails, even after an older pass`, async () => {
+        const r = await landMany(kind, {
+            required: [title],
+            prs: { 11: [of("pass", "cancel")] },
+        });
+        assert.equal(r.code, 1, r.err);
+        assert.match(r.out, /PR 11: FAILED check Validate PR title /);
+        assert.ok(!r.log.some((l) => l.startsWith("enqueue")));
+    });
+    void test(`${kind} land-many: an older failure or timeout still fails the PR behind a newer pass`, async () => {
+        for (const bucket of ["fail", "timed_out"]) {
+            const r = await landMany(kind, {
+                required: [title],
+                prs: { 11: [of(bucket, "pass")] },
+            });
+            assert.equal(r.code, 1, r.err);
+            assert.match(r.out, /PR 11: FAILED check Validate PR title /);
+            assert.ok(!r.log.some((l) => l.startsWith("enqueue")));
+        }
+    });
+    void test(`${kind} land-many: an older cancelled run behind a newest pending one waits, never fails`, async () => {
+        const r = await landMany(kind, { required: [title], prs: { 11: [of("cancel", "pending")] } }, ["--interval", "1", "--timeout", "2", "11"]);
+        assert.equal(r.code, 1, r.err);
+        assert.match(r.out, /^PR 11: TIMEOUT after 2s, OPEN BLOCKED, pending: Validate PR title\n$/);
+        assert.ok(!r.log.some((l) => l.startsWith("enqueue")));
+    });
+    void test(`${kind} land-many: a cancelled run is superseded only by a run of the same workflow and event`, async () => {
+        for (const [odd, other] of [
+            [
+                { bucket: "cancel", workflow: "pr" },
+                { bucket: "pass", workflow: "other" },
+            ],
+            [
+                { bucket: "cancel", event: "push" },
+                { bucket: "pass", workflow: "ci" },
+            ],
+        ]) {
+            const r = await landMany(kind, {
+                required: [title],
+                prs: { 11: [of(odd, other)] },
+            });
+            assert.equal(r.code, 1, r.err);
+            assert.match(r.out, /PR 11: FAILED check Validate PR title /);
+        }
+    });
+    void test(`${kind} land-many: a newer skipped run never supersedes a cancelled one`, async () => {
+        const r = await landMany(kind, {
+            required: [title],
+            prs: { 11: [of("cancel", "skipped")] },
+        });
+        assert.equal(r.code, 1, r.err);
+        assert.match(r.out, /PR 11: FAILED check Validate PR title /);
+        assert.ok(!r.log.some((l) => l.startsWith("enqueue")));
+    });
+    void test(`${kind} land-many: names holding a slash do not collide in the supersede key`, async () => {
+        const r = await landMany(kind, {
+            required: [title],
+            prs: {
+                11: [
+                    {
+                        runsOf: {
+                            a: [{ bucket: "cancel", workflow: "b/c" }],
+                            "a/b": [{ bucket: "pass", workflow: "c" }],
+                        },
+                    },
+                ],
+            },
+        });
+        assert.equal(r.code, 1, r.err);
+        assert.match(r.out, /PR 11: FAILED check a /);
+    });
+    const running = { workflow: "ci", status: "IN_PROGRESS" };
+    void test(`${kind} land-many: a cancelled newest run waits while its workflow and event still run on the head`, async () => {
+        const r = await landMany(kind, {
+            required: [title],
+            prs: { 11: [{ ...of("cancel"), suites: [running] }] },
+        }, ["--interval", "1", "--timeout", "2", "11"]);
+        assert.equal(r.code, 1, r.err);
+        assert.match(r.out, /^PR 11: TIMEOUT after 2s, OPEN BLOCKED, pending: Validate PR title\n$/);
+        assert.ok(!r.log.some((l) => l.startsWith("enqueue")));
+    });
+    void test(`${kind} land-many: a cancelled newest run fails when another workflow or event is the one running`, async () => {
+        // The verdict runs before the running-workflow step, so the cancel still fails the PR.
+        for (const other of [
+            { ...running, workflow: "other" },
+            { ...running, event: "push" },
+        ]) {
+            const r = await landMany(kind, {
+                required: [title],
+                prs: { 11: [{ ...of("cancel"), suites: [other] }] },
+            });
+            assert.equal(r.code, 1, r.err);
+            assert.match(r.out, /PR 11: FAILED check Validate PR title /);
+        }
+    });
+    void test(`${kind} land-many: a cancelled newest run fails once its workflow completed with no newer check run`, async () => {
+        const r = await landMany(kind, {
+            required: [title],
+            prs: {
+                11: [
+                    { ...of("cancel"), suites: [running] },
+                    { ...of("cancel"), suites: [{ ...running, status: "COMPLETED" }] },
+                ],
+            },
+        }, ["--interval", "1", "--timeout", "5", "11"]);
+        assert.equal(r.code, 1, r.err);
+        assert.match(r.out, /^PR 11: FAILED check Validate PR title /);
+        assert.ok(!r.log.some((l) => l.startsWith("enqueue")));
+    });
+    void test(`${kind} land-many: a completed cancelled workflow suite does not hold the PR, a running older one does`, async () => {
+        const done = { workflow: "ci", status: "COMPLETED" };
+        const ok = await landMany(kind, {
+            prs: {
+                11: [
+                    {
+                        ...green,
+                        suites: [
+                            { ...done, conclusion: "CANCELLED" },
+                            { ...done, conclusion: "SUCCESS" },
+                        ],
+                    },
+                    { ...green, queued: "after-enqueue" },
+                    merged,
+                ],
+            },
+        });
+        assert.equal(ok.code, 0, ok.err);
+        assert.ok(ok.log.includes("enqueue 11 head11"));
+        const held = await landMany(kind, {
+            prs: {
+                11: [
+                    {
+                        ...green,
+                        suites: [
+                            { workflow: "ci", status: "IN_PROGRESS" },
+                            { ...done, conclusion: "SUCCESS" },
+                        ],
+                    },
+                ],
+            },
+        }, ["--interval", "1", "--timeout", "2", "11"]);
+        assert.equal(held.code, 1, held.err);
+        assert.match(held.out, /PR 11: TIMEOUT after 2s, OPEN BLOCKED, running: ci\n/);
+        assert.ok(!held.log.some((l) => l.startsWith("enqueue")));
     });
     void test(`${kind} land-many: gh's "required check is expected" refusal waits like a pending check, and TIMEOUT names it`, async () => {
         const q = await landMany(kind, {

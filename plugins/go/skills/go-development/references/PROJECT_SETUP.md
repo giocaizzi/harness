@@ -49,6 +49,8 @@ Commit `go.sum`, `golangci-lint.mod` and `golangci-lint.sum`. Code generators su
 ```makefile
 GOLANGCI := go tool -modfile=golangci-lint.mod golangci-lint
 LINT_GOOS ?= linux darwin windows
+# Cache keys drop the checkout directory, so every worktree reuses the same entries
+export GOFLAGS := -trimpath $(GOFLAGS)
 
 .PHONY: help fmt lint vuln test test-integration check build snapshot tools
 
@@ -93,9 +95,13 @@ tools: ## Upgrade the pinned tools
 
 ## CI
 
-One `ci.yml`, jobs aggregated by `check` (org standard). Tests run on every OS the binary ships for, because process, signal and path code differs per OS.
+One `ci.yml`, jobs aggregated by `check` (org standard). Tests run on every OS the binary ships for, because process, signal and path code differs per OS. The workflow-level `GOFLAGS` matches the Makefile's, so the Windows step that calls `go test` directly builds with the same cache keys.
 
 ```yaml
+env:
+  GOFLAGS: -trimpath
+
+jobs:
   test:
     strategy:
       fail-fast: false
