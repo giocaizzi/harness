@@ -1721,13 +1721,15 @@ function foldWindows(path: string) {
     })
     .join("/");
 }
-// The repo-relative segments of a target: { segs } from the root, { segs, suffix: true } when its start is unknown,
-// or null outside the repo. Trailing dots and spaces of its segments are dropped first, as Windows does (`folded`).
+// The repo-relative readings of a target, each { segs } from the root, { segs, suffix: true } when its start is unknown;
+// none when it is outside the repo. A target is read as written and as Windows reads it (trailing dots and spaces of
+// its segments dropped, `folded`): a dots-only segment (`...`, `.. `) is a plain name on POSIX and `..` once folded, so
+// either reading may be the real one and the caller checks both. A folded reading is never exempted.
 function repoSegments(
   target: string,
   dir: string,
   protect: ProtectConfig,
-): RelativeSegments | null {
+): RelativeSegments[] {
   const p = posixPath(target);
   const keep = dir === UNKNOWN_DIR ? dir : posixPath(dir);
   const fold = (x: string | undefined) =>
@@ -1737,15 +1739,18 @@ function repoSegments(
     dir === UNKNOWN_DIR ? dir : foldWindows(keep),
     { ...protect, root: fold(protect.root), cwd: fold(protect.cwd) },
   );
-  if (!at) return at;
-  // Only a fold inside the repo-relative part counts: a root or cwd that merely ends in a dot changes both spellings alike.
   const raw = repoSegmentsOf(p, keep, protect);
-  return !raw ||
-    raw.suffix !== at.suffix ||
-    raw.segs.length !== at.segs.length ||
-    raw.segs.some((x, i) => x !== at.segs[i])
-    ? { ...at, folded: true }
-    : at;
+  // Only a fold inside the repo-relative part counts: a root or cwd that merely ends in a dot changes both spellings alike.
+  const same =
+    !!at &&
+    !!raw &&
+    raw.suffix === at.suffix &&
+    raw.segs.length === at.segs.length &&
+    raw.segs.every((x, i) => x === at.segs[i]);
+  const out: RelativeSegments[] = [];
+  if (raw) out.push(same ? raw : { ...raw, folded: true });
+  if (at && !same) out.push({ ...at, folded: true });
+  return out;
 }
 function repoSegmentsOf(
   p: string,
@@ -1802,17 +1807,31 @@ function relativeTo(
 ): string[] | RelativeSegments | null {
   const r = normalizeSegments(root);
   const s = normalizeSegments(path);
+  let exact = true as boolean;
   const same = (a: string[], b: string[]) =>
-    a
-      .slice(0, Math.min(a.length, b.length))
-      .every((x, i) => x.toLowerCase() === defined(b[i]).toLowerCase());
+    a.slice(0, Math.min(a.length, b.length)).every((x, i) => {
+      const y = defined(b[i]);
+      if (x.toLowerCase() === y.toLowerCase()) return true;
+      if (!segmentsMayBeSame(x, y)) return false;
+      exact = false;
+      return true;
+    });
   const inside = r.length <= s.length && same(r, s);
   if (!wrap) return inside ? s.slice(r.length) : [];
+  // A root part matched only through an 8.3 name is a guess: nothing is exempt there.
   return inside
-    ? { segs: s.slice(r.length) }
+    ? { segs: s.slice(r.length), ...(exact ? {} : { folded: true }) }
     : same(s, r)
       ? { segs: [] }
       : null;
+}
+// Whether two path segments may name one directory when one is a Windows 8.3 short name (`RUNNER~1` and `runneradmin`,
+// either way round); the matching is the protected-pattern matcher's, and "may" counts: a root is compared the same way.
+export function segmentsMayBeSame(a: string, b: string): boolean {
+  const SHORT = /~\d+(?:\.[^./]{1,3})?$/;
+  if (a.toLowerCase() === b.toLowerCase()) return true;
+  if (!SHORT.test(a) && !SHORT.test(b)) return false;
+  return segMayMatch(a, b) || segMayMatch(b, a);
 }
 // Whether two globs may name one word: the text before the first wildcard of each, and after the last, agree (`*.log`
 // never meets `*.tf`).
@@ -1995,7 +2014,7 @@ export function protectedWrite(
         base !== undefined &&
         patternHits(
           [base, "**"],
-          repoSegments(p, dir, { ...protect, root: undefined })?.segs ?? [],
+          repoSegments(p, dir, { ...protect, root: undefined })[0]?.segs ?? [],
           above,
           true,
           tick,
@@ -2023,24 +2042,24 @@ export function protectedWrite(
     const resolved = resolve(target);
     // Relative to every directory with a .git above the cwd, not only the nearest: a planted `x/.git` moves no root.
     for (const root of new Set([protect.root, ...(protect.roots ?? [])])) {
-      const at = repoSegments(resolved, dir, { ...protect, root });
-      if (at === null) continue;
-      const hit = globs.filter((g) =>
-        patternHits(g.segs, at.segs, above, at.suffix, tick),
-      );
-      if (hit.some((g) => !g.base)) return true;
-      // A registered glob is waived for the run's own files: the whole normalised path is spelled out (no wildcard,
-      // variable or brace, which could stand for `..`, nor a segment Windows would alter: `12\.. ` is `12\..`) and
-      // starts at the root, so `runs/../config.yaml` is no exemption.
-      if (
-        hit.length > 0 &&
-        !(
-          !at.folded &&
-          at.segs.every((x) => !/[*?[\]{}$`%~]|[. ]$/.test(x)) &&
-          exempt.some((g) => patternHits(g, at.segs, false, false, tick))
+      for (const at of repoSegments(resolved, dir, { ...protect, root })) {
+        const hit = globs.filter((g) =>
+          patternHits(g.segs, at.segs, above, at.suffix, tick),
+        );
+        if (hit.some((g) => !g.base)) return true;
+        // A registered glob is waived for the run's own files: the whole normalised path is spelled out (no wildcard,
+        // variable or brace, which could stand for `..`, nor a segment Windows would alter: `12\.. ` is `12\..`) and
+        // starts at the root, so `runs/../config.yaml` is no exemption.
+        if (
+          hit.length > 0 &&
+          !(
+            !at.folded &&
+            at.segs.every((x) => !/[*?[\]{}$`%~]|[. ]$/.test(x)) &&
+            exempt.some((g) => patternHits(g, at.segs, false, false, tick))
+          )
         )
-      )
-        return true;
+          return true;
+      }
     }
     return false;
   };
@@ -2091,19 +2110,26 @@ export function protectedPathHit(
     };
     const slashed = posixPath(path);
     const folded = foldWindows(slashed);
-    const segs = normalizeSegments(folded);
-    const hit = tagged.filter((x) =>
-      patternHits(segsOf(x.g), segs, false, false, tick),
-    );
-    if (hit.some((x) => !x.base)) return true;
-    return (
-      hit.length > 0 &&
-      !(
-        folded === slashed &&
-        segs.every((x) => !/[*?[\]{}$`%~]|[. ]$/.test(x)) &&
-        exempt.some((g) => patternHits(g, segs, false, false, tick))
+    // As written and as Windows reads it: a dots-only segment (`...`) is a name on POSIX and `..` once folded. Either
+    // reading hits; only the unfolded one can be exempt.
+    const readings = [slashed, ...(folded === slashed ? [] : [folded])];
+    for (const text of readings) {
+      const segs = normalizeSegments(text);
+      const hit = tagged.filter((x) =>
+        patternHits(segsOf(x.g), segs, false, false, tick),
+      );
+      if (hit.some((x) => !x.base)) return true;
+      if (
+        hit.length > 0 &&
+        !(
+          folded === slashed &&
+          segs.every((x) => !/[*?[\]{}$`%~]|[. ]$/.test(x)) &&
+          exempt.some((g) => patternHits(g, segs, false, false, tick))
+        )
       )
-    );
+        return true;
+    }
+    return false;
   } catch {
     return true;
   }

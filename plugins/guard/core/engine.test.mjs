@@ -3162,6 +3162,46 @@ void test("protectedWrite and protectedPathHit: 8.3 short names with an extensio
     ])
         assert.equal(protectedPathHit(name, g), false, `edit ${name}`);
 });
+void test("protectedWrite and protectedPathHit: a dots-only segment is read as a name and as Windows folds it (G42)", () => {
+    const g = {
+        globs: [".github/**"],
+        registered: ["**/secret.yml", ".factory/**"],
+        exempt: [".factory/runs/*/*/**"],
+        root: "/r",
+        cwd: "/r",
+    };
+    for (const target of [
+        ".github/.../ci.yml",
+        ".github/.. /ci.yml",
+        ".github/..../ci.yml",
+        ".../secret.yml",
+        ".factory/runs/12/r1/.../x.md",
+    ]) {
+        assert.equal(protectedPathHit(target, g), true, `edit ${target}`);
+        assert.ok(protectedWrite(`echo a > '${target}'`, g)?.target, target);
+        assert.ok(protectedWrite(`echo a > '/r/${target}'`, g)?.target, `abs ${target}`);
+    }
+    assert.equal(protectedPathHit("src/.../ci.yml", g), false);
+    assert.equal(protectedWrite("echo a > 'src/.../ci.yml'", g), null);
+});
+void test("protectedWrite: an 8.3 short name in the root part of an absolute target counts, in either spelling (G42)", () => {
+    for (const [root, target] of [
+        ["/w/runneradmin/repo", "/w/RUNNER~1/repo/.github/x.yml"],
+        ["/w/RUNNER~1/repo", "/w/runneradmin/repo/.github/x.yml"],
+        ["/w/RUNNER~1/repo", "/w/runneradmin/REPO~1/.github/x.yml"],
+    ]) {
+        const g = { globs: [".github/**"], root, roots: [root], cwd: root };
+        assert.ok(protectedWrite(`echo x > '${target}'`, g)?.target, `${target} in ${root}`);
+        assert.ok(protectedWrite(`rm -rf '${target.replace("/x.yml", "")}'`, g));
+    }
+    const g = {
+        globs: [".github/**"],
+        root: "/w/runneradmin/repo",
+        cwd: "/w/runneradmin/repo",
+    };
+    assert.equal(protectedWrite("echo x > /w/OTHER~1/repo/.github/x.yml", g), null);
+    assert.equal(protectedWrite("echo x > /w/RUNNER~1/repo/src/x.yml", g), null);
+});
 void test("protectedWrite: a root or cwd that ends in a dot or space folds like the target (G41)", () => {
     for (const root of ["/w/proj.", "/w/proj ", "/w./proj", "/w/proj. "]) {
         const g = {
