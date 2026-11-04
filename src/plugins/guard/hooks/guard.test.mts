@@ -71,8 +71,9 @@ const pre = (tool_name: string, command: string): ExtendedHookInput => ({
   tool_input: { command },
 });
 
-// Runs the hook as a child with `payload` as a file on its stdin: a pipe can be read in chunks that the hook's reader
-// gives up between on a loaded host (EPIPE), a file reads to EOF at once.
+// Runs the hook as a child with `payload` as a file on its stdin: a file reads to EOF at once, so a test of a rule does
+// not depend on pipe timing (a closed pipe on a hook that exits early raises EPIPE). The hook's reader waits for the
+// whole payload on a pipe too: stdin.test.mts covers that.
 const hookSync = (
   script: string,
   args: string[],
@@ -486,6 +487,82 @@ void test("heavy command on a strained host is denied once", async () => {
     "deny",
   );
   assert.equal(decision(await h(pre("Bash", "npm run build"))), undefined);
+});
+
+const hostCase = async (
+  facts: HostFacts,
+  env: Record<string, string>,
+  command = "npm run build",
+) => {
+  let calls = 0;
+  const h = setup({
+    env,
+    hostFacts: async () => {
+      await Promise.resolve();
+      calls += 1;
+      return facts;
+    },
+  });
+  const d = decision(await h(pre("Bash", command)));
+  return { d, calls };
+};
+const hostDenied = (d: HookSpecificOutput | undefined) =>
+  d?.permissionDecision === "deny" &&
+  (d.permissionDecisionReason ?? "").includes("host is strained");
+
+void test("host caps: defaults unchanged, and the environment overrides them", async () => {
+  const strained = { load1: 50, freeGb: 100 };
+  const base = await hostCase(strained, {});
+  assert.ok(hostDenied(base.d));
+  assert.match(base.d?.permissionDecisionReason ?? "", /caps 30 /);
+  assert.ok(
+    !hostDenied((await hostCase(strained, { GUARD_HOST_LOAD_CAP: "100" })).d),
+  );
+  const low = { load1: 2, freeGb: 5 };
+  assert.ok(hostDenied((await hostCase(low, {})).d));
+  assert.ok(
+    !hostDenied((await hostCase(low, { GUARD_HOST_DISK_FLOOR_GB: "1" })).d),
+  );
+  const cpu = { cpuPercent: 95, freeGb: 100 };
+  assert.ok(hostDenied((await hostCase(cpu, {})).d));
+  assert.ok(!hostDenied((await hostCase(cpu, { GUARD_HOST_CPU_CAP: "99" })).d));
+});
+
+void test("host caps: an invalid override keeps the default", async () => {
+  for (const bad of ["-1", "0", "abc", ""]) {
+    assert.ok(
+      hostDenied(
+        (
+          await hostCase(
+            { load1: 50, freeGb: 100 },
+            { GUARD_HOST_LOAD_CAP: bad },
+          )
+        ).d,
+      ),
+      JSON.stringify(bad),
+    );
+  }
+});
+
+void test("host caps: GUARD_HOST_CHECK=off skips the facts and the rule", async () => {
+  const r = await hostCase(
+    { load1: 999, freeGb: 0 },
+    { GUARD_HOST_CHECK: "off" },
+  );
+  assert.ok(!hostDenied(r.d));
+  assert.equal(r.calls, 0);
+});
+
+void test("host caps: the agent cannot set them through the command", async () => {
+  for (const command of [
+    "GUARD_HOST_CHECK=off npm run build",
+    "GUARD_HOST_LOAD_CAP=999 npm run build",
+    "export GUARD_HOST_CHECK=off; npm run build",
+    "env GUARD_HOST_CHECK=off npm run build",
+  ]) {
+    const r = await hostCase({ load1: 50, freeGb: 100 }, {}, command);
+    assert.ok(hostDenied(r.d), command);
+  }
 });
 
 void test("blast radius: the ask carries a preview; a failing preview still asks", async () => {
@@ -1177,18 +1254,20 @@ void test("a malformed spawn input gets no decision and keeps the session state"
   );
 });
 
-void test("a payload that is not an object exits 0 with no output", () => {
+void test("a payload that is not an object exits 0: a PreToolUse is denied, other events get no output", () => {
   const script = fileURLToPath(new URL("./guard.mjs", import.meta.url));
   for (const payload of ["null", "42", '"x"', "[]", "true"]) {
-    const r = hookSync(script, ["PreToolUse"], payload, {
-      env: {
-        ...process.env,
-        CLAUDE_PLUGIN_DATA: mkdtempSync(join(tmpdir(), "guard-test-")),
-        GUARD_OTEL: "off",
-      },
-    });
-    assert.equal(r.status, 0, `${payload}: ${r.stderr}`);
-    assert.equal(r.stdout, "", payload);
+    const env = {
+      ...process.env,
+      CLAUDE_PLUGIN_DATA: mkdtempSync(join(tmpdir(), "guard-test-")),
+      GUARD_OTEL: "off",
+    };
+    const pre = hookSync(script, ["PreToolUse"], payload, { env });
+    assert.equal(pre.status, 0, `${payload}: ${pre.stderr}`);
+    assert.match(pre.stdout, /"permissionDecision":"deny"/, payload);
+    const other = hookSync(script, ["SessionStart"], payload, { env });
+    assert.equal(other.status, 0, `${payload}: ${other.stderr}`);
+    assert.equal(other.stdout, "", payload);
   }
 });
 

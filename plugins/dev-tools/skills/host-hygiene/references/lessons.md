@@ -17,13 +17,15 @@ The scripts interoperate with any other tool that uses the same paths, so these 
 |---|---|---|
 | `HOST_LOCK_DIR` | `/tmp` (Windows: `%ProgramData%\host-locks`) | Machine-wide lock dir |
 | `HOST_HEAVY_SLOTS` | 2 | Concurrent heavy jobs |
-| `HOST_LOAD_CAP` | 30 | One-minute load to wait under (same as the guard plugin's cap) |
+| `HOST_LOAD_CAP` | 30 | One-minute load to wait under (the guard's default cap; configures `heavy.sh` only, see below) |
 | `HOST_CPU_CAP` | 75 | Windows only: CPU percent to wait under |
-| `HOST_DISK_FLOOR_GB` | 20 | Free space below which a run is refused |
+| `HOST_DISK_FLOOR_GB` | 20 | Free space below which a run is refused (`heavy.sh` only, see below) |
 | `HOST_LOCK_TIMEOUT_SECONDS` | 1800 | Give up waiting (exit 124) |
 | `HOST_POLL_SECONDS` | 30 | Load poll interval |
 | `HOST_OWNER` | `user@<cwd name>` | Owner recorded in leases and entries |
 | `HOST_DEVICE_RUNNING_CMD`, `HOST_DEVICE_SHUTDOWN_CMD` | none | Device commands for `lease --device`, `{device}` replaced by the id |
+
+`HOST_LOAD_CAP` and `HOST_DISK_FLOOR_GB` configure the scripts only (when one waits or refuses) and do not change the guard plugin's deny, which reads `GUARD_HOST_LOAD_CAP`, `GUARD_HOST_CPU_CAP`, `GUARD_HOST_DISK_FLOOR_GB` and `GUARD_HOST_CHECK=off` from the hook's environment (guard.md, Decisions). Keep both at the same values.
 
 Exit codes: the command's own, 1 on low disk, 2 on usage, 124 on timeout.
 

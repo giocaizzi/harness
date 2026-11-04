@@ -25,6 +25,7 @@ import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { docsOnly } from "../core/docsonly.mjs";
+import { hostCaps } from "../core/host.mjs";
 import { emit } from "../core/otel.mjs";
 import { coreErrors, couldNotRun, report } from "../core/result.mjs";
 import { rules } from "../core/rules.mjs";
@@ -38,6 +39,7 @@ import type { PrepareOptions, Prepared } from "./checker.mjs";
 import { pluginDataDir } from "./data.mjs";
 import { sessionStore } from "./guard.mjs";
 import { detectHarnessName } from "./harnesses.mjs";
+import { STOP_DEADLINE_MS, readStdin } from "./stdin.mjs";
 import {
   emitAntigravityUsage,
   failedTarget,
@@ -226,15 +228,20 @@ function markGreen(cwd: string, fp: string, run: SyncRunner): void {
 }
 
 // Why the host cannot take a check now, or null. Load average on Unix only (Windows reports 0), free disk everywhere.
-export function hostStrain(cwd: string): string | null {
+export function hostStrain(
+  cwd: string,
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): string | null {
   try {
+    const caps = hostCaps(env, rules.host);
+    if (caps.off) return null;
     const load1 = loadavg()[0] ?? 0;
-    if (platform() !== "win32" && load1 > rules.host.loadCap) {
+    if (platform() !== "win32" && load1 > caps.loadCap) {
       return `load ${String(Math.round(load1 * 10) / 10)}`;
     }
     const fs = statfsSync(cwd);
     const freeGb = (fs.bavail * fs.bsize) / 1073741824;
-    return freeGb < rules.host.freeFloorGb
+    return freeGb < caps.freeFloorGb
       ? `${String(Math.round(freeGb))} GB free`
       : null;
   } catch {
@@ -568,7 +575,37 @@ export interface StopCheckOptions {
   ) => Promise<RunDetachedResult>;
   report?: (attrs: Record<string, unknown>) => void;
   strain?: (cwd: string) => string | null;
+  // Called with the gate's answer (null = the result passed) before the make check starts, so a crash during the check
+  // cannot undo what the gate decided.
+  onGate?: (reason: string | null) => void;
 }
+
+// What the gate decided so far, for a crash later in the stop.
+export interface GateState {
+  done: boolean;
+  reason: string | null;
+}
+
+const blockOf = (reason: string): StopCheckResult => ({
+  decision: "block",
+  reason,
+  hookSpecificOutput: { hookEventName: "Stop", decision: "block", reason },
+});
+
+// The answer to a crash: nothing for a gate that passed, the gate's own block for one that blocked, and the fail-closed
+// gate answer when the gate had not finished.
+export function crashAnswer(
+  gate: GateState,
+  env: NodeJS.ProcessEnv,
+  input: HookInput,
+  why = "internal error",
+): StopCheckResult | null {
+  if (gate.done) return gate.reason ? blockOf(gate.reason) : null;
+  const reason = gateFailClosed(env, input, why);
+  return reason ? blockOf(reason) : null;
+}
+
+class StdinReadError extends Error {}
 
 export interface StopCheckResult {
   decision?: StopDecision;
@@ -583,6 +620,11 @@ export async function stopCheck(
   opts: StopCheckOptions = {},
 ): Promise<StopCheckResult | null> {
   const gate = await resultGate(input, run, process.env, opts.report);
+  try {
+    opts.onGate?.(gate);
+  } catch {
+    // a bookkeeping callback never changes the answer
+  }
   let check: StopCheckResult | null = null;
   try {
     check = await makeCheck(input, run, opts);
@@ -732,40 +774,6 @@ interface AntigravityStopInput {
   workspacePaths?: readonly string[];
 }
 
-function readInput(): Promise<string> {
-  return new Promise((resolve) => {
-    if (process.stdin.isTTY) {
-      resolve("");
-      return;
-    }
-    let buf = "";
-    let doneCalled = false;
-    const done = (): void => {
-      if (!doneCalled) {
-        doneCalled = true;
-        clearTimeout(timer);
-        process.stdin.pause();
-        process.stdin.destroy();
-        resolve(buf);
-      }
-    };
-    let timer = setTimeout(done, 200);
-    process.stdin.setEncoding("utf8");
-    process.stdin.on("data", (chunk: string) => {
-      buf += chunk;
-      try {
-        JSON.parse(buf);
-        done();
-      } catch {
-        clearTimeout(timer);
-        timer = setTimeout(done, 50);
-      }
-    });
-    process.stdin.on("end", done);
-    process.stdin.on("error", done);
-  });
-}
-
 const entryArg = process.argv[1];
 if (entryArg && import.meta.url === pathToFileURL(entryArg).href) {
   const flagHarness = process.argv
@@ -801,24 +809,12 @@ if (entryArg && import.meta.url === pathToFileURL(entryArg).href) {
   // telemetry steps changes nothing: a passed result stays passed.
   let crashed = false;
   let answered = false;
+  const gateState: GateState = { done: false, reason: null };
   const failClosedOnCrash = (): void => {
     if (crashed) process.exit(0);
     crashed = true;
     try {
-      const reason = answered
-        ? null
-        : gateFailClosed(process.env, input, "internal error");
-      if (reason) {
-        writeOut({
-          decision: "block",
-          reason,
-          hookSpecificOutput: {
-            hookEventName: "Stop",
-            decision: "block",
-            reason,
-          },
-        });
-      }
+      if (!answered) writeOut(crashAnswer(gateState, process.env, input));
     } catch {
       // never exit non-zero by accident
     }
@@ -833,8 +829,11 @@ if (entryArg && import.meta.url === pathToFileURL(entryArg).href) {
   process.on("uncaughtException", failClosedOnCrash);
   process.on("unhandledRejection", failClosedOnCrash);
   try {
-    const raw = await readInput();
-    input = plainInput(JSON.parse(raw || "{}"));
+    const read = await readStdin(process.stdin, {
+      deadlineMs: STOP_DEADLINE_MS,
+    });
+    if (!read.ok) throw new StdinReadError(read.why);
+    input = plainInput(JSON.parse(read.text || "{}"));
     if (input.terminationReason !== undefined && !input.hook_event_name) {
       input.hook_event_name = "Stop";
     }
@@ -849,6 +848,10 @@ if (entryArg && import.meta.url === pathToFileURL(entryArg).href) {
     const events: Record<string, unknown>[] = [];
     const out = await stopCheck(input, spawnSync as unknown as SyncRunner, {
       report: (attrs) => events.push(attrs),
+      onGate: (reason) => {
+        gateState.done = true;
+        gateState.reason = reason;
+      },
     });
 
     // written before the usage and telemetry steps, so a failure there cannot lose a block or deny a passed result
@@ -898,23 +901,16 @@ if (entryArg && import.meta.url === pathToFileURL(entryArg).href) {
     } catch {
       // telemetry only
     }
-  } catch {
+  } catch (e: unknown) {
     // unreadable payload or an internal error in the gate: let the agent stop, unless the launcher named a result
     // checker or this is a runtime run, in which case the stop stays blocked
     try {
-      const reason = answered
-        ? null
-        : gateFailClosed(process.env, input, "internal error");
-      if (reason) {
-        writeOut({
-          decision: "block",
-          reason,
-          hookSpecificOutput: {
-            hookEventName: "Stop",
-            decision: "block",
-            reason,
-          },
-        });
+      if (!answered) {
+        const why =
+          e instanceof StdinReadError
+            ? `could not read the hook input (${e.message})`
+            : "internal error";
+        writeOut(crashAnswer(gateState, process.env, input, why));
       }
     } catch {
       // never exit non-zero by accident
