@@ -114,6 +114,23 @@ void test("contract: the guard probe reports contract 2 and the required capabil
   );
 });
 
+void test("contract: the probe says whether the contract is enforced", () => {
+  const r = spawnSync(process.execPath, [GUARD, "--contract"], {
+    input: "",
+    timeout: 10000,
+    encoding: "utf8",
+  });
+  assert.equal(r.status, 0, `probe exited ${String(r.status)}: ${r.stderr}`);
+  const probe = JSON.parse(r.stdout.split("\n")[0] ?? "") as {
+    enforced?: unknown;
+  };
+  assert.equal(
+    typeof probe.enforced,
+    "boolean",
+    "the probe must report a boolean `enforced`; a runner must refuse to start unless `enforced` is true",
+  );
+});
+
 void test("contract: the manifest validates", () => {
   const v = parseRegistration(
     readFileSync(subject),

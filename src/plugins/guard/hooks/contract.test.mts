@@ -15,7 +15,7 @@ import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { CAPABILITIES } from "../core/registration.mjs";
-import { contractProbe, guardVersion } from "./contract.mjs";
+import { ENFORCED, contractProbe, guardVersion } from "./contract.mjs";
 
 const root = mkdtempSync(join(tmpdir(), "guard-contract-"));
 after(() => {
@@ -53,6 +53,7 @@ void test("contract probe: contractProbe shape", () => {
   assert.deepEqual(contractProbe("9.9.9"), {
     contract: 2,
     capabilities: [...CAPABILITIES],
+    enforced: ENFORCED,
     guard: "9.9.9",
   });
 });
@@ -79,5 +80,7 @@ void test("contract probe: guard.mjs --contract prints one JSON line", () => {
   const out = JSON.parse(r.stdout) as Record<string, unknown>;
   assert.equal(out.contract, 2);
   assert.deepEqual(out.capabilities, [...CAPABILITIES]);
+  assert.equal(typeof out.enforced, "boolean");
+  assert.equal(out.enforced, ENFORCED);
   assert.equal(out.guard, manifest.version);
 });

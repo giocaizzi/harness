@@ -8,9 +8,13 @@ import { fileURLToPath } from "node:url";
 import { CAPABILITIES, CONTRACT } from "../core/registration.mjs";
 import type { Capability } from "../core/registration.mjs";
 
+// Flips to true in the release that wires the v2 decisions (guard 1.0.0).
+export const ENFORCED = false;
+
 export interface ContractProbe {
   capabilities: Capability[];
   contract: typeof CONTRACT;
+  enforced: boolean;
   guard: string;
 }
 
@@ -36,6 +40,7 @@ export function contractProbe(version: string = guardVersion()): ContractProbe {
   return {
     contract: CONTRACT,
     capabilities: [...CAPABILITIES],
+    enforced: ENFORCED,
     guard: version,
   };
 }
