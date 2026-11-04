@@ -34,6 +34,7 @@ import {
 import { pathToFileURL } from "node:url";
 
 import { docsOnly } from "../core/docsonly.mjs";
+import { hostCaps } from "../core/host.mjs";
 import { emit } from "../core/otel.mjs";
 import { UNREGISTERED_RULE, resultFile } from "../core/registration.mjs";
 import { coreErrors, couldNotRun, report } from "../core/result.mjs";
@@ -239,15 +240,20 @@ function markGreen(cwd: string, fp: string, run: SyncRunner): void {
 }
 
 // Why the host cannot take a check now, or null. Load average on Unix only (Windows reports 0), free disk everywhere.
-export function hostStrain(cwd: string): string | null {
+export function hostStrain(
+  cwd: string,
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): string | null {
   try {
+    const caps = hostCaps(env, rules.host);
+    if (caps.off) return null;
     const load1 = loadavg()[0] ?? 0;
-    if (platform() !== "win32" && load1 > rules.host.loadCap) {
+    if (platform() !== "win32" && load1 > caps.loadCap) {
       return `load ${String(Math.round(load1 * 10) / 10)}`;
     }
     const fs = statfsSync(cwd);
     const freeGb = (fs.bavail * fs.bsize) / 1073741824;
-    return freeGb < rules.host.freeFloorGb
+    return freeGb < caps.freeFloorGb
       ? `${String(Math.round(freeGb))} GB free`
       : null;
   } catch {

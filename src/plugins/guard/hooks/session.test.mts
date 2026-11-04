@@ -15,10 +15,11 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  statfsSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
+import { loadavg, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -28,6 +29,7 @@ import { lintFile } from "./lint.mjs";
 import {
   fingerprint,
   gateFailClosed,
+  hostStrain,
   resultGate,
   runDetached,
   stopCheck,
@@ -2163,5 +2165,27 @@ void test("result check: the stop hook CLI keeps a stop blocked on a payload tha
     const out = JSON.parse(blocked.stdout) as { decision: string };
     assert.equal(out.decision, "block");
     assert.equal(runStopHook(payload, [], {}).stdout, "");
+  }
+});
+
+void test("stop: the strain check reads its caps and off switch from the given environment", () => {
+  const cwd = tmp();
+  const calm = { GUARD_HOST_LOAD_CAP: "999999" };
+  const forced = { GUARD_HOST_DISK_FLOOR_GB: "999999999" };
+  assert.equal(hostStrain(cwd, { GUARD_HOST_CHECK: "off", ...forced }), null);
+  assert.equal(typeof hostStrain(cwd, forced), "string");
+  assert.match(hostStrain(cwd, { ...calm, ...forced }) ?? "", /GB free$/);
+  if (process.platform !== "win32" && (loadavg()[0] ?? 0) > 0.0001) {
+    assert.match(
+      hostStrain(cwd, { GUARD_HOST_LOAD_CAP: "0.0001" }) ?? "",
+      /^load /,
+    );
+  }
+  const fs = statfsSync(cwd);
+  if ((fs.bavail * fs.bsize) / 1073741824 > 20) {
+    assert.equal(
+      hostStrain(cwd, { ...calm, GUARD_HOST_DISK_FLOOR_GB: "abc" }),
+      null,
+    );
   }
 });

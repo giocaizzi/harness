@@ -51,7 +51,7 @@ import {
   withPreview,
   worktreeFacts,
 } from "../core/engine.mjs";
-import { cpuPercentFrom } from "../core/host.mjs";
+import { cpuPercentFrom, hostCaps } from "../core/host.mjs";
 import { emit } from "../core/otel.mjs";
 import { sessionAttrs } from "../core/registration.mjs";
 import { rules } from "../core/rules.mjs";
@@ -631,9 +631,11 @@ async function onShell(
   const unattended = fromEnv || (set ?? state.unattended) === true;
 
   try {
-    const host = isHeavy(command, rules)
-      ? await (deps.hostFacts ?? hostFacts)(input.cwd)
-      : {};
+    const caps = hostCaps(deps.env, rules.host);
+    const host =
+      !caps.off && isHeavy(command, rules)
+        ? await (deps.hostFacts ?? hostFacts)(input.cwd)
+        : {};
     let unfinished = false;
     const envObj: GuardEnv = {
       TMPDIR: deps.env?.TMPDIR,
@@ -736,7 +738,7 @@ async function onShell(
         ? ["read", "edit"].filter((r) => !state.reminded.includes(r))
         : [];
     const reminded = new Set([...state.reminded, ...held]);
-    const judged = hostJudged(command, rules, reminded);
+    const judged = !caps.off && hostJudged(command, rules, reminded);
 
     const d = evaluateCommand({
       command,
@@ -752,7 +754,15 @@ async function onShell(
               data: guardDataDirs(deps),
             })
           : null,
-      rules,
+      rules: {
+        ...rules,
+        host: {
+          ...rules.host,
+          loadCap: caps.loadCap,
+          cpuPercentCap: caps.cpuPercentCap,
+          freeFloorGb: caps.freeFloorGb,
+        },
+      },
     });
     state.reminded = [...reminded].filter((r) => !held.includes(r));
 
