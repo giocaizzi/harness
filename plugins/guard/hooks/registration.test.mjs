@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync, } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync, } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
@@ -222,6 +222,44 @@ void test("registration: the trust vet and the pin run on every call, cache hit 
     assert.match(denyWhy(loadRegistration(envFor(m), opts)), /changed during/);
     cache.clear();
     assert.equal(cache.entry, undefined);
+});
+void test("registration: a same-size rewrite that keeps the mtime is detected", () => {
+    const m = manifest();
+    const { atime, mtime } = statSync(m);
+    const dataDir = fresh("data");
+    const pinned = {
+        vet: ro,
+        dataDir,
+        sessionId: "s7",
+        cache: createRegistrationCache(),
+    };
+    assert.equal(loadRegistration(envFor(m), pinned).state, "registered");
+    writeFileSync(m, MANIFEST.replace("acme-runner", "acme-runnex"));
+    utimesSync(m, atime, mtime);
+    assert.match(denyWhy(loadRegistration(envFor(m), pinned)), /changed during/);
+    // no session: the new content is parsed, not the cached one
+    const m2 = manifest();
+    const t2 = statSync(m2);
+    const bare = { vet: ro, cache: createRegistrationCache() };
+    assert.equal(loadRegistration(envFor(m2), bare).state, "registered");
+    writeFileSync(m2, "x".repeat(MANIFEST.length));
+    utimesSync(m2, t2.atime, t2.mtime);
+    assert.match(denyWhy(loadRegistration(envFor(m2), bare)), /: invalid: /);
+});
+void test("posix registration: a failed pin write is refused", { skip: process.platform === "win32" || process.getuid?.() === 0 }, () => {
+    const dataDir = fresh("data");
+    mkdirSync(dataDir);
+    chmodSync(dataDir, 0o500);
+    try {
+        assert.match(denyWhy(loadRegistration(envFor(manifest()), {
+            vet: ro,
+            dataDir,
+            sessionId: "s8",
+        })), /cannot pin the registration \(EACCES\)/);
+    }
+    finally {
+        chmodSync(dataDir, 0o700);
+    }
 });
 void test("registration: an unusable env value does not throw", () => {
     const env = {

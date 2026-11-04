@@ -43,12 +43,11 @@ export type Loaded =
 
 interface CacheEntry {
   key: string;
-  sha256: string;
   validation: Validation;
 }
 
 // In-process harnesses (opencode, pi) keep one per process: the parsed manifest (one entry, replaced) is reused while
-// realpath, inode, mtime and size are unchanged, and the trust checks and the pin still run on every call.
+// the realpath and sha256 are unchanged; the file is read, hashed, vetted and pinned on every call.
 export interface RegistrationCache {
   clear(): void;
   entry?: CacheEntry;
@@ -160,20 +159,20 @@ export function loadRegistration(
       if (st.size > MAX_MANIFEST_BYTES) {
         return deny(`${at}: too large (over 64 KiB)`);
       }
-      const key = `${real}\0${String(st.ino)}\0${String(st.mtimeMs)}\0${String(st.size)}`;
+      const bytes = readBounded(fd);
+      if (!bytes) return deny(`${at}: too large (over 64 KiB)`);
+      sha256 = createHash("sha256").update(bytes).digest("hex");
+      const key = `${real}\0${sha256}`;
       const hit = opts.cache?.entry;
       if (hit?.key === key) {
-        ({ validation, sha256 } = hit);
+        validation = hit.validation;
       } else {
-        const bytes = readBounded(fd);
-        if (!bytes) return deny(`${at}: too large (over 64 KiB)`);
-        sha256 = createHash("sha256").update(bytes).digest("hex");
         validation = parseRegistration(
           bytes,
           DEFAULT_PROTECTED_LIMITS,
           pathApi,
         );
-        if (opts.cache) opts.cache.entry = { key, sha256, validation };
+        if (opts.cache) opts.cache.entry = { key, validation };
       }
     } finally {
       closeSync(fd);
