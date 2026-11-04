@@ -107,6 +107,7 @@ The other four harnesses read the same sources differently (details in [docs/com
 | `make typecheck` | Type-check authored TypeScript without emitting runtime files. |
 | `make check` | `make lint` + `make typecheck` + `make test` (standard entrypoint, run by CI on Linux). The `.ps1` script tests skip off Windows: CI's `windows-scripts` job runs them ([CI](docs/compatibility.md#verify)). |
 | `make e2e` | Copilot CLI, Codex, opencode and pi against a scripted model in throwaway homes (skips a CLI that is missing; CI runs it on Linux, macOS and Windows). |
+| `make contract-test MANIFEST=<abs path>` | Run contract v2 kit against a runner's manifest (one CI job in the runner's repo): [docs/guard.md](docs/guard.md#run-contract-v2-enforced-from-guard-100). |
 | `make agent-review` | Weekly agent-telemetry review without an agent; in a session use the repo-local `/agent-review` skill (`.agents/skills/`, linked from `.claude/skills/`): [docs/agent-review.md](docs/agent-review.md). |
 | `make install HARNESS="codex opencode antigravity"` | Copy what Codex, opencode and Antigravity cannot take from the marketplace into their config dirs. |
 | `make new-agent NAME=<name> PLUGIN=<plugin>` | Scaffold `plugins/<plugin>/agents/<name>.md` and `<name>.yaml`. |
