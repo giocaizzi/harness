@@ -22,7 +22,7 @@ import {
 } from "node:fs";
 import { statfs } from "node:fs/promises";
 import { cpus, homedir, loadavg, platform } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, parse, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
@@ -1028,34 +1028,41 @@ function touchedFiles(input: HookInput): string[] {
 
 const MAX_LINK_HOPS = 40;
 
-// `path` with the real path of its nearest existing ancestor, as `/` segments. A dangling symlink, in the last component
-// or any other, is followed (a write tool creates its target); null past MAX_LINK_HOPS links (a loop): the caller
-// treats the path as protected.
+// `path` with the real path of its nearest existing ancestor, as `/` segments. Each component is followed in turn, as the
+// kernel does: a symlink is replaced by its target before the next `..` applies (`n -> d/../x` with `d -> a/b` is
+// `a/x`), and a dangling one, in the last component or any other, is followed too (a write tool creates its target);
+// null past MAX_LINK_HOPS links (a loop): the caller treats the path as protected.
 function realish(path: string): string | null {
-  const rest: string[] = [];
+  const start = resolve(path);
+  const top = parse(start).root;
+  let cur = top;
+  let missing = false;
   let hops = 0;
-  for (let p = resolve(path); ;) {
-    try {
-      return slashes(join(realpathSync(p), ...rest));
-    } catch {
-      let target: string | undefined;
-      try {
-        if (lstatSync(p).isSymbolicLink()) {
-          target = resolve(dirname(p), readlinkSync(p));
-        }
-      } catch {
-        // missing: look at the parent
-      }
-      if (target !== undefined) {
-        if (++hops > MAX_LINK_HOPS) return null;
-        p = target;
-        continue;
-      }
-      rest.unshift(basename(p));
+  const queue = start.slice(top.length).split(sep).filter(Boolean);
+  while (queue.length) {
+    const comp = queue.shift() ?? "";
+    if (comp === ".") continue;
+    if (comp === "..") {
+      cur = dirname(cur);
+      continue;
     }
-    if (dirname(p) === p) return slashes(resolve(path));
-    p = dirname(p);
+    const next = join(cur, comp);
+    let link: string | undefined;
+    if (!missing) {
+      try {
+        if (lstatSync(next).isSymbolicLink()) link = readlinkSync(next);
+        else cur = next;
+      } catch {
+        missing = true;
+      }
+    }
+    if (link !== undefined) {
+      if (++hops > MAX_LINK_HOPS) return null;
+      if (isAbsolute(link)) cur = parse(link).root;
+      queue.unshift(...link.split(/[\\/]/).filter(Boolean));
+    } else if (missing) cur = next;
   }
+  return slashes(cur);
 }
 
 const insideDir = (path: string, dir: string): boolean => {
