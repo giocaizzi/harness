@@ -71,8 +71,9 @@ const pre = (tool_name: string, command: string): ExtendedHookInput => ({
   tool_input: { command },
 });
 
-// Runs the hook as a child with `payload` as a file on its stdin: a pipe can be read in chunks that the hook's reader
-// gives up between on a loaded host (EPIPE), a file reads to EOF at once.
+// Runs the hook as a child with `payload` as a file on its stdin: a file reads to EOF at once, so a test of a rule does
+// not depend on pipe timing (a closed pipe on a hook that exits early raises EPIPE). The hook's reader waits for the
+// whole payload on a pipe too: stdin.test.mts covers that.
 const hookSync = (
   script: string,
   args: string[],
@@ -1177,18 +1178,20 @@ void test("a malformed spawn input gets no decision and keeps the session state"
   );
 });
 
-void test("a payload that is not an object exits 0 with no output", () => {
+void test("a payload that is not an object exits 0: a PreToolUse is denied, other events get no output", () => {
   const script = fileURLToPath(new URL("./guard.mjs", import.meta.url));
   for (const payload of ["null", "42", '"x"', "[]", "true"]) {
-    const r = hookSync(script, ["PreToolUse"], payload, {
-      env: {
-        ...process.env,
-        CLAUDE_PLUGIN_DATA: mkdtempSync(join(tmpdir(), "guard-test-")),
-        GUARD_OTEL: "off",
-      },
-    });
-    assert.equal(r.status, 0, `${payload}: ${r.stderr}`);
-    assert.equal(r.stdout, "", payload);
+    const env = {
+      ...process.env,
+      CLAUDE_PLUGIN_DATA: mkdtempSync(join(tmpdir(), "guard-test-")),
+      GUARD_OTEL: "off",
+    };
+    const pre = hookSync(script, ["PreToolUse"], payload, { env });
+    assert.equal(pre.status, 0, `${payload}: ${pre.stderr}`);
+    assert.match(pre.stdout, /"permissionDecision":"deny"/, payload);
+    const other = hookSync(script, ["SessionStart"], payload, { env });
+    assert.equal(other.status, 0, `${payload}: ${other.stderr}`);
+    assert.equal(other.stdout, "", payload);
   }
 });
 
