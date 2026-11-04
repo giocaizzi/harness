@@ -367,20 +367,23 @@ export function parseRegistration(bytes, limits = DEFAULT_PROTECTED_LIMITS, path
         return fail(failure(e));
     }
 }
-// Expands result.file's {ticket_number} and {run_id}: { path } (repo-relative, POSIX separators) or { why }.
+// Expands result.file's {ticket_number} and {run_id}: { path } (repo-relative, POSIX separators) or { why }. A
+// variable is checked only when the template uses it.
 export function resultFile(template, vars) {
-    if (!/^[1-9]\d{0,9}$/.test(vars.ticket_number)) {
+    const ticketNumber = vars.ticket_number ?? "";
+    if (template.includes("{ticket_number}") &&
+        !/^[1-9]\d{0,9}$/.test(ticketNumber)) {
         return {
             why: `ticket number must match ^[1-9]\\d{0,9}$, got ${show(vars.ticket_number)}`,
         };
     }
-    if (!RUN_ID.test(vars.run_id)) {
+    if (template.includes("{run_id}") && !RUN_ID.test(vars.run_id)) {
         return {
             why: `run id must match ${RUN_ID.source}, got ${show(vars.run_id)}`,
         };
     }
     const expanded = template
-        .replaceAll("{ticket_number}", vars.ticket_number)
+        .replaceAll("{ticket_number}", ticketNumber)
         .replaceAll("{run_id}", vars.run_id);
     const why = pathRuleError(expanded, DEFAULT_PROTECTED_LIMITS.chars);
     if (why)

@@ -230,6 +230,16 @@ void test("registration: parse bytes", () => {
     const ok = parseRegistration(enc(JSON.stringify(full())));
     assert.equal(ok.ok, true);
 });
+void test("registration: resultFile checks only the variables its template uses", () => {
+    assert.deepEqual(resultFile(".acme/runs/{run_id}.json", { run_id: "run-1" }), {
+        path: ".acme/runs/run-1.json",
+    });
+    assert.deepEqual(resultFile(".acme/result.json", { run_id: "" }), {
+        path: ".acme/result.json",
+    });
+    const r = resultFile(".acme/{ticket_number}.json", { run_id: "run-1" });
+    assert.ok("why" in r && r.why.startsWith("ticket number must match"));
+});
 void test("registration: resultFile expands and checks", () => {
     const vars = { run_id: "run-1", ticket_number: "12" };
     assert.deepEqual(resultFile(".acme/{ticket_number}/{run_id}/{run_id}.json", vars), {
