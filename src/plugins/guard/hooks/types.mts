@@ -239,8 +239,6 @@ export interface HandleDeps {
       ) => Promise<boolean> | boolean)
     | null;
   noAsk?: boolean;
-  // The host platform (default: this process's): a Windows host reads a share or a stream in a path spelling.
-  platform?: NodeJS.Platform;
   pluginRoot?: string;
   previewMs?: number;
   processId?: number;

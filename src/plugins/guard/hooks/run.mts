@@ -116,13 +116,7 @@ export function runContext(env: Env, opts: LoadOptions = {}): RunContext {
 // `at` is where the session is: the repo root and the cwd (`/` separators).
 export function runFacts(
   run: RegisteredRun,
-  at: {
-    cwd?: string;
-    powershell?: boolean;
-    root?: string;
-    roots?: string[];
-    windows?: boolean;
-  },
+  at: { cwd?: string; root?: string },
 ): RunFacts | null {
   if (run.mode === "attended") return null;
   const reg = run.registration;
