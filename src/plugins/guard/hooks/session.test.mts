@@ -4,8 +4,10 @@ import {
   execFileSync,
   spawnSync,
 } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -633,7 +635,7 @@ void test("result gate: an attended run is held only to an invalid file carrying
   }
 });
 
-void test("result gate: off, a subagent, no factory run, a bad ticket or no git checkout pass", async () => {
+void test("result gate: off, a subagent, no factory run or a bad ticket pass; an attended run passes without a git checkout", async () => {
   try {
     const cwd = gateRepo();
     assert.equal(
@@ -669,19 +671,192 @@ void test("result gate: off, a subagent, no factory run, a bad ticket or no git 
         stdout: "",
         stderr: "",
       }) as unknown as SpawnSyncReturns<string>;
-    assert.equal(await resultGate({ cwd }, mockGitFail, RUNTIME), null);
+    assert.equal(await resultGate({ cwd }, mockGitFail, ATTENDED), null);
     const events: Record<string, unknown>[] = [];
     const assertFail: SyncRunner = () => {
-      assert.fail("a gate error fails open");
+      assert.fail("an attended gate error fails open");
     };
     assert.equal(
-      await resultGate({ cwd }, assertFail, RUNTIME, (e) => events.push(e)),
+      await resultGate({ cwd }, assertFail, ATTENDED, (e) => events.push(e)),
       null,
     );
     assert.deepEqual(
       events.map((e) => [e.result, e.target]),
       [["error", "result-gate"]],
     );
+  } finally {
+    delete process.env.CLAUDE_PLUGIN_DATA;
+  }
+});
+
+const RUNTIME_BLOCK =
+  /^Factory result gate: could not check the result for run run-1 \((.*)\); a runtime run never fails open, so the stop stays blocked\.$/;
+
+void test("result gate: a runtime run never fails open on a missing checkout or a throwing runner", async () => {
+  try {
+    const cwd = gateRepo();
+    const mockGitFail: SyncRunner = () =>
+      ({
+        status: 128,
+        stdout: "",
+        stderr: "",
+      }) as unknown as SpawnSyncReturns<string>;
+    const gitOut = await resultGate({ cwd }, mockGitFail, RUNTIME);
+    assert.match(gitOut ?? "", RUNTIME_BLOCK);
+    assert.match(gitOut ?? "", /git rev-parse failed/);
+    const events: Record<string, unknown>[] = [];
+    const throwing: SyncRunner = () => {
+      throw new Error("spawn failed token=abc123");
+    };
+    const out = await resultGate({ cwd }, throwing, RUNTIME, (e) =>
+      events.push(e),
+    );
+    assert.match(out ?? "", RUNTIME_BLOCK);
+    assert.match(out ?? "", /token=\*\*\*/);
+    assert.deepEqual(
+      events.map((e) => [e.result, e.target]),
+      [["error", "result-gate"]],
+    );
+    // these blocks are not counted: the cap still allows two result blocks
+    assert.match(
+      (await resultGate({ cwd }, undefined, RUNTIME)) ?? "",
+      /block 1 of 2/,
+    );
+  } finally {
+    delete process.env.CLAUDE_PLUGIN_DATA;
+  }
+});
+
+// The block counter of run-1, where stop.mts keeps it.
+const counterPath = (): string =>
+  join(
+    process.env.CLAUDE_PLUGIN_DATA ?? "",
+    "result-gate",
+    `${createHash("sha256").update("run-1").digest("hex").slice(0, 16)}.txt`,
+  );
+const plantCounter = (plant: (file: string) => void): string => {
+  const cwd = gateRepo();
+  const file = counterPath();
+  mkdirSync(dirname(file), { recursive: true });
+  plant(file);
+  return cwd;
+};
+const mkfifo = (file: string): void => {
+  assert.equal(spawnSync("mkfifo", [file]).status, 0);
+};
+const posix = process.platform === "win32" ? { skip: "no mkfifo" } : {};
+
+void test("result gate: a counter set to 2 releases an unset runtime run (the unset trust model)", async () => {
+  try {
+    const cwd = plantCounter((f) => {
+      writeFileSync(f, "2");
+    });
+    assert.equal(await resultGate({ cwd }, undefined, RUNTIME), null);
+  } finally {
+    delete process.env.CLAUDE_PLUGIN_DATA;
+  }
+});
+
+void test("result gate: a malformed or oversized counter counts as the cap reached", async () => {
+  try {
+    for (const text of ["x", "-1", "1e3", "1".repeat(70), "", "1\n2"]) {
+      const cwd = plantCounter((f) => {
+        writeFileSync(f, text);
+      });
+      assert.equal(
+        await resultGate({ cwd }, undefined, RUNTIME),
+        null,
+        JSON.stringify(text),
+      );
+    }
+    const cwd = plantCounter((f) => {
+      writeFileSync(f, " 1\n");
+    });
+    assert.match(
+      (await resultGate({ cwd }, undefined, RUNTIME)) ?? "",
+      /block 2 of 2/,
+    );
+  } finally {
+    delete process.env.CLAUDE_PLUGIN_DATA;
+  }
+});
+
+void test(
+  "result gate: a FIFO at the counter path is read without hanging, as the cap reached",
+  posix,
+  async () => {
+    try {
+      const cwd = plantCounter(mkfifo);
+      const started = Date.now();
+      assert.equal(await resultGate({ cwd }, undefined, RUNTIME), null);
+      assert.ok(Date.now() - started < 5000);
+    } finally {
+      delete process.env.CLAUDE_PLUGIN_DATA;
+    }
+  },
+);
+
+void test("result gate: a directory at the counter path counts as the cap reached", async () => {
+  try {
+    const cwd = plantCounter((f) => {
+      mkdirSync(f);
+    });
+    assert.equal(await resultGate({ cwd }, undefined, RUNTIME), null);
+  } finally {
+    delete process.env.CLAUDE_PLUGIN_DATA;
+  }
+});
+
+void test("result gate: strict mode stays blocked whatever sits at the counter path, and replaces a FIFO or symlink", async () => {
+  try {
+    for (const text of ["2", "garbage", "9".repeat(70)]) {
+      const cwd = plantCounter((f) => {
+        writeFileSync(f, text);
+      });
+      assert.match(
+        (await resultGate({ cwd }, undefined, strictEnv(""))) ?? "",
+        /block 3; FACTORY_RESULT_CHECKER is set/,
+        text,
+      );
+    }
+    if (process.platform !== "win32") {
+      const cwd = plantCounter(mkfifo);
+      assert.match(
+        (await resultGate({ cwd }, undefined, strictEnv(""))) ?? "",
+        /block 3; FACTORY_RESULT_CHECKER is set/,
+      );
+      assert.ok(lstatSync(counterPath()).isFile());
+      assert.equal(readFileSync(counterPath(), "utf8"), "3");
+
+      const target = join(tmp(), "target.txt");
+      writeFileSync(target, "untouched");
+      const linked = plantCounter((f) => {
+        symlinkSync(target, f);
+      });
+      assert.match(
+        (await resultGate({ cwd: linked }, undefined, strictEnv(""))) ?? "",
+        /block 3; FACTORY_RESULT_CHECKER is set/,
+      );
+      assert.ok(lstatSync(counterPath()).isFile());
+      assert.equal(readFileSync(target, "utf8"), "untouched");
+    }
+  } finally {
+    delete process.env.CLAUDE_PLUGIN_DATA;
+  }
+});
+
+void test("result gate: a counter that cannot be written blocks a runtime run and lets an attended one go", async () => {
+  try {
+    const cwd = gateRepo(validResult({ ticket: 12 }));
+    writeFileSync(
+      join(process.env.CLAUDE_PLUGIN_DATA ?? "", "result-gate"),
+      "",
+    );
+    assert.match(
+      (await resultGate({ cwd }, undefined, RUNTIME)) ?? "",
+      RUNTIME_BLOCK,
+    );
+    assert.equal(await resultGate({ cwd }, undefined, ATTENDED), null);
   } finally {
     delete process.env.CLAUDE_PLUGIN_DATA;
   }
@@ -1006,8 +1181,13 @@ void test("result gate: strict mode never fails open on an internal error", asyn
       await resultGate({ cwd }, throwing, { FACTORY_RESULT_CHECKER: "" }),
       null,
     );
-    assert.equal(await resultGate({ cwd }, throwing, RUNTIME), null);
-    assert.equal(gateFailClosed(RUNTIME, { cwd }, "x"), null);
+    assert.match(
+      (await resultGate({ cwd }, throwing, RUNTIME)) ?? "",
+      RUNTIME_BLOCK,
+    );
+    assert.equal(await resultGate({ cwd }, throwing, ATTENDED), null);
+    assert.match(gateFailClosed(RUNTIME, { cwd }, "x") ?? "", RUNTIME_BLOCK);
+    assert.equal(gateFailClosed(ATTENDED, { cwd }, "x"), null);
     assert.equal(
       gateFailClosed(
         { ...RUNTIME, GUARD_RESULT_GATE: "off", FACTORY_RESULT_CHECKER: "" },
@@ -1268,7 +1448,41 @@ void test("result check: the stop hook CLI keeps a strict stop blocked on an unr
 
   const unset = runStopHook("{", [], { ...RUNTIME });
   assert.equal(unset.status, 0, unset.stderr);
-  assert.equal(unset.stdout, "");
+  const runtime = JSON.parse(unset.stdout) as {
+    decision: string;
+    reason: string;
+  };
+  assert.equal(runtime.decision, "block");
+  assert.match(
+    runtime.reason,
+    /could not check the result for run run-1 \(internal error\); a runtime run never fails open, so the stop stays blocked\./,
+  );
+
+  const attended = runStopHook("{", [], { ...ATTENDED });
+  assert.equal(attended.status, 0, attended.stderr);
+  assert.equal(attended.stdout, "");
+});
+
+void test("result check: the stop hook CLI blocks a runtime run on an internal error, in each harness's shape", () => {
+  const reason = /a runtime run never fails open/;
+  const claude = runStopHook("{", [], { ...RUNTIME });
+  assert.equal(claude.status, 0, claude.stderr);
+  const c = JSON.parse(claude.stdout) as Record<string, unknown>;
+  assert.equal(c.decision, "block");
+  assert.match(String(c.reason), reason);
+
+  const codex = runStopHook("{", ["--harness=codex"], { ...RUNTIME });
+  assert.equal(codex.status, 0, codex.stderr);
+  const x = JSON.parse(codex.stdout) as Record<string, unknown>;
+  assert.deepEqual(Object.keys(x).sort(), ["decision", "reason"]);
+  assert.equal(x.decision, "block");
+  assert.match(String(x.reason), reason);
+
+  const anti = runStopHook("{", ["--harness=antigravity"], { ...RUNTIME });
+  assert.equal(anti.status, 0, anti.stderr);
+  const a = JSON.parse(anti.stdout) as Record<string, unknown>;
+  assert.equal(a.decision, "continue");
+  assert.match(String(a.reason), reason);
 });
 
 void test("lint: shellcheck findings come back as context; clean, missing tool or other files pass", () => {

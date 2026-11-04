@@ -7,7 +7,7 @@
 // reads /dev/tty fails at once instead of hanging the session.
 
 import { type SpawnSyncReturns, spawn, spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import {
   closeSync,
   constants,
@@ -15,6 +15,7 @@ import {
   mkdirSync,
   openSync,
   readFileSync,
+  renameSync,
   rmSync,
   statfsSync,
   writeFileSync,
@@ -281,26 +282,33 @@ export function takeLock(file: string): (() => void) | null {
 
 const RESULT_GATE_MAX = 2;
 const RESULT_MAX_BYTES = 1024 * 1024;
+const COUNTER_MAX_BYTES = 64;
 
 class ResultReadError extends Error {}
 
-// result.json's text: only a regular file up to 1 MiB. Opened non-blocking and checked through the descriptor, so a
+// A file's text: only a regular file up to `maxBytes`. Opened non-blocking and checked through the descriptor, so a
 // FIFO or a device (the agent can plant one) is an error, never a read that hangs the hook.
-function readResultFile(file: string): string {
+function readRegularFile(
+  file: string,
+  maxBytes: number,
+  tooLarge: string,
+): string {
   // O_NONBLOCK does not exist on Windows
   const nonBlock = (constants as { O_NONBLOCK?: number }).O_NONBLOCK ?? 0;
   const fd = openSync(file, constants.O_RDONLY | nonBlock);
   try {
     const st = fstatSync(fd);
     if (!st.isFile()) throw new ResultReadError("not a regular file");
-    if (st.size > RESULT_MAX_BYTES) {
-      throw new ResultReadError("too large (over 1 MiB)");
-    }
+    if (st.size > maxBytes) throw new ResultReadError(tooLarge);
     return readFileSync(fd, "utf8");
   } finally {
     closeSync(fd);
   }
 }
+
+const readResultFile = (file: string): string =>
+  readRegularFile(file, RESULT_MAX_BYTES, "too large (over 1 MiB)");
+
 const TICKET_NUMBER = /^[\w.-]+\/[\w.-]+#([1-9]\d*)$/;
 const STRICT_WRITE_HINT =
   "Fix result.json until it passes the core check and the launcher's checker; never edit the checker.";
@@ -346,18 +354,21 @@ function gateRun(raw: HookInput, env: NodeJS.ProcessEnv): GateRun | null {
 const isStrict = (env: NodeJS.ProcessEnv): boolean =>
   env.FACTORY_RESULT_CHECKER !== undefined;
 
-// In strict mode the gate never fails open: the block reason for a stop whose check could not be made, or null when
-// the launcher named no checker, the stop is exempt or no run is identified.
+// In strict mode and in a runtime run the gate never fails open: the block reason for a stop whose check could not
+// be made, or null for an attended run with no named checker, an exempt stop or no identified run.
 export function gateFailClosed(
   env: NodeJS.ProcessEnv,
   input: HookInput,
   why: string,
 ): string | null {
   try {
-    const run = isStrict(env) ? gateRun(input, env) : null;
-    return run
-      ? `Factory result gate: could not check the result for run ${run.runId} (${scrub(why).slice(0, 200)}); FACTORY_RESULT_CHECKER is set, so the stop stays blocked.`
-      : null;
+    const strict = isStrict(env);
+    const run = gateRun(input, env);
+    if (!run || !(strict || run.runtime)) return null;
+    const shown = scrub(why).slice(0, 200);
+    return strict
+      ? `Factory result gate: could not check the result for run ${run.runId} (${shown}); FACTORY_RESULT_CHECKER is set, so the stop stays blocked.`
+      : `Factory result gate: could not check the result for run ${run.runId} (${shown}); a runtime run never fails open, so the stop stays blocked.`;
   } catch {
     return null;
   }
@@ -367,19 +378,37 @@ export function gateFailClosed(
 const blockFile = (runId: string): string =>
   join(pluginDataDir(), "result-gate", `${sha(runId).slice(0, 16)}.txt`);
 
+// The count so far. Absent: 0. Anything but a small regular file of digits (the agent can plant a FIFO, a directory
+// or garbage here) counts as the cap reached.
 function blockCount(runId: string): number {
   try {
-    return Number(readFileSync(blockFile(runId), "utf8")) || 0;
-  } catch {
-    return 0; // no block yet
+    const text = readRegularFile(
+      blockFile(runId),
+      COUNTER_MAX_BYTES,
+      "too large",
+    ).trim();
+    return /^\d{1,9}$/.test(text) ? Number(text) : RESULT_GATE_MAX;
+  } catch (e: unknown) {
+    const code = (e as { code?: string }).code;
+    // ENOTDIR: a file where the counter's directory should be, so nothing is counted there (the write then fails)
+    return code === "ENOENT" || code === "ENOTDIR" ? 0 : RESULT_GATE_MAX;
   }
 }
 
-// Records one more block and returns the new count.
+// Records one more block and returns the new count. Written to a temp file and renamed over the counter, so whatever
+// sits at the counter path (a FIFO, a symlink) is replaced, never written through.
 function bumpBlocks(runId: string): number {
   const n = blockCount(runId) + 1;
-  mkdirSync(dirname(blockFile(runId)), { recursive: true });
-  writeFileSync(blockFile(runId), String(n));
+  const file = blockFile(runId);
+  mkdirSync(dirname(file), { recursive: true });
+  const tmp = `${file}.${String(process.pid)}.${randomBytes(4).toString("hex")}.tmp`;
+  try {
+    writeFileSync(tmp, String(n), { flag: "wx" });
+    renameSync(tmp, file);
+  } catch (e: unknown) {
+    rmSync(tmp, { force: true });
+    throw e;
+  }
   return n;
 }
 
@@ -417,7 +446,7 @@ export async function resultGate(
       { cwd, encoding: "utf8", windowsHide: true },
     );
     if (git.status !== 0 || !git.stdout.trim()) {
-      if (strict) throw new Error("git rev-parse failed");
+      if (strict || runtime) throw new Error("git rev-parse failed");
       return null;
     }
     const file = join(
@@ -817,7 +846,7 @@ if (entryArg && import.meta.url === pathToFileURL(entryArg).href) {
     }
   } catch {
     // unreadable payload or an internal error in the gate: let the agent stop, unless the launcher named a result
-    // checker, in which case the stop stays blocked
+    // checker or this is a runtime run, in which case the stop stays blocked
     try {
       const reason = gateFailClosed(process.env, input, "internal error");
       if (reason) {
@@ -835,8 +864,8 @@ if (entryArg && import.meta.url === pathToFileURL(entryArg).href) {
       // never exit non-zero by accident
     }
   }
-  // Exits once the answer is flushed (stdout to a pipe may be async), so idle handles cannot hold the hook open. A
-  // checker thread blocked in a system call still can: Node joins it on exit (docs/guard.md, Known limits).
+  // Exits once the answer is flushed (stdout to a pipe may be async), so idle handles cannot hold the hook open. The
+  // checker runs in a child process killed on timeout, so even one blocked in a system call cannot.
   await new Promise<void>((done) => {
     process.stdout.write("", () => {
       done();

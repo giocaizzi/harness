@@ -886,10 +886,94 @@ void test("bridge: an internal error in strict mode is a reason, not null", asyn
         try {
             const strict = await make(true).stop({ cwd });
             assert.match(strict ?? "", /^Factory result gate: could not check the result for run strict-bridge \(internal error\); FACTORY_RESULT_CHECKER is set/);
+            assert.match((await make(false).stop({ cwd })) ?? "", /^Factory result gate: could not check the result for run strict-bridge \(internal error\); a runtime run never fails open, so the stop stays blocked\.$/);
+            // an attended run still fails open
+            Reflect.deleteProperty(process.env, "FACTORY_RUN_ID");
+            Reflect.deleteProperty(process.env, "FACTORY_TICKET");
+            Object.assign(process.env, {
+                FACTORY_ATTENDED_RUN_ID: "strict-bridge",
+                FACTORY_ATTENDED_TICKET: "acme/app#12",
+            });
             assert.equal(await make(false).stop({ cwd }), null);
         }
         finally {
             delete process.env.FACTORY_RESULT_CHECKER;
+            Reflect.deleteProperty(process.env, "FACTORY_ATTENDED_RUN_ID");
+            Reflect.deleteProperty(process.env, "FACTORY_ATTENDED_TICKET");
+        }
+    });
+});
+void test("opencode and pi: a throwing gate in a runtime run with no checker named is sent the runtime reason, an attended run nothing", async () => {
+    const throwing = () => {
+        throw new Error("spawn exploded");
+    };
+    const runtimeReason = /^Factory result gate: could not check the result for run rt-run \(spawn exploded\); a runtime run never fails open, so the stop stays blocked\.$/;
+    const send = async (cwd) => {
+        const sentOc = [];
+        const client = {
+            session: {
+                get: async () => {
+                    await Promise.resolve();
+                    return null;
+                },
+                prompt: async (p) => {
+                    await Promise.resolve();
+                    sentOc.push(p.body.parts[0]?.text ?? "");
+                },
+            },
+            tui: {
+                showToast: async () => {
+                    await Promise.resolve();
+                },
+            },
+        };
+        const hooks = await GuardPlugin({ client, directory: cwd }, { ...deps(), spawnSync: throwing });
+        for (let i = 0; i < 3; i++) {
+            await hooks.event({
+                event: { type: "session.idle", properties: { sessionID: "s" } },
+            });
+        }
+        const { handlers, sent, api } = fakePi();
+        guardExtension(api, { ...deps(), spawnSync: throwing });
+        const ctx = {
+            cwd,
+            ui: {
+                confirm: async () => {
+                    await Promise.resolve();
+                    return true;
+                },
+                notify: () => {
+                    /* noop */
+                },
+            },
+        };
+        for (let i = 0; i < 3; i++) {
+            await handlers.agent_settled?.({ aborted: false }, ctx);
+        }
+        return { sent, sentOc };
+    };
+    await factoryRun("rt-run", async (cwd) => {
+        delete process.env.FACTORY_RESULT_CHECKER;
+        const { sent, sentOc } = await send(cwd);
+        // no cap on a failed check
+        assert.equal(sentOc.length, 3);
+        assert.equal(sent.length, 3);
+        for (const m of [...sentOc, ...sent])
+            assert.match(m, runtimeReason);
+        Reflect.deleteProperty(process.env, "FACTORY_RUN_ID");
+        Reflect.deleteProperty(process.env, "FACTORY_TICKET");
+        Object.assign(process.env, {
+            FACTORY_ATTENDED_RUN_ID: "rt-run",
+            FACTORY_ATTENDED_TICKET: "acme/app#12",
+        });
+        try {
+            const attended = await send(cwd);
+            assert.equal(attended.sentOc.length, 0);
+            assert.equal(attended.sent.length, 0);
+        }
+        finally {
+            Reflect.deleteProperty(process.env, "FACTORY_ATTENDED_RUN_ID");
+            Reflect.deleteProperty(process.env, "FACTORY_ATTENDED_TICKET");
         }
     });
 });

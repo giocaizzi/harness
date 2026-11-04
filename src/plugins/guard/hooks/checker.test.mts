@@ -1,4 +1,4 @@
-// The launcher's result checker: vetting its path and running it in a worker. Tests named `result check:` run on
+// The launcher's result checker: vetting its path and running it in a child process. Tests named `result check:` run on
 // every OS; the ones that need POSIX permissions are named `posix checker:` and skip on Windows.
 
 import assert from "node:assert/strict";
@@ -346,8 +346,7 @@ void test("result check: more than 50 errors are capped", async () => {
 void test("result check: a message the module posts itself is validated", async () => {
   const post = (m: string) =>
     run(
-      `import { parentPort } from 'node:worker_threads'
-parentPort.postMessage(${m})
+      `process.send(${m})
 export const resultErrors = () => []`,
     );
   assert.deepEqual(await post("{ errors: [1] }"), {
@@ -380,3 +379,81 @@ process.stdout.write(JSON.stringify(await runChecker(c.path, {}, {})))`);
   assert.equal(out.status, 0, out.stderr);
   assert.deepEqual(JSON.parse(out.stdout), { errors: ["x"] });
 });
+
+// A checker that blocks in a syscall: a read of a FIFO nobody writes to. The child is killed, never joined.
+const fifo = (): string => {
+  const p = join(root, `fifo${String(n++)}`);
+  assert.equal(spawnSync("mkfifo", [p]).status, 0);
+  return p;
+};
+
+void test(
+  "posix checker: a resultErrors blocked reading a FIFO times out",
+  posixOnly,
+  async () => {
+    const f = fifo();
+    const t = Date.now();
+    const r = await run(
+      `import { readFileSync } from 'node:fs'
+export const resultErrors = () => { readFileSync(${JSON.stringify(f)}); return [] }`,
+      { timeoutMs: 500 },
+    );
+    assert.equal(why(r), "timed out after 0.5 s");
+    assert.ok(Date.now() - t < 5000);
+  },
+);
+
+void test(
+  "posix checker: a top-level import blocked reading a FIFO times out",
+  posixOnly,
+  async () => {
+    const f = fifo();
+    const t = Date.now();
+    const r = await run(
+      `import { readFileSync } from 'node:fs'
+readFileSync(${JSON.stringify(f)})
+export const resultErrors = () => []`,
+      { timeoutMs: 500 },
+    );
+    assert.equal(why(r), "timed out after 0.5 s");
+    assert.ok(Date.now() - t < 5000);
+  },
+);
+
+void test(
+  "posix checker: a hook that never calls process.exit ends on its own after a FIFO-blocked checker",
+  posixOnly,
+  () => {
+    const checker = file(
+      `import { readFileSync } from 'node:fs'
+export const resultErrors = () => { readFileSync(${JSON.stringify(fifo())}); return [] }`,
+    );
+    const script =
+      file(`import { prepareChecker, runChecker } from ${JSON.stringify(new URL("./checker.mjs", import.meta.url).href)}
+const c = prepareChecker(${JSON.stringify(checker)}, { writable: () => false, owner: () => false })
+process.stdout.write(JSON.stringify(await runChecker(c.path, {}, {}, { timeoutMs: 500 })))`);
+    const out = spawnSync(process.execPath, [script], {
+      encoding: "utf8",
+      timeout: 15_000,
+    });
+    assert.equal(out.error, undefined);
+    assert.equal(out.signal, null);
+    assert.equal(out.status, 0, out.stderr);
+    assert.deepEqual(JSON.parse(out.stdout), { why: "timed out after 0.5 s" });
+  },
+);
+
+void test(
+  "result check: a checker killed by a signal is a why",
+  posixOnly,
+  async () => {
+    assert.match(
+      why(
+        await run(
+          "export const resultErrors = () => process.kill(process.pid, 'SIGKILL')",
+        ),
+      ),
+      /^exited with signal SIGKILL before answering/,
+    );
+  },
+);
