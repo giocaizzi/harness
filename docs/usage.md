@@ -117,7 +117,9 @@ You never call guard. You see it when it denies or asks:
 | `pip`/`poetry` denied: "This repo uses uv" | The repo has `uv.lock` (or a plain `pyproject.toml`). In a poetry or pip repo it runs, with a one-time note. | Nothing: the agent switches to `uv`. |
 | A heavy build or test run denied once | Load over 30, CPU over 90 % or under 20 GB free disk. | Wait, or let the agent wrap it in `heavy.sh`. |
 | A toast "Plan usage is at 9x %" on a subagent spawn (Claude Code) | A plan window is at 90 %; the subagent still starts (`GUARD_THROTTLE=warn`, the default). With `ask` you get an Allow/Deny prompt; with `deny` the spawn is refused. | Nothing, or pick another `GUARD_THROTTLE` mode. |
-| The agent keeps working after it said "done" | `make check` failed on stop (only when the repo changed since the last green run), or in a factory run its `result.json` is missing or invalid. | Nothing: it fixes the failure once (the result file within two tries), then may stop. |
+| The agent keeps working after it said "done" | `make check` failed on stop (only when the repo changed since the last green run), or, in a run a runner registered, its result file is missing or invalid. | Nothing: it fixes the failure once (the result file within two tries, or until it passes when the runner registered a checker), then may stop. |
+| Every tool call denied with `run-registration` or `run-unregistered`, and the stop blocked | A runner's run is not registered correctly: the registration failed to load or validate, or only the old `FACTORY_*` variables are set. | Nothing the agent can fix: the runner registers the run ([guard.md](guard.md#run-contract-v2)). |
+| In an unattended run, a command denied for naming a protected label, a gh alias or a protected path (`run-label`, `run-config`, `protected-path`), also for an edit tool | The runner's registration protects its approval and takeover labels and its paths; the agent never touches them. | Nothing: the agent works around it or reports it. |
 | Shellcheck/PSScriptAnalyzer findings after an edit | An edited `.sh`/`.bash`/`.ps1` has lint findings. | Nothing: advice for the agent. |
 
 It also keeps the machine awake while the harness runs.
@@ -128,15 +130,15 @@ Settings are env vars, set in the shell that starts the harness (or the `env` bl
 |---|---|---|
 | `GUARD_UNATTENDED=1` | off | Every risky ask becomes a deny, and Claude Code parks its permission asks at once. Use for overnight and headless runs (`unattended-runs` skill). Set it in the launching shell or Claude Code's settings `env`; a command that exports it in the session holds for the rest of the session ([guard.md](guard.md#unattended-and-auto-approve-runs)). |
 | `GUARD_STOP_CHECK=off` | on | Turns off `make check` on stop; `force` runs it even on a strained host (CI). |
-| `GUARD_RESULT_GATE=off` | on | Turns off the factory result gate: in a factory run, a stop is held (a result error at most twice, unless the launcher sets `FACTORY_RESULT_CHECKER`) while the run's `result.json` is missing or invalid. A verifier or other side session started with the run's variables sets it. |
+| `GUARD_RESULT_GATE=off` | on | Turns off the result gate: in a registered run, a stop is held (a result error at most twice, unless the registration names a `result.checker`) while the run's result file is missing or invalid. It turns off the result check only, never a registration failure. A verifier or other side session started with the run's variables sets it. |
 | `GUARD_STOP_TIMEOUT_MS` | `300000` | Time limit for that check; a timeout defers it to the next stop, never blocks. |
 | `GUARD_ASK_TIMEOUT_MS` | `60000` | Claude Code: an unanswered permission prompt is parked after this (the agent is told nobody answered and to carry on, not that you denied it); `0` turns it off. |
 | `GUARD_THROTTLE` | `warn` | Claude Code: what a subagent spawn does once a plan window is at 90 %. `warn` starts it with a toast, `ask` puts it in an Allow/Deny prompt (parked like any ask: after `GUARD_ASK_TIMEOUT_MS`, at once under `GUARD_UNATTENDED`), `deny` refuses it, `off` turns the throttle off. Any other value is `warn`. |
 | `GUARD_OTEL=off` | on | Sends no guard telemetry, whatever the OTel endpoint (`make test` sets it). |
 | `GUARD_OTEL_EXPORTER_OTLP_ENDPOINT`, `GUARD_OTEL_EXPORTER_OTLP_HEADERS` | unset | Send each deny and ask to Grafana as logs ([guard.md](guard.md#grafana)). |
-| `GUARD_TRACEPARENT` | unset | A W3C `traceparent` a runtime sets for a traced run: each decision record carries its trace and span ids; a malformed value is ignored ([guard.md](guard.md#grafana)). |
+| `GUARD_TRACEPARENT` | unset | A W3C `traceparent` a runner sets for a traced run: each decision record carries its trace and span ids; a malformed value is ignored ([guard.md](guard.md#grafana)). |
 
-The factory result gate's checker (`FACTORY_RESULT_CHECKER`) and the other `FACTORY_*` variables are set by a run's launcher, not by you: [guard.md](guard.md#factory-run-contract-v1).
+The run registration (`GUARD_RUN_MANIFEST`, whose `result.checker` is the gate's checker) and the other `GUARD_RUN_*` variables are set by a run's runner, not by you: [guard.md](guard.md#run-contract-v2).
 
 A repo with a slow suite defines a `check-fast` make target; the stop hook runs that instead of `check`.
 
