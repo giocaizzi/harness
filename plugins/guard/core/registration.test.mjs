@@ -112,6 +112,9 @@ void test("registration: protected_paths globs", () => {
     g("a/", /empty, "\." or "\.\." segment/);
     g("./a", /empty, "\." or "\.\." segment/);
     g("a/../b", /empty, "\." or "\.\." segment/);
+    g("a/.. /b", /empty, "\." or "\.\." segment/);
+    g("a/.../b", /empty, "\." or "\.\." segment/);
+    g("a/b::$DATA", /must not contain ":"/);
     g(1, /^protected_paths\.globs\[0\] must be a string/);
     bad((m) => (m.protected_paths.globs = "x"), /^protected_paths\.globs must be an array/);
     bad((m) => (m.protected_paths = null), /^protected_paths must be an object/);
@@ -178,7 +181,41 @@ void test("registration: result", () => {
     bad((m) => (m.result.hint = "a\u202eb"), /^result\.hint must be 1 to 500/);
     bad((m) => (m.result.hint = "a\u2028b"), /^result\.hint must be 1 to 500/);
     bad((m) => (m.result.hint = "a\u0085b"), /^result\.hint must be 1 to 500/);
-    bad((m) => (m.result.file = ".{run_id}/workflows/r.json"), /^result\.file must not use a placeholder in its first segment, got /);
+    bad((m) => (m.result.file = ".{run_id}/workflows/r.json"), /^result\.file must not use a placeholder in the first segment of a multi-segment path, got /);
+    bad((m) => (m.result.file = "{run_id}/x.json"), /^result\.file must not use a placeholder in the first segment/);
+    for (const file of ["{run_id}.json", "{ticket_number}.json"]) {
+        const r = validateRegistration(mod((m) => (m.result.file = file)));
+        assert.equal(r.ok, true, file);
+    }
+    for (const file of [
+        ".git./x.json",
+        ".git /x.json",
+        ".GIT../x.json",
+        "a/.git/x.json",
+        "a/b/.github/x.json",
+        "a/.github ./x.json",
+    ]) {
+        bad((m) => (m.result.file = file), /^result\.file must not be under \.git or \.github, got /);
+    }
+    for (const file of ["GIT~1/x.json", "a/github~2/x.json"]) {
+        bad((m) => (m.result.file = file), /^result\.file must not be under \.git or \.github, got /);
+    }
+    for (const file of [".git::$INDEX_ALLOCATION/x.json", "x.json::$DATA"]) {
+        bad((m) => (m.result.file = file), /^result\.file must not contain ":"/);
+    }
+    for (const file of ["a/.. /x.json", "a/.../x.json", "... /x.json"]) {
+        bad((m) => (m.result.file = file), /^result\.file must not have an empty/);
+    }
+    for (const file of [
+        "a/.gitx/x.json",
+        ".gitignore.json",
+        "a/git/x.json",
+        "a/git~x/x.json",
+        "a/b.c/x.json",
+    ]) {
+        const r = validateRegistration(mod((m) => (m.result.file = file)));
+        assert.equal(r.ok, true, file);
+    }
     for (const file of [".git/x.json", ".GITHUB/r.json"]) {
         bad((m) => (m.result.file = file), /^result\.file must not be under \.git or \.github, got /);
     }
@@ -278,7 +315,13 @@ void test("registration: runEnvErrors", () => {
     assert.deepEqual(runEnvErrors({ ...base, GUARD_RUN_MODE: "" }, { ...reg, modes: undefined }), []);
     has(runEnvErrors({ ...base, GUARD_RUN_TICKET: "bad" }, reg), /^GUARD_RUN_TICKET must match/);
     has(runEnvErrors({ GUARD_RUN_ID: "r" }, reg), /^GUARD_RUN_TICKET is required by result\.file/);
+    has(runEnvErrors({ ...base, GUARD_RUN_MODE: "" }, only), /^GUARD_RUN_MODE "unattended" is not one of/);
+    assert.deepEqual(runEnvErrors({ ...base, GUARD_RUN_MODE: "" }, { ...reg, modes: ["unattended"] }), []);
+    const emptyTicket = runEnvErrors({ GUARD_RUN_ID: "r", GUARD_RUN_TICKET: "" }, reg);
+    assert.equal(emptyTicket.length, 1);
+    has(emptyTicket, /^GUARD_RUN_TICKET is required by result\.file/);
     const noTicket = { ...reg, result: { file: "x/result.json" } };
+    assert.deepEqual(runEnvErrors({ GUARD_RUN_ID: "r", GUARD_RUN_TICKET: "" }, noTicket), []);
     assert.deepEqual(runEnvErrors({ GUARD_RUN_ID: "r" }, noTicket), []);
     assert.deepEqual(runEnvErrors({ GUARD_RUN_ID: "r" }, { ...reg, result: undefined }), []);
 });
