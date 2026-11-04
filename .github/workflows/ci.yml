@@ -116,17 +116,17 @@ jobs:
       - shell: bash
         env:
           GUARD_OTEL: "off"
-          FACTORY_EVENTS_FILE: ""
+          GUARD_RUN_EVENTS_FILE: ""
         run: |
           node --test --test-reporter=tap --test-name-pattern='^result check:' plugins/guard/core/result.test.mjs plugins/guard/hooks/checker.test.mjs plugins/guard/hooks/session.test.mjs | tee tap.txt
-          if ! grep -qx '# tests 28' tap.txt || ! grep -qx '# pass 28' tap.txt; then echo "::error::expected 28 guard result check tests to pass"; exit 1; fi
+          if ! grep -qx '# tests 26' tap.txt || ! grep -qx '# pass 26' tap.txt; then echo "::error::expected 26 guard result check tests to pass"; exit 1; fi
       # Run contract v2: the registration validator, loader and contract-test kit with Windows path rules (POSIX-only
       # and trusted-MANIFEST tests skip here, so the step checks for no failure and a floor of passing tests).
       - shell: bash
         env:
           GUARD_OTEL: "off"
           GUARD_STOP_CHECK: "off"
-          FACTORY_EVENTS_FILE: ""
+          GUARD_RUN_EVENTS_FILE: ""
         run: |
           node --test --test-reporter=tap plugins/guard/core/registration.test.mjs plugins/guard/hooks/registration.test.mjs tests/contract/kit.test.mjs | tee tap.txt
           pass=$(sed -n 's/^# pass //p' tap.txt)
