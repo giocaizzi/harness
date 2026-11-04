@@ -1,4 +1,4 @@
-// The launcher's result checker: vetting its path and running it in a child process. Tests named `result check:` run on
+// The runner's result checker: vetting its path and running it in a child process. Tests named `result check:` run on
 // every OS; the ones that need POSIX permissions are named `posix checker:` and skip on Windows.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -6,7 +6,7 @@ import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, w
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, test } from "node:test";
-import { BUILD_COPY, defaultChecker, isWritableByMe, prepareChecker, runChecker, vetTrustedFile, } from "./checker.mjs";
+import { isWritableByMe, prepareChecker, runChecker, vetTrustedFile, } from "./checker.mjs";
 const root = realpathSync(mkdtempSync(join(tmpdir(), "guard-checker-")));
 after(() => {
     rmSync(root, { recursive: true, force: true });
@@ -62,12 +62,6 @@ void test("result check: a CRLF-suffixed value is accepted as its trimmed path",
 void test("result check: a vetted checker returns its real path", () => {
     const p = file("export const resultErrors = () => []");
     assert.deepEqual(prepareChecker(p, ro), { path: p, shown: p });
-});
-void test("result check: the default checker is the build copy when it exists", () => {
-    const p = file("export const resultErrors = () => []");
-    assert.deepEqual(defaultChecker(p), { path: p });
-    assert.equal(defaultChecker(join(root, "none.mjs")), null);
-    assert.ok(BUILD_COPY.endsWith("check-result.mjs"));
 });
 void test("posix checker: a file this user owns or can write is refused, even read-only", posixOnly, () => {
     const p = file("export const resultErrors = () => []");
@@ -163,9 +157,9 @@ void test("result check: returns the checker errors, or none", async () => {
     assert.deepEqual(await run("export const resultErrors = async () => ['late']"), { errors: ["late"] });
 });
 void test("result check: the checker gets the result and the environment", async () => {
-    const c = prepareChecker(file("export const resultErrors = (r, env) => [`${r.run_id}/${env.FACTORY_X}`]"), ro);
+    const c = prepareChecker(file("export const resultErrors = (r, env) => [`${r.run_id}/${env.GUARD_RUN_X}`]"), ro);
     assert.ok("path" in c);
-    assert.deepEqual(await runChecker(c.path, { run_id: "r1" }, { FACTORY_X: "x" }), {
+    assert.deepEqual(await runChecker(c.path, { run_id: "r1" }, { GUARD_RUN_X: "x" }), {
         errors: ["r1/x"],
     });
 });
