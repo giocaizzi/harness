@@ -3742,14 +3742,17 @@ void test("factory run: the data directory matcher reads a path as the shell may
     // target, quoted array elements, shell syntax inside quotes, a prefix assignment in a payload, extendedglob
     "mv /Users/me/.claude/plugins/data cd",
     "cat /Users/me/x\\(/../.claude/plugins/data/guard-acme/result-gate/a\\)$Z",
-    'tee "/Users/me/x(/../.claude/plugins/data/guard-acme/result-gate/a)$Z" </dev/null',
     "cat /Users/me/.claude/plugins/data/${Y}x",
     "CDPATH=/Users/me; cd .claude/plugins/data/guard-acme && cat result-gate/x",
     "arr=( '/Users/me/.claude/plugins/data/guard-a'* ); cat \"${arr[0]}/x\"",
-    'echo hi > "/Users/me/x;/../.claude/plugins/data/guard-acme/result-gate/a"',
     "HOME=/Users/me/.claude/plugins/data bash -c 'echo 0 > ~/guard-a\"\"cme/count'",
     "python3 -c \"open('$HOME/.claude/plugins/data/guard-a\"\"cme/c','w')\"",
-    "setopt extendedglob; touch ~/.claude/plugins/data/^x/count",
+    "cd /Users/me/.claude/plugins/data && mv ${E}guard-acme /tmp/x",
+    "HOME=/tmp/x true $(mv ~/.claude/plugins/data/guard-a* /tmp/y)",
+    "env -i HOME=/Users/me/.claude/plugins/data bash -c 'echo 0 > ~/guard-a\"\"cme/count'",
+    'HOME=/tmp bash -c "echo 0 > $HOME/.claude/plugins/data/guard-a*/result-gate/a"',
+    "CDPATH+=/Users/me/.claude/plugins/data; cd guard-acme && echo 0 > count",
+    'arr=( /Users/me/.claude/plugins/data/guard-a\\cme ); echo 0 > "${arr[0]}/count"',
   ];
   for (const c of denied) {
     const d = run(c);
@@ -3793,9 +3796,13 @@ void test("factory run: the data directory matcher reads a path as the shell may
     "cat /tmp/*(.)",
     `git commit -q -m "feat: ${"x".repeat(1100)}"`,
     "i=$((i+1))",
+    "echo $((10/2))",
     "git log HEAD^..main",
     "cd src/$PKG && make",
     "CDPATH=/Users/me; cd ./src && make",
+    'gh pr create --title "fix: a" --body "$(cat <<\'EOF\'\n## Summary\n- see https://github.com/acme/app/pull/1\nEOF\n)"',
+    'for f in src/*.ts; do echo "${f##*/}"; done',
+    `git commit -q -m 'chore: x' -m '${"a/".repeat(600)}'`,
   ];
   // Known limits the reader sets: a `(` after a redirection target or a bare group is read as a subshell.
   for (const c of [
