@@ -1,7 +1,6 @@
 // Run contract v2: the runner's registration manifest (GUARD_RUN_MANIFEST). Pure: no fs or process I/O. The schema is
 // strict (unknown keys, unknown capabilities and another contract major are refused), and a registration can only add
-// protection on top of guard's built-in floor, never remove or loosen it. Not wired into decisions yet: contract v1
-// stays the enforced contract until guard 1.0.0.
+// protection on top of guard's built-in floor, never remove or loosen it. Enforced from guard 1.0.0.
 
 import path from "node:path";
 
@@ -205,7 +204,7 @@ const checkProtected = (
     // Exemptions apply only to this registration's own globs: never under .github or a built-in protected default.
     const floor = new Set([
       ".github",
-      ...rules.factory.protectedPaths.map((g) =>
+      ...rules.run.protectedPaths.map((g) =>
         (g.split("/")[0] ?? "").toLowerCase(),
       ),
     ]);

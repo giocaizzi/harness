@@ -39,6 +39,7 @@ import {
   isRisky,
   nativeAsk,
   previewCommand,
+  protectedPathHit,
   pureRead,
   refFacts,
   regenFacts,
@@ -52,6 +53,7 @@ import {
 } from "../core/engine.mjs";
 import { cpuPercentFrom } from "../core/host.mjs";
 import { emit } from "../core/otel.mjs";
+import { sessionAttrs } from "../core/registration.mjs";
 import { rules } from "../core/rules.mjs";
 import { commandWords, units } from "../core/shell.mjs";
 import type {
@@ -64,6 +66,14 @@ import type {
 import { contractProbe } from "./contract.mjs";
 import { pluginDataDir } from "./data.mjs";
 import { editedFiles } from "./lint.mjs";
+import type { RunContext } from "./run.mjs";
+import {
+  denyReason,
+  legacySet,
+  recordUnregistered,
+  runContext,
+  runFacts,
+} from "./run.mjs";
 import {
   isEditTool,
   isReadTool,
@@ -564,97 +574,13 @@ export function existingDirs(
   return dirs;
 }
 
-export interface FactoryLabelsResult {
-  approval: string;
-  approvals?: string[];
-  extra?: string[];
-  takeover?: string;
-  takeovers?: string[];
-  unsure?: boolean;
-}
-
-export function factoryLabels(cwd?: string): FactoryLabelsResult {
-  const defaults: FactoryLabelsResult = {
-    approval: rules.factory.approval,
-    takeover: rules.factory.takeover,
-  };
-  for (let dir = resolve(cwd ?? "."); ; dir = dirname(dir)) {
-    let text: string | undefined;
-    try {
-      text = readFileSync(join(dir, ".factory", "config.yaml"), "utf8").replace(
-        /\r/g,
-        "",
-      );
-    } catch (e: unknown) {
-      const code =
-        typeof e === "object" && e !== null && "code" in e
-          ? (e as { code?: unknown }).code
-          : undefined;
-      if (code !== "ENOENT" && code !== "ENOTDIR") {
-        return { ...defaults, unsure: true, extra: [] };
-      }
-    }
-    if (text !== undefined) {
-      if (!/^labels\b/m.test(text)) return defaults;
-      const block = /^labels:[ \t]*\n((?:[ \t]+.*(?:\n|$)|[ \t]*\n)*)/m.exec(
-        text,
-      )?.[1];
-      const named: Record<string, string | null> = {};
-      const keys = ["approval", "takeover"] as const;
-      for (const key of keys) {
-        if (block === undefined) {
-          named[key] = null;
-        } else if (!new RegExp(`^[ \\t]+${key}[ \\t]*:`, "m").test(block)) {
-          named[key] = defaults[key] ?? null;
-        } else {
-          const m = new RegExp(
-            `^[ \\t]+${key}:[ \\t]*(?:"([^"]+)"|'([^']+)'|([^\\s#]+))`,
-            "m",
-          ).exec(block);
-          named[key] = m ? (m[1] ?? m[2] ?? m[3] ?? null) : null;
-        }
-      }
-      if (keys.every((key) => named[key] !== null)) {
-        const app = named.approval;
-        const take = named.takeover;
-        if (typeof app === "string") {
-          // Configured names add to the defaults, which stay protected.
-          const more = (name: string | null | undefined, dflt: string) =>
-            typeof name === "string" && name !== dflt ? [name] : [];
-          const approvals = more(app, defaults.approval);
-          const takeovers = more(take, defaults.takeover ?? "");
-          return {
-            ...defaults,
-            ...(approvals.length ? { approvals } : {}),
-            ...(takeovers.length ? { takeovers } : {}),
-          };
-        }
-      }
-      const extra = [
-        ...text.matchAll(
-          /\b(?:approval|takeover)[ \t]*:[ \t]*["']?([^\s"',}\]#]+)/g,
-        ),
-      ].map((m) => m[1] ?? "");
-      return { ...defaults, unsure: true, extra };
-    }
-    if (dirname(dir) === dir) return defaults;
-  }
-}
-
 export interface ProtectFactsResult {
   cwd: string;
-  extra: string[];
   root: string;
 }
 
-export function protectFacts(
-  env?: Record<string, string | undefined>,
-  cwd?: string,
-): ProtectFactsResult {
-  const extra = (env?.FACTORY_PROTECTED_PATHS ?? "")
-    .split(/\r?\n/)
-    .map((g) => g.trim())
-    .filter(Boolean);
+// Where the session is: the repo root (the nearest directory with a .git) and the cwd, `/` separators.
+export function protectFacts(cwd?: string): ProtectFactsResult {
   const at = resolve(cwd ?? ".");
   let root = at;
   for (let dir = at; ; dir = dirname(dir)) {
@@ -665,7 +591,7 @@ export function protectFacts(
     if (dirname(dir) === dir) break;
   }
   const slash = (p: string): string => p.replace(/\\/g, "/");
-  return { extra, root: slash(root), cwd: slash(at) };
+  return { root: slash(root), cwd: slash(at) };
 }
 
 const slashes = (p: string): string => p.replace(/\\/g, "/");
@@ -695,6 +621,7 @@ async function onShell(
   input: HookInput,
   state: StoredSessionState,
   deps: HandleDeps,
+  ctx: RunContext,
 ): Promise<HandleResult> {
   const rawCommand = (input.tool_input as ShellToolInput | undefined)?.command;
   const command = typeof rawCommand === "string" ? rawCommand : "";
@@ -818,15 +745,13 @@ async function onShell(
       host,
       readTool: deps.readTool ?? true,
       ...facts,
-      factory: deps.env?.FACTORY_RUN_ID
-        ? {
-            ...factoryLabels(input.cwd),
-            protect: {
-              ...protectFacts(deps.env, input.cwd),
+      run:
+        ctx.state === "registered"
+          ? runFacts(ctx, {
+              ...protectFacts(input.cwd),
               data: guardDataDirs(deps),
-            },
-          }
-        : null,
+            })
+          : null,
       rules,
     });
     state.reminded = [...reminded].filter((r) => !held.includes(r));
@@ -987,7 +912,9 @@ async function onShell(
       : {};
   } catch (err: unknown) {
     const errorObj = err instanceof Error ? err : null;
-    if (isRisky(command, rules)) {
+    // A crash must not let an unattended run's write through: every command is denied there, not only risky ones.
+    const strict = ctx.state === "registered" && ctx.mode === "unattended";
+    if (strict || isRisky(command, rules)) {
       appendDecision(deps.env, {
         decision: "deny",
         rule: "guard-error",
@@ -1008,10 +935,10 @@ async function onShell(
         input.cwd,
       );
     }
-    return isRisky(command, rules)
+    return strict || isRisky(command, rules)
       ? preToolUse(
           "deny",
-          `The command guard failed, so this risky command was not run: ${errorObj ? errorObj.message : String(err)}`,
+          `The command guard failed, so this ${strict ? "" : "risky "}command was not run: ${errorObj ? errorObj.message : String(err)}`,
           deps.harness,
         )
       : {};
@@ -1081,14 +1008,20 @@ function onEdit(
   input: HookInput,
   state: StoredSessionState,
   deps: HandleDeps,
+  ctx: RunContext,
 ): HandleResult {
-  // In a factory run an edit tool never touches guard's own data directory (the result gate's block counter lives there).
-  if (deps.env?.FACTORY_RUN_ID) {
-    const dirs = guardDataDirs(deps);
-    const hit = touchedFiles(input).find((f) =>
-      [slashes(f), realish(f)].some((p) => dirs.some((d) => insideDir(p, d))),
-    );
-    if (hit !== undefined) {
+  const facts =
+    ctx.state === "registered"
+      ? runFacts(ctx, {
+          ...protectFacts(input.cwd),
+          data: guardDataDirs(deps),
+        })
+      : null;
+  // In an unattended registered run an edit tool never touches guard's own data directory (the result gate's block
+  // counter lives there) nor a protected path.
+  if (facts) {
+    const denyEdit = (reason: string): HandleResult => {
+      appendDecision(deps.env, { decision: "deny", rule: "protected-path" });
       fire(
         deps,
         "guard.decision",
@@ -1102,11 +1035,39 @@ function onEdit(
         },
         input.cwd,
       );
-      return preToolUse(
-        "deny",
-        `${rules.factory.protectedWhy} \`${hit}\` is in guard's own data directory in this run; leave it alone.`,
-        deps.harness,
+      return preToolUse("deny", reason, deps.harness);
+    };
+    const dirs = guardDataDirs(deps);
+    const files = touchedFiles(input);
+    const hit = files.find((f) =>
+      [slashes(f), realish(f)].some((p) => dirs.some((d) => insideDir(p, d))),
+    );
+    if (hit !== undefined)
+      return denyEdit(
+        `${rules.run.protectedWhy} \`${hit}\` is in guard's own data directory in this run; leave it alone.`,
       );
+    const root = facts.protect?.root ?? protectFacts(input.cwd).root;
+    const protect = {
+      globs: [...rules.run.protectedPaths, ...(facts.protect?.extra ?? [])],
+      registered: facts.protect?.registered ?? [],
+      exempt: facts.protect?.exempt ?? [],
+    };
+    for (const f of files) {
+      for (const [file, base] of [
+        [slashes(f), slashes(root)],
+        [realish(f), realish(root)],
+      ] as const) {
+        if (!insideDir(file, base)) continue;
+        const rel = file
+          .split("/")
+          .filter(Boolean)
+          .slice(base.split("/").filter(Boolean).length)
+          .join("/");
+        if (protectedPathHit(rel, protect, rules.run.protectedLimits))
+          return denyEdit(
+            `${rules.run.protectedWhy} \`${rel}\` is a protected path in this run; leave it to the owner and say on the ticket what should change.`,
+          );
+      }
     }
   }
   const t = (input.tool_input as EditToolInput | undefined) ?? {};
@@ -1306,6 +1267,13 @@ export async function handle(
           input.cwd,
         );
         if (self.versioned && self.version) installed[self.name] = self.version;
+        const start = runContext(deps.env ?? {}, {
+          dataDir: deps.dataDir,
+          sessionId: session,
+          cache: deps.registrationCache,
+          vet: deps.runVet,
+        });
+        const registered = start.state === "registered" ? start : null;
         const attrs = Object.fromEntries(
           Object.entries(installed).map(([p, v]) => [
             `plugin_version_${p.replace(/[^a-z0-9]/g, "_")}`,
@@ -1319,6 +1287,7 @@ export async function handle(
             session_id: input.session_id,
             source: input.source,
             ...attrs,
+            ...sessionAttrs(registered),
           },
           input.cwd,
         );
@@ -1359,7 +1328,43 @@ export async function handle(
       );
     }
 
-    if (
+    const ctx = runContext(deps.env ?? {}, {
+      dataDir: deps.dataDir,
+      sessionId: session,
+      cache: deps.registrationCache,
+      vet: deps.runVet,
+    });
+
+    if (ctx.state === "deny") {
+      // A run whose registration failed, or that set only legacy variables: every tool call is denied.
+      if (ctx.rule === "run-unregistered")
+        recordUnregistered(
+          deps.env ?? {},
+          deps.dataDir ?? pluginDataDir(deps.env ?? process.env),
+          session,
+        );
+      const cmd =
+        isShellTool(tool) && typeof t.command === "string" ? t.command : null;
+      appendDecision(deps.env, {
+        decision: "deny",
+        rule: ctx.rule,
+        ...(cmd === null ? {} : { cmd_hash: commandHash(cmd) }),
+      });
+      fire(
+        deps,
+        "guard.decision",
+        {
+          rule: ctx.rule,
+          action: "deny",
+          cmd_class: ctx.rule,
+          tool: input.tool_name ?? "",
+          session_id: input.session_id,
+          tool_use_id: (input as { tool_use_id?: string }).tool_use_id,
+        },
+        input.cwd,
+      );
+      out = preToolUse("deny", denyReason(ctx, "tool"), deps.harness);
+    } else if (
       tool === "skill" &&
       (typeof t.skill === "string" || typeof t.name === "string")
     ) {
@@ -1371,15 +1376,20 @@ export async function handle(
             : "",
       );
     } else if (isShellTool(tool)) {
-      out = await onShell(input, state, deps);
+      out = await onShell(input, state, deps, ctx);
     } else if (isEditTool(tool)) {
-      out = onEdit(input, state, deps);
+      out = onEdit(input, state, deps, ctx);
     } else if (rules.routing.tools.includes(tool)) {
       out = onSpawn(input, state, deps);
     } else if (isTaskTool(tool)) {
       const command = taskCommand(tool, t as TaskInput, input.cwd);
       if (command) {
-        out = await onShell({ ...input, tool_input: { command } }, state, deps);
+        out = await onShell(
+          { ...input, tool_input: { command } },
+          state,
+          deps,
+          ctx,
+        );
       } else if (tool === "run_task") {
         out = note(
           `The guard could not read the command of task "${(t as TaskInput).id ?? ""}" in .vscode/tasks.json, so it did not check it. If it deletes, force-pushes or reads secrets, confirm with the user first.`,
@@ -1588,7 +1598,19 @@ async function main(): Promise<void> {
       new Promise((r) => setImmediate(r)).then(() =>
         emit(process.env, event, recordAttrs(attrs, cwd, harness)),
       ),
-  }).catch((): HandleResult => ({}));
+  }).catch((): HandleResult =>
+    // A crash must not let a tool call through in a run.
+    input.hook_event_name === "PreToolUse" &&
+    (legacySet(process.env) ||
+      (process.env.GUARD_RUN_ID ?? "").trim() !== "" ||
+      (process.env.GUARD_RUN_MANIFEST ?? "").trim() !== "")
+      ? preToolUse(
+          "deny",
+          "The command guard failed in a registered run, so this tool call was not run.",
+          harness,
+        )
+      : {},
+  );
 
   if (harness === "antigravity") {
     let agOut: AntigravityOut = { decision: "allow" };

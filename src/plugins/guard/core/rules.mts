@@ -95,12 +95,10 @@ export const rules: GuardRules = {
       "dev-tools:reviewer",
       "dev-tools:escalate",
       "api:api-reviewer",
-      "factory:verifier",
     ],
     aliases: { "dev-tools-worker": "dev-tools:worker" },
     codexBuiltin: ["default", "worker", "explorer"],
     overrides: {
-      "factory:verifier": { model: "sonnet|opus", effort: ["medium", "high"] },
       "dev-tools:reviewer": {
         model: "opus",
         modelNeeds: "high",
@@ -450,16 +448,13 @@ export const rules: GuardRules = {
       why: "runs a command the guard cannot read (encoded, decoded at run time, or nested too deep)",
     },
   ],
-  // The factory approval and takeover labels (the defaults below, never replaced; a config's `labels.approval` and
-  // `labels.takeover` add to them) are never touched (applied or removed) while FACTORY_RUN_ID is set.
-  factory: {
-    approval: "agent-ok",
-    why: "A factory run must not touch the approval label: with an owner token the runtime would read it as the owner's approval.",
-    takeover: "factory-takeover",
-    takeoverWhy:
-      "A runtime run must not touch the takeover label: it hands the ticket from a runtime to an attended run, and only an approver sets it.",
+  // A registered unattended run (run contract v2, docs/guard.md): the labels its registration names (approval, takeover,
+  // protected) are never touched (applied or removed), and its shell and edit tools never change a protected path.
+  run: {
+    labelWhy:
+      "A run must not touch a label its runner registered: applying or removing it is the owner's.",
     unsureWhy:
-      "The repo's .factory/config.yaml exists but could not be read, or its labels could not be parsed, so the guard cannot tell which labels a factory run must not touch.",
+      "The run's registration requires label protection but names no labels, so the guard cannot tell which labels this run must not touch.",
     // gh's own commands, their aliases and help topics (gh 2.102 `gh help` and each command's ALIASES). Any other `gh <name>`
     // is an alias or extension (`stack`, an extension; `co`, a default alias stored in the user's gh config, so one a run can replace), and
     // `gh alias set|import` or `gh extension install|upgrade|remove|exec` makes, swaps or runs one: the command it runs is
@@ -520,17 +515,17 @@ export const rules: GuardRules = {
       "workflow",
     ],
     ghUnseenWhy:
-      "In a factory run every gh command must be one the guard can read: a gh alias or extension can run any command, a label change included, out of its sight.",
-    // Repo-relative globs a run's shell never writes (rule `protected-path`); FACTORY_PROTECTED_PATHS adds to them.
-    protectedPaths: [".github/**", ".factory/**"],
-    // Waived from the two defaults only (an explicit FACTORY_PROTECTED_PATHS glob still protects): files inside a run directory (the run's own outputs).
-    exemptPaths: [".factory/runs/*/*/**"],
+      "In a run every gh command must be one the guard can read: a gh alias or extension can run any command, a label change included, out of its sight.",
+    // The built-in floor: repo-relative globs a run's shell and edit tools never change (rule `protected-path`), never
+    // waived. The registration's globs and GUARD_RUN_PROTECTED_PATHS add to them; the registration's exemptions waive
+    // only its own globs.
+    protectedPaths: [".github/**"],
     // Past any of these a command that may write is denied (a hook that times out lets the command through): write
-    // targets in one command, characters in a target, milliseconds for the check. Globs past `globs` (defaults counted
+    // targets in one command, characters in a target, milliseconds for the check. Globs past `globs` (the floor counted
     // first) or over `chars` are ignored.
     protectedLimits: { globs: 256, targets: 512, chars: 1024, ms: 2000 },
     protectedWhy:
-      "A factory run must not change a protected path (CI, the factory config, or one the runtime lists): those changes are the owner's.",
+      "A run must not change a protected path (CI, or one its runner registered): those changes are the owner's.",
   },
   titles: {
     types: [

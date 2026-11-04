@@ -4,8 +4,8 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { CAPABILITIES, CONTRACT } from "../core/registration.mjs";
-// Flips to true in the release that wires the v2 decisions (guard 1.0.0).
-export const ENFORCED = false;
+// The v2 decisions are enforced from guard 1.0.0.
+export const ENFORCED = true;
 // guard's version from its own .claude-plugin/plugin.json, "unknown" when it cannot be read.
 export function guardVersion(pluginRoot = fileURLToPath(new URL("..", import.meta.url))) {
     try {

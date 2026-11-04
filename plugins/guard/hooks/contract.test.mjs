@@ -59,5 +59,6 @@ void test("contract probe: guard.mjs --contract prints one JSON line", () => {
     assert.deepEqual(out.capabilities, [...CAPABILITIES]);
     assert.equal(typeof out.enforced, "boolean");
     assert.equal(out.enforced, ENFORCED);
+    assert.equal(out.enforced, true, "enforced from guard 1.0.0");
     assert.equal(out.guard, manifest.version);
 });

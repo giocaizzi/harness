@@ -138,8 +138,11 @@ void test("registration: protected_paths exempt", () => {
     has(e("{a,b}/x"), re);
     has(e("other/x"), re);
     has(e("!x"), re);
-    has(e(".factory/**", [".factory/x/**"]), re);
-    has(e(".FACTORY/**", [".FACTORY/x/**"]), re);
+    // Only .github is the built-in floor: a runner's own directory is its registration's to protect and to exempt.
+    assert.equal(validateRegistration(mod((m) => (m.protected_paths = {
+        globs: [".factory/**"],
+        exempt: [".factory/runs/*/*/**"],
+    }))).ok, true);
     assert.equal(validateRegistration(mod((m) => (m.protected_paths = { globs: [".acme/**"], exempt: [".acme/x"] }))).ok, true);
 });
 void test("registration: result", () => {

@@ -999,7 +999,7 @@ void test("guard: every gh command in the factory skills passes the factory-run 
         command,
         state: { reminded: new Set() },
         host: {},
-        factory: { approval: "agent-ok" },
+        run: { labels: { approval: "agent-ok" } },
         rules,
     });
     const files = spawnSync("git", ["ls-files", "plugins/factory/skills/**/*.md"], { cwd: repo, encoding: "utf8" })
@@ -1608,7 +1608,7 @@ void test("gate script: reads the config keys it needs from the template shape, 
         command: "node /home/runner/.claude/plugins/cache/m/factory/1/skills/ticket-run/scripts/gate.mjs 12",
         state: { reminded: new Set() },
         host: {},
-        factory: { approval: "agent-ok" },
+        run: { labels: { approval: "agent-ok" } },
         rules,
     });
     assert.notEqual(decision.action, "deny", "the gate call passes the factory-run guard");
