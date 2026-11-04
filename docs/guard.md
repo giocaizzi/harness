@@ -17,6 +17,7 @@ Agent rules enforced as hooks, from one plugin, for Claude Code, Copilot CLI, VS
 | `hooks/opencode.mjs` | opencode plugin over the bridge; `scripts/install.mjs` writes a stub in `~/.config/opencode/plugins/` that re-exports it. |
 | `hooks/pi.mjs` | pi extension over the bridge, listed in the repo's root `package.json`. |
 | `hooks/guard.mjs` | The command guard: reads the event on stdin, gathers facts (host, worktrees, the repo's Python manager), asks the engine, writes `hookSpecificOutput` on stdout. |
+| `hooks/stdin.mjs` | Reads a hook's payload to the end within a deadline and a 32 MiB cap, and says when it could not, so `guard.mjs` and `stop.mjs` fail closed instead of judging half a payload ([Decisions](#decisions)). |
 | `hooks/stop.mjs` | The factory result gate (core check plus the launcher's checker), then `make check-fast` (when defined) or `make check` before the agent stops (was the dotfiles `stop-make-check.sh`/`.ps1`). |
 | `core/result.mjs` | Pure: guard's own check of `result.json` (a JSON object; `run_id`, `ticket`, `end_state`). The gate always runs it. |
 | `hooks/checker.mjs` | Vets the path in `FACTORY_RESULT_CHECKER` (path rules, writability), runs the module in a child process, and holds the transition seam (`BUILD_COPY`, `defaultChecker`). |
