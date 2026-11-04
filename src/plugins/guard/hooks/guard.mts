@@ -23,6 +23,7 @@ import {
 import { statfs } from "node:fs/promises";
 import { cpus, homedir, loadavg, platform } from "node:os";
 import { dirname, isAbsolute, join, parse, resolve, sep } from "node:path";
+import type { win32 } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
@@ -1042,13 +1043,35 @@ const MAX_LINK_HOPS = 40;
 // in the last component or any other, is followed too (a write tool creates its target); null past MAX_LINK_HOPS
 // links (a loop): the caller treats the path as protected. With `lexical` on win32, where a `..` in a relative link
 // target may apply to the link's own directory as text, the target is normalised before it is followed.
-function realish(path: string, lexical = false): string | null {
+export interface LinkEnv {
+  platform: NodeJS.Platform;
+  path: Pick<
+    typeof win32,
+    "dirname" | "isAbsolute" | "join" | "parse" | "resolve" | "sep"
+  >;
+  isLink: (path: string) => boolean;
+  readLink: (path: string) => string;
+}
+
+const linkEnv: LinkEnv = {
+  platform: process.platform,
+  path: { dirname, isAbsolute, join, parse, resolve, sep },
+  isLink: (p) => lstatSync(p).isSymbolicLink(),
+  readLink: readlinkSync,
+};
+
+export function realish(
+  path: string,
+  lexical = false,
+  env: LinkEnv = linkEnv,
+): string | null {
+  const { dirname, isAbsolute, join, parse, resolve, sep } = env.path;
   const top = parse(path).root;
   let cur = top;
   let missing = false;
   let hops = 0;
   const split = (p: string) =>
-    p.split(process.platform === "win32" ? /[\\/]/ : sep).filter(Boolean);
+    p.split(env.platform === "win32" ? /[\\/]/ : sep).filter(Boolean);
   const queue = split(path.slice(top.length));
   while (queue.length) {
     const comp = queue.shift() ?? "";
@@ -1061,7 +1084,7 @@ function realish(path: string, lexical = false): string | null {
     let link: string | undefined;
     if (!missing) {
       try {
-        if (lstatSync(next).isSymbolicLink()) link = readlinkSync(next);
+        if (env.isLink(next)) link = env.readLink(next);
         else cur = next;
       } catch {
         missing = true;
@@ -1070,7 +1093,7 @@ function realish(path: string, lexical = false): string | null {
     if (link !== undefined) {
       if (++hops > MAX_LINK_HOPS) return null;
       const target =
-        lexical && process.platform === "win32" ? resolve(cur, link) : link;
+        lexical && env.platform === "win32" ? resolve(cur, link) : link;
       if (isAbsolute(target)) cur = parse(target).root;
       queue.unshift(
         ...split(isAbsolute(target) ? target.slice(cur.length) : target),
