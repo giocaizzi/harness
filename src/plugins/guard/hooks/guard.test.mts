@@ -2376,7 +2376,7 @@ void test("a registered run: a colon or a leading double slash is an ordinary na
     "build/x-10:30.log",
   ])
     assert.ok(denied(await windows(edit(file, repo))), `win32 edit ${file}`);
-  // PowerShell's provider drives name no file: never a stream, under the PowerShell tool
+  // PowerShell's provider drives name no file: never a stream, under any shell tool name on Windows
   for (const command of [
     "Remove-Item Env:FOO",
     "Remove-Item -Path Env:FOO",
@@ -2389,7 +2389,7 @@ void test("a registered run: a colon or a leading double slash is an ordinary na
       `powershell: ${command}`,
     );
     assert.ok(
-      denied(await shell(windows, command)),
+      !denied(await shell(windows, command)),
       `another tool on Windows: ${command}`,
     );
   }

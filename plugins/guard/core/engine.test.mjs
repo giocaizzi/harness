@@ -3411,11 +3411,11 @@ void test("protectedWrite: a share path, an NTFS stream, a root-relative PowerSh
     assert.equal(oddSpelling("b:c"), "drive");
     assert.equal(oddSpelling("a/.../b", { windows: false }), "dots");
     assert.equal(oddSpelling("//?/C:/x", { windows: false }), "drive");
-    assert.equal(oddSpelling("Env:FOO", { powershell: true }), null);
+    assert.equal(oddSpelling("Env:FOO", { providers: true }), null);
     assert.equal(oddSpelling("Env:FOO"), "drive");
-    assert.equal(oddSpelling("env:/FOO", { powershell: true }), null);
-    assert.equal(oddSpelling("HKCU:/Software/Acme", { powershell: true }), null);
-    assert.equal(oddSpelling("a/Env:FOO", { powershell: true }), "drive");
+    assert.equal(oddSpelling("env:/FOO", { providers: true }), null);
+    assert.equal(oddSpelling("HKCU:/Software/Acme", { providers: true }), null);
+    assert.equal(oddSpelling("a/Env:FOO", { providers: true }), "drive");
 });
 void test("protectedWrite: a colon, a leading double slash and a drive-relative path are read only in a Windows run (G45)", () => {
     const posix = {
@@ -3457,7 +3457,7 @@ void test("protectedWrite: a colon, a leading double slash and a drive-relative 
         "echo a > //localhost/C$/Users/runneradmin/repo/.github/x",
     ])
         assert.equal(protectedWrite(command, win)?.spelled, "drive", command);
-    // PowerShell's provider drives name no file: no stream, under the PowerShell tool only
+    // PowerShell's provider drives name no file: no stream, under any shell tool (another tool name may run PowerShell)
     const ps = { ...win, powershell: true };
     for (const command of [
         "Remove-Item Env:FOO",
@@ -3474,7 +3474,7 @@ void test("protectedWrite: a colon, a leading double slash and a drive-relative 
         "Set-Content -Path Variable:x -Value 1",
     ]) {
         assert.equal(protectedWrite(command, ps), null, command);
-        assert.equal(protectedWrite(command, win)?.spelled, "drive", command);
+        assert.equal(protectedWrite(command, win), null, `other tool: ${command}`);
     }
     assert.equal(protectedWrite("Set-Content a/Env:FOO x", ps)?.spelled, "drive", "only a leading provider drive");
     assert.equal(protectedWrite("Set-Content Envx:FOO x", ps)?.spelled, "drive", "only the named providers");

@@ -1636,10 +1636,11 @@ export function spellingWhy(why, target, kind) {
 // (`C:dir`), a network share (`//host/share`) and a stream (`name:stream`) exist only on Windows, where
 // `windows` (the default) reads them: elsewhere a colon or a double slash is an ordinary name. With `streams` off a
 // share and a stream are not looked for either: an edit tool's path was made absolute by the hook, so its colons and
-// double slash are not the agent's spelling. With `powershell`, a leading provider drive (`Env:FOO`,
-// `HKCU:\Software`) is no stream: it names no file.
+// double slash are not the agent's spelling. With `providers`, a leading PowerShell provider drive (`Env:FOO`,
+// `HKCU:\Software`) is no stream: it names no file. A shell command passes it under every tool name, as another tool
+// name may run PowerShell.
 const PROVIDER_DRIVE = /^(?:env|variable|function|alias|hkcu|hklm|cert|wsman):$/i;
-export function oddSpelling(path, { windows = true, streams = true, powershell = false } = {}) {
+export function oddSpelling(path, { windows = true, streams = true, providers = false } = {}) {
     const p = posixPath(path);
     if (p.split("/").some((x) => x !== "." && x !== ".." && /^[. ]+$/.test(x)))
         return "dots";
@@ -1664,7 +1665,7 @@ export function oddSpelling(path, { windows = true, streams = true, powershell =
             return true;
         // `Env:FOO` is one segment and `Env:\FOO` is `Env:` then `FOO`: the provider drive is what precedes the first colon.
         return !(/^[a-z]:$/i.test(x) ||
-            (powershell && PROVIDER_DRIVE.test(x.slice(0, x.indexOf(":") + 1))));
+            (providers && PROVIDER_DRIVE.test(x.slice(0, x.indexOf(":") + 1))));
     })
         ? "drive"
         : null;
@@ -1722,7 +1723,7 @@ export function protectedWrite(command, protect, env = {}, limits = { globs: 256
     // Only a Windows run reads a share or a stream in a spelling: elsewhere a colon or a double slash is an ordinary name.
     const shape = {
         windows: windowsRun(protect),
-        powershell: protect.powershell === true,
+        providers: true,
     };
     const hits = (spelling, dir, resolve, above, path = true) => {
         const kept = path && plain.has(spelling);
