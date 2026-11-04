@@ -160,7 +160,14 @@ void test(
       new RegExp(`\\(ancestor ${up.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&")}\\)`),
     );
     assert.match(
-      why(prepareChecker(p, { ...ro, writable: (t) => t === up })),
+      // not sticky: the temp dir's parent is a sticky /tmp on Linux
+      why(
+        prepareChecker(p, {
+          ...ro,
+          writable: (t) => t === up,
+          sticky: () => false,
+        }),
+      ),
       /\(ancestor /,
     );
     assert.match(

@@ -92,7 +92,13 @@ void test("posix checker: the directory and every ancestor must be out of reach"
     assert.match(why(prepareChecker(p, { ...ro, owner: (t) => t === dir })), /\(its directory\)/);
     assert.match(why(prepareChecker(p, { ...ro, writable: (t) => t === dir })), /\(its directory\)/);
     assert.match(why(prepareChecker(p, { ...ro, owner: (t) => t === up })), new RegExp(`\\(ancestor ${up.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&")}\\)`));
-    assert.match(why(prepareChecker(p, { ...ro, writable: (t) => t === up })), /\(ancestor /);
+    assert.match(
+    // not sticky: the temp dir's parent is a sticky /tmp on Linux
+    why(prepareChecker(p, {
+        ...ro,
+        writable: (t) => t === up,
+        sticky: () => false,
+    })), /\(ancestor /);
     assert.match(why(prepareChecker(p, { ...ro, writable: (t) => t === "/" })), /\(ancestor \/\)/);
     assert.match(why(prepareChecker(p, {
         ...ro,
