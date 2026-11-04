@@ -1410,10 +1410,11 @@ function globsMayMeet(a, b) {
 }
 // Whether one target segment may be one protected-pattern segment.
 // A variable may hold a leading dot, so only a written `*`, `?` or `[` at the start keeps a dot file out.
-function segMayMatch(pat, seg) {
+// `dots` takes a leading wildcard to match a dot file too (a session can `shopt -s dotglob`).
+function segMayMatch(pat, seg, dots = false) {
     const glob = seg.replace(/\$(?:\{[^}]*\}|\w+|\([^)]*\))|%\w+%|`[^`]*`/g, "*");
     if (SEG_GLOB.test(glob)) {
-        if (/^[*?[]/.test(seg) && pat.startsWith("."))
+        if (!dots && /^[*?[]/.test(seg) && pat.startsWith("."))
             return false;
         return SEG_GLOB.test(pat)
             ? globsMayMeet(glob, pat)
@@ -1536,13 +1537,19 @@ export function protectedWrite(command, protect, env = {}, limits = { globs: 256
         for (const d of dataDirs) {
             if (full !== null) {
                 const s = normalizeSegments(full.replace(/^\/(?=[a-z]:)/i, ""));
-                const same = (a, b) => a.every((x, i) => x.toLowerCase() === defined(b[i]).toLowerCase());
-                if (d.length <= s.length ? same(d, s) : above && same(s, d))
+                // The data directory's segments are literal; the path's may hold a glob or a variable (a leading wildcard may be a dot).
+                const same = (lit, path) => path
+                    .slice(0, lit.length)
+                    .every((x, i) => segMayMatch(defined(lit[i]), x, true));
+                const cover = (lit, path) => lit
+                    .slice(0, path.length)
+                    .every((x, i) => segMayMatch(x, defined(path[i]), true));
+                if (d.length <= s.length ? same(d, s) : above && cover(d, s))
                     return true;
                 const git = /^\/([a-z])(?:\/|$)/i.exec(full);
                 if (git && /^[a-z]:$/i.test(d[0] ?? "")) {
                     const g = [`${defined(git[1])}:`, ...s.slice(1)];
-                    if (d.length <= g.length ? same(d, g) : above && same(g, d))
+                    if (d.length <= g.length ? same(d, g) : above && cover(d, g))
                         return true;
                 }
                 continue;
@@ -1590,7 +1597,15 @@ export function protectedWrite(command, protect, env = {}, limits = { globs: 256
     }
     catch (e) {
         // Any failure (a limit, a stack overflow, a bug) denies a command that may write, and lets the rest through.
-        if (!MAY_WRITE.test(command))
+        // A command naming the data directory (its last segment or the plugin-data variable) fails closed whatever the writer.
+        const low = command.toLowerCase();
+        const names = dataDirs.length > 0 &&
+            (/(?:claude|copilot)_plugin_data/.test(low) ||
+                dataDirs.some((d) => {
+                    const base = d.at(-1)?.toLowerCase();
+                    return base !== undefined && base !== "" && low.includes(base);
+                }));
+        if (!names && !MAY_WRITE.test(command))
             return null;
         return {
             unsure: e === LIMITED
