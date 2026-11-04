@@ -2,7 +2,11 @@
 import assert from "node:assert/strict";
 import path from "node:path";
 import { test } from "node:test";
-import { MAX_MANIFEST_BYTES, parseRegistration, resultFile, runEnvErrors, sessionAttrs, UNREGISTERED_REASON, unregisteredLine, validateRegistration, } from "./registration.mjs";
+import { MAX_MANIFEST_BYTES, parseRegistration as parseNative, resultFile, runEnvErrors, sessionAttrs, UNREGISTERED_REASON, unregisteredLine, validateRegistration as validateNative, } from "./registration.mjs";
+// The fixtures use POSIX checker paths: on Windows the default path rules are win32, so the tests pin POSIX unless a
+// case passes path.win32.
+const validateRegistration = (v, limits, api = path.posix) => validateNative(v, limits, api);
+const parseRegistration = (b) => parseNative(b, undefined, path.posix);
 const full = () => ({
     contract: 2,
     runner: "acme-runner",

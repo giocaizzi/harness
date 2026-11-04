@@ -7,16 +7,26 @@ import { test } from "node:test";
 import type { ProtectedLimits } from "./types.mjs";
 import {
   MAX_MANIFEST_BYTES,
-  parseRegistration,
+  parseRegistration as parseNative,
   resultFile,
   runEnvErrors,
   sessionAttrs,
   UNREGISTERED_REASON,
   unregisteredLine,
-  validateRegistration,
+  validateRegistration as validateNative,
   type Registration,
   type Validation,
 } from "./registration.mjs";
+
+// The fixtures use POSIX checker paths: on Windows the default path rules are win32, so the tests pin POSIX unless a
+// case passes path.win32.
+const validateRegistration = (
+  v: unknown,
+  limits?: ProtectedLimits,
+  api: typeof path = path.posix,
+): Validation => validateNative(v, limits, api);
+const parseRegistration = (b: Uint8Array): Validation =>
+  parseNative(b, undefined, path.posix);
 
 const full = () => ({
   contract: 2,
