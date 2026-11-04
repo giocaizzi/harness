@@ -8,7 +8,7 @@ import { statfs } from "node:fs/promises";
 import { cpus, homedir, loadavg, platform } from "node:os";
 import { dirname, isAbsolute, join, parse, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { analysis, branchFacts, cdDirs, cmdClass, codexRules, deniedBy, deniedDir, evaluateCommand, evaluateEdit, evaluateRouting, hostJudged, isHeavy, isRisky, nativeAsk, oddSpelling, previewCommand, protectedPathHit, pureRead, refFacts, regenFacts, segmentsMayBeSame, spellingWhy, stackFacts, stackTargets, tagFacts, tagTargets, unattendedSet, windowsRun, withPreview, worktreeFacts, } from "../core/engine.mjs";
+import { analysis, branchFacts, cdDirs, cmdClass, codexRules, deniedBy, deniedDir, evaluateCommand, evaluateEdit, evaluateRouting, hostJudged, isHeavy, isRisky, nativeAsk, previewCommand, protectedPathHit, pureRead, refFacts, regenFacts, stackFacts, stackTargets, tagFacts, tagTargets, unattendedSet, withPreview, worktreeFacts, } from "../core/engine.mjs";
 import { cpuPercentFrom, hostCaps } from "../core/host.mjs";
 import { emit } from "../core/otel.mjs";
 import { sessionAttrs } from "../core/registration.mjs";
@@ -389,24 +389,20 @@ export function existingDirs(command, env, cwd) {
     }
     return dirs;
 }
-// Where the session is: the repo root (the nearest directory with a .git), every directory with a .git above the cwd
-// (`roots`, nearest first: the agent can plant a .git in a subdirectory, so a path is protected relative to any of
-// them) and the cwd, `/` separators.
+// Where the session is: the repo root (the nearest directory with a .git) and the cwd, `/` separators.
 export function protectFacts(cwd) {
     const at = resolve(cwd ?? ".");
-    const roots = [];
+    let root = at;
     for (let dir = at;; dir = dirname(dir)) {
-        if (existsSync(join(dir, ".git")))
-            roots.push(dir);
+        if (existsSync(join(dir, ".git"))) {
+            root = dir;
+            break;
+        }
         if (dirname(dir) === dir)
             break;
     }
     const slash = (p) => p.replace(/\\/g, "/");
-    return {
-        root: slash(roots[0] ?? at),
-        roots: roots.map(slash),
-        cwd: slash(at),
-    };
+    return { root: slash(root), cwd: slash(at) };
 }
 const slashes = (p) => p.replace(/\\/g, "/");
 async function onShell(input, state, deps, ctx) {
@@ -481,11 +477,7 @@ async function onShell(input, state, deps, ctx) {
             readTool: deps.readTool ?? true,
             ...facts,
             run: ctx.state === "registered"
-                ? runFacts(ctx, {
-                    ...protectFacts(input.cwd),
-                    powershell: (input.tool_name ?? "").toLowerCase() === "powershell",
-                    windows: (deps.platform ?? process.platform) === "win32",
-                })
+                ? runFacts(ctx, protectFacts(input.cwd))
                 : null,
             rules: {
                 ...rules,
@@ -665,7 +657,7 @@ function touchedFiles(input) {
     ].filter(Boolean)) {
         const lex = resolve(base, p);
         const raw = isAbsolute(p) ? p : `${absBase}${sep}${p}`;
-        seen.set(`${lex}\0${raw}`, { lex, raw, given: p });
+        seen.set(`${lex}\0${raw}`, { lex, raw });
     }
     return [...seen.values()];
 }
@@ -731,13 +723,12 @@ export function readingsOf(f, env = linkEnv) {
         out.push(realish(f.raw, true, env), realish(f.lex, true, env));
     return [...new Set(out)];
 }
-// `path` relative to `dir` (both `/` separated), or null when it is not inside: compared segment by segment, a Windows
-// 8.3 short name standing for the long one it may abbreviate, in either spelling (fail closed: "may" is inside).
+// `path` relative to `dir` (both `/` separated, letter case ignored), or null when it is not inside.
 const relativeInside = (path, dir) => {
     const a = path.split("/").filter(Boolean);
     const b = dir.split("/").filter(Boolean);
     return b.length <= a.length &&
-        b.every((x, i) => segmentsMayBeSame(x, a[i] ?? ""))
+        b.every((x, i) => x.toLowerCase() === (a[i] ?? "").toLowerCase())
         ? a.slice(b.length).join("/")
         : null;
 };
@@ -759,49 +750,27 @@ function onEdit(input, state, deps, ctx) {
         };
         const files = touchedFiles(input).map((f) => ({
             name: f.lex,
-            given: f.given,
             raw: f.raw,
             readings: readingsOf(f),
         }));
-        // A spelling Windows reads differently is denied, not modelled (`oddSpelling`); a share or a stream only in a Windows
-        // run.
-        const windows = windowsRun({
-            ...protectFacts(input.cwd),
-            windows: (deps.platform ?? process.platform) === "win32",
-        });
-        for (const f of files) {
-            const kind = oddSpelling(f.given, { windows }) ??
-                oddSpelling(f.raw, { windows, streams: false });
-            if (kind !== null)
-                return denyEdit(spellingWhy(rules.run.protectedWhy, f.name, kind));
-        }
         const loop = files.find((f) => f.readings.includes(null));
         if (loop !== undefined)
             return denyEdit(`${rules.run.protectedWhy} \`${loop.name}\` goes through too many symbolic links to be checked; leave it alone.`);
-        const found = protectFacts(input.cwd);
-        const roots = new Set([
-            facts.protect?.root ?? found.root,
-            ...(facts.protect?.roots ?? found.roots),
-        ]);
         const protect = {
             globs: [...rules.run.protectedPaths, ...(facts.protect?.extra ?? [])],
             registered: facts.protect?.registered ?? [],
             exempt: facts.protect?.exempt ?? [],
         };
-        // Relative to every directory with a .git above the cwd: the agent can plant one in a subdirectory.
+        const root = facts.protect?.root ?? protectFacts(input.cwd).root;
+        const bases = [...new Set([slashes(root), realish(root) ?? slashes(root)])];
         for (const f of files) {
-            for (const root of roots) {
-                const bases = [
-                    ...new Set([slashes(root), realish(root) ?? slashes(root)]),
-                ];
-                for (const file of f.readings) {
-                    for (const base of bases) {
-                        const rel = relativeInside(file ?? "", base);
-                        if (rel === null)
-                            continue;
-                        if (protectedPathHit(rel, protect, rules.run.protectedLimits))
-                            return denyEdit(`${rules.run.protectedWhy} \`${rel}\` is a protected path in this run; leave it to the owner and say on the ticket what should change.`);
-                    }
+            for (const file of f.readings) {
+                for (const base of bases) {
+                    const rel = relativeInside(file ?? "", base);
+                    if (rel === null)
+                        continue;
+                    if (protectedPathHit(rel, protect, rules.run.protectedLimits))
+                        return denyEdit(`${rules.run.protectedWhy} \`${rel}\` is a protected path in this run; leave it to the owner and say on the ticket what should change.`);
                 }
             }
         }

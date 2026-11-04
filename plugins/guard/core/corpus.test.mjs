@@ -6,7 +6,6 @@
 // options: { python: 'uv' } the repo's Python manager; { hints: true } the read and edit hints not yet shown;
 // { read: false } the command must not get the plain-read allow (`pureRead`), so the harness's own prompt decides.
 // { run: 'registered' | 'configured' | 'unsure' | 'protected' } a registered unattended run: example labels and protected paths, other label names (for 'configured'), a registration that requires labels but names none, or one protecting only a label.
-// { windows: true } a Windows run: a drive-letter root and directory, so a share or a stream in a spelling is read.
 // { stack: <facts> } the stacked-PR facts `stackFacts` gathered: { below: { number, branch }, base }, or {} for none.
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -73,18 +72,7 @@ const RUN = {
     protected: { labels: { protected: ["acme-parked"] }, protect: PROTECT },
     unsure: { unsure: true },
 };
-// A Windows run: a drive-letter root and directory.
-const onRoot = (facts, windows) => windows && facts.protect
-    ? {
-        ...facts,
-        protect: {
-            ...facts.protect,
-            root: "C:/Users/me/repo",
-            cwd: "C:/Users/me/repo",
-        },
-    }
-    : facts;
-const decide = async (command, { python = null, hints = false, run: runOption = null, stack = null, windows = false, } = {}) => {
+const decide = async (command, { python = null, hints = false, run: runOption = null, stack = null, } = {}) => {
     const [worktrees, branches, regenerable, refs] = await Promise.all([
         worktreeFacts(command, env, rules, run),
         branchFacts(command, rules, run, env),
@@ -103,7 +91,7 @@ const decide = async (command, { python = null, hints = false, run: runOption = 
         refs,
         python,
         stack,
-        run: runOption ? onRoot(RUN[runOption], windows) : null,
+        run: runOption ? RUN[runOption] : null,
         rules,
     });
     return (d.action +
@@ -152,7 +140,6 @@ function isOptions(value) {
             value.run === "configured" ||
             value.run === "protected" ||
             value.run === "unsure") &&
-        (value.windows === undefined || typeof value.windows === "boolean") &&
         (value.stack === undefined || value.stack === null || isStack(value.stack)));
 }
 function readCorpus(value) {

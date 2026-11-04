@@ -324,21 +324,13 @@ export interface ProtectConfig {
   exempt?: string[];
   // Never waived: the built-in floor and GUARD_RUN_PROTECTED_PATHS.
   globs: string[];
-  // The command runs under PowerShell: a path from a root (`\Users\x`) is on the drive of its directory.
-  powershell?: boolean;
   // The registration's globs: waived by `exempt`.
   registered?: string[];
   root?: string;
-  // Every directory with a .git above the cwd, nearest first: a path is protected when it is relative to any of them.
-  roots?: string[];
-  // The run is on a Windows host: a share or a stream in a spelling is read (a drive-letter root or directory says so too).
-  windows?: boolean;
 }
 
 export interface ProtectHit {
   target?: string;
-  // Set when the target is denied for its spelling alone (`oddSpelling`).
-  spelled?: "dots" | "drive";
   unsure?: string;
 }
 
@@ -355,7 +347,6 @@ export interface RunFacts {
     // The registration's protected_paths.globs.
     registered?: string[];
     root?: string;
-    roots?: string[];
   };
   // The registration requires "labels" but names none: every label change is denied (rule run-config).
   unsure?: boolean;
@@ -467,8 +458,6 @@ export type ShellRun = (
   cwd?: string,
 ) => Promise<string | null | undefined>;
 export interface RelativeSegments {
-  // Windows folding (trailing dots and spaces) changed a segment: no exemption applies.
-  folded?: boolean;
   segs: string[];
   suffix?: boolean;
 }
@@ -477,8 +466,6 @@ export type WriteHits = (
   dir: string,
   resolve: (path: string) => string,
   above: boolean,
-  // False for text that is no path to read an odd spelling on (a writer's value).
-  path?: boolean,
 ) => boolean;
 export interface GhAction {
   label: boolean;
@@ -521,8 +508,6 @@ export interface CorpusOptions {
   run?: "registered" | "configured" | "unsure" | "protected" | null;
   stack?: StackFact | null;
   read?: boolean;
-  // A Windows run: a drive-letter root and directory, the Bash tool.
-  windows?: boolean;
 }
 export type CorpusRow = [
   command: string,
