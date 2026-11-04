@@ -3,7 +3,7 @@
 // and reads `hookSpecificOutput.permissionDecision`. A hook is a fresh process, so per-session facts
 // (loaded skills, rules already reminded) live in a JSON file under $CLAUDE_PLUGIN_DATA.
 import { execFile } from "node:child_process";
-import { appendFileSync, closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, realpathSync, rmSync, statSync, } from "node:fs";
+import { appendFileSync, closeSync, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, readlinkSync, realpathSync, rmSync, statSync, } from "node:fs";
 import { statfs } from "node:fs/promises";
 import { cpus, homedir, loadavg, platform } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
@@ -329,6 +329,17 @@ const preToolUse = (decision, reason, harness) => {
         }),
     };
 };
+// The answer when guard itself crashed: a PreToolUse in a run is denied (a crash must not let a tool call through), in
+// every mode; the manifest variable counts as set when defined, even blank, as the loader reads it. Anything else is
+// allowed.
+export function crashResult(input, env, harness) {
+    return input.hook_event_name === "PreToolUse" &&
+        (legacySet(env) ||
+            (env.GUARD_RUN_ID ?? "").trim() !== "" ||
+            env.GUARD_RUN_MANIFEST !== undefined)
+        ? preToolUse("deny", "The command guard failed in a registered run, so this tool call was not run.", harness)
+        : {};
+}
 const note = (context, notice) => ({
     stdout: JSON.stringify({
         hookSpecificOutput: {
@@ -382,20 +393,24 @@ export function existingDirs(command, env, cwd) {
     }
     return dirs;
 }
-// Where the session is: the repo root (the nearest directory with a .git) and the cwd, `/` separators.
+// Where the session is: the repo root (the nearest directory with a .git), every directory with a .git above the cwd
+// (`roots`, nearest first: the agent can plant a .git in a subdirectory, so a path is protected relative to any of
+// them) and the cwd, `/` separators.
 export function protectFacts(cwd) {
     const at = resolve(cwd ?? ".");
-    let root = at;
+    const roots = [];
     for (let dir = at;; dir = dirname(dir)) {
-        if (existsSync(join(dir, ".git"))) {
-            root = dir;
-            break;
-        }
+        if (existsSync(join(dir, ".git")))
+            roots.push(dir);
         if (dirname(dir) === dir)
             break;
     }
     const slash = (p) => p.replace(/\\/g, "/");
-    return { root: slash(root), cwd: slash(at) };
+    return {
+        root: slash(roots[0] ?? at),
+        roots: roots.map(slash),
+        cwd: slash(at),
+    };
 }
 const slashes = (p) => p.replace(/\\/g, "/");
 // Guard's own data directories in this run (absolute, `/` separators): the one the hook keeps its files in and the one
@@ -670,18 +685,38 @@ function touchedFiles(input) {
             .map((p) => resolve(base, p))),
     ];
 }
-// `path` with the real path of its nearest existing ancestor, as `/` segments.
+const MAX_LINK_HOPS = 40;
+// `path` with the real path of its nearest existing ancestor, as `/` segments. A dangling symlink, in the last component
+// or any other, is followed (a write tool creates its target); null past MAX_LINK_HOPS links (a loop): the caller
+// treats the path as protected.
 function realish(path) {
     const rest = [];
-    for (let p = resolve(path);; p = dirname(p)) {
+    let hops = 0;
+    for (let p = resolve(path);;) {
         try {
             return slashes(join(realpathSync(p), ...rest));
         }
         catch {
+            let target;
+            try {
+                if (lstatSync(p).isSymbolicLink()) {
+                    target = resolve(dirname(p), readlinkSync(p));
+                }
+            }
+            catch {
+                // missing: look at the parent
+            }
+            if (target !== undefined) {
+                if (++hops > MAX_LINK_HOPS)
+                    return null;
+                p = target;
+                continue;
+            }
             rest.unshift(basename(p));
         }
         if (dirname(p) === p)
             return slashes(resolve(path));
+        p = dirname(p);
     }
 }
 const insideDir = (path, dir) => {
@@ -713,29 +748,40 @@ function onEdit(input, state, deps, ctx) {
         };
         const dirs = guardDataDirs(deps);
         const files = touchedFiles(input);
-        const hit = files.find((f) => [slashes(f), realish(f)].some((p) => dirs.some((d) => insideDir(p, d))));
+        const real = new Map(files.map((f) => [f, realish(f)]));
+        const loop = files.find((f) => real.get(f) === null);
+        if (loop !== undefined)
+            return denyEdit(`${rules.run.protectedWhy} \`${loop}\` goes through too many symbolic links to be checked; leave it alone.`);
+        const hit = files.find((f) => [slashes(f), real.get(f) ?? ""].some((p) => dirs.some((d) => insideDir(p, d))));
         if (hit !== undefined)
             return denyEdit(`${rules.run.protectedWhy} \`${hit}\` is in guard's own data directory in this run; leave it alone.`);
-        const root = facts.protect?.root ?? protectFacts(input.cwd).root;
+        const found = protectFacts(input.cwd);
+        const roots = new Set([
+            facts.protect?.root ?? found.root,
+            ...(facts.protect?.roots ?? found.roots),
+        ]);
         const protect = {
             globs: [...rules.run.protectedPaths, ...(facts.protect?.extra ?? [])],
             registered: facts.protect?.registered ?? [],
             exempt: facts.protect?.exempt ?? [],
         };
+        // Relative to every directory with a .git above the cwd: the agent can plant one in a subdirectory.
         for (const f of files) {
-            for (const [file, base] of [
-                [slashes(f), slashes(root)],
-                [realish(f), realish(root)],
-            ]) {
-                if (!insideDir(file, base))
-                    continue;
-                const rel = file
-                    .split("/")
-                    .filter(Boolean)
-                    .slice(base.split("/").filter(Boolean).length)
-                    .join("/");
-                if (protectedPathHit(rel, protect, rules.run.protectedLimits))
-                    return denyEdit(`${rules.run.protectedWhy} \`${rel}\` is a protected path in this run; leave it to the owner and say on the ticket what should change.`);
+            for (const root of roots) {
+                for (const [file, base] of [
+                    [slashes(f), slashes(root)],
+                    [real.get(f) ?? "", realish(root) ?? slashes(root)],
+                ]) {
+                    if (!insideDir(file, base))
+                        continue;
+                    const rel = file
+                        .split("/")
+                        .filter(Boolean)
+                        .slice(base.split("/").filter(Boolean).length)
+                        .join("/");
+                    if (protectedPathHit(rel, protect, rules.run.protectedLimits))
+                        return denyEdit(`${rules.run.protectedWhy} \`${rel}\` is a protected path in this run; leave it to the owner and say on the ticket what should change.`);
+                }
             }
         }
     }
@@ -1119,14 +1165,7 @@ async function main() {
             ? (command, rule) => codexAsks(process.env, input.transcript_path)?.(command, rule) ?? false
             : undefined,
         emit: (event, attrs, cwd) => new Promise((r) => setImmediate(r)).then(() => emit(process.env, event, recordAttrs(attrs, cwd, harness))),
-    }).catch(() => 
-    // A crash must not let a tool call through in a run.
-    input.hook_event_name === "PreToolUse" &&
-        (legacySet(process.env) ||
-            (process.env.GUARD_RUN_ID ?? "").trim() !== "" ||
-            (process.env.GUARD_RUN_MANIFEST ?? "").trim() !== "")
-        ? preToolUse("deny", "The command guard failed in a registered run, so this tool call was not run.", harness)
-        : {});
+    }).catch(() => crashResult(input, process.env, harness));
     if (harness === "antigravity") {
         let agOut = { decision: "allow" };
         if (out.stdout) {

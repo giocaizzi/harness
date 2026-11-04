@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, writeFileSync, } from "node:fs";
+import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, realpathSync, symlinkSync, writeFileSync, } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir, userInfo } from "node:os";
 import { join, resolve } from "node:path";
@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 import { codexRules } from "../core/engine.mjs";
 import { rules } from "../core/rules.mjs";
 import { fallbackDataDir } from "./data.mjs";
-import { CODEX_RULES, codexAsks, codexReviewer, handle, inWorkTree, protectFacts, pythonManager, sessionStore, tail, } from "./guard.mjs";
+import { CODEX_RULES, codexAsks, codexReviewer, crashResult, handle, inWorkTree, protectFacts, pythonManager, sessionStore, tail, } from "./guard.mjs";
 const calm = async () => {
     await Promise.resolve();
     return { load1: 1, freeGb: 100 };
@@ -1284,7 +1284,7 @@ void test("a registered run: a shell write to a protected path is denied; GUARD_
     mkdirSync(join(testRepo, "src"));
     const sub = join(testRepo, "src");
     const slash = (p) => p.replace(/\\/g, "/");
-    assert.deepEqual(protectFacts(sub), { root: slash(testRepo), cwd: slash(sub) }, "root found above cwd");
+    assert.deepEqual(protectFacts(sub), { root: slash(testRepo), roots: [slash(testRepo)], cwd: slash(sub) }, "root found above cwd");
     const write = (command, cwd = testRepo) => ({
         ...pre("Bash", command),
         cwd,
@@ -1334,6 +1334,123 @@ void test("a registered run: a shell write to a protected path is denied; GUARD_
     assert.equal(decision(await inRun(".factory/runs/*/result.json")(write("echo x > .factory/runs/12/result.json")))?.permissionDecision, "deny", "a listed glob under runs/ protects it");
     assert.notEqual(decision(await inRun(".factory/runs/*/result.json")(write("echo x > .factory/runs/12/checklist.md")))?.permissionDecision, "deny", "only what the glob names");
     assert.notEqual(decision(await setup({ env: {} })(write("echo x > .github/workflows/ci.yml")))?.permissionDecision, "deny", "no run: allowed");
+});
+// An edit tool's call, from `cwd`.
+const edit = (file_path, cwd) => ({
+    hook_event_name: "PreToolUse",
+    tool_name: "Write",
+    tool_input: { file_path },
+    cwd,
+});
+const denied = (out) => decision(out)?.permissionDecision === "deny";
+void test("a registered run: a .git planted in a subdirectory moves no repo root (edit tool and shell)", async () => {
+    const repo = realpathSync(mkdtempSync(join(tmpdir(), "guard-roots-")));
+    mkdirSync(join(repo, ".git"));
+    mkdirSync(join(repo, "x", ".git"), { recursive: true });
+    const x = join(repo, "x");
+    const run = registered();
+    for (const cwd of [repo, x]) {
+        for (const file of [
+            join(repo, ".github", "ci.yml"),
+            join(repo, ".factory", "config.yaml"),
+        ]) {
+            assert.ok(denied(await run(edit(file, cwd))), `${file} from ${cwd}`);
+        }
+    }
+    assert.ok(denied(await run(edit("../.github/ci.yml", x))), "a relative edit target");
+    assert.ok(denied(await run(edit(".github/ci.yml", x))), "relative to the planted root too");
+    assert.ok(!denied(await run(edit(join(x, "ok.txt"), x))), "the rest is free");
+    for (const command of [
+        "echo a > ../.github/ci.yml",
+        `echo a > ${repo}/.github/ci.yml`,
+        "echo a > .github/ci.yml",
+        "rm -rf ../.github",
+    ]) {
+        assert.ok(denied(await run({ ...pre("Bash", command), cwd: x })), command);
+    }
+    assert.ok(!denied(await run({ ...pre("Bash", "echo a > ok.txt"), cwd: x })), "a shell write elsewhere");
+});
+void test("a registered run: an edit through a dangling symlink is checked at its target", async () => {
+    const repo = realpathSync(mkdtempSync(join(tmpdir(), "guard-links-")));
+    mkdirSync(join(repo, ".git"));
+    symlinkSync(".github/workflows/new.yml", join(repo, "notes.md"));
+    symlinkSync("b", join(repo, "a"));
+    symlinkSync("a", join(repo, "b"));
+    symlinkSync(".github/workflows", join(repo, "wf"));
+    const run = registered();
+    assert.ok(denied(await run(edit(join(repo, "notes.md"), repo))), "the final component");
+    assert.ok(denied(await run(edit(join(repo, "wf", "new.yml"), repo))), "a middle component");
+    assert.ok(denied(await run(edit(join(repo, "a"), repo))), "a link loop is protected");
+    assert.ok(!denied(await run(edit(join(repo, "plain.md"), repo))));
+});
+void test("a registered run: Windows spellings of a protected path are protected (edit tool and shell)", async () => {
+    const repo = realpathSync(mkdtempSync(join(tmpdir(), "guard-win-")));
+    mkdirSync(join(repo, ".git"));
+    const run = registered({
+        protected_paths: { globs: [".gitx/**"] },
+    });
+    for (const name of [
+        ".github./x",
+        ".github /x",
+        ".github../workflows/x.yml",
+        "GITHUB~1/workflows/x.yml",
+        "GITHU~1/x",
+        "github~2/x",
+        "GIT~1/x",
+        ".gitx./y",
+        ".GITX /y",
+    ]) {
+        assert.ok(denied(await run(edit(join(repo, name), repo))), `edit ${name}`);
+        assert.ok(denied(await run(edit(name, repo))), `relative edit ${name}`);
+        assert.ok(denied(await run({ ...pre("Bash", `echo a > '${name}'`), cwd: repo })), `shell ${name}`);
+        assert.ok(denied(await run({
+            ...pre("Bash", `echo a > '${join(repo, name)}'`),
+            cwd: repo,
+        })), `absolute shell ${name}`);
+    }
+    for (const name of ["src/x", "docs./x", "ZZZZZZ~1/x", "OTHER~1/x"]) {
+        assert.ok(!denied(await run(edit(name, repo))), `edit ${name}`);
+    }
+});
+void test("crashResult: a crash denies a tool call in a run, whatever its mode, and allows the rest", () => {
+    const tool = { hook_event_name: "PreToolUse" };
+    const stop = { hook_event_name: "Stop" };
+    for (const env of [
+        { GUARD_RUN_ID: "r1" },
+        { GUARD_RUN_MANIFEST: "/m.json" },
+        { GUARD_RUN_MANIFEST: "" },
+        { GUARD_RUN_MANIFEST: "  " },
+        { FACTORY_RUN_ID: "r1" },
+        { GUARD_RUN_ID: "r1", GUARD_RUN_MODE: "attended" },
+    ]) {
+        const out = crashResult(tool, env, "claude");
+        assert.match(out.stdout ?? "", /"permissionDecision":"deny".*The command guard failed in a registered run/, JSON.stringify(env));
+        assert.deepEqual(crashResult(stop, env), {}, "only a tool call is denied");
+    }
+    for (const env of [{}, { GUARD_RUN_ID: " " }, { FACTORY_RUN_ID: "" }]) {
+        assert.deepEqual(crashResult(tool, env), {}, JSON.stringify(env));
+    }
+});
+void test("a registered run: a run variable changed mid-session denies every tool call", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "guard-pin-"));
+    const manifest = writeManifest(DEFAULT_REG);
+    const call = (extra) => setup({
+        dataDir,
+        runVet: RO,
+        env: {
+            GUARD_RUN_ID: "r1",
+            GUARD_RUN_TICKET: "acme/app#7",
+            GUARD_RUN_MANIFEST: manifest,
+            ...extra,
+        },
+    })({ ...pre("Bash", "echo a > .github/ci.yml"), cwd: "/" });
+    assert.ok(denied(await call({})), "the first call pins the run");
+    const attended = decision(await call({ GUARD_RUN_MODE: "attended" }));
+    assert.equal(attended?.permissionDecision, "deny");
+    assert.match(attended.permissionDecisionReason ?? "", /run variables changed during the session \(GUARD_RUN_MODE\)/);
+    assert.doesNotMatch(attended.permissionDecisionReason ?? "", /attended/);
+    assert.match(decision(await call({ GUARD_RUN_TICKET: "acme/app#8" }))
+        ?.permissionDecisionReason ?? "", /changed during the session \(GUARD_RUN_TICKET\)/);
 });
 void test("a registered run: the protected-path check denies within the hook budget on worst cases (#213 review)", async () => {
     const testRepo = mkdtempSync(join(tmpdir(), "guard-protect-"));

@@ -6,7 +6,7 @@ import { cmdClass } from "../core/engine.mjs";
 import { emit } from "../core/otel.mjs";
 import { keepAwake } from "./awake.mjs";
 import { fallbackDataDir } from "./data.mjs";
-import { handle, hostFacts, pythonManager, run } from "./guard.mjs";
+import { crashResult, handle, hostFacts, pythonManager, run, } from "./guard.mjs";
 import { lintFile } from "./lint.mjs";
 import { createRegistrationCache } from "./registration.mjs";
 import { gateFailClosed, stopCheck } from "./stop.mjs";
@@ -64,7 +64,9 @@ export function createGuard({ harness, noAsk = false, dataDir = DATA_DIR, deps =
             };
         }
         catch {
-            return {};
+            // A crash lets the call through, except a tool call in a run, which is denied (as in the command hook).
+            const o = JSON.parse(crashResult(input, d.env, harness).stdout ?? "{}");
+            return { ...o.hookSpecificOutput };
         }
     };
     return {
