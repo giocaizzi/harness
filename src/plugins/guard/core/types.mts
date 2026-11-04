@@ -223,18 +223,14 @@ export interface ProtectedLimits {
   targets: number;
 }
 
-export interface FactoryRules {
-  approval: string;
-  exemptPaths: string[];
+export interface RunRules {
   ghCommands: string[];
   ghUnseenWhy: string;
+  labelWhy: string;
   protectedLimits: ProtectedLimits;
   protectedPaths: string[];
   protectedWhy: string;
-  takeover: string;
-  takeoverWhy: string;
   unsureWhy: string;
-  why: string;
 }
 
 export interface TitlesRules {
@@ -260,12 +256,12 @@ export interface UsageRules {
 
 export interface GuardRules {
   deny?: DenyRule[];
-  factory: FactoryRules;
   files?: FileRule[];
   heavy: HeavyRule[];
   host: HostRules;
   risky: RiskyRule[];
   routing: RoutingRules;
+  run: RunRules;
   skills: SkillRule[];
   stack: StackRule;
   titles: TitlesRules;
@@ -325,30 +321,18 @@ export interface StackFact {
 export interface ProtectConfig {
   cwd?: string;
   data?: string[];
-  defaults?: string[];
+  // Waives `registered` globs only.
   exempt?: string[];
+  // Never waived: the built-in floor and GUARD_RUN_PROTECTED_PATHS.
   globs: string[];
+  // The registration's globs: waived by `exempt`.
+  registered?: string[];
   root?: string;
 }
 
 export interface ProtectHit {
   target?: string;
   unsure?: string;
-}
-
-export interface FactoryFacts {
-  approval: string;
-  approvals?: string[];
-  extra?: string[];
-  protect?: {
-    cwd?: string;
-    data?: string[];
-    extra?: string[];
-    root?: string;
-  };
-  takeover?: string;
-  takeovers?: string[];
-  unsure?: boolean;
 }
 
 // A registered unattended run's facts for the shell and edit rules (run contract v2): the runner's labels, its
@@ -378,7 +362,6 @@ export interface CommandEvaluationInput {
   branches?: Record<string, SafeFact | undefined>;
   command: string;
   env?: GuardEnv;
-  factory?: FactoryFacts | null;
   host?: HostFacts;
   loadedSkills?: Iterable<string>;
   python?: string | null;
@@ -386,6 +369,7 @@ export interface CommandEvaluationInput {
   refs?: Record<string, SafeFact | undefined>;
   regenerable?: Record<string, boolean | undefined>;
   rules: GuardRules;
+  run?: RunFacts | null;
   stack?: StackFact | null;
   state: SessionState;
   tags?: Record<string, TagFact | undefined>;
@@ -523,7 +507,7 @@ export interface StackFixtureOptions {
 export interface CorpusOptions {
   python?: string | null;
   hints?: boolean;
-  factory?: "readable" | "configured" | "unsure" | null;
+  run?: "registered" | "configured" | "unsure" | "protected" | null;
   stack?: StackFact | null;
   read?: boolean;
 }

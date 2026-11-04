@@ -1674,22 +1674,22 @@ export function shellEdit(command: string, env: GuardEnv = {}) {
   return false;
 }
 
-// A shell write, in a factory run, to a protected path (#213): `protect.globs` (`rules.factory.protectedPaths`, always,
-// plus FACTORY_PROTECTED_PATHS), each over paths relative to the repo root (`protect.root`; the cwd when unknown). Writes are output redirections of any command, `tee`, `sed -i`/`perl -pi`, Set-Content, Add-Content,
+// A shell write, in a registered run, to a protected path (#213): `protect.globs` (the floor `rules.run.protectedPaths`
+// plus GUARD_RUN_PROTECTED_PATHS, never waived) and `protect.registered` (the registration's globs), each over paths relative to the repo root (`protect.root`; the cwd when unknown). Writes are output redirections of any command, `tee`, `sed -i`/`perl -pi`, Set-Content, Add-Content,
 // Out-File and Tee-Object, the operands of rm, Remove-Item and their aliases, the sources and destination of mv and
 // Move-Item, and the destination of cp and Copy-Item (a destination also as `<dest>/<source name>`, a directory it may
 // be). Removing or moving away a directory above a protected path counts (`rm -rf .github`, `rm -rf .`), along a
 // glob's literal leading segments only (`**/*.tf` puts no directory above it). Letter case is ignored, as macOS and
 // Windows do. A target the shell globs is matched as a glob (`.g*` may name `.github`; a leading `*` or `?` never names
 // a dot file), a brace list is expanded (one group a level, 64 words at most), and one whose start is a variable or a
-// `cd` not followed is matched by the rest of its path anywhere (`$ROOT/.github/x`). A default glob is waived for
-// `protect.exempt` (`.factory/runs/*/*/**`: files inside a run directory) when the normalised path is spelled out;
-// a glob in FACTORY_PROTECTED_PATHS (`protect.globs`) is never waived. Guard's own data directories (`protect.data`,
+// `cd` not followed is matched by the rest of its path anywhere (`$ROOT/.github/x`). A registered glob is waived for
+// `protect.exempt` (the registration's exemptions, e.g. files inside a run directory) when the normalised path is spelled out;
+// a glob in `protect.globs` (the floor, GUARD_RUN_PROTECTED_PATHS) is never waived. Guard's own data directories (`protect.data`,
 // absolute: the result gate's block counter and the make-check state live there) are protected the same way and before
 // any glob: a write inside one, or a remove or move of one or of a directory above it, hits whatever the exemptions say;
 // a target whose start is unknown (a variable, `~`, a `cd` not followed) hits when it ends in the data directory's name
 // followed by anything (`~/.claude/plugins/data/<name>/result-gate/x`). A command that may write fails
-// closed past the limits (`rules.factory.protectedLimits`: targets, characters, milliseconds) or when the check throws,
+// closed past the limits (`rules.run.protectedLimits`: targets, characters, milliseconds) or when the check throws,
 // since a hook that times out or emits nothing lets the command through; globs past the limits are ignored. Returns { target } (the first protected target as written), { unsure } (a limit it hit) or null.
 const PROTECT_RM = /^(?:rm|rmdir|unlink|remove-item|ri|del|erase|rd)$/;
 const PROTECT_MV = /^(?:mv|move-item|mi|move)$/;
@@ -1878,13 +1878,15 @@ export function protectedWrite(
   env: GuardEnv = {},
   limits: ProtectedLimits = { globs: 256, targets: 512, chars: 1024, ms: 2000 },
 ) {
-  // A setting past the limits is cut, not failed: globs over `chars` are dropped, then all past `globs` (defaults first).
-  // `protect.defaults` come first and may be exempted (`protect.exempt`); `protect.globs` are explicit and never are.
+  // A setting past the limits is cut, not failed: globs over `chars` are dropped, then all past `globs` (the floor first,
+  // so it is never cut). `protect.registered` (the registration's globs) come after and may be exempted
+  // (`protect.exempt`); `protect.globs` (the floor and GUARD_RUN_PROTECTED_PATHS) never are.
   const segsOf = (g: string) =>
     normalizeSegments(posixPath(g).replace(/\/$/, "/**"));
-  const defaults = protect.defaults ?? [];
-  const tagged = [...defaults, ...protect.globs]
-    .map((g, i) => ({ g, base: i < defaults.length }))
+  const tagged = [
+    ...protect.globs.map((g) => ({ g, base: false })),
+    ...(protect.registered ?? []).map((g) => ({ g, base: true })),
+  ]
     .filter((x) => x.g.length <= limits.chars)
     .slice(0, limits.globs);
   const globs = tagged.map((x) => ({ segs: segsOf(x.g), base: x.base }));
@@ -1975,8 +1977,8 @@ export function protectedWrite(
       patternHits(g.segs, at.segs, above, at.suffix, tick),
     );
     if (hit.some((g) => !g.base)) return true;
-    // A default glob is waived for the run's own files: the whole normalised path is spelled out (no wildcard, variable
-    // or brace, which could stand for `..`, nor a segment ending in a dot or space, which Windows strips: `12\.. ` is `12\..`) and starts at the root, so `.factory/runs/../config.yaml` is no exemption.
+    // A registered glob is waived for the run's own files: the whole normalised path is spelled out (no wildcard, variable
+    // or brace, which could stand for `..`, nor a segment ending in a dot or space, which Windows strips: `12\.. ` is `12\..`) and starts at the root, so `runs/../config.yaml` is no exemption.
     return (
       hit.length > 0 &&
       !(
@@ -2003,6 +2005,47 @@ export function protectedWrite(
           ? `more than ${String(limits.targets)} write targets, one over ${String(limits.chars)} characters, a brace list of more than 64 words, or over ${String(limits.ms)} ms to check`
           : "the check failed",
     };
+  }
+}
+// Whether an edit tool's target is a protected path: `path` is repo-relative, POSIX and already resolved (no `..`).
+// True when a `globs` glob matches it, or a `registered` glob matches it and no `exempt` glob does; letter case is
+// ignored, as in protectedWrite. Never throws: a failure counts as a hit.
+export function protectedPathHit(
+  path: string,
+  protect: ProtectConfig,
+  limits: ProtectedLimits = { globs: 256, targets: 512, chars: 1024, ms: 2000 },
+): boolean {
+  try {
+    const segsOf = (g: string) =>
+      normalizeSegments(posixPath(g).replace(/\/$/, "/**"));
+    const tagged = [
+      ...protect.globs.map((g) => ({ g, base: false })),
+      ...(protect.registered ?? []).map((g) => ({ g, base: true })),
+    ]
+      .filter((x) => x.g.length <= limits.chars)
+      .slice(0, limits.globs);
+    const exempt = (protect.exempt ?? [])
+      .filter((g) => g.length <= limits.chars)
+      .map(segsOf);
+    const until = Date.now() + limits.ms;
+    let work = 0;
+    const tick = () => {
+      if ((++work & 255) === 0 && Date.now() > until) throw LIMITED;
+    };
+    const segs = normalizeSegments(posixPath(path));
+    const hit = tagged.filter((x) =>
+      patternHits(segsOf(x.g), segs, false, false, tick),
+    );
+    if (hit.some((x) => !x.base)) return true;
+    return (
+      hit.length > 0 &&
+      !(
+        segs.every((x) => !/[*?[\]{}$`%~]|[. ]$/.test(x)) &&
+        exempt.some((g) => patternHits(g, segs, false, false, tick))
+      )
+    );
+  } catch {
+    return true;
   }
 }
 // PowerShell and cmd keep a backslash (`.github\ci.yml`) that a POSIX shell reads as an escape: both spellings count. A
@@ -2532,7 +2575,7 @@ export function ghUnseen(command: string, rules: GuardRules) {
   }
   const [cmd, sub] = positional;
   if (cmd === undefined) return false;
-  if (!rules.factory.ghCommands.includes(cmd)) return true;
+  if (!rules.run.ghCommands.includes(cmd)) return true;
   return (
     (cmd === "alias" && ["set", "import"].includes(defined(sub))) ||
     (["extension", "extensions", "ext"].includes(cmd) &&
@@ -2540,7 +2583,7 @@ export function ghUnseen(command: string, rules: GuardRules) {
   );
 }
 
-// Fail closed while a factory run is active. A command that names the label, approval or takeover (in any quoting or case, as
+// Fail closed while a registered run is active. A command that names the label, approval or takeover (in any quoting or case, as
 // GitHub compares), is denied unless it is one plain `gh` read; adding and removing alike are the owner's. A `gh` command with a
 // body the guard cannot read (`--input`, a `key=@file` field) is denied unless it is one plain `gh api` call writing to
 // a `/comments` endpoint or a path outside `/labels` and `/issues`; so is any other line running `gh api` (opaqueGh) unless
@@ -2778,87 +2821,74 @@ export function evaluateCommand({
   stack = null,
   python = null,
   readTool = false,
-  factory = null,
+  run = null,
   rules,
 }: CommandEvaluationInput): CommandDecision {
-  // While a factory run is active the agent never touches the approval label: with an owner token it would count as the owner's.
-  const approvalHit = factory
-    ? [factory.approval, ...(factory.approvals ?? [])].find((name) =>
-        touchesApprovalLabel(command, name),
-      )
-    : undefined;
-  if (factory && approvalHit !== undefined)
+  // In a registered unattended run the agent never touches the approval label: with an owner token it would count as the owner's.
+  const labelDeny = (name: string): CommandDecision => ({
+    action: "deny",
+    rule: "run-label",
+    reason: `${rules.run.labelWhy} The \`${name}\` label is registered for this run; it is the owner's to apply or remove, so ask on the ticket instead.`,
+  });
+  const approvalHit = run?.labels?.approval;
+  if (approvalHit && touchesApprovalLabel(command, approvalHit))
+    return labelDeny(approvalHit);
+  if (run && ghHidden(command))
     return {
       action: "deny",
-      rule: "factory-approval",
-      reason: `${rules.factory.why} The \`${approvalHit}\` label is the owner's to apply or remove; ask on the ticket instead.`,
+      rule: "run-label",
+      reason: `${rules.run.labelWhy} This command may run \`gh\` under a spelling the guard cannot read (another letter case, an escape, a glob or brace list); spell \`gh\` literally.`,
     };
-  if (factory && ghHidden(command))
+  if (run && ghUnseen(command, rules))
     return {
       action: "deny",
-      rule: "factory-approval",
-      reason: `${rules.factory.why} This command may run \`gh\` under a spelling the guard cannot read (another letter case, an escape, a glob or brace list); spell \`gh\` literally.`,
+      rule: "run-label",
+      reason: `${rules.run.ghUnseenWhy} Use gh's own subcommand (\`gh issue|pr|api …\`) instead of an alias or extension.`,
     };
-  if (factory && ghUnseen(command, rules))
-    return {
-      action: "deny",
-      rule: "factory-approval",
-      reason: `${rules.factory.ghUnseenWhy} Use gh's own subcommand (\`gh issue|pr|api …\`) instead of an alias or extension.`,
-    };
-  // Nor the takeover label: an approver sets it to hand the ticket to an attended run, which removes it once it claimed.
-  const takeoverHit = factory
-    ? [factory.takeover, ...(factory.takeovers ?? [])].find(
-        (name) => name && touchesApprovalLabel(command, name),
-      )
-    : undefined;
-  if (factory && takeoverHit)
-    return {
-      action: "deny",
-      rule: "factory-takeover",
-      reason: `${rules.factory.takeoverWhy} The \`${takeoverHit}\` label is the owner's to apply; ask on the ticket instead.`,
-    };
-  // Nor a protected path (`.github/**`, `.factory/**`, FACTORY_PROTECTED_PATHS) through a shell write: the runtime counts the deny.
+  // Nor the protected labels, nor the takeover label: an approver sets it to hand the ticket to an attended run.
+  const otherHit = [
+    ...(run?.labels?.protected ?? []),
+    ...(run?.labels?.takeover === undefined ? [] : [run.labels.takeover]),
+  ].find((name) => touchesApprovalLabel(command, name));
+  if (otherHit !== undefined) return labelDeny(otherHit);
+  // Nor a protected path (the floor, the registration's globs, GUARD_RUN_PROTECTED_PATHS) through a shell write.
   const shielded =
-    factory &&
+    run &&
     protectedWrite(
       command,
       {
-        ...factory.protect,
-        defaults: rules.factory.protectedPaths,
-        exempt: rules.factory.exemptPaths,
-        globs: factory.protect?.extra ?? [],
+        ...run.protect,
+        globs: [...rules.run.protectedPaths, ...(run.protect?.extra ?? [])],
+        registered: run.protect?.registered ?? [],
+        exempt: run.protect?.exempt ?? [],
       },
       env,
-      rules.factory.protectedLimits,
+      rules.run.protectedLimits,
     );
   if (shielded?.target)
     return {
       action: "deny",
       rule: "protected-path",
-      reason: `${rules.factory.protectedWhy} \`${shielded.target}\` is a protected path in this run; leave it to the owner and say on the ticket what should change.`,
+      reason: `${rules.run.protectedWhy} \`${shielded.target}\` is a protected path in this run; leave it to the owner and say on the ticket what should change.`,
     };
   if (shielded?.unsure)
     return {
       action: "deny",
       rule: "protected-path",
-      reason: `${rules.factory.protectedWhy} The guard could not check this command's writes within its limits (${shielded.unsure}), so it denies them; split the command into smaller ones.`,
+      reason: `${rules.run.protectedWhy} The guard could not check this command's writes within its limits (${shielded.unsure}), so it denies them; split the command into smaller ones.`,
     };
-  // A config the guard could not read fails closed: every label change is denied, and so is any name it could still find.
-  if (
-    factory?.unsure &&
-    (changesLabels(command) ||
-      (factory.extra ?? []).some((name) => touchesApprovalLabel(command, name)))
-  )
+  // A registration that requires labels but names none fails closed: every label change is denied.
+  if (run?.unsure && changesLabels(command))
     return {
       action: "deny",
-      rule: "factory-config",
-      reason: `${rules.factory.unsureWhy} Every label change is denied in this run until the config is fixed; ask on the ticket instead.`,
+      rule: "run-config",
+      reason: `${rules.run.unsureWhy} Every label change is denied in this run until the registration names its labels; ask on the ticket instead.`,
     };
-  if (factory?.unsure && ghBuildsLabelFlag(command))
+  if (run?.unsure && ghBuildsLabelFlag(command))
     return {
       action: "deny",
-      rule: "factory-config",
-      reason: `${rules.factory.unsureWhy} This \`gh issue|pr create|edit\` has a subcommand or flag the shell builds at run time, which could add a label. Spell the subcommand and flags literally, quote every value, and pass a body as a value or with a literal \`--body-file\` path.`,
+      rule: "run-config",
+      reason: `${rules.run.unsureWhy} This \`gh issue|pr create|edit\` has a subcommand or flag the shell builds at run time, which could add a label. Spell the subcommand and flags literally, quote every value, and pass a body as a value or with a literal \`--body-file\` path.`,
     };
   // Hard denies come first and fire every time, like the title guard. A `when` rule denies only in a repo
   // that adopted that manager; elsewhere it lets the command through with a once-per-session note.

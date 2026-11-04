@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { test } from "node:test";
-import { badTitle, branchFacts, branchTargets, cmdClass, codexRules, evaluateCommand, evaluateEdit, evaluateRouting, evaluateSpawn, ghHidden, ghUnseen, nativeAsk, opencodeAsks, protectedWrite, pureRead, refFacts, regenerableName, regenFacts, removalTargets, shellEdit, tagFacts, throttleMode, touchesApprovalLabel, unattendedSet, usageLevel, worktreeFacts, } from "./engine.mjs";
+import { badTitle, branchFacts, branchTargets, cmdClass, codexRules, evaluateCommand, evaluateEdit, evaluateRouting, evaluateSpawn, ghHidden, ghUnseen, nativeAsk, opencodeAsks, protectedPathHit, protectedWrite, pureRead, refFacts, regenerableName, regenFacts, removalTargets, shellEdit, tagFacts, throttleMode, touchesApprovalLabel, unattendedSet, usageLevel, worktreeFacts, } from "./engine.mjs";
 import { rules } from "./rules.mjs";
 function defined(value) {
     if (value === undefined || value === null)
@@ -1005,7 +1005,6 @@ void test("a spawn that bypasses the typed agents gets one routing hint per case
     assert.equal(rule("dev-tools:driver", "opus"), "routing-override");
     assert.equal(rule("scout", "haiku"), "routing-override");
     assert.equal(rule("api:api-reviewer", "opus"), "routing-override");
-    assert.equal(rule("factory:verifier", "haiku"), "routing-override");
     assert.equal(rule("dev-tools:driver", undefined, fresh(), "high"), "routing-override");
     assert.equal(rule("dev-tools:reviewer", undefined, fresh(), "max"), "routing-override");
     assert.match(defined(evaluateRouting({
@@ -1024,20 +1023,18 @@ void test("a spawn that bypasses the typed agents gets one routing hint per case
     // Routed as the skill says: a typed agent without overrides, the two allowed ones, an untyped unit on Sonnet.
     assert.equal(rule("dev-tools:driver"), undefined);
     assert.equal(rule("general-purpose", "sonnet"), undefined);
-    assert.equal(rule("factory:verifier", "sonnet"), undefined);
-    assert.equal(rule("factory:verifier", undefined, fresh(), "high"), undefined);
-    // The ticket-run routing table: docs, config or XS on Sonnet at medium, security paths on Opus at high.
-    assert.equal(rule("factory:verifier", "sonnet", fresh(), "medium"), undefined);
-    assert.equal(rule("factory:verifier", "opus", fresh(), "high"), undefined);
-    assert.equal(rule("factory:verifier", "haiku", fresh(), "medium"), "routing-override");
+    // A plugin no longer in the routing table has no routing: factory:verifier is no typed agent here.
+    assert.equal(rule("factory:verifier", "haiku"), undefined);
+    assert.equal(evaluateRouting({
+        type: "factory:verifier",
+        model: "haiku",
+        state: fresh(),
+        rules,
+    }).rule, undefined);
     // Full model names: Copilot CLI, VS Code, a Claude id.
-    for (const m of [
-        "claude-sonnet-4.6",
-        "Claude Sonnet 4.6 (copilot)",
-        "claude-opus-4.7",
-    ])
-        assert.equal(rule("factory:verifier", m, fresh(), "high"), undefined, m);
-    assert.equal(rule("factory:verifier", "Claude Haiku 4.5 (copilot)"), "routing-override");
+    for (const m of ["claude-opus-4.7", "Claude Opus 4.7 (copilot)"])
+        assert.equal(rule("dev-tools:reviewer", m, fresh(), "high"), undefined, m);
+    assert.equal(rule("dev-tools:reviewer", "Claude Haiku 4.5 (copilot)"), "routing-override");
     assert.equal(rule("dev-tools:reviewer", undefined, fresh(), "high"), undefined);
     // The reviewer: routine tier as defined; a sensitive review raises it to Opus, only together with effort high.
     assert.equal(rule("dev-tools:reviewer", "opus", fresh(), "high"), undefined);
@@ -1954,8 +1951,8 @@ void test("F4 cmdClass: a rule maps to its family, a command to its program fami
         assert.equal(cmdClass(null, c), "other", c);
     assert.equal(cmdClass("constructor", ""), "other");
 });
-void test("factory run: a command naming the approval label is denied unless it only reads", () => {
-    const run = (command, factory = { approval: "agent-ok" }) => evaluateCommand({ command, state: fresh(), host: calm, factory, rules });
+void test("run: a command naming the approval label is denied unless it only reads", () => {
+    const run = (command, facts = { labels: { approval: "agent-ok" } }) => evaluateCommand({ command, state: fresh(), host: calm, run: facts, rules });
     for (const c of [
         // Adding, in every spelling.
         "gh issue edit 7 --add-label agent-ok",
@@ -2083,7 +2080,7 @@ void test("factory run: a command naming the approval label is denied unless it 
     ]) {
         const d = run(c);
         assert.equal(d.action, "deny", c);
-        assert.equal(d.rule, "factory-approval", c);
+        assert.equal(d.rule, "run-label", c);
     }
     for (const c of [
         "gh issue list --label agent-ok",
@@ -2122,7 +2119,7 @@ void test("factory run: a command naming the approval label is denied unless it 
         "gh pr checks --watch; gh pr merge --auto --squash",
         "gh -R o/r pr list | head -5",
     ]) {
-        assert.notEqual(run(c).rule, "factory-approval", c);
+        assert.notEqual(run(c).rule, "run-label", c);
         assert.equal(touchesApprovalLabel(c, "agent-ok"), false, c);
     }
     // G26: a line of several commands whose `gh api` calls are each plain reads naming no label passes.
@@ -2132,7 +2129,7 @@ void test("factory run: a command naming the approval label is denied unless it 
         "gh api user --jq .login | head -1",
     ]) {
         assert.equal(touchesApprovalLabel(c, "agent-ok"), false, c);
-        assert.notEqual(run(c).rule, "factory-approval", c);
+        assert.notEqual(run(c).rule, "run-label", c);
     }
     // ...but not when one of them is not plain, sits in a substitution or carries a body.
     for (const c of [
@@ -2151,11 +2148,13 @@ void test("factory run: a command naming the approval label is denied unless it 
     ]) {
         assert.equal(touchesApprovalLabel(c, "agent-ok"), true, c);
     }
-    assert.equal(run("gh issue edit 7 --add-label ready", { approval: "ready" }).action, "deny", "a configured label");
-    assert.equal(run("gh issue edit 7 --add-label agent-ok", null).action, "allow", "no factory run: allowed");
+    assert.equal(run("gh issue edit 7 --add-label ready", {
+        labels: { approval: "ready" },
+    }).action, "deny", "a configured label");
+    assert.equal(run("gh issue edit 7 --add-label agent-ok", null).action, "allow", "no run: allowed");
 });
-void test("factory run: a command that resolves to gh without spelling it is denied (#274)", () => {
-    const run = (command, factory = { approval: "agent-ok" }) => evaluateCommand({ command, state: fresh(), host: calm, factory, rules });
+void test("run: a command that resolves to gh without spelling it is denied (#274)", () => {
+    const run = (command, facts = { labels: { approval: "agent-ok" } }) => evaluateCommand({ command, state: fresh(), host: calm, run: facts, rules });
     for (const c of [
         "GH api user",
         "$'g\\x68' api user",
@@ -2170,7 +2169,7 @@ void test("factory run: a command that resolves to gh without spelling it is den
         "/usr/bin/GH api user",
     ]) {
         assert.equal(ghHidden(c), true, c);
-        assert.equal(run(c).rule, "factory-approval", c);
+        assert.equal(run(c).rule, "run-label", c);
     }
     for (const c of [
         "gh api user",
@@ -2186,9 +2185,9 @@ void test("factory run: a command that resolves to gh without spelling it is den
         "x=GH; $x api",
     ])
         assert.equal(ghHidden(c), false, c);
-    assert.equal(run("GH api user", null).action, "allow", "no factory run");
+    assert.equal(run("GH api user", null).action, "allow", "no run");
 });
-void test("factory run: bracket classes fold case, negated ones included (#274 review)", () => {
+void test("run: bracket classes fold case, negated ones included (#274 review)", () => {
     // A class may match when it takes either case of the letter; a negated one when it lacks either.
     for (const [c, want] of [
         tuple("[!G]h", true),
@@ -2203,7 +2202,7 @@ void test("factory run: bracket classes fold case, negated ones included (#274 r
         assert.equal(ghHidden(`${c} api user`), want, c);
     }
 });
-void test("factory run: the command behind a known wrapper is read with that wrapper's options (#274 review, #282)", () => {
+void test("run: the command behind a known wrapper is read with that wrapper's options (#274 review, #282)", () => {
     for (const c of [
         "sudo -E -u root GH api user",
         "sudo -i -g staff GH api user",
@@ -2321,13 +2320,13 @@ void test("wrappers: each one's options are read with its own table, so the comm
     ])
         assert.equal(run(c).action, "allow", c);
 });
-void test("factory run: the hidden-gh check stays fast on stars and brace lists (#274 review)", () => {
+void test("run: the hidden-gh check stays fast on stars and brace lists (#274 review)", () => {
     // In a child with a timeout: a regex per glob backtracked on a word of a hundred stars and hung the hook.
     const script = `
     import { evaluateCommand } from ${JSON.stringify(new URL("./engine.mjs", import.meta.url).href)};
     import { rules } from ${JSON.stringify(new URL("./rules.mjs", import.meta.url).href)};
     const lines = ['*'.repeat(150) + 'x api', '{' + Array(64).fill('*'.repeat(30) + 'x').join(',') + '} api', ('*'.repeat(100) + 'x; ').repeat(200), 'g' + '*'.repeat(10000) + 'q api', '[' + 'a'.repeat(5000) + ']h api', 'sudo -E '.repeat(2000) + 'x', 'timeout -s KILL 5 ' + 'g? '.repeat(5000), 'coproc '.repeat(3000) + 'x { make; }'];
-    for (const command of lines) evaluateCommand({ command, state: { reminded: new Set() }, host: {}, factory: { approval: 'agent-ok' }, rules });
+    for (const command of lines) evaluateCommand({ command, state: { reminded: new Set() }, host: {}, run: { labels: { approval: 'agent-ok' } }, rules });
   `;
     const r = spawnSync(process.execPath, ["--input-type=module", "-e", script], {
         timeout: 10000,
@@ -2336,8 +2335,8 @@ void test("factory run: the hidden-gh check stays fast on stars and brace lists 
     assert.equal(r.signal, null, "timed out");
     assert.equal(r.status, 0, r.stderr);
 });
-void test("factory run: a gh alias or extension is denied, gh's own commands pass (#273)", () => {
-    const run = (command, factory = { approval: "agent-ok" }) => evaluateCommand({ command, state: fresh(), host: calm, factory, rules });
+void test("run: a gh alias or extension is denied, gh's own commands pass (#273)", () => {
+    const run = (command, facts = { labels: { approval: "agent-ok" } }) => evaluateCommand({ command, state: fresh(), host: calm, run: facts, rules });
     for (const c of [
         "gh tag 1",
         'gh alias set t "issue list"',
@@ -2354,7 +2353,7 @@ void test("factory run: a gh alias or extension is denied, gh's own commands pas
         "gh copilot",
     ]) {
         assert.equal(ghUnseen(c, rules), true, c);
-        assert.equal(run(c).rule, "factory-approval", c);
+        assert.equal(run(c).rule, "run-label", c);
         assert.match(defined(run(c).reason), /alias or extension/, c);
     }
     for (const c of [
@@ -2379,13 +2378,13 @@ void test("factory run: a gh alias or extension is denied, gh's own commands pas
         "gh extension list",
     ])
         assert.equal(ghUnseen(c, rules), false, c);
-    assert.equal(run("gh tag 1", null).action, "allow", "no factory run");
+    assert.equal(run("gh tag 1", null).action, "allow", "no run");
 });
-void test("factory run: files inside .factory/runs/*/ are waived from the defaults, an explicit glob is not (#302)", () => {
+void test("run: files inside a registered exemption are waived from the registered globs, never from the floor or an explicit glob (#302)", () => {
     const base = {
-        defaults: [".github/**", ".factory/**"],
+        registered: [".factory/**"],
         exempt: [".factory/runs/*/*/**"],
-        globs: [],
+        globs: [".github/**"],
         root: "/r",
         cwd: "/r",
     };
@@ -2437,10 +2436,10 @@ void test("factory run: files inside .factory/runs/*/ are waived from the defaul
         "echo x > .factory/runs/12/a > .factory/config.yaml",
     ])
         assert.notEqual(hit(c), null, c);
-    // A glob the runtime lists wins over the waiver, however it is spelled.
+    // A glob in `globs` (GUARD_RUN_PROTECTED_PATHS) wins over the waiver, however it is spelled.
     const listed = {
         ...base,
-        globs: [".factory/runs/*/secret.json", ".factory/**"],
+        globs: [".github/**", ".factory/**"],
     };
     assert.notEqual(hit("echo x > .factory/runs/12/secret.json", {
         ...base,
@@ -2452,8 +2451,13 @@ void test("factory run: files inside .factory/runs/*/ are waived from the defaul
     }), null);
     assert.notEqual(hit("echo x > .factory/runs/12/result.json", listed), null);
 });
-void test("factory run: shell writes to a protected path are denied (#213)", () => {
-    const g = { globs: [".github/**", ".factory/**"], root: "/r", cwd: "/r" };
+void test("run: shell writes to a protected path are denied (#213)", () => {
+    const g = {
+        globs: [".github/**"],
+        registered: [".factory/**"],
+        root: "/r",
+        cwd: "/r",
+    };
     const hit = (c, p = g) => protectedWrite(c, p, { HOME: "/Users/me", TMPDIR: "/tmp/" });
     for (const c of [
         "echo x > .github/a",
@@ -2542,21 +2546,21 @@ void test("factory run: shell writes to a protected path are denied (#213)", () 
         root: "C:/r",
         cwd: "C:/r",
     }), null);
-    const run = (command, factory) => evaluateCommand({ command, state: fresh(), host: calm, factory, rules });
-    assert.equal(run("echo x > .github/a", { approval: "agent-ok" }).rule, "protected-path", "the defaults apply with no protect facts");
+    const run = (command, facts) => evaluateCommand({ command, state: fresh(), host: calm, run: facts, rules });
+    assert.equal(run("echo x > .github/a", {}).rule, "protected-path", "the floor applies with no labels and no protect facts");
     assert.equal(run("echo x > infra/a", {
-        approval: "agent-ok",
         protect: { extra: ["infra/**"] },
     }).rule, "protected-path", "extra globs add");
     assert.equal(run("echo x > .github/a", {
-        approval: "agent-ok",
         protect: { extra: ["infra/**"] },
-    }).rule, "protected-path", "extra globs never replace the defaults");
-    assert.equal(run("echo x > .github/a", null).action, "allow", "no factory run");
+    }).rule, "protected-path", "extra globs never replace the floor");
+    assert.equal(run("echo x > .factory/a", {}).action, "allow", "no registered glob: .factory is no built-in");
+    assert.equal(run("echo x > .github/a", null).action, "allow", "no run");
 });
-void test("factory run: protected-path reads past reserved words, keeps above to literal segments, takes absolute targets as written (#213 review)", () => {
+void test("run: protected-path reads past reserved words, keeps above to literal segments, takes absolute targets as written (#213 review)", () => {
     const g = {
-        globs: [".github/**", ".factory/**", "**/*.tf", "**/migrations/**"],
+        globs: [".github/**", "**/*.tf", "**/migrations/**"],
+        registered: [".factory/**"],
         root: "/r",
         cwd: "/r",
     };
@@ -2595,7 +2599,7 @@ void test("factory run: protected-path reads past reserved words, keeps above to
     ])
         assert.equal(hit(c), null, c);
 });
-void test("factory run: protected-path fails closed past its limits, for a command that may write only (#213 review)", () => {
+void test("run: protected-path fails closed past its limits, for a command that may write only (#213 review)", () => {
     const g = (extra = []) => ({
         globs: [".github/**", ...extra],
         root: "/r",
@@ -2603,10 +2607,10 @@ void test("factory run: protected-path fails closed past its limits, for a comma
     });
     const limits = { globs: 256, targets: 512, chars: 1024, ms: 2000 };
     const pw = (c, p = g(), l = limits) => protectedWrite(c, p, {}, l);
-    // A setting past the limits is cut: globs over the length dropped, the rest kept up to the cap, defaults first.
+    // A setting past the limits is cut: globs over the length dropped, the rest kept up to the cap, the floor first.
     const many = g([...Array(255).fill("x/**"), "late/**"]);
     assert.equal(pw("echo x > late/a", many), null, "a glob past the cap is ignored");
-    assert.notEqual(pw("echo x > .github/a", many), null, "the defaults stay");
+    assert.notEqual(pw("echo x > .github/a", many), null, "the floor stays");
     assert.notEqual(pw("echo x > x/a", many), null, "globs within the cap stay");
     assert.equal(defined(pw("echo x > " + "a".repeat(1025), g())).unsure !== undefined, true, "a target too long");
     assert.equal(pw("echo x > a", g(["a".repeat(1025)])), null, "a glob too long is dropped");
@@ -2656,7 +2660,7 @@ void test("factory run: protected-path fails closed past its limits, for a comma
         command: "rm " + Array(600).fill("a").join(" "),
         state: fresh(),
         host: calm,
-        factory: { approval: "agent-ok" },
+        run: { labels: { approval: "agent-ok" } },
         rules,
     });
     assert.equal(d.rule, "protected-path");
@@ -2665,18 +2669,17 @@ void test("factory run: protected-path fails closed past its limits, for a comma
         command: "ls " + Array(600).fill("a").join(" "),
         state: fresh(),
         host: calm,
-        factory: {
-            approval: "agent-ok",
+        run: {
+            labels: { approval: "agent-ok" },
             protect: { extra: Array(300).fill("x/**") },
         },
         rules,
     }).rule, "protected-path", "a read with too many globs passes");
 });
-void test("factory run: the takeover label is denied like the approval label, reads pass", () => {
-    const run = (command, factory = {
-        approval: "agent-ok",
-        takeover: "factory-takeover",
-    }) => evaluateCommand({ command, state: fresh(), host: calm, factory, rules });
+void test("run: the takeover label is denied like the approval label, reads pass", () => {
+    const run = (command, facts = {
+        labels: { approval: "agent-ok", takeover: "factory-takeover" },
+    }) => evaluateCommand({ command, state: fresh(), host: calm, run: facts, rules });
     for (const c of [
         "gh issue edit 7 --add-label factory-takeover",
         "gh issue edit 7 --remove-label Factory-Takeover",
@@ -2687,8 +2690,8 @@ void test("factory run: the takeover label is denied like the approval label, re
     ]) {
         const d = run(c);
         assert.equal(d.action, "deny", c);
-        assert.equal(d.rule, "factory-takeover", c);
-        assert.match(defined(d.reason), /takeover label/, c);
+        assert.equal(d.rule, "run-label", c);
+        assert.match(defined(d.reason), /label is registered for this run/, c);
     }
     for (const c of [
         "gh issue list --label factory-takeover --json number",
@@ -2698,19 +2701,13 @@ void test("factory run: the takeover label is denied like the approval label, re
         assert.equal(run(c).action, "allow", c);
     }
     assert.equal(run("gh issue edit 7 --add-label hand-over", {
-        approval: "agent-ok",
-        takeover: "hand-over",
-    }).rule, "factory-takeover", "a configured label");
-    assert.equal(run("gh issue edit 7 --add-label factory-takeover", null).action, "allow", "no factory run: allowed");
+        labels: { approval: "agent-ok", takeover: "hand-over" },
+    }).rule, "run-label", "a configured label");
+    assert.equal(run("gh issue edit 7 --add-label factory-takeover", null).action, "allow", "no run: allowed");
 });
-void test("factory run with a config the guard could not read: every label change is denied, reads pass", () => {
-    const unsure = {
-        approval: "agent-ok",
-        takeover: "factory-takeover",
-        unsure: true,
-        extra: ["go-ahead"],
-    };
-    const run = (command, factory = unsure) => evaluateCommand({ command, state: fresh(), host: calm, factory, rules });
+void test("run with a registration that requires labels but names none the guard could not read: every label change is denied, reads pass", () => {
+    const unsure = { unsure: true };
+    const run = (command, facts = unsure) => evaluateCommand({ command, state: fresh(), host: calm, run: facts, rules });
     for (const c of [
         "gh issue edit 7 --add-label go-ahead",
         "gh issue edit 7 --add-label needs-owner",
@@ -2768,7 +2765,7 @@ void test("factory run with a config the guard could not read: every label chang
     ]) {
         const d = run(c);
         assert.equal(d.action, "deny", c);
-        assert.equal(d.rule, "factory-config", c);
+        assert.equal(d.rule, "run-config", c);
     }
     for (const c of [
         "gh issue view 7 --json labels",
@@ -2780,9 +2777,8 @@ void test("factory run with a config the guard could not read: every label chang
     }
     assert.match(defined(run("gh issue edit $N --body-file b.md").reason), /builds at run time.*literal `--body-file` path/, "the reason says what to change");
     assert.equal(run("gh issue edit 7 --add-label agent-o\\\nk", {
-        approval: "agent-ok",
-        takeover: "factory-takeover",
-    }).rule, "factory-approval", "a line continuation joins the label");
+        labels: { approval: "agent-ok", takeover: "factory-takeover" },
+    }).rule, "run-label", "a line continuation joins the label");
     // An expansion in a value, or in a gh command that cannot add labels: not this rule.
     for (const c of [
         'gh pr create -t "fix: x" -b y',
@@ -2797,14 +2793,13 @@ void test("factory run with a config the guard could not read: every label chang
         "gh pr merge $PR --squash --auto",
         "ls -la $HOME",
     ]) {
-        assert.notEqual(run(c).rule, "factory-config", c);
+        assert.notEqual(run(c).rule, "run-config", c);
     }
     assert.equal(run("gh issue edit 7 --add-label needs-owner", {
-        approval: "agent-ok",
-        takeover: "factory-takeover",
-    }).action, "allow", "a readable config: other labels pass");
+        labels: { approval: "agent-ok", takeover: "factory-takeover" },
+    }).action, "allow", "a registration naming labels: other labels pass");
 });
-void test("factory run: the label check never throws and fails fast on a hang", () => {
+void test("run: the label check never throws and fails fast on a hang", () => {
     // In a child with a timeout, so a check that loops forever fails here in seconds instead of hanging the suite.
     const script = `
     import { touchesApprovalLabel } from ${JSON.stringify(new URL("./engine.mjs", import.meta.url).href)};
@@ -2832,18 +2827,19 @@ void test("factory run: the label check never throws and fails fast on a hang", 
 function tuple(...values) {
     return values;
 }
-void test("factory run: configured label names add to the defaults, which stay protected", () => {
+void test("run: the approval, takeover and protected labels are all denied", () => {
     const facts = {
-        approval: "agent-ok",
-        takeover: "factory-takeover",
-        approvals: ["go-ahead"],
-        takeovers: ["hand-over"],
+        labels: {
+            approval: "go-ahead",
+            takeover: "hand-over",
+            protected: ["agent-ok", "factory-takeover"],
+        },
     };
     const run = (command) => evaluateCommand({
         command,
         state: fresh(),
         host: calm,
-        factory: facts,
+        run: facts,
         rules,
     });
     for (const c of [
@@ -2852,7 +2848,7 @@ void test("factory run: configured label names add to the defaults, which stay p
     ]) {
         const d = run(c);
         assert.equal(d.action, "deny", c);
-        assert.equal(d.rule, "factory-approval", c);
+        assert.equal(d.rule, "run-label", c);
     }
     assert.match(defined(run("gh issue edit 1 --add-label go-ahead").reason), /`go-ahead`/);
     for (const c of [
@@ -2861,7 +2857,7 @@ void test("factory run: configured label names add to the defaults, which stay p
     ]) {
         const d = run(c);
         assert.equal(d.action, "deny", c);
-        assert.equal(d.rule, "factory-takeover", c);
+        assert.equal(d.rule, "run-label", c);
     }
     for (const c of [
         "gh issue view 1 --json labels",
@@ -2870,17 +2866,17 @@ void test("factory run: configured label names add to the defaults, which stay p
     ])
         assert.equal(run(c).action, "allow", c);
 });
-void test("factory run: guard's data directory is a protected write target", () => {
+void test("run: guard's data directory is a protected write target", () => {
     const data = "/Users/me/.claude/plugins/data/guard-acme";
-    const factory = {
-        approval: "agent-ok",
+    const facts = {
+        labels: { approval: "agent-ok" },
         protect: { root: "/Users/me/repo", cwd: "/Users/me/repo", data: [data] },
     };
-    const run = (command, f = factory) => evaluateCommand({
+    const run = (command, f = facts) => evaluateCommand({
         command,
         state: fresh(),
         host: calm,
-        factory: f,
+        run: f,
         env: { HOME: "/Users/me", dirs: { has: () => true } },
         rules,
     });
@@ -2937,17 +2933,17 @@ void test("factory run: guard's data directory is a protected write target", () 
         assert.equal(run(c).action, "allow", c);
     assert.notEqual(run("rm -rf node_modules").rule, "protected-path", "a remove elsewhere is not protected (the generic rm ask applies)");
     assert.notEqual(run("rm -rf /Users/me/.claude/plugins/data/other").rule, "protected-path", "a sibling directory is not protected (the generic rm ask applies)");
-    assert.equal(run(`echo 2 > ${data}/result-gate/x.txt`, null).action, "allow", "no factory run: allowed");
-    assert.equal(run(`touch ${data}/result-gate/x.txt`, null).action, "allow", "no factory run: allowed");
+    assert.equal(run(`echo 2 > ${data}/result-gate/x.txt`, null).action, "allow", "no run: allowed");
+    assert.equal(run(`touch ${data}/result-gate/x.txt`, null).action, "allow", "no run: allowed");
 });
-void test("factory run: a Git Bash drive path names a drive-letter data directory; a posix /c/ directory is its own", () => {
+void test("run: a Git Bash drive path names a drive-letter data directory; a posix /c/ directory is its own", () => {
     const run = (command, data, f = true) => evaluateCommand({
         command,
         state: fresh(),
         host: calm,
-        factory: f
+        run: f
             ? {
-                approval: "agent-ok",
+                labels: { approval: "agent-ok" },
                 protect: { root: "/work/repo", cwd: "/work/repo", data: [data] },
             }
             : null,
@@ -2965,8 +2961,121 @@ void test("factory run: a Git Bash drive path names a drive-letter data director
         assert.equal(d.rule, "protected-path", c);
     }
     assert.equal(run("touch /c/Users/me/AppData/Local/Temp/guard-plugin-me/x", win, false)
-        .action, "allow", "no factory run: allowed");
+        .action, "allow", "no run: allowed");
     assert.equal(run("touch /d/Users/me/AppData/Local/Temp/guard-plugin-me/x", win).action, "allow", "another drive");
     assert.equal(run("touch /c/Users/me/x", "/c/Users/me/data").action, "allow", "a posix data dir is not matched as a drive path");
     assert.equal(run("touch /c/Users/me/data/x", "/c/Users/me/data").rule, "protected-path");
+});
+void test("run: gh that cannot be read is denied whenever a run is active, labels or not (run contract v2)", () => {
+    const run = (command, facts) => evaluateCommand({ command, state: fresh(), host: calm, run: facts, rules });
+    const hidden = run("GH issue edit 1 --add-label x", {});
+    assert.equal(hidden.action, "deny");
+    assert.equal(hidden.rule, "run-label");
+    assert.match(defined(hidden.reason), /spell `gh` literally/);
+    const unseen = run("gh stack push", {});
+    assert.equal(unseen.rule, "run-label");
+    assert.match(defined(unseen.reason), /alias or extension/);
+    assert.equal(run("gh issue list", {}).action, "allow");
+    assert.notEqual(run("gh stack push", null).rule, "run-label");
+});
+void test("run: the registered labels are named in the deny, and only a registered label is", () => {
+    const facts = {
+        labels: {
+            approval: "go-ahead",
+            takeover: "hand-over",
+            protected: ["acme-parked"],
+        },
+    };
+    const run = (command) => evaluateCommand({ command, state: fresh(), host: calm, run: facts, rules });
+    for (const name of ["go-ahead", "hand-over", "acme-parked"]) {
+        const d = run(`gh issue edit 1 --add-label ${name}`);
+        assert.equal(d.rule, "run-label", name);
+        assert.ok(defined(d.reason).includes(`The \`${name}\` label is registered for this run`));
+        assert.match(defined(d.reason), /owner's/);
+    }
+    assert.equal(run("gh issue edit 1 --add-label agent-ok").action, "allow");
+});
+void test("run: run-config only with an unsure registration", () => {
+    const run = (facts) => evaluateCommand({
+        command: "gh issue edit 1 --add-label ship-it",
+        state: fresh(),
+        host: calm,
+        run: facts,
+        rules,
+    });
+    const d = run({ unsure: true });
+    assert.equal(d.rule, "run-config");
+    assert.match(defined(d.reason), /until the registration names its labels; ask on the ticket/);
+    assert.equal(run({}).action, "allow");
+    assert.equal(run({ labels: { approval: "go-ahead" } }).action, "allow");
+});
+void test("run: the .github floor is always protected, a registration adds to it and its exemption waives only its own globs", () => {
+    const run = (command, facts) => evaluateCommand({ command, state: fresh(), host: calm, run: facts, rules });
+    const facts = {
+        protect: {
+            root: "/r",
+            cwd: "/r",
+            registered: ["out/**"],
+            exempt: ["out/runs/*/*/**", ".github/**"],
+            extra: ["infra/**"],
+        },
+    };
+    assert.equal(run("echo x > .github/a", facts).rule, "protected-path");
+    assert.equal(run("echo x > out/a", facts).rule, "protected-path");
+    assert.equal(run("echo x > out/runs/1/r/a", facts).action, "allow");
+    assert.equal(run("echo x > infra/a", facts).rule, "protected-path");
+    // An exemption never waives a GUARD_RUN_PROTECTED_PATHS glob.
+    const extraOverlap = {
+        protect: {
+            root: "/r",
+            cwd: "/r",
+            registered: ["out/**"],
+            exempt: ["out/runs/*/*/**"],
+            extra: ["out/runs/*/*/secret/**"],
+        },
+    };
+    assert.equal(run("echo x > out/runs/1/r/secret/a", extraOverlap).rule, "protected-path");
+    assert.equal(run("echo x > out/runs/1/r/a", extraOverlap).action, "allow");
+    const d = run("echo x > .github/a", facts);
+    assert.match(defined(d.reason), /A run must not change a protected path \(CI, or one its runner registered\)/);
+});
+void test("run: the floor survives a registration of 256 globs", () => {
+    const registered = Array.from({ length: 256 }, (_, i) => `r${String(i)}/**`);
+    const g = { globs: [".github/**"], registered, root: "/r", cwd: "/r" };
+    assert.notEqual(protectedWrite("echo x > .github/a", g), null);
+    assert.notEqual(protectedWrite("echo x > r0/a", g), null);
+    assert.equal(protectedWrite("echo x > r255/a", g), null, "past the cap: ignored");
+});
+void test("protectedPathHit: an edit tool's repo-relative path against the floor, the registered globs and their exemptions", () => {
+    const p = {
+        globs: [".github/**", "infra/**"],
+        registered: [".factory/**"],
+        exempt: [".factory/runs/*/*/**"],
+    };
+    for (const path of [
+        ".github/workflows/ci.yml",
+        ".GITHUB/workflows/ci.yml",
+        "infra/main.tf",
+        ".factory/config.yaml",
+        ".factory/runs/12",
+        ".factory/runs",
+    ])
+        assert.equal(protectedPathHit(path, p), true, path);
+    for (const path of [
+        "src/a.ts",
+        "README.md",
+        ".factory/runs/12/r1/notes.md",
+        ".FACTORY/RUNS/12/r1/notes.md",
+        ".githubx/a",
+    ])
+        assert.equal(protectedPathHit(path, p), false, path);
+    // An exemption never waives a `globs` glob, and a spelled-out path is needed for any waiver.
+    assert.equal(protectedPathHit(".github/runs/12/r1/a", {
+        ...p,
+        exempt: [".github/**", ".factory/runs/*/*/**"],
+    }), true);
+    assert.equal(protectedPathHit(".factory/runs/*/r1/a", p), true, "a wildcard is no exemption");
+    // The limits cut the registered globs, never the floor; a failure is a hit.
+    assert.equal(protectedPathHit(".github/a", { ...p, registered: ["x/**"] }, { globs: 1, targets: 1, chars: 100, ms: 100 }), true);
+    assert.equal(protectedPathHit(null, p), true, "a throw fails closed");
 });
