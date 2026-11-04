@@ -25,7 +25,12 @@ export function runContext(env, opts = {}) {
     try {
         const loaded = loadRegistration(env, opts);
         if (loaded.state === "deny") {
-            return { state: "deny", rule: RULE, why: loaded.why };
+            return {
+                state: "deny",
+                rule: RULE,
+                why: loaded.why,
+                ...(loaded.pin ? { pin: true } : {}),
+            };
         }
         if (loaded.state === "none") {
             return legacySet(env)

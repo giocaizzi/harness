@@ -261,6 +261,14 @@ function stopContext(env, input, opts) {
         cache: opts.cache,
         vet: opts,
     });
+    // The data dir is writable by the agent, so the pin carries no weight at stop: when only the pin failed the
+    // registration, load it again without the pin. The env and the manifest (vetted as ever) are the authority.
+    if (ctx.state === "deny" && ctx.pin) {
+        return {
+            ctx: runContext(env, { cache: opts.cache, vet: opts }),
+            dataDir,
+        };
+    }
     return { ctx, dataDir };
 }
 // The gate never fails open once a registered run names a checker (strict) or runs unattended: the block reason for

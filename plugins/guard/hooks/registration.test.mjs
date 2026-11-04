@@ -224,6 +224,23 @@ void test("registration: an unreadable pin file is refused", () => {
         sessionId: "s5",
     })), "cannot read the session's registration pin (EISDIR)");
 });
+void test("registration: only a pin failure is marked as one, so the stop can re-check it", () => {
+    const dataDir = fresh("data");
+    mkdirSync(pinFile(dataDir, "s6"), { recursive: true });
+    const pinned = loadRegistration(envFor(manifest()), {
+        vet: ro,
+        dataDir,
+        sessionId: "s6",
+    });
+    assert.equal(pinned.state === "deny" && pinned.pin, true);
+    const bad = loadRegistration(envFor(join(fresh("none"), "gone.json")), {
+        vet: ro,
+        dataDir,
+        sessionId: "s6",
+    });
+    assert.equal(bad.state, "deny");
+    assert.equal("pin" in bad, false);
+});
 void test("registration: the trust vet and the pin run on every call, cache hit or not", () => {
     const dataDir = fresh("data");
     const m = manifest();

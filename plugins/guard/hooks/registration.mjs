@@ -65,6 +65,13 @@ function readBounded(fd) {
 // run-registration. Never throws.
 export function loadRegistration(env, opts = {}) {
     const deny = (why) => ({ rule: RULE, state: "deny", why });
+    // the data dir is writable by the agent: a deny that only the pin produced is marked, so the stop can re-check
+    const pinDeny = (why) => ({
+        rule: RULE,
+        state: "deny",
+        why,
+        pin: true,
+    });
     try {
         const platform = opts.platform ?? process.platform;
         const pathApi = platform === "win32" ? path.win32 : path;
@@ -155,31 +162,31 @@ export function loadRegistration(env, opts = {}) {
             };
             let r = read();
             if (r.why)
-                return deny(r.why);
+                return pinDeny(r.why);
             if (!r.pin) {
                 try {
                     mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
                     appendFileSync(file, `${JSON.stringify({ manifest: real, sha256, ...vars })}\n`);
                 }
                 catch (e) {
-                    return deny(`cannot pin the registration (${codeOf(e)})`);
+                    return pinDeny(`cannot pin the registration (${codeOf(e)})`);
                 }
                 // a parallel hook may have pinned first: the first valid line wins
                 r = read();
                 if (r.why)
-                    return deny(r.why);
+                    return pinDeny(r.why);
                 if (!r.pin)
-                    return deny("cannot pin the registration (missing)");
+                    return pinDeny("cannot pin the registration (missing)");
             }
             if (r.pin.manifest !== real) {
-                return deny("GUARD_RUN_MANIFEST names more than one path (another manifest is pinned for this session)");
+                return pinDeny("GUARD_RUN_MANIFEST names more than one path (another manifest is pinned for this session)");
             }
             if (r.pin.sha256 !== sha256) {
-                return deny(`manifest changed during the session (sha256 ${r.pin.sha256.slice(0, 16)}… was pinned)`);
+                return pinDeny(`manifest changed during the session (sha256 ${r.pin.sha256.slice(0, 16)}… was pinned)`);
             }
             const changed = ["run_id", "mode", "ticket"].filter((k) => r.pin?.[k] !== vars[k]);
             if (changed.length > 0) {
-                return deny(`run variables changed during the session (${changed.map((k) => `GUARD_RUN_${k === "run_id" ? "ID" : k.toUpperCase()}`).join(", ")})`);
+                return pinDeny(`run variables changed during the session (${changed.map((k) => `GUARD_RUN_${k === "run_id" ? "ID" : k.toUpperCase()}`).join(", ")})`);
             }
         }
         return {

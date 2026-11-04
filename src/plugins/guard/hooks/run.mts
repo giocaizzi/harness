@@ -56,6 +56,8 @@ export interface RegisteredRun {
 }
 
 export interface RunDeny {
+  // the session pin alone failed the registration
+  pin?: true;
   rule: typeof RULE | typeof UNREGISTERED_RULE;
   state: "deny";
   why: string;
@@ -68,7 +70,12 @@ export function runContext(env: Env, opts: LoadOptions = {}): RunContext {
   try {
     const loaded = loadRegistration(env, opts);
     if (loaded.state === "deny") {
-      return { state: "deny", rule: RULE, why: loaded.why };
+      return {
+        state: "deny",
+        rule: RULE,
+        why: loaded.why,
+        ...(loaded.pin ? { pin: true as const } : {}),
+      };
     }
     if (loaded.state === "none") {
       return legacySet(env)
