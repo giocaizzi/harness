@@ -1738,6 +1738,20 @@ void test("result check: the stop hook CLI keeps a stop blocked on an unreadable
   assert.equal(free.stdout, "");
 });
 
+void test("result check: an unreadable payload with no session id is capped per harness process, across spawned stop hooks", () => {
+  const data = tmp();
+  const run = () =>
+    runStopHook("{", [], { GUARD_RUN_ID: "run-1", CLAUDE_PLUGIN_DATA: data });
+  const outs = [run(), run(), run()].map((r) => {
+    assert.equal(r.status, 0, r.stderr);
+    return r.stdout;
+  });
+  assert.match(outs[0] ?? "", /block 1 of 2/);
+  assert.match(outs[1] ?? "", /block 2 of 2/);
+  assert.equal(outs[2], "");
+  assert.equal(readdirSync(join(data, "result-gate")).length, 1);
+});
+
 void test("lint: shellcheck findings come back as context; clean, missing tool or other files pass", () => {
   const dir = lintTmp();
   const sh = join(dir, "a.sh");

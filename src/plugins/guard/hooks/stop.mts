@@ -338,6 +338,9 @@ const STRICT_HINT =
 export interface CheckerOpts extends PrepareOptions {
   cache?: RegistrationCache;
   dataDir?: string;
+  // True for a host that runs the hook in its own process (opencode, pi): a stop with no session id is then keyed on
+  // that process id. Unset, the hook is a command run by the harness, keyed on the harness's pid.
+  inProcess?: boolean;
   timeoutMs?: number;
 }
 
@@ -381,7 +384,7 @@ export function gateFailClosed(
     if (isSubagentStop(raw)) return null;
     const { ctx } = stopContext(env, raw, opts);
     if (ctx.state === "deny") {
-      return cappedRegistrationBlock(ctx, raw)?.reason ?? null;
+      return cappedRegistrationBlock(ctx, raw, opts)?.reason ?? null;
     }
     if (ctx.state === "none") return null;
     const result = ctx.registration.result;
@@ -451,11 +454,13 @@ function bumpBlocks(runId: string): number {
   return n;
 }
 
-// The registration-deny cap key: the session id when the host sends one. An in-process host (opencode, pi) may send
-// none: the key is then the cwd plus this process id, so separate sessions on one host never share a counter.
-function registrationKey(input: HookInput): string {
+// The registration-deny cap key: the session id when the host sends one. Without one, the cwd plus a process id that
+// is stable for the session: the harness's (the parent) for a command hook, whose own pid is new on every stop; this
+// process's for an in-process host (`inProcess`).
+function registrationKey(input: HookInput, opts: CheckerOpts = {}): string {
   if (input.session_id) return input.session_id;
-  return `${input.cwd ?? process.cwd()}:${String(process.pid)}`;
+  const pid = opts.inProcess ? process.pid : process.ppid;
+  return `${input.cwd ?? process.cwd()}:${String(pid)}`;
 }
 
 // A failed registration blocks the stop at most RESULT_GATE_MAX times per key: the agent cannot fix it and every tool
@@ -464,8 +469,9 @@ function registrationKey(input: HookInput): string {
 function cappedRegistrationBlock(
   ctx: Extract<RunContext, { state: "deny" }>,
   input: HookInput,
+  opts: CheckerOpts = {},
 ): { reason: string; n: number } | null {
-  const key = `registration:${registrationKey(input)}`;
+  const key = `registration:${registrationKey(input, opts)}`;
   if (blockCount(key) >= RESULT_GATE_MAX) return null;
   let n = blockCount(key) + 1;
   try {
@@ -536,9 +542,13 @@ export async function resultGate(
       // Not switched off by GUARD_RESULT_GATE. Capped like result errors, per session: the agent cannot fix a
       // registration and every tool call is already denied, so an uncapped block would only loop the session.
       if (ctx.rule === UNREGISTERED_RULE) {
-        recordUnregistered(env, dataDir, registrationKey(payload));
+        recordUnregistered(
+          env,
+          dataDir,
+          registrationKey(payload, checkerOpts),
+        );
       }
-      const blocked = cappedRegistrationBlock(ctx, payload);
+      const blocked = cappedRegistrationBlock(ctx, payload, checkerOpts);
       if (blocked === null) {
         event("capped", { rule: ctx.rule });
         return null;

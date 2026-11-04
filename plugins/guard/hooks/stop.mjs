@@ -273,7 +273,7 @@ export function gateFailClosed(env, input, why, opts = {}) {
             return null;
         const { ctx } = stopContext(env, raw, opts);
         if (ctx.state === "deny") {
-            return cappedRegistrationBlock(ctx, raw)?.reason ?? null;
+            return cappedRegistrationBlock(ctx, raw, opts)?.reason ?? null;
         }
         if (ctx.state === "none")
             return null;
@@ -344,18 +344,20 @@ function bumpBlocks(runId) {
     }
     return n;
 }
-// The registration-deny cap key: the session id when the host sends one. An in-process host (opencode, pi) may send
-// none: the key is then the cwd plus this process id, so separate sessions on one host never share a counter.
-function registrationKey(input) {
+// The registration-deny cap key: the session id when the host sends one. Without one, the cwd plus a process id that
+// is stable for the session: the harness's (the parent) for a command hook, whose own pid is new on every stop; this
+// process's for an in-process host (`inProcess`).
+function registrationKey(input, opts = {}) {
     if (input.session_id)
         return input.session_id;
-    return `${input.cwd ?? process.cwd()}:${String(process.pid)}`;
+    const pid = opts.inProcess ? process.pid : process.ppid;
+    return `${input.cwd ?? process.cwd()}:${String(pid)}`;
 }
 // A failed registration blocks the stop at most RESULT_GATE_MAX times per key: the agent cannot fix it and every tool
 // call is already denied, so an uncapped block would only loop the session. Null once capped. A counter that cannot
 // be written still blocks.
-function cappedRegistrationBlock(ctx, input) {
-    const key = `registration:${registrationKey(input)}`;
+function cappedRegistrationBlock(ctx, input, opts = {}) {
+    const key = `registration:${registrationKey(input, opts)}`;
     if (blockCount(key) >= RESULT_GATE_MAX)
         return null;
     let n = blockCount(key) + 1;
@@ -419,9 +421,9 @@ export async function resultGate(input, run = spawnSync, env = process.env, onEv
             // Not switched off by GUARD_RESULT_GATE. Capped like result errors, per session: the agent cannot fix a
             // registration and every tool call is already denied, so an uncapped block would only loop the session.
             if (ctx.rule === UNREGISTERED_RULE) {
-                recordUnregistered(env, dataDir, registrationKey(payload));
+                recordUnregistered(env, dataDir, registrationKey(payload, checkerOpts));
             }
-            const blocked = cappedRegistrationBlock(ctx, payload);
+            const blocked = cappedRegistrationBlock(ctx, payload, checkerOpts);
             if (blocked === null) {
                 event("capped", { rule: ctx.rule });
                 return null;

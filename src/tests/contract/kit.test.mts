@@ -274,6 +274,9 @@ void test(
       JSON.stringify({
         manifest: realpathSync(subject),
         sha256: "0".repeat(64),
+        run_id: runEnv().GUARD_RUN_ID,
+        mode: runEnv().GUARD_RUN_MODE,
+        ticket: runEnv().GUARD_RUN_TICKET,
       }) + "\n",
     );
     const loaded = loadRegistration(runEnv(), { dataDir, sessionId });
@@ -456,6 +459,25 @@ void test("contract: an unusable manifest denies label changes", () => {
     run,
   );
 });
+
+void test(
+  "contract: a changed run id or mode during the session denies",
+  { skip: skipUnattended },
+  () => {
+    const changes: Record<string, string>[] = [
+      { GUARD_RUN_ID: "contract-run-other" },
+    ];
+    // the mode flip needs a manifest that allows both modes
+    if (!unattendedModes || unattendedModes.includes("attended")) {
+      changes.push({ GUARD_RUN_MODE: "attended" });
+    }
+    for (const change of changes) {
+      const run = newRun();
+      assertNotDenied(bash(run, "echo ok"));
+      assertDenied(bash(run, "echo ok", change), "run-registration", run);
+    }
+  },
+);
 
 void test(
   "contract: a protected path write is denied",

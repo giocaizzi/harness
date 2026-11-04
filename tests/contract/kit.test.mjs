@@ -164,6 +164,9 @@ void test("contract: a manifest changed during the session denies", { skip: skip
     writeFileSync(pinFile(dataDir, sessionId), JSON.stringify({
         manifest: realpathSync(subject),
         sha256: "0".repeat(64),
+        run_id: runEnv().GUARD_RUN_ID,
+        mode: runEnv().GUARD_RUN_MODE,
+        ticket: runEnv().GUARD_RUN_TICKET,
     }) + "\n");
     const loaded = loadRegistration(runEnv(), { dataDir, sessionId });
     assert.match(denied(loaded).why, /changed during the session/);
@@ -277,6 +280,20 @@ void test("contract: an unusable manifest denies label changes", () => {
     const copy = path.join(scratch("writable"), "run.json");
     copyFileSync(subject, copy);
     assertDenied(bash(run, "gh issue edit 1 --add-label x", { GUARD_RUN_MANIFEST: copy }), "run-registration", run);
+});
+void test("contract: a changed run id or mode during the session denies", { skip: skipUnattended }, () => {
+    const changes = [
+        { GUARD_RUN_ID: "contract-run-other" },
+    ];
+    // the mode flip needs a manifest that allows both modes
+    if (!unattendedModes || unattendedModes.includes("attended")) {
+        changes.push({ GUARD_RUN_MODE: "attended" });
+    }
+    for (const change of changes) {
+        const run = newRun();
+        assertNotDenied(bash(run, "echo ok"));
+        assertDenied(bash(run, "echo ok", change), "run-registration", run);
+    }
 });
 void test("contract: a protected path write is denied", { skip: skipUnattended }, () => {
     const run = newRun();
