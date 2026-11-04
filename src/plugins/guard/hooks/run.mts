@@ -16,6 +16,7 @@ import {
   unregisteredLine,
 } from "../core/registration.mjs";
 import type { RunFacts } from "../core/types.mjs";
+import { appendDataFile } from "./data.mjs";
 import type { LoadOptions } from "./registration.mjs";
 import { loadRegistration } from "./registration.mjs";
 
@@ -186,7 +187,7 @@ export function recordUnregistered(
     }
     try {
       mkdirSync(dataDir, { recursive: true, mode: 0o700 });
-      appendFileSync(unregisteredLog(dataDir), line);
+      appendDataFile(unregisteredLog(dataDir), line);
     } catch {
       // unwritable data dir: the deny stands
     }

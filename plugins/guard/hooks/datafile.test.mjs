@@ -165,3 +165,26 @@ out(res);
     assert.match(r.gateFifo, /Run result gate/);
     assert.match(r.gateLink, /Run result gate/);
 });
+// The tripwire log is a data-dir file too: a FIFO or a symlink at its path is neither blocked on nor written through,
+// and the legacy-only deny stands.
+for (const shape of ["fifo", "fifolink", "reglink"]) {
+    void test(`data dir writes (${shape}): the tripwire log is lost, the legacy-only deny stands, never a hang`, posix, () => {
+        const r = child(`
+const { handle } = await import(${JSON.stringify(url("guard"))});
+const dataDir = join(root, "data");
+const log = join(dataDir, "run-unregistered.jsonl");
+plant(${JSON.stringify(shape)}, log, "");
+const res = await handle(
+  { session_id: "s1", cwd: root, hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: { command: "ls" } },
+  { dataDir, env: { FACTORY_RUN_ID: "r1" }, hostFacts: async () => ({ load1: 1, freeGb: 100 }), run: async () => null },
+);
+const o = res.stdout ? JSON.parse(res.stdout).hookSpecificOutput : {};
+out({
+  d: o.permissionDecision,
+  rule: /GUARD_RUN_MANIFEST/.test(o.permissionDecisionReason ?? ""),
+  target: ${JSON.stringify(shape)} === "reglink" ? readFileSync(log + ".t", "utf8") : "",
+});
+`);
+        assert.deepEqual(r, { d: "deny", rule: true, target: "" });
+    });
+}

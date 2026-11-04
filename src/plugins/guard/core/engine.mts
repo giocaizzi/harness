@@ -1903,7 +1903,7 @@ export function protectedWrite(
       patternHits(g.segs, at.segs, above, at.suffix, tick),
     );
     if (hit.some((g) => !g.base)) return true;
-    // A default glob is waived for the run's own files: the whole normalised path is spelled out (no wildcard, variable
+    // A registered glob is waived for the run's own files: the whole normalised path is spelled out (no wildcard, variable
     // or brace, which could stand for `..`, nor a segment ending in a dot or space, which Windows strips: `12\.. ` is `12\..`) and starts at the root, so `.factory/runs/../config.yaml` is no exemption.
     return (
       hit.length > 0 &&

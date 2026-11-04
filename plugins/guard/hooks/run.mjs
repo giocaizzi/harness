@@ -7,6 +7,7 @@ import { createHash } from "node:crypto";
 import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { RULE, UNREGISTERED_REASON, UNREGISTERED_RULE, unregisteredLine, } from "../core/registration.mjs";
+import { appendDataFile } from "./data.mjs";
 import { loadRegistration } from "./registration.mjs";
 // The contract v1 run variables. Any of them set (to a non-blank value) without a registration trips the tripwire.
 export const LEGACY_VARS = [
@@ -129,7 +130,7 @@ export function recordUnregistered(env, dataDir, sessionId, now = new Date()) {
         }
         try {
             mkdirSync(dataDir, { recursive: true, mode: 0o700 });
-            appendFileSync(unregisteredLog(dataDir), line);
+            appendDataFile(unregisteredLog(dataDir), line);
         }
         catch {
             // unwritable data dir: the deny stands
