@@ -16,7 +16,8 @@
 # DIRTY is a conflict; BEHIND (only without a queue) needs the base merged in; STACKED is a PR based on another
 # branch than the default one (land it with `gh stack merge`, or retarget it as `land` step 3 says); ERROR is gh
 # failing 3 polls in a row; TIMEOUT names what it waited on (pending required checks, running workflows, gh's
-# refusal, a merge-async request still pending). Exits 0 when every PR merged, 1 otherwise, 2 on usage. Needs gh and jq.
+# refusal, a merge-async request still pending). A cancelled check run superseded by a newer run of the same check
+# (same name, workflow and event) is ignored; a cancelled newest run still fails. Exits 0 when every PR merged, 1 otherwise, 2 on usage. Needs gh and jq.
 # --interval (1-3600) and --timeout (1-86400) default to LAND_MANY_INTERVAL (30) and LAND_MANY_TIMEOUT (7200) seconds.
 set -u
 usage() { echo "usage: land-many.sh [--interval <1-3600 s>] [--timeout <1-86400 s>] <pr>..." >&2; exit 2; }
@@ -49,14 +50,20 @@ query='query($owner:String!,$name:String!,$n:Int!){repository(owner:$owner,name:
 id state mergeStateStatus headRefOid baseRefName isInMergeQueue isMergeQueueEnabled mergeCommit{oid}
 commits(last:1){nodes{commit{checkSuites(first:100){nodes{status workflowRun{workflow{name}}}}}}}
 statusCheckRollup{contexts(first:100){nodes{__typename
-... on CheckRun{name status conclusion detailsUrl} ... on StatusContext{context state targetUrl}}}}}}}'
+... on CheckRun{databaseId name status conclusion detailsUrl checkSuite{workflowRun{event workflow{name}}}} ... on StatusContext{context state targetUrl}}}}}}}'
 # One tab-separated line: state merge head id base queued queue sha, the workflows still running on the head
 # (comma-separated, "-" for none: an empty field would collapse), then the rollup as name<US>bucket<US>link<RS>...
-flat='.data.repository.pullRequest | [.state, .mergeStateStatus, .headRefOid, .id, .baseRefName,
+# A cancelled check run with a newer run of the same check (same name, workflow and event) is superseded: left out.
+# shellcheck disable=SC2016 # jq variables, not shell ones
+flat='def k: .name + "/" + (.checkSuite.workflowRun.workflow.name // "") + "/" + (.checkSuite.workflowRun.event // "");
+  .data.repository.pullRequest | [.state, .mergeStateStatus, .headRefOid, .id, .baseRefName,
   (.isInMergeQueue | tostring), (.isMergeQueueEnabled | tostring), (.mergeCommit.oid // "-"),
   ([(.commits.nodes[0].commit.checkSuites.nodes // [])[] | select(.workflowRun != null and .status != "COMPLETED")
     | .workflowRun.workflow.name] | unique | if length == 0 then "-" else join(",") end),
-  ([(.statusCheckRollup.contexts.nodes // [])[] | if .__typename == "CheckRun"
+  ((.statusCheckRollup.contexts.nodes // []) as $n | [$n[]
+    | select((.__typename == "CheckRun" and .status == "COMPLETED" and .conclusion == "CANCELLED" and (. as $c
+      | any($n[]; .__typename == "CheckRun" and k == ($c | k) and .databaseId > $c.databaseId))) | not)
+    | if .__typename == "CheckRun"
     then [.name, (if .status != "COMPLETED" then "pending" elif (.conclusion | IN("SUCCESS", "NEUTRAL", "SKIPPED")) then "pass" else "fail" end), (.detailsUrl // "")]
     else [.context, (if .state == "SUCCESS" then "pass" elif (.state | IN("PENDING", "EXPECTED")) then "pending" else "fail" end), (.targetUrl // "")] end
     | join("\u001f")] | join("\u001e"))] | @tsv'
