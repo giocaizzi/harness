@@ -72,6 +72,11 @@ import {
 } from "./harnesses.mjs";
 import { installedVersions, staleCheck } from "./stale.mjs";
 import {
+  EVENT_DEADLINE_MS,
+  PRE_TOOL_DEADLINE_MS,
+  readStdin,
+} from "./stdin.mjs";
+import {
   appendDecision,
   commandHash,
   harnessName,
@@ -1496,38 +1501,20 @@ interface AntigravityOut {
   reason?: string;
 }
 
-function readInput(): Promise<string> {
-  return new Promise((resolve) => {
-    if (process.stdin.isTTY) {
-      resolve("");
-      return;
-    }
-    let buf = "";
-    let doneCalled = false;
-    const done = (): void => {
-      if (!doneCalled) {
-        doneCalled = true;
-        clearTimeout(timer);
-        process.stdin.pause();
-        process.stdin.destroy();
-        resolve(buf);
-      }
-    };
-    let timer = setTimeout(done, 200);
-    process.stdin.setEncoding("utf8");
-    process.stdin.on("data", (chunk: string) => {
-      buf += chunk;
-      try {
-        JSON.parse(buf);
-        done();
-      } catch {
-        clearTimeout(timer);
-        timer = setTimeout(done, 50);
-      }
-    });
-    process.stdin.on("end", done);
-    process.stdin.on("error", done);
-  });
+// A PreToolUse payload that cannot be read whole is denied, never allowed: the guard did not see the tool call.
+function denyUnreadable(why: string, isAgy: boolean): void {
+  const reason = `guard: could not read this tool call (${why}), so it is denied. Retry it once; a tool input over 32 MiB is always denied, so split it. If it is denied again, stop and tell the user that guard cannot read tool calls.`;
+  try {
+    appendDecision(process.env, { decision: "deny", rule: "guard-input" });
+  } catch {
+    // telemetry only
+  }
+  process.stdout.write(
+    preToolUse("deny", reason, isAgy ? "antigravity" : undefined).stdout ?? "",
+    () => {
+      process.exit(0);
+    },
+  );
 }
 
 async function main(): Promise<void> {
@@ -1539,30 +1526,35 @@ async function main(): Promise<void> {
     .find((a) => a.startsWith("--harness="))
     ?.slice(10);
   const isAgy = flagHarness === "antigravity";
+  const isPre = process.argv[2] === "PreToolUse" || isAgy;
 
-  const raw = await readInput();
-  if (!raw.trim()) {
-    if (isAgy) {
-      process.stdout.write(JSON.stringify({ decision: "allow" }));
-      process.exit(0);
+  const read = await readStdin(process.stdin, {
+    deadlineMs: isPre ? PRE_TOOL_DEADLINE_MS : EVENT_DEADLINE_MS,
+  });
+  const failClosed = (why: string): void => {
+    if (isPre) {
+      denyUnreadable(why, isAgy);
     }
+  };
+  if (!read.ok) {
+    failClosed(read.why);
+    return;
+  }
+  const raw = read.text;
+  if (!raw.trim()) {
+    // a TTY (manual run) reads as empty too: only a closed pipe with nothing on it is an unreadable call
+    if (!process.stdin.isTTY) failClosed("empty input");
     return;
   }
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
   } catch {
-    if (isAgy) {
-      process.stdout.write(JSON.stringify({ decision: "allow" }));
-      process.exit(0);
-    }
+    failClosed("input is not JSON");
     return;
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    if (isAgy) {
-      process.stdout.write(JSON.stringify({ decision: "allow" }));
-      process.exit(0);
-    }
+    failClosed("input is not a JSON object");
     return;
   }
   const input = parsed as ExtendedHookInput;

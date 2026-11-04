@@ -18,6 +18,7 @@ import { pluginDataDir } from "./data.mjs";
 import { editedFiles } from "./lint.mjs";
 import { isEditTool, isReadTool, isShellTool, isTaskTool, } from "./harnesses.mjs";
 import { installedVersions, staleCheck } from "./stale.mjs";
+import { EVENT_DEADLINE_MS, PRE_TOOL_DEADLINE_MS, readStdin, } from "./stdin.mjs";
 import { appendDecision, commandHash, harnessName, recordAttrs, } from "./telemetry.mjs";
 const quoteArg = (a) => /^[\w./@%+=:,~-]+$/.test(a) ? a : `'${a.replace(/'/g, "'\\''")}'`;
 const taskLine = (task) => {
@@ -1035,38 +1036,17 @@ export function codexAsks(env, transcriptPath) {
         return null;
     }
 }
-function readInput() {
-    return new Promise((resolve) => {
-        if (process.stdin.isTTY) {
-            resolve("");
-            return;
-        }
-        let buf = "";
-        let doneCalled = false;
-        const done = () => {
-            if (!doneCalled) {
-                doneCalled = true;
-                clearTimeout(timer);
-                process.stdin.pause();
-                process.stdin.destroy();
-                resolve(buf);
-            }
-        };
-        let timer = setTimeout(done, 200);
-        process.stdin.setEncoding("utf8");
-        process.stdin.on("data", (chunk) => {
-            buf += chunk;
-            try {
-                JSON.parse(buf);
-                done();
-            }
-            catch {
-                clearTimeout(timer);
-                timer = setTimeout(done, 50);
-            }
-        });
-        process.stdin.on("end", done);
-        process.stdin.on("error", done);
+// A PreToolUse payload that cannot be read whole is denied, never allowed: the guard did not see the tool call.
+function denyUnreadable(why, isAgy) {
+    const reason = `guard: could not read this tool call (${why}), so it is denied. Retry it once; a tool input over 32 MiB is always denied, so split it. If it is denied again, stop and tell the user that guard cannot read tool calls.`;
+    try {
+        appendDecision(process.env, { decision: "deny", rule: "guard-input" });
+    }
+    catch {
+        // telemetry only
+    }
+    process.stdout.write(preToolUse("deny", reason, isAgy ? "antigravity" : undefined).stdout ?? "", () => {
+        process.exit(0);
     });
 }
 async function main() {
@@ -1078,12 +1058,24 @@ async function main() {
         .find((a) => a.startsWith("--harness="))
         ?.slice(10);
     const isAgy = flagHarness === "antigravity";
-    const raw = await readInput();
-    if (!raw.trim()) {
-        if (isAgy) {
-            process.stdout.write(JSON.stringify({ decision: "allow" }));
-            process.exit(0);
+    const isPre = process.argv[2] === "PreToolUse" || isAgy;
+    const read = await readStdin(process.stdin, {
+        deadlineMs: isPre ? PRE_TOOL_DEADLINE_MS : EVENT_DEADLINE_MS,
+    });
+    const failClosed = (why) => {
+        if (isPre) {
+            denyUnreadable(why, isAgy);
         }
+    };
+    if (!read.ok) {
+        failClosed(read.why);
+        return;
+    }
+    const raw = read.text;
+    if (!raw.trim()) {
+        // a TTY (manual run) reads as empty too: only a closed pipe with nothing on it is an unreadable call
+        if (!process.stdin.isTTY)
+            failClosed("empty input");
         return;
     }
     let parsed;
@@ -1091,17 +1083,11 @@ async function main() {
         parsed = JSON.parse(raw);
     }
     catch {
-        if (isAgy) {
-            process.stdout.write(JSON.stringify({ decision: "allow" }));
-            process.exit(0);
-        }
+        failClosed("input is not JSON");
         return;
     }
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-        if (isAgy) {
-            process.stdout.write(JSON.stringify({ decision: "allow" }));
-            process.exit(0);
-        }
+        failClosed("input is not a JSON object");
         return;
     }
     const input = parsed;

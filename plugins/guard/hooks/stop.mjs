@@ -20,6 +20,7 @@ import { DEFAULT_WRITE_HINT, defaultChecker, prepareChecker, runChecker, } from 
 import { pluginDataDir } from "./data.mjs";
 import { sessionStore } from "./guard.mjs";
 import { detectHarnessName } from "./harnesses.mjs";
+import { STOP_DEADLINE_MS, readStdin } from "./stdin.mjs";
 import { emitAntigravityUsage, failedTarget, harnessName, recordAttrs, scrub, } from "./telemetry.mjs";
 const DEFAULT_TIMEOUT_MS = 300_000;
 const MAX_UNTRACKED = 2000;
@@ -437,8 +438,29 @@ export async function resultGate(input, run = spawnSync, env = process.env, onEv
         return gateFailClosed(env, input, err);
     }
 }
+const blockOf = (reason) => ({
+    decision: "block",
+    reason,
+    hookSpecificOutput: { hookEventName: "Stop", decision: "block", reason },
+});
+// The answer to a crash: nothing for a gate that passed, the gate's own block for one that blocked, and the fail-closed
+// gate answer when the gate had not finished.
+export function crashAnswer(gate, env, input, why = "internal error") {
+    if (gate.done)
+        return gate.reason ? blockOf(gate.reason) : null;
+    const reason = gateFailClosed(env, input, why);
+    return reason ? blockOf(reason) : null;
+}
+class StdinReadError extends Error {
+}
 export async function stopCheck(input, run = spawnSync, opts = {}) {
     const gate = await resultGate(input, run, process.env, opts.report);
+    try {
+        opts.onGate?.(gate);
+    }
+    catch {
+        // a bookkeeping callback never changes the answer
+    }
     let check = null;
     try {
         check = await makeCheck(input, run, opts);
@@ -548,40 +570,6 @@ async function makeCheck(input, run = spawnSync, { exec = run === spawnSync
         hookSpecificOutput: { hookEventName: "Stop", decision: "block", reason },
     };
 }
-function readInput() {
-    return new Promise((resolve) => {
-        if (process.stdin.isTTY) {
-            resolve("");
-            return;
-        }
-        let buf = "";
-        let doneCalled = false;
-        const done = () => {
-            if (!doneCalled) {
-                doneCalled = true;
-                clearTimeout(timer);
-                process.stdin.pause();
-                process.stdin.destroy();
-                resolve(buf);
-            }
-        };
-        let timer = setTimeout(done, 200);
-        process.stdin.setEncoding("utf8");
-        process.stdin.on("data", (chunk) => {
-            buf += chunk;
-            try {
-                JSON.parse(buf);
-                done();
-            }
-            catch {
-                clearTimeout(timer);
-                timer = setTimeout(done, 50);
-            }
-        });
-        process.stdin.on("end", done);
-        process.stdin.on("error", done);
-    });
-}
 const entryArg = process.argv[1];
 if (entryArg && import.meta.url === pathToFileURL(entryArg).href) {
     const flagHarness = process.argv
@@ -613,25 +601,14 @@ if (entryArg && import.meta.url === pathToFileURL(entryArg).href) {
     // telemetry steps changes nothing: a passed result stays passed.
     let crashed = false;
     let answered = false;
+    const gateState = { done: false, reason: null };
     const failClosedOnCrash = () => {
         if (crashed)
             process.exit(0);
         crashed = true;
         try {
-            const reason = answered
-                ? null
-                : gateFailClosed(process.env, input, "internal error");
-            if (reason) {
-                writeOut({
-                    decision: "block",
-                    reason,
-                    hookSpecificOutput: {
-                        hookEventName: "Stop",
-                        decision: "block",
-                        reason,
-                    },
-                });
-            }
+            if (!answered)
+                writeOut(crashAnswer(gateState, process.env, input));
         }
         catch {
             // never exit non-zero by accident
@@ -648,8 +625,12 @@ if (entryArg && import.meta.url === pathToFileURL(entryArg).href) {
     process.on("uncaughtException", failClosedOnCrash);
     process.on("unhandledRejection", failClosedOnCrash);
     try {
-        const raw = await readInput();
-        input = plainInput(JSON.parse(raw || "{}"));
+        const read = await readStdin(process.stdin, {
+            deadlineMs: STOP_DEADLINE_MS,
+        });
+        if (!read.ok)
+            throw new StdinReadError(read.why);
+        input = plainInput(JSON.parse(read.text || "{}"));
         if (input.terminationReason !== undefined && !input.hook_event_name) {
             input.hook_event_name = "Stop";
         }
@@ -663,6 +644,10 @@ if (entryArg && import.meta.url === pathToFileURL(entryArg).href) {
         const events = [];
         const out = await stopCheck(input, spawnSync, {
             report: (attrs) => events.push(attrs),
+            onGate: (reason) => {
+                gateState.done = true;
+                gateState.reason = reason;
+            },
         });
         // written before the usage and telemetry steps, so a failure there cannot lose a block or deny a passed result
         writeOut(out);
@@ -695,23 +680,15 @@ if (entryArg && import.meta.url === pathToFileURL(entryArg).href) {
             // telemetry only
         }
     }
-    catch {
+    catch (e) {
         // unreadable payload or an internal error in the gate: let the agent stop, unless the launcher named a result
         // checker or this is a runtime run, in which case the stop stays blocked
         try {
-            const reason = answered
-                ? null
-                : gateFailClosed(process.env, input, "internal error");
-            if (reason) {
-                writeOut({
-                    decision: "block",
-                    reason,
-                    hookSpecificOutput: {
-                        hookEventName: "Stop",
-                        decision: "block",
-                        reason,
-                    },
-                });
+            if (!answered) {
+                const why = e instanceof StdinReadError
+                    ? `could not read the hook input (${e.message})`
+                    : "internal error";
+                writeOut(crashAnswer(gateState, process.env, input, why));
             }
         }
         catch {
