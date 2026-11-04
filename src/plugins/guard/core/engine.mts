@@ -411,7 +411,7 @@ export function expandLoops(command: string) {
 // external variable, `~user` or a value that is not a plain path stays as written and asks.
 // A double-quoted word with no spaces or other expansions ("$TMPDIR/x", "$S") is that word: unquote it so the
 // temp check can resolve it instead of seeing the blanked string.
-const SIMPLE_QUOTED = /"((?:\$\{?\w+\}?)?[^"\s$`\\]*)"/g;
+const SIMPLE_QUOTED = /"((?:\$\{?\w+\}?)?[^"\s$`\\()<>|;&]*)"/g;
 const UNKNOWN_DIR = "<cd?>";
 const REMOTE_DIR = "<remote>";
 const NO_TARGET = "<none>";
@@ -419,6 +419,8 @@ const CD =
   /(?:^|[\s({])(?:cd|chdir|set-location|sl|pushd|popd|push-location|pop-location)(?=\s|$)/i;
 const PLAIN_CD = /^\s*(?:cd|chdir|set-location|sl)(?:\s+(\S+))?\s*$/i;
 const PLAIN_DIR = /^[\w.@%+=:,\\/~][\w.@%+=:,\\/~-]*$/;
+// A `cd` target the shell never looks up through CDPATH: absolute, `~`, a variable, or `.`/`..` as its first segment.
+const NOT_VIA_CDPATH = /^(?:[\\/~$%`]|\.\.?(?:[\\/]|$)|[a-z]:)/i;
 // Where `cd` stops being followed: a separator that opens a subshell or a branch, or a group or keyword that starts one.
 const BRANCH_SEP = new Set(["(", ")", "||", ";;"]);
 const BRANCH_CODE =
@@ -576,7 +578,7 @@ function levelSegments(
       // A relative target without a leading dot may resolve through a CDPATH the command set.
       const cdpath =
         ("CDPATH" in vars || "cdpath" in vars) &&
-        !/^[\\/.~$%]|^[a-z]:/i.test(to ?? "");
+        !NOT_VIA_CDPATH.test(to ?? "");
       dir =
         to && !cdpath && PLAIN_DIR.test(to) && !to.startsWith("~")
           ? inDir(dir, to)
@@ -603,12 +605,19 @@ function levelSegments(
           resolve,
         });
     }
+    // A prefix assignment (`HOME=/x bash -c '…'`, also after `env`) holds for the payload the command runs.
+    const prefixed = { ...snapshot };
+    const lead = cmd.words.slice(cmd.words[0]?.val === "env" ? 1 : 0);
+    let k = 0;
+    while (k < lead.length && /^[A-Za-z_]\w*=/.test(defined(lead[k]).val)) k++;
+    if (k > 0 && !frozen)
+      assign({ ...cmd, words: lead.slice(0, k) }, prefixed, env, pwd);
     for (const p of cmd.payloads) {
       const inner =
         p.expanded === "escaped"
           ? { vars: {}, pwd: undefined }
           : p.expanded
-            ? { vars: snapshot, pwd }
+            ? { vars: prefixed, pwd }
             : frozen;
       out.push(
         ...(p.remote
@@ -618,7 +627,7 @@ function levelSegments(
               dir,
               remote,
               env,
-              snapshot,
+              prefixed,
               inner,
               cds,
               ranHere,
@@ -1862,8 +1871,10 @@ function segMayMatch(pat: string, seg: string, dots = false) {
 // `..` climbs the name before it, or it went down and the `..` steps back into it (`A/**/..` is `parent(A)` or
 // `A/**`); a `..` at the start is dropped (the root's parent is the root). A glob that bash before 5.2 reads as `..`
 // too (`.?`, `.*`, `.[.]`: it starts with a dot and matches `..`, as macOS /bin/bash 3.2 does) is read both ways.
-// Null past 64 readings, which counts as reaching anything.
+// Null past 64 readings or 512 segments, which counts as reaching anything.
 const DATA_READINGS = 64;
+// Past this many segments a word counts as reaching anything: the matchers recurse once per segment.
+const DATA_SEGMENTS = 512;
 // Marks a folded segment that may stand for any number of directories, its text kept after the mark (`/$X.log`); no
 // segment can hold a `/`, so a directory named `**` stays itself.
 const ANY_SEG = "/";
@@ -1872,12 +1883,21 @@ const anySeg = (s: string) => s.startsWith(ANY_SEG);
 const ANY_EMPTY = new RegExp(`^(?:\\*|${SEG_VAR.source})*$`);
 function dataPaths(p: string, literal: boolean): string[][] | null {
   // A zsh glob qualifier or grouping (`*(/)`, `(a|b)`) or a bash extglob (`@(a)`, `!(b)`) is one glob, read as `*`
-  // before the split, since a qualifier may hold a `/`; a `$(…)` stays a substitution.
-  let text = p;
+  // before the split, since a qualifier may hold a `/`; a `$(…)` stays a substitution. The group may also be quoted
+  // text the reader unquoted (`"x(/../…)"`), so the word is read as written too, and the readings are joined.
+  let collapsed = p;
   if (!literal)
-    for (let n = 0; n < 8 && /(?<!\$)[?*+@!]?\([^()]*\)/.test(text); n++)
-      text = text.replace(/(?<!\$)[?*+@!]?\([^()]*\)/g, "*");
-  const raw = text.split("/").filter((s) => s && s !== ".");
+    for (let n = 0; n < 8 && /(?<!\$)[?*+@!]?\([^()]*\)/.test(collapsed); n++)
+      collapsed = collapsed.replace(/(?<!\$)[?*+@!]?\([^()]*\)/g, "*");
+  const texts = collapsed === p ? [p] : [p, collapsed];
+  const raws = texts.map((text) =>
+    text
+      .split("/")
+      .filter((s) => s && s !== ".")
+      // A zsh extendedglob operator (`^x`, `x#`, `(#i)x`) may name anything in a segment: read as `*`.
+      .map((s) => (!literal && /[\^#]/.test(s) ? "*" : s)),
+  );
+  if (raws.some((raw) => raw.length > DATA_SEGMENTS)) return null;
   const dotGlob = (s: string) =>
     !literal && s.startsWith(".") && s !== ".." && SEG_GLOB.test(s);
   // The readings of one segment: itself, and for a dot glob `..` and `.` where it matches them.
@@ -1898,12 +1918,18 @@ function dataPaths(p: string, literal: boolean): string[][] | null {
     }
     return [[...v, !literal && MULTI_SEG.test(s) ? ANY_SEG + s : s]];
   };
-  let variants: string[][] = [[]];
-  for (const s of raw) {
-    variants = variants.flatMap((v) => readings(s).flatMap((a) => fold(v, a)));
-    if (variants.length > DATA_READINGS) return null;
+  const out: string[][] = [];
+  for (const raw of raws) {
+    let variants: string[][] = [[]];
+    for (const s of raw) {
+      variants = variants.flatMap((v) =>
+        readings(s).flatMap((a) => fold(v, a)),
+      );
+      if (variants.length > DATA_READINGS) return null;
+    }
+    out.push(...variants);
   }
-  return variants;
+  return out;
 }
 // Whether a path (from `dataPaths`: literal, glob and ANY_SEG-marked segments, no `..`) may lie inside the data
 // directory `d` (literal segments), or, with `above`, end at or above it. A marked segment takes any number of its
@@ -1927,9 +1953,11 @@ function reachData(
       // The names it stands for: none, when its text is only variables and wildcards; else the first must match its
       // text (`x-$Y` starts with `x-`), and the rest may run to the end of the data directory.
       const t = seg.slice(1);
+      const head = t.slice(0, t.search(MULTI_SEG));
       r =
         (ANY_EMPTY.test(t) && f(i + 1, j)) ||
-        segMayMatch(defined(d[j]), t === "" ? "*" : t, true);
+        head === "" ||
+        segMayMatch(defined(d[j]), `${head}*`, true);
     } else r = segMayMatch(defined(d[j]), seg, true) && f(i + 1, j + 1);
     memo.set(key, r);
     return r;
@@ -2054,6 +2082,8 @@ export function protectedWrite(
     const unknown =
       /^[$~%`]/.test(p) || (dir === UNKNOWN_DIR && !ABS_DIR.test(p));
     if (unknown) {
+      // A start that is the whole word (`$((i+1))`, `~`) has no tail to match.
+      if (/^[$~%`]/.test(p) && !p.includes("/")) return false;
       const first = p.split("/").find(Boolean) ?? "";
       const rest =
         /^(?:\$(?:\{[^}]*\}|\w+|\([^)]*\))|%\w+%|~[\w.-]*|`[^`]*`)$/.test(first)
@@ -2102,16 +2132,24 @@ export function protectedWrite(
   // `key=value` and `--opt=value` words count by their value too.
   const named: WriteHits = (word, dir, resolve, _above, literal) => {
     if (!dataDirs.length) return false;
-    if (word.length > limits.chars) throw LIMITED;
     const value = word.includes("=") ? word.slice(word.indexOf("=") + 1) : null;
     // An array assignment's value (`arr=(a b)`) counts by each element.
     const elements =
       value !== null && /^\([^()]*\)$/.test(value)
-        ? value.slice(1, -1).split(/\s+/).filter(Boolean)
+        ? value
+            .slice(1, -1)
+            .split(/\s+/)
+            .map((e) => e.replace(/['"]/g, ""))
+            .filter(Boolean)
         : [];
     for (const t of [word, ...(value === null ? [] : [value]), ...elements]) {
       tick();
-      if (DATA_VAR.test(t) || inData(dir, resolve(t), false, literal))
+      // The word's value with its quotes removed may spell the path where the command's text did not (`guard-a""cme`).
+      if (
+        DATA_VAR.test(t) ||
+        spelledIn(t) !== undefined ||
+        inData(dir, resolve(t), false, literal)
+      )
         return true;
     }
     return false;
@@ -2136,10 +2174,13 @@ export function protectedWrite(
   };
   // The data directory's path, or a reference to the plugin-data variable, spelled anywhere in the command's text (inside
   // a quoted script, an option's value, a word with other text around it) names it whatever the reader makes of the word.
-  const text = posixPath(command)
-    .replace(/\/\.(?=\/)/g, "")
-    .replace(/\/{2,}/g, "/");
-  const dataText = (d: string[]) => {
+  const spelledIn = (raw: string) => {
+    const text = posixPath(raw)
+      .replace(/\/\.(?=\/)/g, "")
+      .replace(/\/{2,}/g, "/");
+    return dataDirs.map((d) => dataText(d, text)).find((f) => f !== undefined);
+  };
+  const dataText = (d: string[], text: string) => {
     const dir = d.join("/");
     const forms = /^[a-z]:$/i.test(d[0] ?? "")
       ? [dir, `/${dir.replace(":", "")}`]
@@ -2161,7 +2202,7 @@ export function protectedWrite(
       ).test(text),
     );
   };
-  const spelled = dataDirs.map(dataText).find((f) => f !== undefined);
+  const spelled = spelledIn(command);
   if (spelled !== undefined) return { target: spelled };
   const ref = /(?:\$\{?(?:env:)?|%)(?:claude|copilot)_plugin_data\b/i.exec(
     command,
@@ -2213,48 +2254,42 @@ function scanWrites(
   named: WriteHits | null,
 ) {
   // A word the shell does not expand is literal text: no glob, variable or `**` in it stands for anything else. An
-  // unquoted `(` counts as expansion too: a zsh qualifier or a bash extglob (`@(x)`) is a glob the reader keeps whole.
-  const literal = (w: ShellWord) => !dynamicText(w.raw, /[*?[(]/);
-  // Any `cd` target, followed or not: a glob or variable spelling of the data directory is a `cd` the guard cannot
-  // follow, so what comes after it is matched by its tail only, and the target itself must be read.
-  // Also a `cd` target spelled relative without a leading dot, read as an unknown start: CDPATH may resolve it anywhere.
-  for (const { cd, words, redirs, dir, resolve } of droppedCommands(
-    command,
-    env,
-  )) {
+  // unquoted `(`, `^` or `#` counts as expansion too: a zsh qualifier, extendedglob operator or a bash extglob (`@(x)`)
+  // is a glob the reader keeps whole.
+  const literal = (w: ShellWord) => !dynamicText(w.raw, /[*?[(^#]/);
+  // A relative `cd` target without a leading dot may resolve through CDPATH, when the environment or the command sets it.
+  const cdpath =
+    typeof env.CDPATH === "string" || /\b(?:CDPATH|cdpath)\s*=/.test(command);
+  // Every command, the ones the segment reader drops included (a `cd`, followed or not, whose target may be a glob or
+  // variable spelling of the data directory, and a command made only of assignments): their words, redirections and,
+  // for a `cd` the reader took for one by a later word (`rm -rf x cd`), their writer too.
+  const entries = [
+    ...droppedCommands(command, env),
+    ...segments(command, env)
+      .filter((s) => !s.remote)
+      .map((s) => ({
+        cd: false,
+        words: s.words,
+        redirs: s.redirs,
+        dir: s.dir,
+        resolve: s.resolve,
+      })),
+  ];
+  for (const { cd, words, redirs, dir, resolve } of entries) {
+    // Any command naming a path inside guard's data directory, whatever its program (a redirection target too).
     if (named)
       for (const [i, w] of [...redirs, ...words].entries())
         for (const t of spellings(w)) {
           if (named(defined(t), dir, resolve, false, literal(w))) return t;
           if (
             cd &&
+            cdpath &&
             i > redirs.length &&
-            !/^[\\/.~$%`]|^[a-z]:/i.test(defined(t)) &&
+            !NOT_VIA_CDPATH.test(defined(t)) &&
             named(defined(t), UNKNOWN_DIR, resolve, false, literal(w))
           )
             return t;
         }
-    for (const w of redirs) {
-      if (NOT_A_FILE.test(w.val)) continue;
-      count(w);
-      for (const t of spellings(w))
-        if (
-          !NOT_A_FILE.test(defined(t)) &&
-          hits(defined(t), dir, resolve, false, literal(w))
-        )
-          return t;
-    }
-  }
-  for (const { words, redirs = [], dir, remote, resolve } of segments(
-    command,
-    env,
-  )) {
-    if (remote) continue;
-    // Any command naming a path inside guard's data directory, whatever its program (a redirection target too).
-    if (named)
-      for (const w of [...redirs, ...words])
-        for (const t of spellings(w))
-          if (named(defined(t), dir, resolve, false, literal(w))) return t;
     for (const w of redirs) {
       if (NOT_A_FILE.test(w.val)) continue;
       count(w);
@@ -2285,7 +2320,8 @@ function scanWrites(
       PROTECT_CP.test(name)
     ))
       continue;
-    // Only a writer's words are counted and expanded: a read-only command never fails closed.
+    // Only a writer's words are counted and expanded: outside a run with a data directory, a read-only command never
+    // fails closed.
     for (const w of cw.slice(1)) if (!w.val.startsWith("-")) count(w);
     // Each spelling keeps whether its word is literal; a built `<dest>/<source name>` is not.
     const lit = new Map<string, boolean>();
