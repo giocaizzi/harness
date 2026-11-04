@@ -90,6 +90,20 @@ void test("readStdin: complete JSON with the stream left open resolves", async (
   assert.deepEqual(await p, { ok: true, text: '{"a":{"b":1}}\n' });
 });
 
+void test("readStdin: a large object in many chunks ending in a brace, left open, resolves via the idle check", async () => {
+  const s = new PassThrough();
+  const json = JSON.stringify({ a: "}".repeat(4 * 1024 * 1024) });
+  const p = readStdin(s, big);
+  const buf = Buffer.from(json);
+  for (let i = 0; i < buf.length; i += 65536) {
+    s.write(buf.subarray(i, i + 65536));
+    await new Promise((r) => setImmediate(r));
+  }
+  const r = await p;
+  assert.ok(r.ok);
+  assert.equal(r.text.length, json.length);
+});
+
 void test("readStdin: a stream that never completes times out", async () => {
   const s = new PassThrough();
   const p = readStdin(s, { deadlineMs: 100 });
