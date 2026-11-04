@@ -13,7 +13,9 @@ import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { docsOnly } from "../core/docsonly.mjs";
 import { emit } from "../core/otel.mjs";
+import { coreErrors, couldNotRun, report } from "../core/result.mjs";
 import { rules } from "../core/rules.mjs";
+import { DEFAULT_WRITE_HINT, defaultChecker, prepareChecker, runChecker, } from "./checker.mjs";
 import { pluginDataDir } from "./data.mjs";
 import { sessionStore } from "./guard.mjs";
 import { detectHarnessName } from "./harnesses.mjs";
@@ -212,47 +214,97 @@ export function takeLock(file) {
 }
 const RESULT_GATE_MAX = 2;
 const TICKET_NUMBER = /^[\w.-]+\/[\w.-]+#([1-9]\d*)$/;
+const STRICT_WRITE_HINT = "Fix result.json until it passes the core check and the launcher's checker; never edit the checker.";
+const SUBAGENT_HINT = "A subagent (such as the verifier) ignores this and ends its turn: the main session writes the file.";
+// The factory run this stop belongs to, or null: the gate is off, a subagent is stopping, or no run is identified
+// (the runtime's FACTORY_RUN_ID and FACTORY_TICKET, or an attended run's pair).
+function gateRun(input, env) {
+    if (env.GUARD_RESULT_GATE === "off" ||
+        input.agent_id ||
+        /^subagentstop$/i.test(input.hook_event_name ?? "")) {
+        return null;
+    }
+    const runtime = (env.FACTORY_RUN_ID ?? "").trim();
+    const runId = runtime || (env.FACTORY_ATTENDED_RUN_ID ?? "").trim();
+    const ticketRef = (runtime ? env.FACTORY_TICKET : env.FACTORY_ATTENDED_TICKET)?.trim() ?? "";
+    const number = TICKET_NUMBER.exec(ticketRef)?.[1];
+    return runId && number ? { runId, number, runtime: Boolean(runtime) } : null;
+}
+// Strict mode: the launcher named a checker (FACTORY_RESULT_CHECKER present, even empty). Read from the hook's own
+// environment only, never from the result file or project config.
+const isStrict = (env) => env.FACTORY_RESULT_CHECKER !== undefined;
+// In strict mode the gate never fails open: the block reason for a stop whose check could not be made, or null when
+// the launcher named no checker, the stop is exempt or no run is identified.
+export function gateFailClosed(env, input, why) {
+    try {
+        const run = isStrict(env) ? gateRun(input, env) : null;
+        return run
+            ? `Factory result gate: could not check the result for run ${run.runId} (${scrub(why).slice(0, 200)}); FACTORY_RESULT_CHECKER is set, so the stop stays blocked.`
+            : null;
+    }
+    catch {
+        return null;
+    }
+}
+// The block counter, one file per run: the only place it is read or written.
+const blockFile = (runId) => join(pluginDataDir(), "result-gate", `${sha(runId).slice(0, 16)}.txt`);
+function blockCount(runId) {
+    try {
+        return Number(readFileSync(blockFile(runId), "utf8")) || 0;
+    }
+    catch {
+        return 0; // no block yet
+    }
+}
+// Records one more block and returns the new count.
+function bumpBlocks(runId) {
+    const n = blockCount(runId) + 1;
+    mkdirSync(dirname(blockFile(runId)), { recursive: true });
+    writeFileSync(blockFile(runId), String(n));
+    return n;
+}
 export async function resultGate(input, run = spawnSync, env = process.env, onEvent = () => {
     // default event ignore
-}) {
+}, checkerOpts = {}) {
     const event = (result, attrs = {}) => {
         onEvent({ result, target: "result-gate", ...attrs });
     };
+    const strict = isStrict(env);
     try {
-        if (env.GUARD_RESULT_GATE === "off" ||
-            input.agent_id ||
-            /^subagentstop$/i.test(input.hook_event_name ?? "")) {
+        const gate = gateRun(input, env);
+        if (!gate)
+            return null;
+        const { runId, number, runtime } = gate;
+        const runner = runtime ? "runtime" : "attended";
+        // Resolved once, before the result is read.
+        const dflt = strict ? null : defaultChecker(checkerOpts.buildCopy);
+        const checker = strict
+            ? prepareChecker(env.FACTORY_RESULT_CHECKER, checkerOpts)
+            : dflt && { path: dflt.path, shown: dflt.path };
+        const checkerShown = checker?.shown ?? "";
+        const git = run("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], { cwd: input.cwd ?? process.cwd(), encoding: "utf8", windowsHide: true });
+        if (git.status !== 0 || !git.stdout.trim()) {
+            if (strict)
+                throw new Error("git rev-parse failed");
             return null;
         }
-        const runtime = (env.FACTORY_RUN_ID ?? "").trim();
-        const runId = runtime || (env.FACTORY_ATTENDED_RUN_ID ?? "").trim();
-        const ticketRef = (runtime ? env.FACTORY_TICKET : env.FACTORY_ATTENDED_TICKET)?.trim() ??
-            "";
-        const number = TICKET_NUMBER.exec(ticketRef)?.[1];
-        if (!runId || !number)
-            return null;
-        const git = run("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], { cwd: input.cwd ?? process.cwd(), encoding: "utf8", windowsHide: true });
-        if (git.status !== 0 || !git.stdout.trim())
-            return null;
         const file = join(dirname(git.stdout.trim()), ".factory", "runs", number, "result.json");
-        const checkResultPath = "../.generated/factory/check-result.mjs";
-        const mod = (await import(checkResultPath));
-        let errors;
+        let errors = [];
+        let parsed;
+        let parsedOk = false;
+        const runFile = (env.FACTORY_RUN_FILE ?? "").trim();
+        const checkEnv = runtime
+            ? runFile
+                ? {
+                    ...env,
+                    FACTORY_RUN_FILE: resolve(input.cwd ?? process.cwd(), runFile),
+                }
+                : env
+            : {};
         try {
-            const content = readFileSync(file, "utf8").replace(/^\uFEFF/, "");
-            const resultObj = JSON.parse(content);
-            if (!runtime && resultObj.run_id !== runId)
-                return null;
-            const runFile = (env.FACTORY_RUN_FILE ?? "").trim();
-            const checkEnv = runtime
-                ? runFile
-                    ? {
-                        ...env,
-                        FACTORY_RUN_FILE: resolve(input.cwd ?? process.cwd(), runFile),
-                    }
-                    : env
-                : {};
-            errors = mod.resultErrors(resultObj, checkEnv);
+            const content = readFileSync(file, "utf8").replace(/^﻿/, "");
+            parsed = JSON.parse(content);
+            parsedOk = true;
         }
         catch (e) {
             if (!runtime)
@@ -266,31 +318,43 @@ export async function resultGate(input, run = spawnSync, env = process.env, onEv
                         : `cannot read (${err.code ?? err.message ?? ""})`,
             ];
         }
+        if (parsedOk) {
+            if (!runtime &&
+                (parsed === null ||
+                    typeof parsed !== "object" ||
+                    parsed.run_id !== runId)) {
+                return null;
+            }
+            errors = coreErrors(parsed, checkEnv);
+        }
+        // The checker can only add errors: the core ones always stay.
+        if (checker && "why" in checker) {
+            errors.push(...couldNotRun(checkerShown, checker.why));
+        }
+        else if (checker && parsedOk) {
+            const r = await runChecker(checker.path, parsed, checkEnv, {
+                timeoutMs: checkerOpts.timeoutMs,
+            });
+            errors.push(...("errors" in r ? r.errors : couldNotRun(checkerShown, r.why)));
+        }
+        errors = [...new Set(errors)];
         if (!errors.length)
             return null;
-        const counter = join(pluginDataDir(), "result-gate", `${sha(runId).slice(0, 16)}.txt`);
-        let blocks = 0;
-        try {
-            blocks = Number(readFileSync(counter, "utf8")) || 0;
-        }
-        catch {
-            // no block yet
-        }
-        if (blocks >= RESULT_GATE_MAX) {
-            event("capped", { runner: runtime ? "runtime" : "attended" });
+        const blocks = blockCount(runId);
+        if (!strict && blocks >= RESULT_GATE_MAX) {
+            event("capped", { runner });
             return null;
         }
-        mkdirSync(dirname(counter), { recursive: true });
-        writeFileSync(counter, String(blocks + 1));
-        event("block", {
-            runner: runtime ? "runtime" : "attended",
-            blocks: blocks + 1,
-        });
+        const n = bumpBlocks(runId);
+        event("block", { runner, blocks: n });
+        const head = strict
+            ? `Factory result gate (block ${String(n)}; FACTORY_RESULT_CHECKER is set, so the stop stays blocked until the result passes)`
+            : `Factory result gate (block ${String(n)} of ${String(RESULT_GATE_MAX)})`;
         return [
-            `Factory result gate (block ${String(blocks + 1)} of ${String(RESULT_GATE_MAX)}): ${file} is not a valid result for run ${runId}:`,
-            ...mod.report(errors),
-            "Write it with the ticket-run skill's scripts/write-result.mjs, never by hand: put the judgment fields in a JSON file and run `node <skill dir>/scripts/write-result.mjs <file>` from the repo; fix the input, never the written file, until it exits 0.",
-            "A subagent (such as the verifier) ignores this and ends its turn: the main session writes the file.",
+            `${head}: ${file} is not a valid result for run ${runId}:`,
+            ...report(errors),
+            strict ? STRICT_WRITE_HINT : DEFAULT_WRITE_HINT,
+            SUBAGENT_HINT,
         ].join("\n");
     }
     catch (e) {
@@ -298,12 +362,20 @@ export async function resultGate(input, run = spawnSync, env = process.env, onEv
             ? e.message
             : String(e);
         event("error", { why: scrub(err).slice(0, 200) });
-        return null;
+        return gateFailClosed(env, input, err);
     }
 }
 export async function stopCheck(input, run = spawnSync, opts = {}) {
     const gate = await resultGate(input, run, process.env, opts.report);
-    const check = await makeCheck(input, run, opts);
+    let check = null;
+    try {
+        check = await makeCheck(input, run, opts);
+    }
+    catch (e) {
+        // a gate block must survive a failing make check
+        if (!gate)
+            throw e;
+    }
     if (!gate)
         return check;
     const reason = check?.decision === "block" ? `${gate}\n\n${check.reason ?? ""}` : gate;
@@ -445,9 +517,29 @@ if (entryArg && import.meta.url === pathToFileURL(entryArg).href) {
         .find((a) => a.startsWith("--harness="))
         ?.slice(10);
     const activeHarness = flagHarness ?? detectHarnessName();
+    let input = {};
+    const isAntigravity = () => activeHarness === "antigravity" || input.terminationReason !== undefined;
+    // Stdout carries one JSON object, written at most once, in the shape each harness reads.
+    let written = false;
+    const writeOut = (out) => {
+        if (!out || written)
+            return;
+        written = true;
+        if (isAntigravity()) {
+            process.stdout.write(JSON.stringify(out.decision === "block"
+                ? { decision: "continue", reason: out.reason }
+                : {}));
+        }
+        else if (activeHarness === "codex" && out.decision) {
+            process.stdout.write(JSON.stringify({ decision: out.decision, reason: out.reason }));
+        }
+        else {
+            process.stdout.write(JSON.stringify(out));
+        }
+    };
     try {
         const raw = await readInput();
-        const input = JSON.parse(raw || "{}");
+        input = JSON.parse(raw || "{}");
         if (input.terminationReason !== undefined && !input.hook_event_name) {
             input.hook_event_name = "Stop";
         }
@@ -462,8 +554,9 @@ if (entryArg && import.meta.url === pathToFileURL(entryArg).href) {
         const out = await stopCheck(input, spawnSync, {
             report: (attrs) => events.push(attrs),
         });
-        const isAntigravity = activeHarness === "antigravity" || input.terminationReason !== undefined;
-        if (isAntigravity &&
+        // written before the usage step, so a failure there cannot lose a block
+        writeOut(out);
+        if (isAntigravity() &&
             (input.transcriptPath ||
                 input.transcript_path)) {
             const tPath = input.transcriptPath ??
@@ -477,28 +570,33 @@ if (entryArg && import.meta.url === pathToFileURL(entryArg).href) {
                 store.save(state);
             }
         }
-        if (out) {
-            if (isAntigravity) {
-                process.stdout.write(JSON.stringify(out.decision === "block"
-                    ? { decision: "continue", reason: out.reason }
-                    : {}));
-            }
-            else if (activeHarness === "codex" && out.decision) {
-                process.stdout.write(JSON.stringify({ decision: out.decision, reason: out.reason }));
-            }
-            else {
-                process.stdout.write(JSON.stringify(out));
-            }
-        }
         for (const event of events) {
             await emit(process.env, "guard.stop", recordAttrs({ ...event, cmd_class: "stop", session_id: input.session_id }, input.cwd ?? process.cwd(), harnessName()));
         }
-        if (isAntigravity) {
+        if (isAntigravity()) {
             process.exit(0);
         }
     }
     catch {
-        // unreadable payload: let the agent stop
+        // unreadable payload or an internal error: let the agent stop, unless the launcher named a result checker, in
+        // which case the stop stays blocked
+        try {
+            const reason = gateFailClosed(process.env, input, "internal error");
+            if (reason) {
+                writeOut({
+                    decision: "block",
+                    reason,
+                    hookSpecificOutput: {
+                        hookEventName: "Stop",
+                        decision: "block",
+                        reason,
+                    },
+                });
+            }
+        }
+        catch {
+            // never exit non-zero by accident
+        }
         if (activeHarness === "antigravity") {
             process.exit(0);
         }

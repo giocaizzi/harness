@@ -8,7 +8,7 @@ import { keepAwake } from "./awake.mjs";
 import { fallbackDataDir } from "./data.mjs";
 import { handle, hostFacts, pythonManager, run } from "./guard.mjs";
 import { lintFile } from "./lint.mjs";
-import { stopCheck } from "./stop.mjs";
+import { gateFailClosed, stopCheck } from "./stop.mjs";
 import { recordAttrs } from "./telemetry.mjs";
 // Neither harness gives plugins a data dir; the same fallback as VS Code.
 export const DATA_DIR = fallbackDataDir();
@@ -129,7 +129,8 @@ export function createGuard({ harness, noAsk = false, dataDir = DATA_DIR, deps =
                 return out?.decision === "block" ? (out.reason ?? null) : null;
             }
             catch {
-                return null;
+                // stopCheck reads process.env: a launcher-named result checker keeps the stop blocked
+                return gateFailClosed(process.env, { cwd }, "internal error");
             }
         },
         // One model response: { sessionId, model, provider, tokens: { input, output, cacheRead, cacheWrite, reasoning }, costUsd }.
