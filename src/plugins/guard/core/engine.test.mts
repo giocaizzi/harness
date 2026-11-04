@@ -3892,11 +3892,21 @@ void test("factory run: a Git Bash drive path names a drive-letter data director
     "touch /c/Users/me/AppData/Local/Temp/guard-plugin-me/x",
     "echo 2 > /C/Users/me/AppData/Local/Temp/guard-plugin-me/result-gate/x",
     `touch ${win}/x`,
+    "touch /c/Users/me/AppData/Local/Temp/guard-plugin-*/x",
+    "type \\\\?\\C:\\Users\\me\\AppData\\Local\\Temp\\guard-plugin-me\\x",
+    "Set-Location C:\\Users\\me\\AppData\\Local\\Temp\\guard-plugin-m?",
   ]) {
     const d = run(c, win);
     assert.equal(d.action, "deny", c);
     assert.equal(d.rule, "protected-path", c);
   }
+  // Known limits against a Windows directory: a trailing dot, an 8.3 short name, `\\?\` with a glob.
+  for (const c of [
+    "type C:\\Users\\me\\AppData\\Local\\Temp\\guard-plugin-me.\\x",
+    "type C:\\Users\\me\\AppData\\Local\\Temp\\GUARD-~1\\x",
+    "type \\\\?\\C:\\Users\\me\\AppData\\Local\\Temp\\guard-plugin-m?\\x",
+  ])
+    assert.notEqual(run(c, win).rule, "protected-path", `${c} (known limit)`);
   assert.equal(
     run("touch /c/Users/me/AppData/Local/Temp/guard-plugin-me/x", win, false)
       .action,
