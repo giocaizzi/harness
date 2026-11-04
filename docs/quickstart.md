@@ -8,7 +8,7 @@ You need `node` 22+ on PATH and a [Nerd Font](https://www.nerdfonts.com/) in the
 
 ```bash
 claude plugin marketplace add giocaizzi/harness
-for p in dev-tools guard hud sounds python go javascript api factory; do claude plugin install "$p@giocaizzi-harness"; done
+for p in dev-tools guard hud sounds python go javascript api; do claude plugin install "$p@giocaizzi-harness"; done
 ```
 
 Skip the language plugins (`python`, `go`, `javascript`, `api`) you do not need. Then add the status line and the agent-panel rows to `~/.claude/settings.json`:

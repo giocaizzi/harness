@@ -9,7 +9,7 @@ There are four kinds of feature, and you call each one differently:
 | Kind | Plugins | How it starts |
 |---|---|---|
 | Skills | `dev-tools`, `python`, `go`, `javascript`, `api` | **By itself** when the request matches its description ("open a PR" loads `ship`), or **by you** with its slash command. |
-| Agents | `dev-tools` (`scout`, `worker`, `driver`, `reviewer`, `escalate`), `api` (`api-reviewer`), `factory` (`verifier`) | **By the main session**, which routes to them on its own (judgement work to `driver`, edits to `worker`, lookups to `scout`, review to `reviewer`). Name one to force it ("use scout to ..."). |
+| Agents | `dev-tools` (`scout`, `worker`, `driver`, `reviewer`, `escalate`), `api` (`api-reviewer`) | **By the main session**, which routes to them on its own (judgement work to `driver`, edits to `worker`, lookups to `scout`, review to `reviewer`). Name one to force it ("use scout to ..."). |
 | Hooks | `guard`, `sounds` | **Never called.** They run on their own around tool calls, prompts and turns. |
 | Display | `hud` | **Always on**, plus a few slash commands for panes. |
 
@@ -80,15 +80,6 @@ These load by themselves when the work touches their subject; call them by name 
 | `api` | `sqlalchemy` | define models, write queries, manage sessions and migrations |
 | `api` | `ddd` | design bounded contexts, aggregates, ports and adapters |
 
-### Ticket runs (`factory`)
-
-For a repo adopted per [adopt-factory.md](adopt-factory.md): you approve a ticket by labelling it `agent-ok`, the agent works it, and everything it decides or asks lands on the ticket ([factory.md](factory.md)).
-
-| Skill | Argument | What it does |
-|---|---|---|
-| `ticket-run` | issue number | Checks you applied the approval label, posts a plan, works the ticket in its own worktree deciding scope with the fold-in test, asks questions on the ticket and parks until you answer there, runs the `verifier`, ships one PR that closes the ticket, merges by risk tier, deploys and live-verifies, and records the result. Run it again on a parked ticket after you answer, or on a ticket you labelled `factory-takeover` to finish a runtime run attended. |
-| `factory-status` | days of done tickets (default 7) | One screen from GitHub labels and the marked comments: halted and quarantined tickets, tickets that need you with their open question or a takeover, in progress with PR and checks, parked for grooming, approved and not started, recently done. Read-only. |
-
 ## Agents
 
 | Agent | Plugin | Used when | Model |
@@ -96,10 +87,9 @@ For a repo adopted per [adopt-factory.md](adopt-factory.md): you approve a ticke
 | `scout` | `dev-tools` | you need something found or read: code, logs, test output. Read-only; answers with `file:line` evidence. | cheapest (Claude: Haiku, `low`) |
 | `worker` | `dev-tools` | an edit whose every decision is made: a written plan, a rename, a config rollout, one unit of a driver's split (several run in parallel). Stops on any unsettled choice. | routine tier (Claude: Sonnet, `medium`) |
 | `driver` | `dev-tools` | a hub hands off judgement work: investigate, plan, split, fan the edits out to `worker`s, integrate, fix review findings | driver tier (Claude: Opus) |
-| `reviewer` | `dev-tools` | a change needs review by someone who did not write it (not a factory ticket) | routine tier (Claude: Sonnet, `medium`); a sensitive review raises it on the spawn to Opus at `high` |
+| `reviewer` | `dev-tools` | a change needs review by someone who did not write it | routine tier (Claude: Sonnet, `medium`); a sensitive review raises it on the spawn to Opus at `high` |
 | `escalate` | `dev-tools` | a `driver` failed twice on the same problem | strongest (Claude: Fable) |
 | `api-reviewer` | `api` | you want an API security review: vulnerabilities, RBAC leaks, compliance. Read-only; posts a verdict like `reviewer` | driver (Claude: Opus, `medium`) |
-| `verifier` | `factory` | a ticket's change is ready to ship and needs a gate that did not write it ([factory.md](factory.md#verification)) | driver (Claude: Opus, `medium`; per-change overrides in `ticket-run`'s `references/routing.md`) |
 
 To force one, name it ("use scout to list every place we read `GUARD_` env vars"). Per harness: Claude Code `/agents` lists them; Copilot CLI `/agent` picks one; opencode `@scout`; Codex and pi by asking (pi runs them through its `subagent` tool). Models per harness: [compatibility.md](compatibility.md).
 

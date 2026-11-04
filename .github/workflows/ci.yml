@@ -107,11 +107,6 @@ jobs:
         run: |
           node --test --test-reporter=tap tests/land-scripts-ps1.test.mjs | tee tap.txt
           if ! grep -qx '# tests 71' tap.txt || ! grep -qx '# pass 71' tap.txt; then echo "::error::expected 71 land-many.ps1, resync-after-squash.ps1 and verify-merge-only.ps1 tests to pass"; exit 1; fi
-      # The factory's ps1 launcher, its result writer and checker, and the gate script's config reader (Node scripts that handle Windows paths and CRLF).
-      - shell: bash
-        run: |
-          node --test --test-reporter=tap --test-name-pattern='^(attended launcher \(ps1\)|write-result|check-result|result scripts|gate script: reads)' tests/factory.test.mjs | tee tap.txt
-          if ! grep -qx '# tests 17' tap.txt || ! grep -qx '# pass 17' tap.txt; then echo "::error::expected 17 factory launcher (ps1), result writer, checker and gate config tests to pass"; exit 1; fi
       # Guard's result check and the stop hook's result gate: Windows path forms, BOM and CRLF, the hook's output per harness.
       - shell: bash
         env:
