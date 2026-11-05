@@ -97,14 +97,37 @@ const attr = (key, value) => ({
     key,
     value: { stringValue: String(value) },
 });
+const isIpv4 = (value) => {
+    const parts = value.split(".");
+    return (parts.length === 4 &&
+        parts.every((part) => /^\d{1,3}$/.test(part) && Number(part) <= 255));
+};
+const isIpv6 = (value) => value.includes(":") && /^[0-9a-f:.]+(?:%[\w.-]+)?$/i.test(value);
+/** Normalize an exported host name to a short host without deriving a missing value. */
+export function normalizeHostName(value) {
+    const normalized = (value ?? "").trim().replace(/\.+$/, "");
+    if (!normalized)
+        return null;
+    if (normalized.toLowerCase() === "localhost" ||
+        isIpv4(normalized) ||
+        isIpv6(normalized))
+        return normalized;
+    return normalized.split(".")[0] ?? null;
+}
 /** Build an OTLP/HTTP JSON log request payload, or return null when no endpoint is set. */
 export function logRequest({ endpoint, headers, resource }, event, attrs, now = Date.now(), service = "guard", trace = null) {
     if (!endpoint)
         return null;
+    const configuredResource = parsePairs(resource);
+    const hostName = normalizeHostName(configuredResource["host.name"]);
+    if (hostName === null)
+        delete configuredResource["host.name"];
+    else
+        configuredResource["host.name"] = hostName;
     const res = service === "guard"
-        ? { "service.name": "guard", ...parsePairs(resource) }
+        ? { ...configuredResource, "service.name": "guard" }
         : {
-            ...parsePairs(resource),
+            ...configuredResource,
             "service.name": service,
             "service.namespace": service,
         };
@@ -159,7 +182,7 @@ export async function emit(env, event, attrs, fetchFn = fetch, service = "guard"
             endpoint: v("OTEL_EXPORTER_OTLP_ENDPOINT"),
             headers: v("OTEL_EXPORTER_OTLP_HEADERS"),
             resource: v("OTEL_RESOURCE_ATTRIBUTES"),
-        }, event, attrs, Date.now(), service, event === "guard.decision" ? traceContext(env) : null);
+        }, event, attrs, Date.now(), service, traceContext(env));
         if (req)
             await fetchFn(req.url, {
                 method: "POST",

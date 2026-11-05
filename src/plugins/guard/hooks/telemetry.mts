@@ -3,12 +3,13 @@
 
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { appendFileSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { emit, otelEnabled, repoSlug, traceContext } from "../core/otel.mjs";
-import { detectHarnessName } from "./harnesses.mjs";
+import { canonicalHarnessName, detectHarnessName } from "./harnesses.mjs";
 
 export { repoSlug };
 
@@ -92,22 +93,143 @@ export function repoName(
   return repos.get(key) ?? null;
 }
 
-// Every record carries the harness, the guard version and the repo (`owner/name` of the hook input's `cwd`), read only
-// when something will be sent.
+const legacyHarnessName = (harness?: string): string | null => {
+  const normalized = harness?.trim().toLowerCase();
+  switch (normalized) {
+    case "claude":
+    case "copilot":
+    case "vscode":
+    case "codex":
+      return normalized;
+    default:
+      return null;
+  }
+};
+
+const harnessAttrs = (harness?: string): Record<string, unknown> => {
+  const legacy = legacyHarnessName(harness);
+  return {
+    harness: canonicalHarnessName(harness),
+    ...(legacy ? { harness_legacy: legacy } : {}),
+  };
+};
+
+const enrichedAttrs = (
+  attrs: Record<string, unknown>,
+  cwd?: string,
+  harness?: string,
+): Record<string, unknown> => ({
+  ...attrs,
+  ...harnessAttrs(harness),
+  guard_version: guardVersion(),
+  repo: repoName(cwd),
+});
+
+// Every record carries the canonical harness identity, the guard version and the repo (`owner/name` of the hook
+// input's `cwd`), read only when something will be sent. Changed internal aliases are retained temporarily.
 export const recordAttrs = (
   attrs: Record<string, unknown>,
   cwd?: string,
   harness?: string,
   env: NodeJS.ProcessEnv = process.env,
 ): Record<string, unknown> =>
-  otelEnabled(env)
-    ? {
-        ...attrs,
-        harness,
-        guard_version: guardVersion(),
-        repo: repoName(cwd),
-      }
-    : attrs;
+  otelEnabled(env) ? enrichedAttrs(attrs, cwd, harness) : attrs;
+
+export type UsageCostSource = "reported" | "estimated";
+
+export interface UsageAttributeParams {
+  cacheCreationTokens?: number | null;
+  cacheReadTokens?: number | null;
+  costSource?: UsageCostSource | null;
+  costUsd?: number | null;
+  cwd?: string;
+  env?: NodeJS.ProcessEnv;
+  harness?: string | null;
+  inputTokens?: number | null;
+  model?: string | null;
+  outputTokens?: number | null;
+  provider?: string | null;
+  reasoningTokens?: number | null;
+  sessionId?: string | null;
+}
+
+const presentString = (
+  value: string | null | undefined,
+): string | undefined => {
+  const normalized = value?.trim();
+  if (!normalized) return undefined;
+  return normalized;
+};
+
+const finiteNumber = (value: number | null | undefined): number | undefined =>
+  typeof value === "number" && Number.isFinite(value) ? value : undefined;
+
+const nonNegativeFiniteNumber = (
+  value: number | null | undefined,
+): number | undefined => {
+  const finite = finiteNumber(value);
+  return finite !== undefined && finite >= 0 ? finite : undefined;
+};
+
+interface UsageEnrichment {
+  guardVersion: () => string | null;
+  repoName: (cwd?: string) => string | null;
+}
+
+const defaultUsageEnrichment: UsageEnrichment = { guardVersion, repoName };
+
+/** Build the shared attributes for a synthetic `api_request` usage log. */
+export function usageAttributes(
+  {
+    cacheCreationTokens,
+    cacheReadTokens,
+    costSource,
+    costUsd,
+    cwd,
+    env = process.env,
+    harness,
+    inputTokens,
+    model,
+    outputTokens,
+    provider,
+    reasoningTokens,
+    sessionId,
+  }: UsageAttributeParams,
+  enrichment: UsageEnrichment = defaultUsageEnrichment,
+): Record<string, unknown> {
+  const session = presentString(sessionId);
+  const modelName = presentString(model);
+  const providerName = presentString(provider);
+  const input = nonNegativeFiniteNumber(inputTokens);
+  const output = nonNegativeFiniteNumber(outputTokens);
+  const cacheRead = nonNegativeFiniteNumber(cacheReadTokens);
+  const cacheCreation = nonNegativeFiniteNumber(cacheCreationTokens);
+  const reasoning = nonNegativeFiniteNumber(reasoningTokens);
+  const cost = nonNegativeFiniteNumber(costUsd);
+  const common = {
+    usage_schema: "guard.usage.v1",
+    ...(session ? { "session.id": session } : {}),
+    ...(modelName ? { model: modelName } : {}),
+    ...(providerName ? { provider: providerName } : {}),
+    ...(input !== undefined ? { input_tokens: input } : {}),
+    ...(output !== undefined ? { output_tokens: output } : {}),
+    ...(cacheRead !== undefined ? { cache_read_tokens: cacheRead } : {}),
+    ...(cacheCreation !== undefined
+      ? { cache_creation_tokens: cacheCreation }
+      : {}),
+    ...(reasoning !== undefined ? { reasoning_tokens: reasoning } : {}),
+    ...(cost !== undefined ? { cost_usd: cost } : {}),
+    ...(cost !== undefined && costSource ? { cost_source: costSource } : {}),
+    ...harnessAttrs(harness ?? undefined),
+  };
+  if (!otelEnabled(env)) return common;
+  const observedCwd = presentString(cwd);
+  return {
+    ...common,
+    guard_version: enrichment.guardVersion(),
+    ...(observedCwd ? { repo: enrichment.repoName(observedCwd) } : {}),
+  };
+}
 
 // A line of tool output made safe to send: long token-like runs and `key=value` / `key: value` pairs whose key names
 // a secret are masked, then it is cut to 200 characters.
@@ -171,40 +293,6 @@ export function appendDecision(
   }
 }
 
-/**
- * Estimate USD cost for a Gemini model call based on official pricing per million tokens.
- * Pro: $1.25 / M in, $5.00 / M out, $0.3125 / M cache read.
- * Flash: $0.15 / M in, $0.60 / M out, $0.0375 / M cache read.
- * Flash-Lite: $0.075 / M in, $0.30 / M out, $0.01875 / M cache read.
- */
-export function estimateGeminiCost(
-  model?: string,
-  inputTokens = 0,
-  outputTokens = 0,
-  cacheReadTokens = 0,
-): number {
-  const m = (model ?? "").toLowerCase();
-  let inRate = 1.25 / 1_000_000;
-  let outRate = 5.0 / 1_000_000;
-  let cacheRate = 0.3125 / 1_000_000;
-
-  if (m.includes("flash-lite")) {
-    inRate = 0.075 / 1_000_000;
-    outRate = 0.3 / 1_000_000;
-    cacheRate = 0.01875 / 1_000_000;
-  } else if (m.includes("flash")) {
-    inRate = 0.15 / 1_000_000;
-    outRate = 0.6 / 1_000_000;
-    cacheRate = 0.0375 / 1_000_000;
-  }
-
-  const cost =
-    Math.max(0, inputTokens) * inRate +
-    Math.max(0, outputTokens) * outRate +
-    Math.max(0, cacheReadTokens) * cacheRate;
-  return Number(cost.toFixed(6));
-}
-
 export interface AntigravityTranscriptStep {
   cache_read_tokens?: number;
   input_tokens?: number;
@@ -219,6 +307,53 @@ export type EmitReportFn = (
   service?: string,
 ) => Promise<void>;
 
+export interface AntigravityTranscriptPaths {
+  conversationId?: string;
+  homeDir?: string;
+  transcriptPath?: string;
+  transcript_path?: string;
+}
+
+/** Resolve an explicit Antigravity transcript or an existing transcript in its recovered artifact layout. */
+export function resolveAntigravityTranscriptPath(
+  {
+    conversationId,
+    homeDir = homedir(),
+    transcriptPath,
+    transcript_path: legacyTranscriptPath,
+  }: AntigravityTranscriptPaths,
+  fileExists: (path: string) => boolean = existsSync,
+): string | undefined {
+  const explicit =
+    presentString(transcriptPath) ?? presentString(legacyTranscriptPath);
+  if (explicit) return explicit;
+
+  const id = presentString(conversationId);
+  if (
+    !id ||
+    id === "." ||
+    id === ".." ||
+    id.includes("/") ||
+    id.includes("\\") ||
+    id.includes("\0")
+  ) {
+    return undefined;
+  }
+  const logs = join(
+    homeDir,
+    ".gemini",
+    "antigravity-cli",
+    "brain",
+    id,
+    ".system_generated",
+    "logs",
+  );
+  const transcript = join(logs, "transcript.jsonl");
+  if (fileExists(transcript)) return transcript;
+  const fullTranscript = join(logs, "transcript_full.jsonl");
+  return fileExists(fullTranscript) ? fullTranscript : undefined;
+}
+
 /**
  * Scan Antigravity's transcript.jsonl for new PLANNER_RESPONSE turns and emit api_request to OTel.
  * Returns the highest step_index seen, or lastStep if unchanged or unreadable.
@@ -228,6 +363,7 @@ export async function emitAntigravityUsage(
   conversationId: string | undefined,
   modelName: string | undefined,
   lastStep: number | undefined,
+  cwd: string | undefined,
   env: NodeJS.ProcessEnv | undefined = process.env,
   emitFn?: EmitReportFn,
 ): Promise<number | undefined> {
@@ -254,28 +390,25 @@ export async function emitAntigravityUsage(
       if (typeof idx === "number" && idx > (lastStep ?? -1)) {
         if (idx > maxStep) maxStep = idx;
         if (step.type === "PLANNER_RESPONSE") {
-          const inTok = Number(step.input_tokens) || 0;
-          const outTok = Number(step.output_tokens) || 0;
-          const cacheReadTok = Number(step.cache_read_tokens) || 0;
-          const model = modelName ?? "auto";
-          const costUsd = estimateGeminiCost(
-            model,
-            inTok,
-            outTok,
-            cacheReadTok,
-          );
+          const inTok = nonNegativeFiniteNumber(step.input_tokens);
+          const outTok = nonNegativeFiniteNumber(step.output_tokens);
+          const cacheReadTok = nonNegativeFiniteNumber(step.cache_read_tokens);
+          const model = presentString(modelName);
           promises.push(
-            emitRecord("api_request", {
-              "session.id": conversationId,
-              model,
-              provider: "google",
-              input_tokens: inTok,
-              output_tokens: outTok,
-              cache_read_tokens: cacheReadTok,
-              cache_creation_tokens: 0,
-              reasoning_tokens: 0,
-              cost_usd: costUsd,
-            }).catch(() => undefined),
+            emitRecord(
+              "api_request",
+              usageAttributes({
+                harness: "antigravity",
+                cwd,
+                sessionId: conversationId,
+                model,
+                provider: "google",
+                inputTokens: inTok,
+                outputTokens: outTok,
+                cacheReadTokens: cacheReadTok,
+                env,
+              }),
+            ).catch(() => undefined),
           );
         }
       }

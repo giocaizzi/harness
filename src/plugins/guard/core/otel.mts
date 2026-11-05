@@ -120,6 +120,32 @@ const attr = (key: string, value: unknown) => ({
   value: { stringValue: String(value) },
 });
 
+const isIpv4 = (value: string): boolean => {
+  const parts = value.split(".");
+  return (
+    parts.length === 4 &&
+    parts.every((part) => /^\d{1,3}$/.test(part) && Number(part) <= 255)
+  );
+};
+
+const isIpv6 = (value: string): boolean =>
+  value.includes(":") && /^[0-9a-f:.]+(?:%[\w.-]+)?$/i.test(value);
+
+/** Normalize an exported host name to a short host without deriving a missing value. */
+export function normalizeHostName(
+  value: string | null | undefined,
+): string | null {
+  const normalized = (value ?? "").trim().replace(/\.+$/, "");
+  if (!normalized) return null;
+  if (
+    normalized.toLowerCase() === "localhost" ||
+    isIpv4(normalized) ||
+    isIpv6(normalized)
+  )
+    return normalized;
+  return normalized.split(".")[0] ?? null;
+}
+
 /** Build an OTLP/HTTP JSON log request payload, or return null when no endpoint is set. */
 export function logRequest(
   { endpoint, headers, resource }: OtelConfig,
@@ -130,11 +156,15 @@ export function logRequest(
   trace: TraceContext | null = null,
 ): OtelLogRequest | null {
   if (!endpoint) return null;
+  const configuredResource = parsePairs(resource);
+  const hostName = normalizeHostName(configuredResource["host.name"]);
+  if (hostName === null) delete configuredResource["host.name"];
+  else configuredResource["host.name"] = hostName;
   const res =
     service === "guard"
-      ? { "service.name": "guard", ...parsePairs(resource) }
+      ? { ...configuredResource, "service.name": "guard" }
       : {
-          ...parsePairs(resource),
+          ...configuredResource,
           "service.name": service,
           "service.namespace": service,
         };
@@ -201,7 +231,7 @@ export async function emit(
       attrs,
       Date.now(),
       service,
-      event === "guard.decision" ? traceContext(env) : null,
+      traceContext(env),
     );
     if (req)
       await fetchFn(req.url, {

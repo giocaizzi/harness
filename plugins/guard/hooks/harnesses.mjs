@@ -107,6 +107,31 @@ export const ALL_SHELL_TOOLS = new Set(Object.values(HARNESS_CONFIGS).flatMap((c
 export const ALL_READ_TOOLS = new Set(Object.values(HARNESS_CONFIGS).flatMap((c) => c.readTools));
 export const ALL_EDIT_TOOLS = new Set(Object.values(HARNESS_CONFIGS).flatMap((c) => c.editTools));
 export const ALL_TASK_TOOLS = new Set(Object.values(HARNESS_CONFIGS).flatMap((c) => c.taskTools));
+/** Map an internal harness alias to its canonical telemetry identity. */
+export function canonicalHarnessName(name) {
+    switch (name?.trim().toLowerCase()) {
+        case "claude":
+        case "claude-code":
+            return "claude-code";
+        case "copilot":
+        case "copilot-cli":
+            return "copilot-cli";
+        case "vscode":
+        case "vscode-copilot":
+            return "vscode-copilot";
+        case "codex":
+        case "codex-cli":
+            return "codex-cli";
+        case "opencode":
+            return "opencode";
+        case "pi":
+            return "pi";
+        case "antigravity":
+            return "antigravity";
+        default:
+            return "other";
+    }
+}
 export function resolveHarness(name) {
     if (!name)
         return HARNESS_CONFIGS.other;

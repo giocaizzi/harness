@@ -2411,6 +2411,57 @@ void test('stop check: Antigravity hook receives { decision: "continue", reason 
   assert.equal(res.stdout, "");
 });
 
+void test("stop check: Antigravity usage reaches a recovered transcript without an explicit path", () => {
+  const home = tmp();
+  const data = tmp();
+  const conversationId = "agy-recovered-1";
+  const logs = join(
+    home,
+    ".gemini",
+    "antigravity-cli",
+    "brain",
+    conversationId,
+    ".system_generated",
+    "logs",
+  );
+  mkdirSync(logs, { recursive: true });
+  writeFileSync(
+    join(logs, "transcript.jsonl"),
+    `${JSON.stringify({
+      step_index: 4,
+      type: "PLANNER_RESPONSE",
+      input_tokens: 10,
+      output_tokens: 2,
+      cache_read_tokens: 0,
+    })}\n`,
+  );
+
+  const res = spawnSync(
+    process.execPath,
+    [join(import.meta.dirname, "stop.mjs"), "--harness=antigravity"],
+    {
+      input: JSON.stringify({
+        conversationId,
+        terminationReason: "NO_TOOL_CALL",
+      }),
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        CLAUDE_PLUGIN_DATA: data,
+        GUARD_OTEL: "off",
+        GUARD_STOP_CHECK: "off",
+        HOME: home,
+      },
+    },
+  );
+  assert.equal(res.status, 0, res.stderr);
+  assert.equal(res.stdout, "");
+  assert.match(
+    readFileSync(join(data, "sessions", `${conversationId}.jsonl`), "utf8"),
+    /"lastTranscriptStep":4/,
+  );
+});
+
 void test("result check: the stop hook CLI keeps a stop blocked on a payload that is not an object when a run is identified", () => {
   for (const payload of ["null", "5", "[]", '"x"']) {
     const blocked = runStopHook(payload, [], { GUARD_RUN_ID: "run-1" });

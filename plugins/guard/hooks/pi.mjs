@@ -115,6 +115,7 @@ export default function guardExtension(pi, deps) {
         const u = m.usage;
         await guard.usage({
             sessionId: sessionOf(ctx),
+            cwd: ctx.cwd,
             model: m.responseModel ?? m.model,
             provider: m.provider,
             tokens: {

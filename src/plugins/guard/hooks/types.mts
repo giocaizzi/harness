@@ -14,6 +14,16 @@ export type HarnessName =
   | "vscode"
   | "other";
 
+export type TelemetryHarnessName =
+  | "claude-code"
+  | "copilot-cli"
+  | "vscode-copilot"
+  | "codex-cli"
+  | "opencode"
+  | "pi"
+  | "antigravity"
+  | "other";
+
 export type ExecutionKind = "command" | "in-process";
 
 export type PermissionDecision = "allow" | "deny" | "ask";
@@ -139,6 +149,7 @@ export interface GuardModelTokens {
 
 export interface GuardModelUsageParams {
   costUsd?: number;
+  cwd?: string;
   model?: string;
   provider?: string;
   sessionId?: string;

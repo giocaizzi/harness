@@ -112,14 +112,19 @@ test('a throttle denial posts a record to the collector when the session exports
   expect(posted).toEqual(['http://collector/v1/logs'])
 })
 
-test('without an endpoint a throttle denial posts nothing', async ($, on) => {
+test('without an endpoint a throttle denial posts nothing and does no repo or session enrichment', async ($, on) => {
   on('session.usage', () => usage(95))
   on('agent.spawn', () => ({ model: 'haiku', agentId: 'a1' }))
   throttle(on, 'deny')
+  let sessionLookups = 0
+  let gitLookups = 0
+  on('session.cwd', () => (sessionLookups++, { value: '/repo' }))
+  on('process.run', () => (gitLookups++, { value: { exitCode: 0, stdout: '', stderr: '' } }))
   on('http.fetch', () => {
     throw new Error('must not post')
   })
   expect((await $.agent.spawn({ prompt: 'x' })).deny).toContain('95%')
+  expect([sessionLookups, gitLookups]).toEqual([0, 0])
 })
 
 // The test's tool.check hook stands for the engine: an ask from the guard's command hook. Scoped to Bash: since
@@ -203,17 +208,24 @@ test("with the mode unknown, the guard's own ask is still parked unattended", as
   expect(r.reason).toContain('unattended run')
 })
 
-// Records posted to the collector, by event name, with the attributes as a map.
+// Records posted to the collector, by event name, with the attributes as a map and trace ids read from the record.
 function collector(on: Parameters<Parameters<typeof test>[1]>[1], env: Record<string, string>) {
   on('env.get', (_$, e) => ({ value: env[e.name] }))
-  const posted: Record<string, string>[] = []
+  const posted: Record<string, string | undefined>[] = []
   on('http.fetch', (_$, e) => {
     const rec = JSON.parse(String(e.init?.body)).resourceLogs[0].scopeLogs[0].logRecords[0]
-    posted.push(Object.fromEntries(rec.attributes.map((a: { key: string; value: { stringValue: string } }) => [a.key, a.value.stringValue])))
+    posted.push({
+      ...Object.fromEntries(rec.attributes.map((a: { key: string; value: { stringValue: string } }) => [a.key, a.value.stringValue])),
+      $traceId: rec.traceId,
+      $spanId: rec.spanId,
+      $hasTraceId: String(Object.hasOwn(rec, 'traceId')),
+      $hasSpanId: String(Object.hasOwn(rec, 'spanId')),
+    })
     return { value: { status: 200, ok: true, headers: {}, text: '' } }
   })
   return posted
 }
+const traceparent = '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01'
 const settle = async () => {
   for (let i = 0; i < 20; i++) await Promise.resolve()
 }
@@ -226,13 +238,15 @@ test('every ask outcome is reported as guard.ask_result', async ($, on) => {
   await $.tool.check(call)
   await clock.advance(1)
   await settle()
-  expect(posted.map((p) => [p['event.name'], p.result, p.tool, p.harness])).toEqual([['guard.ask_result', 'allow', 'Bash', 'claude']])
+  expect(posted.map((p) => [p['event.name'], p.result, p.tool, p.harness, p.harness_legacy])).toEqual([
+    ['guard.ask_result', 'allow', 'Bash', 'claude-code', 'claude'],
+  ])
   expect(posted[0]?.wait_ms).toBeDefined()
 })
 
-test('an ask_result carries the guard version, the repo as owner/name and the command class, never the command', async ($, on) => {
+test('an ask_result carries canonical and migration harness attrs, trace context, version, repo and command class, never the command', async ($, on) => {
   const clock = mock.clock(on)
-  const posted = collector(on, { OTEL_EXPORTER_OTLP_ENDPOINT: 'http://collector' })
+  const posted = collector(on, { OTEL_EXPORTER_OTLP_ENDPOINT: 'http://collector', GUARD_TRACEPARENT: traceparent })
   on('fs.read', (_$, e) => ({ value: e.path.endsWith('plugin.json') ? '{"version":"9.9.9"}' : '' }))
   on('process.run', () => ({ value: { exitCode: 0, stdout: 'https://token@example.com/acme/widgets.git\n', stderr: '' } }))
   on('tool.check', { tool: 'Bash' }, ask)
@@ -240,15 +254,38 @@ test('an ask_result carries the guard version, the repo as owner/name and the co
   await $.tool.check(call)
   await clock.advance(1)
   await settle()
-  expect(posted.map((p) => [p.guard_version, p.repo, p.cmd_class])).toEqual([['9.9.9', 'acme/widgets', 'files']])
+  expect(posted.map((p) => [p.harness, p.harness_legacy, p.guard_version, p.repo, p.cmd_class, p.$traceId, p.$spanId])).toEqual([
+    ['claude-code', 'claude', '9.9.9', 'acme/widgets', 'files', '4bf92f3577b34da6a3ce929d0e0e4736', '00f067aa0ba902b7'],
+  ])
   expect(JSON.stringify(posted)).not.toContain('rm -r')
   expect(JSON.stringify(posted)).not.toContain('token')
 })
 
-test('a throttle record carries the guard version, the repo from the first remote without origin, and cmd_class spawn', async ($, on) => {
+test('malformed or absent GUARD_TRACEPARENT omits top-level trace ids and TRACEPARENT is ignored', async ($, on) => {
+  const clock = mock.clock(on)
+  const env: Record<string, string> = {
+    OTEL_EXPORTER_OTLP_ENDPOINT: 'http://collector',
+    GUARD_TRACEPARENT: 'malformed',
+    TRACEPARENT: traceparent,
+  }
+  const posted = collector(on, env)
+  on('tool.check', { tool: 'Bash' }, ask)
+  answer(on, 'Allow')
+  await $.tool.check(call)
+  delete env.GUARD_TRACEPARENT
+  await $.tool.check(call)
+  await clock.advance(1)
+  await settle()
+  expect(posted.map((p) => [p.$hasTraceId, p.$hasSpanId, p.$traceId, p.$spanId])).toEqual([
+    ['false', 'false', undefined, undefined],
+    ['false', 'false', undefined, undefined],
+  ])
+})
+
+test('a throttle record carries trace context, the guard version, the repo from the first remote without origin, and cmd_class spawn', async ($, on) => {
   on('session.usage', () => usage(95))
   on('agent.spawn', () => ({ model: 'haiku', agentId: 'a1' }))
-  const posted = collector(on, { OTEL_EXPORTER_OTLP_ENDPOINT: 'http://collector' })
+  const posted = collector(on, { OTEL_EXPORTER_OTLP_ENDPOINT: 'http://collector', GUARD_TRACEPARENT: traceparent })
   on('fs.read', () => ({ value: '{"version":"9.9.9"}' }))
   on('process.run', (_$, e) => {
     const a = e.argv.join(' ')
@@ -258,7 +295,9 @@ test('a throttle record carries the guard version, the repo from the first remot
   })
   await $.agent.spawn({ prompt: 'x' })
   await settle()
-  expect(posted.map((p) => [p['event.name'], p.guard_version, p.repo, p.cmd_class])).toEqual([['guard.throttle', '9.9.9', 'acme/tools', 'spawn']])
+  expect(posted.map((p) => [p['event.name'], p.guard_version, p.repo, p.cmd_class, p.$traceId, p.$spanId])).toEqual([
+    ['guard.throttle', '9.9.9', 'acme/tools', 'spawn', '4bf92f3577b34da6a3ce929d0e0e4736', '00f067aa0ba902b7'],
+  ])
 })
 
 test('a lookup that throws leaves the record without repo, and later records still go out', async ($, on) => {
@@ -288,16 +327,23 @@ test('a timeout is reported as guard.ask_result timeout', async ($, on) => {
   expect(posted.map((p) => p.result)).toEqual(['timeout'])
 })
 
-test('the mod falls back to the GUARD_-prefixed endpoint, and GUARD_OTEL=off sends nothing', async ($, on) => {
+test('the mod falls back to the GUARD_-prefixed endpoint, and GUARD_OTEL=off sends nothing or enriches it', async ($, on) => {
   on('session.usage', () => usage(95))
   on('agent.spawn', () => ({ model: 'haiku', agentId: 'a1' }))
   const env: Record<string, string> = { GUARD_OTEL_EXPORTER_OTLP_ENDPOINT: 'http://guard-collector' }
   const posted = collector(on, env)
+  let sessionLookups = 0
+  let gitLookups = 0
+  on('session.cwd', () => (sessionLookups++, { value: '/otel-off-repo' }))
+  on('process.run', () => (gitLookups++, { value: { exitCode: 0, stdout: '', stderr: '' } }))
   await $.agent.spawn({ prompt: 'x' })
   expect(posted.map((p) => p['event.name'])).toEqual(['guard.throttle'])
   env.GUARD_OTEL = 'off'
+  sessionLookups = 0
+  gitLookups = 0
   await $.agent.spawn({ prompt: 'x' })
   expect(posted.length).toBe(1)
+  expect([sessionLookups, gitLookups]).toEqual([0, 0])
 })
 
 test('GUARD_ASK_TIMEOUT_MS sets the timeout', async ($, on) => {

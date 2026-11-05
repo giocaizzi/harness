@@ -3,6 +3,7 @@ import { test } from "node:test";
 import {
   emit,
   logRequest,
+  normalizeHostName,
   otelOff,
   parsePairs,
   traceContext,
@@ -34,7 +35,8 @@ void test("logRequest: OTLP JSON record with the resource attributes and the eve
     {
       endpoint: "https://otel.example/",
       headers: "Authorization=Bearer%20t",
-      resource: "service.namespace=claude-code,host.name=mac",
+      resource:
+        "service.name=configured,service.namespace=claude-code,host.name=runner.example.test.",
     },
     "guard.decision",
     { rule: "pip-deny", action: "deny", skipped: undefined },
@@ -48,7 +50,7 @@ void test("logRequest: OTLP JSON record with the resource attributes and the eve
   assert.deepEqual(keys(defined(rec).resource.attributes), {
     "service.name": "guard",
     "service.namespace": "claude-code",
-    "host.name": "mac",
+    "host.name": "runner",
   });
   const log = defined(defined(rec).scopeLogs[0]).logRecords[0];
   assert.equal(defined(log).timeUnixNano, "1000000000");
@@ -106,11 +108,32 @@ void test("emit: GUARD_-prefixed copies stand in for the OTEL_* the harness stri
   assert.equal(defined(sent).url, "http://o/v1/logs");
 });
 
-void test("logRequest: a harness reported by the guard owns service.name and service.namespace", () => {
+void test("normalizeHostName: shortens DNS names, preserves IPs and omits absent hosts", () => {
+  assert.equal(normalizeHostName(" runner.example.test. \n"), "runner");
+  assert.equal(normalizeHostName("runner"), "runner");
+  assert.equal(normalizeHostName("127.0.0.1"), "127.0.0.1");
+  assert.equal(normalizeHostName("2001:db8::1"), "2001:db8::1");
+  assert.equal(normalizeHostName("localhost."), "localhost");
+  assert.equal(normalizeHostName("  "), null);
+  assert.equal(normalizeHostName(undefined), null);
+
+  const request = logRequest(
+    { endpoint: "http://collector.example", resource: "deployment=test" },
+    "guard.stop",
+    {},
+    1,
+  );
+  const attrs = defined(readOtel(defined(request).body).resourceLogs[0])
+    .resource.attributes;
+  assert.ok(!attrs.some((item) => item.key === "host.name"));
+});
+
+void test("logRequest: a synthetic service owns service.name and service.namespace", () => {
   const r = logRequest(
     {
       endpoint: "http://c",
-      resource: "service.namespace=claude-code,host.name=mac",
+      resource:
+        "service.name=configured,service.namespace=configured,host.name=runner.example.test",
     },
     "api_request",
     {},
@@ -124,7 +147,7 @@ void test("logRequest: a harness reported by the guard owns service.name and ser
   );
   assert.deepEqual(attrs, {
     "service.namespace": "pi",
-    "host.name": "mac",
+    "host.name": "runner",
     "service.name": "pi",
   });
 });
@@ -151,6 +174,71 @@ const TRACE = {
   traceId: "4bf92f3577b34da6a3ce929d0e0e4736",
   spanId: "00f067aa0ba902b7",
 };
+
+void test("emit: Factory resource attributes survive service overrides and trace correlation", async () => {
+  const resource = [
+    "service.name=acme-runner",
+    "service.namespace=claude-code",
+    "factory.run_id=run-123",
+    "factory.ticket=42",
+    "factory.role=worker",
+    "factory.phase=implementation",
+    "factory.mode=attended",
+    "host.name=runner.example.test.",
+  ].join(",");
+  const cases: { service: string; namespace: string }[] = [
+    { service: "guard", namespace: "claude-code" },
+    { service: "pi", namespace: "pi" },
+  ];
+
+  for (const expected of cases) {
+    let sent: OtelPayload | undefined;
+    await emit(
+      {
+        GUARD_OTEL_EXPORTER_OTLP_ENDPOINT: "http://collector.example",
+        GUARD_OTEL_RESOURCE_ATTRIBUTES: resource,
+        GUARD_TRACEPARENT: TP,
+      },
+      "guard.decision",
+      { rule: "factory-contract" },
+      (_, init) => {
+        sent = readOtel(init.body);
+      },
+      expected.service,
+    );
+
+    const resourceLog = defined(defined(sent).resourceLogs[0]);
+    const resourceAttrs = Object.fromEntries(
+      resourceLog.resource.attributes.map((item) => [
+        item.key,
+        item.value.stringValue,
+      ]),
+    );
+    assert.deepEqual(resourceAttrs, {
+      "service.name": expected.service,
+      "service.namespace": expected.namespace,
+      "factory.run_id": "run-123",
+      "factory.ticket": "42",
+      "factory.role": "worker",
+      "factory.phase": "implementation",
+      "factory.mode": "attended",
+      "host.name": "runner",
+    });
+
+    const record = defined(defined(resourceLog.scopeLogs[0]).logRecords[0]);
+    assert.equal(record.traceId, TRACE.traceId);
+    assert.equal(record.spanId, TRACE.spanId);
+    assert.deepEqual(
+      Object.fromEntries(
+        record.attributes.map((item) => [item.key, item.value.stringValue]),
+      ),
+      {
+        "event.name": "guard.decision",
+        rule: "factory-contract",
+      },
+    );
+  }
+});
 
 void test("traceContext: a well-formed GUARD_TRACEPARENT gives its trace and span ids", () => {
   assert.deepEqual(traceContext({ GUARD_TRACEPARENT: TP }), TRACE);
@@ -243,9 +331,9 @@ void test("logRequest: a trace context sets the record traceId and spanId, never
   }
 });
 
-void test("emit: guard.decision carries a well-formed GUARD_TRACEPARENT, other events and malformed values do not", async () => {
+void test("emit: every event carries a well-formed GUARD_TRACEPARENT; malformed or absent values do not", async () => {
   const sent: OtelRecord[] = [];
-  const send = (env: EnvMap, event: string) =>
+  const send = (env: EnvMap, event: string, service = "guard") =>
     emit(
       { GUARD_OTEL_EXPORTER_OTLP_ENDPOINT: "http://g", ...env },
       event,
@@ -257,20 +345,55 @@ void test("emit: guard.decision carries a well-formed GUARD_TRACEPARENT, other e
               .logRecords[0],
           ),
         ),
+      service,
     );
   await send({ GUARD_TRACEPARENT: TP }, "guard.decision");
   await send({ GUARD_TRACEPARENT: TP.toUpperCase() }, "guard.decision");
   await send({}, "guard.decision");
-  await send({ GUARD_TRACEPARENT: TP }, "guard.stop");
+  await send({ GUARD_TRACEPARENT: TP }, "api_request", "pi");
   assert.equal(sent.length, 4);
-  assert.deepEqual(
-    [defined(sent[0]).traceId, defined(sent[0]).spanId],
-    [TRACE.traceId, TRACE.spanId],
-  );
-  for (const r of sent.slice(1))
-    assert.ok(!("traceId" in r) && !("spanId" in r));
+  for (const index of [0, 3]) {
+    assert.deepEqual(
+      [defined(sent[index]).traceId, defined(sent[index]).spanId],
+      [TRACE.traceId, TRACE.spanId],
+    );
+  }
+  for (const index of [1, 2]) {
+    const record = defined(sent[index]);
+    assert.ok(!("traceId" in record) && !("spanId" in record));
+  }
   // The raw value (version and flags) is never sent as such.
   assert.ok(!JSON.stringify(sent).includes(TP));
+});
+
+void test("emit: a guard.decision keeps tool_use_id as an attribute and the trace ids as traceId/spanId", async () => {
+  let sent: OtelRecord | undefined;
+  await emit(
+    {
+      GUARD_OTEL_EXPORTER_OTLP_ENDPOINT: "http://g",
+      GUARD_TRACEPARENT: TP,
+    },
+    "guard.decision",
+    { rule: "r", tool_use_id: "toolu_1" },
+    (_, init) => {
+      sent = defined(
+        defined(defined(readOtel(init.body).resourceLogs[0]).scopeLogs[0])
+          .logRecords[0],
+      );
+    },
+  );
+  const record = defined(sent);
+  assert.deepEqual(
+    [record.traceId, record.spanId],
+    [TRACE.traceId, TRACE.spanId],
+  );
+  const keys = record.attributes.map((a) => a.key);
+  assert.ok(keys.includes("tool_use_id"));
+  assert.deepEqual(
+    record.attributes.find((a) => a.key === "tool_use_id")?.value,
+    { stringValue: "toolu_1" },
+  );
+  assert.ok(!keys.includes("trace_id") && !keys.includes("span_id"));
 });
 
 function isRecord(value: unknown): value is Record<string, unknown> {
