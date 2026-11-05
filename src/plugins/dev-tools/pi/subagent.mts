@@ -1,4 +1,4 @@
-// pi extension: the plugins' agents (scout, escalate, api-reviewer, verifier) as a `subagent` tool, since pi has no subagents.
+// pi extension: the plugins' agents (scout, escalate, api-reviewer) as a `subagent` tool, since pi has no subagents.
 // Each call runs the agent in its own `pi -p --no-session` process with the agent's prompt appended and its tools
 // narrowed, on the session's model at the agent's effort; the final text comes back as the tool result. Loaded from the root package.json.
 import { spawn } from "node:child_process";
@@ -100,7 +100,7 @@ const piCommand = (): string[] => {
   return entry && existsSync(entry) ? [process.execPath, entry] : ["pi"];
 };
 
-// The child's environment: the guard's stop check and factory result gate are off there, since the parent's own stop
+// The child's environment: the guard's stop check and result gate are off there, since the parent's own stop
 // runs them once the subagent's work is part of its turn; and the guard keeps the child's reminders as its own agent's within the
 // parent session, so the skills either loads count for both.
 // `PI_SUBAGENT_DEPTH` counts the nesting: an agent without a `tools` list (driver, escalate) gets this tool again in its

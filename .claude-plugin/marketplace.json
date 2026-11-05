@@ -6,7 +6,7 @@
   },
   "metadata": {
     "description": "Personal agent harness: skills, agents and guards for Claude Code, Copilot CLI, VS Code, Codex, opencode, pi and Antigravity",
-    "version": "3.6.1"
+    "version": "4.0.0"
   },
   "plugins": [
     {
@@ -65,7 +65,7 @@
       "name": "dev-tools",
       "source": "./plugins/dev-tools",
       "description": "General development tooling \u2014 git, GitHub, conventional commits, semantic versioning",
-      "version": "1.51.7",
+      "version": "1.51.8",
       "keywords": [
         "git",
         "github",
@@ -112,18 +112,6 @@
         "notifications",
         "mod",
         "claude-code"
-      ]
-    },
-    {
-      "name": "factory",
-      "source": "./plugins/factory",
-      "description": "Attended ticket runs on a GitHub issue board: owner-approved tickets worked end to end, scope logged on the ticket, questions on the ticket, a result contract per run",
-      "version": "0.27.1",
-      "keywords": [
-        "github-issues",
-        "workflow",
-        "agents",
-        "verification"
       ]
     }
   ]

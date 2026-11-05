@@ -2,13 +2,13 @@
 
 Runbook for every supported harness. What each one gets: [compatibility.md](compatibility.md). The hooks need `node` 22+ on PATH; everything works on macOS, Linux and Windows.
 
-Plugins: `api`, `python`, `go`, `javascript`, `dev-tools`, `guard`, `hud`, `sounds`, `factory` (`hud` does something in Claude Code and pi, its status line also in Copilot CLI, running subagents in opencode; `sounds` in Claude Code, pi, Codex and opencode). `factory` needs `dev-tools` and `guard`: Claude Code installs them with it, the other harnesses need them installed too.
+Plugins: `api`, `python`, `go`, `javascript`, `dev-tools`, `guard`, `hud`, `sounds` (`hud` does something in Claude Code and pi, its status line also in Copilot CLI, running subagents in opencode; `sounds` in Claude Code, pi, Codex and opencode).
 
 ## Claude Code
 
 ```bash
 claude plugin marketplace add giocaizzi/harness
-claude plugin install dev-tools@giocaizzi-harness   # and api, python, go, javascript, guard, hud, sounds, factory
+claude plugin install dev-tools@giocaizzi-harness   # and api, python, go, javascript, guard, hud, sounds
 ```
 
 Update: `claude plugin marketplace update giocaizzi-harness`; an installed plugin updates when its version changes. Check: `/plugin` lists them, `/agents` shows `scout`. Old versions stay in the plugin cache: `sweep-stale.sh --plugins` (dev-tools `host-hygiene`) lists them, and keeps any version a session started before the update may still run. It covers every marketplace in the cache; add `--marketplace giocaizzi-harness` to leave other marketplaces' plugins alone. Once every open session ran `/reload-plugins`, `sweep-stale.sh --plugins --marketplace giocaizzi-harness --after-reload --apply` removes this marketplace's old versions.
@@ -32,7 +32,7 @@ Plugins (skills, the guard's hooks and sounds' Stop hook) come from the marketpl
 
 ```bash
 codex plugin marketplace add giocaizzi/harness
-codex plugin add dev-tools@giocaizzi-harness        # and api, python, go, javascript, guard, sounds, factory
+codex plugin add dev-tools@giocaizzi-harness        # and api, python, go, javascript, guard, sounds
 git clone https://github.com/giocaizzi/harness ~/.local/share/giocaizzi-harness
 make -C ~/.local/share/giocaizzi-harness install HARNESS=codex   # agents -> ~/.codex/agents, guard prompt rules -> ~/.codex/rules ($CODEX_HOME)
 ```
@@ -62,7 +62,7 @@ Update: `git pull` in the checkout (the guard updates with it), then the `make i
 pi install git:github.com/giocaizzi/harness
 ```
 
-pi reads the repo's `package.json`: every plugin's skills and four extensions: the guard, a `subagent` tool that runs `scout`, `driver`, `reviewer`, `escalate`, `api-reviewer` and `verifier` in their own pi sessions, hud's footer and sounds' alerts. Update: `pi update --extensions`. Check: `pi list` shows the package; `/skill:ship` loads a skill; asking for a scout runs the `subagent` tool.
+pi reads the repo's `package.json`: every plugin's skills and four extensions: the guard, a `subagent` tool that runs `scout`, `driver`, `reviewer`, `escalate` and `api-reviewer` in their own pi sessions, hud's footer and sounds' alerts. Update: `pi update --extensions`. Check: `pi list` shows the package; `/skill:ship` loads a skill; asking for a scout runs the `subagent` tool.
 
 ## Antigravity
 
@@ -74,6 +74,26 @@ make -C ~/.local/share/giocaizzi-harness install HARNESS=antigravity
 That copies the skills to `~/.gemini/config/skills/`, the agents to `~/.gemini/config/agents/`, and registers the guard's `PreToolUse` hook (for `run_command` with native `ask`/`deny` decisions) and `Stop` hook into `~/.gemini/config/hooks.json` (`$GEMINI_CONFIG_DIR` moves all of them).
 
 Update: `git pull` in the checkout, then `make install HARNESS=antigravity` again. Check: `/agents` shows `scout`; running `pip install x` in a uv repo is denied with the guard's reason.
+
+## A plugin removed from the marketplace
+
+A plugin can leave this marketplace, for example when it moves to a separate plugin repository (the `factory` plugin did in 4.0.0). In Claude Code (checked with 2.1.318 in a throwaway `HOME`, with a git-sourced marketplace):
+
+- After `claude plugin marketplace update giocaizzi-harness`, the installed copy stays in the plugin cache but no longer loads: `claude plugin list` shows `failed to load: Plugin <name> not found in marketplace giocaizzi-harness`. `claude plugin update <name>@giocaizzi-harness` fails with `Plugin "<name>" not found`, and a fresh install with `Plugin "<name>" not found in marketplace "giocaizzi-harness"`.
+- A plugin from any marketplace that depends on `<name>@giocaizzi-harness` (or on the bare `<name>` inside this marketplace) fails to load too, with `Dependency "<name>@giocaizzi-harness" is not installed`. Installing the moved plugin from its new marketplace does not satisfy it: a dependency names its marketplace, so the depending plugin's manifest has to name the new one.
+- While the stale entry is installed, `claude plugin prune` refuses to run (`cannot determine orphans`).
+
+To move over:
+
+```bash
+claude plugin marketplace add <owner>/<new-repo>
+claude plugin install <name>@<new-marketplace>
+claude plugin uninstall <name>@giocaizzi-harness
+```
+
+Install the new one before uninstalling the old one when the moved plugin depends on plugins from here (as `factory` does on `dev-tools` and `guard`). Those were auto-installed as its dependencies, and uninstalling the old copy with nothing else depending on them marks them unneeded, so a later `claude plugin prune` would remove them. With the new copy installed first and declaring them as `dev-tools@giocaizzi-harness` and `guard@giocaizzi-harness`, `prune` keeps them. Its marketplace needs `allowCrossMarketplaceDependenciesOn: ["giocaizzi-harness"]` for Claude Code to install them with it; without that, the plugin installs but does not load until they are installed. The uninstalled version's cache directory stays on disk, marked orphaned (`.orphaned_at`).
+
+Copilot CLI, VS Code and Codex were not probed: uninstall the plugin there with their own plugin command, then install it from its new marketplace. For Codex agents, opencode and Antigravity, re-running `make install` after `git pull` removes the files an earlier run installed that the checkout no longer ships. pi installs the whole repo, so the plugin's skills and agents leave with the package update (`pi update --extensions`, above).
 
 ## From a checkout (development)
 
