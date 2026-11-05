@@ -1284,7 +1284,7 @@ void test("a registered run: a shell write to a protected path is denied; GUARD_
     mkdirSync(join(testRepo, "src"));
     const sub = join(testRepo, "src");
     const slash = (p) => p.replace(/\\/g, "/");
-    assert.deepEqual(protectFacts(sub), { root: slash(testRepo), roots: [slash(testRepo)], cwd: slash(sub) }, "root found above cwd");
+    assert.deepEqual(protectFacts(sub), { root: slash(testRepo), cwd: slash(sub) }, "root found above cwd");
     const write = (command, cwd = testRepo) => ({
         ...pre("Bash", command),
         cwd,
@@ -1343,33 +1343,6 @@ const edit = (file_path, cwd) => ({
     cwd,
 });
 const denied = (out) => decision(out)?.permissionDecision === "deny";
-void test("a registered run: a .git planted in a subdirectory moves no repo root (edit tool and shell)", async () => {
-    const repo = realpathSync(mkdtempSync(join(tmpdir(), "guard-roots-")));
-    mkdirSync(join(repo, ".git"));
-    mkdirSync(join(repo, "x", ".git"), { recursive: true });
-    const x = join(repo, "x");
-    const run = registered();
-    for (const cwd of [repo, x]) {
-        for (const file of [
-            join(repo, ".github", "ci.yml"),
-            join(repo, ".factory", "config.yaml"),
-        ]) {
-            assert.ok(denied(await run(edit(file, cwd))), `${file} from ${cwd}`);
-        }
-    }
-    assert.ok(denied(await run(edit("../.github/ci.yml", x))), "a relative edit target");
-    assert.ok(denied(await run(edit(".github/ci.yml", x))), "relative to the planted root too");
-    assert.ok(!denied(await run(edit(join(x, "ok.txt"), x))), "the rest is free");
-    for (const command of [
-        "echo a > ../.github/ci.yml",
-        `echo a > ${repo}/.github/ci.yml`,
-        "echo a > .github/ci.yml",
-        "rm -rf ../.github",
-    ]) {
-        assert.ok(denied(await run({ ...pre("Bash", command), cwd: x })), command);
-    }
-    assert.ok(!denied(await run({ ...pre("Bash", "echo a > ok.txt"), cwd: x })), "a shell write elsewhere");
-});
 void test("a registered run: an edit through a dangling symlink is checked at its target", async () => {
     const repo = realpathSync(mkdtempSync(join(tmpdir(), "guard-links-")));
     mkdirSync(join(repo, ".git"));
@@ -1395,7 +1368,7 @@ void test("a registered run: a link target is followed component by component, b
     assert.ok(denied(await run(edit(join(repo, "n.md"), repo))), "d/../ci.yml is .github/ci.yml");
     assert.ok(!denied(await run(edit(join(repo, "src", "fine.md"), repo))));
 });
-void test("a registered run: a `..` in the edit tool's own path applies after the link before it, as the kernel does (G42)", async () => {
+void test("a registered run: a `..` in the edit tool's own path applies after the link before it, as the kernel does", async () => {
     const repo = realpathSync(mkdtempSync(join(tmpdir(), "guard-rawdots-")));
     mkdirSync(join(repo, ".git"));
     mkdirSync(join(repo, ".github", "workflows"), { recursive: true });
@@ -1410,85 +1383,6 @@ void test("a registered run: a `..` in the edit tool's own path applies after th
     // a link that leads somewhere harmless stays allowed
     assert.ok(!denied(await run(edit(`${repo}/ok/../x.md`, repo))));
     assert.ok(!denied(await run(edit(join(repo, "src", "x.md"), repo))));
-});
-void test("a registered run: a dots-only segment in the edit tool's path is protected under either reading (G42)", async () => {
-    const repo = realpathSync(mkdtempSync(join(tmpdir(), "guard-dots-")));
-    mkdirSync(join(repo, ".git"));
-    const run = registered({ protected_paths: { globs: ["**/secret.yml"] } });
-    for (const file of [
-        ".github/.../ci.yml",
-        ".github/.. /ci.yml",
-        ".../secret.yml",
-    ]) {
-        assert.ok(denied(await run(edit(join(repo, file), repo))), file);
-        assert.ok(denied(await run(edit(file, repo))), `relative ${file}`);
-        assert.ok(denied(await run({
-            ...pre("Bash", `echo a > '${join(repo, file)}'`),
-            cwd: repo,
-        })), `shell ${file}`);
-    }
-    assert.ok(!denied(await run(edit(join(repo, "src", "x.md"), repo))));
-});
-void test("a registered run: an 8.3 short name in the root part of an edit path still reaches the repo (G42)", async () => {
-    const outer = realpathSync(mkdtempSync(join(tmpdir(), "guard-short-")));
-    const run = registered();
-    for (const [real, alias] of [
-        ["runneradmin", "RUNNER~1"],
-        ["RUNNER~1", "runneradmin"],
-    ]) {
-        const repo = join(outer, real, "repo");
-        mkdirSync(join(repo, ".git"), { recursive: true });
-        const via = join(outer, alias, "repo");
-        assert.ok(denied(await run(edit(join(via, ".github", "x.yml"), repo))), `edit via ${alias}`);
-        assert.ok(denied(await run({
-            ...pre("Bash", `echo x > '${via}/.github/x.yml'`),
-            cwd: repo,
-        })), `shell via ${alias}`);
-        assert.ok(!denied(await run(edit(join(via, "src", "x.yml"), repo))));
-    }
-});
-void test("a registered run: a checkout whose path ends in a dot or a space still protects its .github", async () => {
-    const outer = realpathSync(mkdtempSync(join(tmpdir(), "guard-tail-")));
-    const run = registered();
-    for (const name of ["proj.", "proj "]) {
-        const repo = join(outer, name);
-        mkdirSync(join(repo, ".git"), { recursive: true });
-        for (const command of [
-            `echo a > '${repo}/.github/ci.yml'`,
-            `rm -rf '${repo}/.github'`,
-        ])
-            assert.ok(denied(await run({ ...pre("Bash", command), cwd: repo })), `${name}: ${command}`);
-        assert.ok(denied(await run(edit(join(repo, ".github", "ci.yml"), repo))));
-    }
-});
-void test("a registered run: Windows spellings of a protected path are protected (edit tool and shell)", async () => {
-    const repo = realpathSync(mkdtempSync(join(tmpdir(), "guard-win-")));
-    mkdirSync(join(repo, ".git"));
-    const run = registered({
-        protected_paths: { globs: [".gitx/**"] },
-    });
-    for (const name of [
-        ".github./x",
-        ".github /x",
-        ".github../workflows/x.yml",
-        "GITHUB~1/workflows/x.yml",
-        "GITHU~1/x",
-        "github~2/x",
-        "GIT~1/x",
-        ".gitx./y",
-        ".GITX /y",
-    ]) {
-        assert.ok(denied(await run(edit(join(repo, name), repo))), `edit ${name}`);
-        assert.ok(denied(await run(edit(name, repo))), `relative edit ${name}`);
-        assert.ok(denied(await run({ ...pre("Bash", `echo a > '${name}'`), cwd: repo })), `shell ${name}`);
-        assert.ok(denied(await run({
-            ...pre("Bash", `echo a > '${join(repo, name)}'`),
-            cwd: repo,
-        })), `absolute shell ${name}`);
-    }
-    for (const name of ["src/x", "docs./x", "ZZZZZZ~1/x", "OTHER~1/x"]) {
-        assert.ok(!denied(await run(edit(name, repo))), `edit ${name}`);
-    }
 });
 void test("crashResult: a crash denies a tool call in a run, whatever its mode, and allows the rest", () => {
     const tool = { hook_event_name: "PreToolUse" };
@@ -1828,55 +1722,6 @@ void test("Antigravity payload: toolCall on run_command evaluates decisions and 
     const askJson = JSON.parse(askOut.stdout);
     assert.equal(askJson.decision, "ask");
     assert.match(askJson.reason ?? "", /git reset --hard/);
-});
-void test("a registered run: guard's data directory is protected from shell writes and edit tools; outside a run, it is not", async () => {
-    const data = mkdtempSync(join(tmpdir(), "guard-data-"));
-    const repo = mkdtempSync(join(tmpdir(), "guard-repo-"));
-    const counter = join(data, "result-gate", "x.txt");
-    const inRun = registered(DEFAULT_REG, { CLAUDE_PLUGIN_DATA: data });
-    const outside = setup({ env: { CLAUDE_PLUGIN_DATA: data } });
-    const edit = (tool, tool_input, cwd = repo) => ({
-        hook_event_name: "PreToolUse",
-        tool_name: tool,
-        tool_input,
-        cwd,
-    });
-    const shell = {
-        ...pre("Bash", `echo 2 > ${counter}`),
-        cwd: repo,
-    };
-    assert.equal(decision(await inRun(shell))?.permissionDecision, "deny");
-    assert.equal(decision(await outside(shell)), undefined);
-    const touch = {
-        ...pre("Bash", `touch ${counter}`),
-        cwd: repo,
-    };
-    assert.equal(decision(await inRun(touch))?.permissionDecision, "deny");
-    assert.equal(decision(await outside(touch)), undefined);
-    const calls = [
-        edit("Write", { file_path: counter, content: "2" }),
-        edit("Edit", { file_path: counter, old_string: "1", new_string: "2" }),
-        edit("MultiEdit", { file_path: counter, edits: [] }),
-        edit("create", { path: counter, file_text: "2" }),
-        edit("apply_patch", `*** Begin Patch\n*** Update File: ${counter}\n@@\n-1\n+2\n*** End Patch`),
-        edit("apply_patch", `*** Begin Patch\n*** Add File: ${join(repo, "ok.txt")}\n+x\n*** Delete File: ${counter}\n*** End Patch`),
-        edit("apply_patch", {
-            command: `*** Begin Patch\n*** Update File: ${join(repo, "a.txt")}\n*** Move to: ${counter}\n@@\n-1\n+2\n*** End Patch`,
-        }),
-    ];
-    for (const c of calls) {
-        const d = decision(await inRun(c));
-        assert.ok(d, JSON.stringify(c.tool_input));
-        assert.equal(d.permissionDecision, "deny", JSON.stringify(c.tool_input));
-        assert.match(d.permissionDecisionReason ?? "", /data directory/);
-        assert.equal(decision(await outside(c))?.permissionDecision, undefined, "outside a run: " + JSON.stringify(c.tool_input));
-    }
-    const repoEdit = edit("Edit", {
-        file_path: join(repo, "src", "a.ts"),
-        old_string: "1",
-        new_string: "2",
-    });
-    assert.equal(decision(await inRun(repoEdit))?.permissionDecision, undefined);
 });
 void test("a registered run: an edit tool never changes a protected path; the registration's exemption, attended and no run allow it", async () => {
     const repo = mkdtempSync(join(tmpdir(), "guard-repo-"));

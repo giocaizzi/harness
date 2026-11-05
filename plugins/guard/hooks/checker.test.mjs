@@ -107,6 +107,15 @@ void test("posix checker: isWritableByMe is false for a file this user cannot wr
     assert.equal(isWritableByMe(join(root, "gone.mjs")), true);
     assert.equal(isWritableByMe("/etc/hosts", "win32"), process.getuid?.() === 0);
 });
+void test("checker: EROFS, EACCES and EPERM mean not writable, any other access error or none means writable", () => {
+    const code = (c) => () => c;
+    for (const c of ["EROFS", "EACCES", "EPERM"]) {
+        assert.equal(isWritableByMe("/x", "linux", code(c)), false, c);
+    }
+    for (const c of ["ENOENT", "EIO", "ELOOP", "unknown", undefined]) {
+        assert.equal(isWritableByMe("/x", "linux", code(c)), true, String(c));
+    }
+});
 void test("posix checker: an unreadable file is refused", posixOnly, () => {
     if (process.getuid?.() === 0)
         return;

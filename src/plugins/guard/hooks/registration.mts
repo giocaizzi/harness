@@ -6,13 +6,11 @@
 
 import { createHash } from "node:crypto";
 import {
-  appendFileSync,
   closeSync,
   constants,
   fstatSync,
   mkdirSync,
   openSync,
-  readFileSync,
   readSync,
 } from "node:fs";
 import path from "node:path";
@@ -28,6 +26,7 @@ import {
 import { rawPath } from "../core/result.mjs";
 import type { PrepareOptions } from "./checker.mjs";
 import { vetTrustedFile } from "./checker.mjs";
+import { appendDataFile, readDataFileStrict } from "./data.mjs";
 import { scrub } from "./telemetry.mjs";
 
 export type Loaded =
@@ -39,7 +38,13 @@ export type Loaded =
       sha256: string;
       state: "registered";
     }
-  | { rule: "run-registration"; state: "deny"; why: string };
+  | {
+      // true when the session pin alone failed the registration (the manifest and the run variables passed)
+      pin?: true;
+      rule: "run-registration";
+      state: "deny";
+      why: string;
+    };
 
 interface CacheEntry {
   key: string;
@@ -61,6 +66,8 @@ export interface LoadOptions {
   sessionId?: string;
   vet?: PrepareOptions;
 }
+
+const PIN_MAX_BYTES = 65536;
 
 export function createRegistrationCache(): RegistrationCache {
   const cache: RegistrationCache = {
@@ -139,6 +146,13 @@ export function loadRegistration(
   opts: LoadOptions = {},
 ): Loaded {
   const deny = (why: string): Loaded => ({ rule: RULE, state: "deny", why });
+  // the data dir is writable by the agent: a deny that only the pin produced is marked, so the stop can re-check
+  const pinDeny = (why: string): Loaded => ({
+    rule: RULE,
+    state: "deny",
+    why,
+    pin: true,
+  });
   try {
     const platform = opts.platform ?? process.platform;
     const pathApi = platform === "win32" ? path.win32 : path;
@@ -223,7 +237,7 @@ export function loadRegistration(
       const file = pinFile(opts.dataDir, opts.sessionId);
       const read = (): { pin?: Pin; why?: string } => {
         try {
-          return { pin: firstPin(readFileSync(file, "utf8")) };
+          return { pin: firstPin(readDataFileStrict(file, PIN_MAX_BYTES)) };
         } catch (e: unknown) {
           const code = codeOf(e);
           return code === "ENOENT"
@@ -232,29 +246,29 @@ export function loadRegistration(
         }
       };
       let r = read();
-      if (r.why) return deny(r.why);
+      if (r.why) return pinDeny(r.why);
       if (!r.pin) {
         try {
           mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
-          appendFileSync(
+          appendDataFile(
             file,
             `${JSON.stringify({ manifest: real, sha256, ...vars })}\n`,
           );
         } catch (e: unknown) {
-          return deny(`cannot pin the registration (${codeOf(e)})`);
+          return pinDeny(`cannot pin the registration (${codeOf(e)})`);
         }
         // a parallel hook may have pinned first: the first valid line wins
         r = read();
-        if (r.why) return deny(r.why);
-        if (!r.pin) return deny("cannot pin the registration (missing)");
+        if (r.why) return pinDeny(r.why);
+        if (!r.pin) return pinDeny("cannot pin the registration (missing)");
       }
       if (r.pin.manifest !== real) {
-        return deny(
+        return pinDeny(
           "GUARD_RUN_MANIFEST names more than one path (another manifest is pinned for this session)",
         );
       }
       if (r.pin.sha256 !== sha256) {
-        return deny(
+        return pinDeny(
           `manifest changed during the session (sha256 ${r.pin.sha256.slice(0, 16)}… was pinned)`,
         );
       }
@@ -262,7 +276,7 @@ export function loadRegistration(
         (k) => r.pin?.[k] !== vars[k],
       );
       if (changed.length > 0) {
-        return deny(
+        return pinDeny(
           `run variables changed during the session (${changed.map((k) => `GUARD_RUN_${k === "run_id" ? "ID" : k.toUpperCase()}`).join(", ")})`,
         );
       }

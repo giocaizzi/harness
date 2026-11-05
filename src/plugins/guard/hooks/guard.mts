@@ -5,7 +5,6 @@
 
 import { execFile } from "node:child_process";
 import {
-  appendFileSync,
   closeSync,
   existsSync,
   fstatSync,
@@ -16,13 +15,13 @@ import {
   readSync,
   readdirSync,
   readlinkSync,
-  realpathSync,
   rmSync,
   statSync,
 } from "node:fs";
 import { statfs } from "node:fs/promises";
 import { cpus, homedir, loadavg, platform } from "node:os";
 import { dirname, isAbsolute, join, parse, resolve, sep } from "node:path";
+import type { win32 } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
@@ -45,7 +44,6 @@ import {
   pureRead,
   refFacts,
   regenFacts,
-  segmentsMayBeSame,
   stackFacts,
   stackTargets,
   tagFacts,
@@ -67,7 +65,7 @@ import type {
   TagFact,
 } from "../core/types.mjs";
 import { contractProbe } from "./contract.mjs";
-import { pluginDataDir } from "./data.mjs";
+import { appendDataFile, pluginDataDir, readDataFile } from "./data.mjs";
 import { editedPaths } from "./lint.mjs";
 import type { RunContext } from "./run.mjs";
 import {
@@ -199,6 +197,7 @@ const readerArgs = (command: string): string[] =>
     return reader ? args : [];
   });
 
+const FACTS_MAX_BYTES = 4 * 1024 * 1024;
 const WEEK_MS = 7 * 24 * 3600 * 1000;
 
 export function knownSkills(
@@ -301,12 +300,8 @@ export function sessionStore(
         return { reminded: [], loaded: [], plugins: {} };
       }
       const proc = processId != null ? String(processId) : "";
-      let text = "";
-      try {
-        text = readFileSync(file, "utf8");
-      } catch {
-        // no facts yet
-      }
+      // missing, or not a regular file of bounded size: no facts yet
+      const text = readDataFile(file, FACTS_MAX_BYTES) ?? "";
       for (const line of text.split("\n")) {
         let fact: RawSessionFact;
         try {
@@ -398,7 +393,7 @@ export function sessionStore(
       ];
       if (!lines.length) return;
       mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
-      appendFileSync(file, lines.join("\n") + "\n");
+      appendDataFile(file, lines.join("\n") + "\n");
     },
 
     sweep(): void {
@@ -605,45 +600,24 @@ export function existingDirs(
 export interface ProtectFactsResult {
   cwd: string;
   root: string;
-  roots: string[];
 }
 
-// Where the session is: the repo root (the nearest directory with a .git), every directory with a .git above the cwd
-// (`roots`, nearest first: the agent can plant a .git in a subdirectory, so a path is protected relative to any of
-// them) and the cwd, `/` separators.
+// Where the session is: the repo root (the nearest directory with a .git) and the cwd, `/` separators.
 export function protectFacts(cwd?: string): ProtectFactsResult {
   const at = resolve(cwd ?? ".");
-  const roots: string[] = [];
+  let root = at;
   for (let dir = at; ; dir = dirname(dir)) {
-    if (existsSync(join(dir, ".git"))) roots.push(dir);
+    if (existsSync(join(dir, ".git"))) {
+      root = dir;
+      break;
+    }
     if (dirname(dir) === dir) break;
   }
   const slash = (p: string): string => p.replace(/\\/g, "/");
-  return {
-    root: slash(roots[0] ?? at),
-    roots: roots.map(slash),
-    cwd: slash(at),
-  };
+  return { root: slash(root), cwd: slash(at) };
 }
 
 const slashes = (p: string): string => p.replace(/\\/g, "/");
-
-// Guard's own data directories in this run (absolute, `/` separators): the one the hook keeps its files in and the one
-// the stop hook reads, each also by its real path when that differs (/tmp is /private/tmp on macOS).
-export function guardDataDirs(deps: HandleDeps): string[] {
-  const out = new Set<string>();
-  for (const d of [pluginDataDir(deps.env ?? process.env), deps.dataDir]) {
-    if (!d) continue;
-    const abs = slashes(resolve(d));
-    out.add(abs);
-    try {
-      out.add(slashes(realpathSync(abs)));
-    } catch {
-      // not created yet
-    }
-  }
-  return [...out];
-}
 
 interface ShellToolInput {
   command?: unknown;
@@ -781,10 +755,7 @@ async function onShell(
       ...facts,
       run:
         ctx.state === "registered"
-          ? runFacts(ctx, {
-              ...protectFacts(input.cwd),
-              data: guardDataDirs(deps),
-            })
+          ? runFacts(ctx, protectFacts(input.cwd))
           : null,
       rules: {
         ...rules,
@@ -1038,13 +1009,35 @@ const MAX_LINK_HOPS = 40;
 // in the last component or any other, is followed too (a write tool creates its target); null past MAX_LINK_HOPS
 // links (a loop): the caller treats the path as protected. With `lexical` on win32, where a `..` in a relative link
 // target may apply to the link's own directory as text, the target is normalised before it is followed.
-function realish(path: string, lexical = false): string | null {
+export interface LinkEnv {
+  platform: NodeJS.Platform;
+  path: Pick<
+    typeof win32,
+    "dirname" | "isAbsolute" | "join" | "parse" | "resolve" | "sep"
+  >;
+  isLink: (path: string) => boolean;
+  readLink: (path: string) => string;
+}
+
+const linkEnv: LinkEnv = {
+  platform: process.platform,
+  path: { dirname, isAbsolute, join, parse, resolve, sep },
+  isLink: (p) => lstatSync(p).isSymbolicLink(),
+  readLink: readlinkSync,
+};
+
+export function realish(
+  path: string,
+  lexical = false,
+  env: LinkEnv = linkEnv,
+): string | null {
+  const { dirname, isAbsolute, join, parse, resolve, sep } = env.path;
   const top = parse(path).root;
   let cur = top;
   let missing = false;
   let hops = 0;
   const split = (p: string) =>
-    p.split(process.platform === "win32" ? /[\\/]/ : sep).filter(Boolean);
+    p.split(env.platform === "win32" ? /[\\/]/ : sep).filter(Boolean);
   const queue = split(path.slice(top.length));
   while (queue.length) {
     const comp = queue.shift() ?? "";
@@ -1057,7 +1050,7 @@ function realish(path: string, lexical = false): string | null {
     let link: string | undefined;
     if (!missing) {
       try {
-        if (lstatSync(next).isSymbolicLink()) link = readlinkSync(next);
+        if (env.isLink(next)) link = env.readLink(next);
         else cur = next;
       } catch {
         missing = true;
@@ -1066,7 +1059,7 @@ function realish(path: string, lexical = false): string | null {
     if (link !== undefined) {
       if (++hops > MAX_LINK_HOPS) return null;
       const target =
-        lexical && process.platform === "win32" ? resolve(cur, link) : link;
+        lexical && env.platform === "win32" ? resolve(cur, link) : link;
       if (isAbsolute(target)) cur = parse(target).root;
       queue.unshift(
         ...split(isAbsolute(target) ? target.slice(cur.length) : target),
@@ -1076,21 +1069,31 @@ function realish(path: string, lexical = false): string | null {
   return slashes(cur);
 }
 
-// `path` relative to `dir` (both `/` separated), or null when it is not inside: compared segment by segment, a Windows
-// 8.3 short name standing for the long one it may abbreviate, in either spelling (fail closed: "may" is inside).
+// Every reading of an edit tool's target that counts, and any that hits denies: the lexical one (`d/../x` is `x`), and the
+// real path of the raw spelling and of the lexical one (the kernel follows a link before a `..`; win32 may apply a `..`
+// in a link target as text).
+export function readingsOf(
+  f: { lex: string; raw: string },
+  env: LinkEnv = linkEnv,
+): (string | null)[] {
+  const out = [
+    slashes(f.lex),
+    realish(f.raw, false, env),
+    realish(f.lex, false, env),
+  ];
+  if (env.platform === "win32")
+    out.push(realish(f.raw, true, env), realish(f.lex, true, env));
+  return [...new Set(out)];
+}
+
+// `path` relative to `dir` (both `/` separated, letter case ignored), or null when it is not inside.
 const relativeInside = (path: string, dir: string): string | null => {
   const a = path.split("/").filter(Boolean);
   const b = dir.split("/").filter(Boolean);
   return b.length <= a.length &&
-    b.every((x, i) => segmentsMayBeSame(x, a[i] ?? ""))
+    b.every((x, i) => x.toLowerCase() === (a[i] ?? "").toLowerCase())
     ? a.slice(b.length).join("/")
     : null;
-};
-
-const insideDir = (path: string, dir: string): boolean => {
-  const a = path.toLowerCase().split("/").filter(Boolean);
-  const b = dir.toLowerCase().split("/").filter(Boolean);
-  return b.length <= a.length && b.every((x, i) => x === a[i]);
 };
 
 function onEdit(
@@ -1100,14 +1103,8 @@ function onEdit(
   ctx: RunContext,
 ): HandleResult {
   const facts =
-    ctx.state === "registered"
-      ? runFacts(ctx, {
-          ...protectFacts(input.cwd),
-          data: guardDataDirs(deps),
-        })
-      : null;
-  // In an unattended registered run an edit tool never touches guard's own data directory (the result gate's block
-  // counter lives there) nor a protected path.
+    ctx.state === "registered" ? runFacts(ctx, protectFacts(input.cwd)) : null;
+  // In an unattended registered run an edit tool never touches a protected path.
   if (facts) {
     const denyEdit = (reason: string): HandleResult => {
       appendDecision(deps.env, { decision: "deny", rule: "protected-path" });
@@ -1126,18 +1123,9 @@ function onEdit(
       );
       return preToolUse("deny", reason, deps.harness);
     };
-    const dirs = guardDataDirs(deps);
-    // Every reading of a target counts, and any that hits denies: the lexical one (`d/../x` is `x`), and the real path
-    // of the raw spelling and of the lexical one (the kernel follows a link before a `..`; win32 may apply a `..` in a
-    // link target as text).
-    const readingsOf = (f: { lex: string; raw: string }): (string | null)[] => {
-      const out = [slashes(f.lex), realish(f.raw), realish(f.lex)];
-      if (process.platform === "win32")
-        out.push(realish(f.raw, true), realish(f.lex, true));
-      return [...new Set(out)];
-    };
     const files = touchedFiles(input).map((f) => ({
       name: f.lex,
+      raw: f.raw,
       readings: readingsOf(f),
     }));
     const loop = files.find((f) => f.readings.includes(null));
@@ -1145,36 +1133,22 @@ function onEdit(
       return denyEdit(
         `${rules.run.protectedWhy} \`${loop.name}\` goes through too many symbolic links to be checked; leave it alone.`,
       );
-    const hit = files.find((f) =>
-      f.readings.some((p) => dirs.some((d) => insideDir(p ?? "", d))),
-    );
-    if (hit !== undefined)
-      return denyEdit(
-        `${rules.run.protectedWhy} \`${hit.name}\` is in guard's own data directory in this run; leave it alone.`,
-      );
-    const found = protectFacts(input.cwd);
-    const roots = new Set([
-      facts.protect?.root ?? found.root,
-      ...(facts.protect?.roots ?? found.roots),
-    ]);
     const protect = {
       globs: [...rules.run.protectedPaths, ...(facts.protect?.extra ?? [])],
       registered: facts.protect?.registered ?? [],
       exempt: facts.protect?.exempt ?? [],
     };
-    // Relative to every directory with a .git above the cwd: the agent can plant one in a subdirectory.
+    const root = facts.protect?.root ?? protectFacts(input.cwd).root;
+    const bases = [...new Set([slashes(root), realish(root) ?? slashes(root)])];
     for (const f of files) {
-      for (const root of roots) {
-        const bases = [slashes(root), realish(root) ?? slashes(root)];
-        for (const file of f.readings) {
-          for (const base of bases) {
-            const rel = relativeInside(file ?? "", base);
-            if (rel === null) continue;
-            if (protectedPathHit(rel, protect, rules.run.protectedLimits))
-              return denyEdit(
-                `${rules.run.protectedWhy} \`${rel}\` is a protected path in this run; leave it to the owner and say on the ticket what should change.`,
-              );
-          }
+      for (const file of f.readings) {
+        for (const base of bases) {
+          const rel = relativeInside(file ?? "", base);
+          if (rel === null) continue;
+          if (protectedPathHit(rel, protect, rules.run.protectedLimits))
+            return denyEdit(
+              `${rules.run.protectedWhy} \`${rel}\` is a protected path in this run; leave it to the owner and say on the ticket what should change.`,
+            );
         }
       }
     }

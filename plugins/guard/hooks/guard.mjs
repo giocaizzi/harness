@@ -3,19 +3,19 @@
 // and reads `hookSpecificOutput.permissionDecision`. A hook is a fresh process, so per-session facts
 // (loaded skills, rules already reminded) live in a JSON file under $CLAUDE_PLUGIN_DATA.
 import { execFile } from "node:child_process";
-import { appendFileSync, closeSync, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, readlinkSync, realpathSync, rmSync, statSync, } from "node:fs";
+import { closeSync, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, readlinkSync, rmSync, statSync, } from "node:fs";
 import { statfs } from "node:fs/promises";
 import { cpus, homedir, loadavg, platform } from "node:os";
 import { dirname, isAbsolute, join, parse, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { analysis, branchFacts, cdDirs, cmdClass, codexRules, deniedBy, deniedDir, evaluateCommand, evaluateEdit, evaluateRouting, hostJudged, isHeavy, isRisky, nativeAsk, previewCommand, protectedPathHit, pureRead, refFacts, regenFacts, segmentsMayBeSame, stackFacts, stackTargets, tagFacts, tagTargets, unattendedSet, withPreview, worktreeFacts, } from "../core/engine.mjs";
+import { analysis, branchFacts, cdDirs, cmdClass, codexRules, deniedBy, deniedDir, evaluateCommand, evaluateEdit, evaluateRouting, hostJudged, isHeavy, isRisky, nativeAsk, previewCommand, protectedPathHit, pureRead, refFacts, regenFacts, stackFacts, stackTargets, tagFacts, tagTargets, unattendedSet, withPreview, worktreeFacts, } from "../core/engine.mjs";
 import { cpuPercentFrom, hostCaps } from "../core/host.mjs";
 import { emit } from "../core/otel.mjs";
 import { sessionAttrs } from "../core/registration.mjs";
 import { rules } from "../core/rules.mjs";
 import { commandWords, units } from "../core/shell.mjs";
 import { contractProbe } from "./contract.mjs";
-import { pluginDataDir } from "./data.mjs";
+import { appendDataFile, pluginDataDir, readDataFile } from "./data.mjs";
 import { editedPaths } from "./lint.mjs";
 import { denyReason, legacySet, recordUnregistered, runContext, runFacts, } from "./run.mjs";
 import { isEditTool, isReadTool, isShellTool, isTaskTool, } from "./harnesses.mjs";
@@ -88,6 +88,7 @@ const readerArgs = (command) => units(analysis(command)).flatMap(({ cmd }) => {
         !args.some((a) => /^(?:-i|-[a-zA-Z]*i\b|--in-place)/.test(a));
     return reader ? args : [];
 });
+const FACTS_MAX_BYTES = 4 * 1024 * 1024;
 const WEEK_MS = 7 * 24 * 3600 * 1000;
 export function knownSkills(here = dirname(fileURLToPath(import.meta.url))) {
     const names = new Set();
@@ -142,13 +143,8 @@ export function sessionStore(dir = pluginDataDir(), sessionId, agentId, processI
                 return { reminded: [], loaded: [], plugins: {} };
             }
             const proc = processId != null ? String(processId) : "";
-            let text = "";
-            try {
-                text = readFileSync(file, "utf8");
-            }
-            catch {
-                // no facts yet
-            }
+            // missing, or not a regular file of bounded size: no facts yet
+            const text = readDataFile(file, FACTS_MAX_BYTES) ?? "";
             for (const line of text.split("\n")) {
                 let fact;
                 try {
@@ -233,7 +229,7 @@ export function sessionStore(dir = pluginDataDir(), sessionId, agentId, processI
             if (!lines.length)
                 return;
             mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
-            appendFileSync(file, lines.join("\n") + "\n");
+            appendDataFile(file, lines.join("\n") + "\n");
         },
         sweep() {
             const sessions = join(dir, "sessions");
@@ -393,44 +389,22 @@ export function existingDirs(command, env, cwd) {
     }
     return dirs;
 }
-// Where the session is: the repo root (the nearest directory with a .git), every directory with a .git above the cwd
-// (`roots`, nearest first: the agent can plant a .git in a subdirectory, so a path is protected relative to any of
-// them) and the cwd, `/` separators.
+// Where the session is: the repo root (the nearest directory with a .git) and the cwd, `/` separators.
 export function protectFacts(cwd) {
     const at = resolve(cwd ?? ".");
-    const roots = [];
+    let root = at;
     for (let dir = at;; dir = dirname(dir)) {
-        if (existsSync(join(dir, ".git")))
-            roots.push(dir);
+        if (existsSync(join(dir, ".git"))) {
+            root = dir;
+            break;
+        }
         if (dirname(dir) === dir)
             break;
     }
     const slash = (p) => p.replace(/\\/g, "/");
-    return {
-        root: slash(roots[0] ?? at),
-        roots: roots.map(slash),
-        cwd: slash(at),
-    };
+    return { root: slash(root), cwd: slash(at) };
 }
 const slashes = (p) => p.replace(/\\/g, "/");
-// Guard's own data directories in this run (absolute, `/` separators): the one the hook keeps its files in and the one
-// the stop hook reads, each also by its real path when that differs (/tmp is /private/tmp on macOS).
-export function guardDataDirs(deps) {
-    const out = new Set();
-    for (const d of [pluginDataDir(deps.env ?? process.env), deps.dataDir]) {
-        if (!d)
-            continue;
-        const abs = slashes(resolve(d));
-        out.add(abs);
-        try {
-            out.add(slashes(realpathSync(abs)));
-        }
-        catch {
-            // not created yet
-        }
-    }
-    return [...out];
-}
 async function onShell(input, state, deps, ctx) {
     const rawCommand = input.tool_input?.command;
     const command = typeof rawCommand === "string" ? rawCommand : "";
@@ -503,10 +477,7 @@ async function onShell(input, state, deps, ctx) {
             readTool: deps.readTool ?? true,
             ...facts,
             run: ctx.state === "registered"
-                ? runFacts(ctx, {
-                    ...protectFacts(input.cwd),
-                    data: guardDataDirs(deps),
-                })
+                ? runFacts(ctx, protectFacts(input.cwd))
                 : null,
             rules: {
                 ...rules,
@@ -691,18 +662,19 @@ function touchedFiles(input) {
     return [...seen.values()];
 }
 const MAX_LINK_HOPS = 40;
-// `path` with the real path of its nearest existing ancestor, as `/` segments. The path is walked as given, never
-// normalised first, and each component is followed in turn, as the kernel does: a symlink is replaced by its target
-// before the next `..` applies (`n -> d/../x` with `d -> a/b` is `a/x`; `d/../x` is `a/x` too), and a dangling one,
-// in the last component or any other, is followed too (a write tool creates its target); null past MAX_LINK_HOPS
-// links (a loop): the caller treats the path as protected. With `lexical` on win32, where a `..` in a relative link
-// target may apply to the link's own directory as text, the target is normalised before it is followed.
-function realish(path, lexical = false) {
+const linkEnv = {
+    platform: process.platform,
+    path: { dirname, isAbsolute, join, parse, resolve, sep },
+    isLink: (p) => lstatSync(p).isSymbolicLink(),
+    readLink: readlinkSync,
+};
+export function realish(path, lexical = false, env = linkEnv) {
+    const { dirname, isAbsolute, join, parse, resolve, sep } = env.path;
     const top = parse(path).root;
     let cur = top;
     let missing = false;
     let hops = 0;
-    const split = (p) => p.split(process.platform === "win32" ? /[\\/]/ : sep).filter(Boolean);
+    const split = (p) => p.split(env.platform === "win32" ? /[\\/]/ : sep).filter(Boolean);
     const queue = split(path.slice(top.length));
     while (queue.length) {
         const comp = queue.shift() ?? "";
@@ -716,8 +688,8 @@ function realish(path, lexical = false) {
         let link;
         if (!missing) {
             try {
-                if (lstatSync(next).isSymbolicLink())
-                    link = readlinkSync(next);
+                if (env.isLink(next))
+                    link = env.readLink(next);
                 else
                     cur = next;
             }
@@ -728,7 +700,7 @@ function realish(path, lexical = false) {
         if (link !== undefined) {
             if (++hops > MAX_LINK_HOPS)
                 return null;
-            const target = lexical && process.platform === "win32" ? resolve(cur, link) : link;
+            const target = lexical && env.platform === "win32" ? resolve(cur, link) : link;
             if (isAbsolute(target))
                 cur = parse(target).root;
             queue.unshift(...split(isAbsolute(target) ? target.slice(cur.length) : target));
@@ -738,30 +710,31 @@ function realish(path, lexical = false) {
     }
     return slashes(cur);
 }
-// `path` relative to `dir` (both `/` separated), or null when it is not inside: compared segment by segment, a Windows
-// 8.3 short name standing for the long one it may abbreviate, in either spelling (fail closed: "may" is inside).
+// Every reading of an edit tool's target that counts, and any that hits denies: the lexical one (`d/../x` is `x`), and the
+// real path of the raw spelling and of the lexical one (the kernel follows a link before a `..`; win32 may apply a `..`
+// in a link target as text).
+export function readingsOf(f, env = linkEnv) {
+    const out = [
+        slashes(f.lex),
+        realish(f.raw, false, env),
+        realish(f.lex, false, env),
+    ];
+    if (env.platform === "win32")
+        out.push(realish(f.raw, true, env), realish(f.lex, true, env));
+    return [...new Set(out)];
+}
+// `path` relative to `dir` (both `/` separated, letter case ignored), or null when it is not inside.
 const relativeInside = (path, dir) => {
     const a = path.split("/").filter(Boolean);
     const b = dir.split("/").filter(Boolean);
     return b.length <= a.length &&
-        b.every((x, i) => segmentsMayBeSame(x, a[i] ?? ""))
+        b.every((x, i) => x.toLowerCase() === (a[i] ?? "").toLowerCase())
         ? a.slice(b.length).join("/")
         : null;
 };
-const insideDir = (path, dir) => {
-    const a = path.toLowerCase().split("/").filter(Boolean);
-    const b = dir.toLowerCase().split("/").filter(Boolean);
-    return b.length <= a.length && b.every((x, i) => x === a[i]);
-};
 function onEdit(input, state, deps, ctx) {
-    const facts = ctx.state === "registered"
-        ? runFacts(ctx, {
-            ...protectFacts(input.cwd),
-            data: guardDataDirs(deps),
-        })
-        : null;
-    // In an unattended registered run an edit tool never touches guard's own data directory (the result gate's block
-    // counter lives there) nor a protected path.
+    const facts = ctx.state === "registered" ? runFacts(ctx, protectFacts(input.cwd)) : null;
+    // In an unattended registered run an edit tool never touches a protected path.
     if (facts) {
         const denyEdit = (reason) => {
             appendDecision(deps.env, { decision: "deny", rule: "protected-path" });
@@ -775,48 +748,29 @@ function onEdit(input, state, deps, ctx) {
             }, input.cwd);
             return preToolUse("deny", reason, deps.harness);
         };
-        const dirs = guardDataDirs(deps);
-        // Every reading of a target counts, and any that hits denies: the lexical one (`d/../x` is `x`), and the real path
-        // of the raw spelling and of the lexical one (the kernel follows a link before a `..`; win32 may apply a `..` in a
-        // link target as text).
-        const readingsOf = (f) => {
-            const out = [slashes(f.lex), realish(f.raw), realish(f.lex)];
-            if (process.platform === "win32")
-                out.push(realish(f.raw, true), realish(f.lex, true));
-            return [...new Set(out)];
-        };
         const files = touchedFiles(input).map((f) => ({
             name: f.lex,
+            raw: f.raw,
             readings: readingsOf(f),
         }));
         const loop = files.find((f) => f.readings.includes(null));
         if (loop !== undefined)
             return denyEdit(`${rules.run.protectedWhy} \`${loop.name}\` goes through too many symbolic links to be checked; leave it alone.`);
-        const hit = files.find((f) => f.readings.some((p) => dirs.some((d) => insideDir(p ?? "", d))));
-        if (hit !== undefined)
-            return denyEdit(`${rules.run.protectedWhy} \`${hit.name}\` is in guard's own data directory in this run; leave it alone.`);
-        const found = protectFacts(input.cwd);
-        const roots = new Set([
-            facts.protect?.root ?? found.root,
-            ...(facts.protect?.roots ?? found.roots),
-        ]);
         const protect = {
             globs: [...rules.run.protectedPaths, ...(facts.protect?.extra ?? [])],
             registered: facts.protect?.registered ?? [],
             exempt: facts.protect?.exempt ?? [],
         };
-        // Relative to every directory with a .git above the cwd: the agent can plant one in a subdirectory.
+        const root = facts.protect?.root ?? protectFacts(input.cwd).root;
+        const bases = [...new Set([slashes(root), realish(root) ?? slashes(root)])];
         for (const f of files) {
-            for (const root of roots) {
-                const bases = [slashes(root), realish(root) ?? slashes(root)];
-                for (const file of f.readings) {
-                    for (const base of bases) {
-                        const rel = relativeInside(file ?? "", base);
-                        if (rel === null)
-                            continue;
-                        if (protectedPathHit(rel, protect, rules.run.protectedLimits))
-                            return denyEdit(`${rules.run.protectedWhy} \`${rel}\` is a protected path in this run; leave it to the owner and say on the ticket what should change.`);
-                    }
+            for (const file of f.readings) {
+                for (const base of bases) {
+                    const rel = relativeInside(file ?? "", base);
+                    if (rel === null)
+                        continue;
+                    if (protectedPathHit(rel, protect, rules.run.protectedLimits))
+                        return denyEdit(`${rules.run.protectedWhy} \`${rel}\` is a protected path in this run; leave it to the owner and say on the ticket what should change.`);
                 }
             }
         }

@@ -486,15 +486,16 @@ const piCtx = (cwd) => ({
 const idle = (hooks) => hooks.event({
     event: { type: "session.idle", properties: { sessionID: "s" } },
 });
-void test("opencode: a registered run without a valid result.json is sent the result gate on idle, twice at most", async () => {
+void test("opencode: a registered run without a valid result.json is sent the result gate on every idle, with no cap in an unattended run", async () => {
     await registeredRun(resultManifest(), async (cwd) => {
         const sent = [];
         const hooks = await GuardPlugin({ client: ocClient(sent), directory: cwd }, trusted());
         for (let i = 0; i < 3; i++)
             await idle(hooks);
-        assert.equal(sent.length, 2);
-        assert.match(sent[0] ?? "", /^Run result gate \(block 1 of 2\)[\s\S]*Fix the result file/);
-        assert.match(sent[1] ?? "", /^Run result gate \(block 2 of 2\)/);
+        assert.equal(sent.length, 3);
+        assert.match(sent[0] ?? "", /^Run result gate \(block 1; an unattended run's stop stays blocked[\s\S]*Fix the result file/);
+        assert.match(sent[1] ?? "", /^Run result gate \(block 2; /);
+        assert.match(sent[2] ?? "", /^Run result gate \(block 3; /);
     });
 });
 void test("pi: deny blocks, ask confirms through the UI and blocks without one", async () => {
@@ -831,16 +832,17 @@ void test("pi: a failing make check on settle is sent back once, an aborted run 
     assert.equal(sent.length, 1);
     assert.match(sent[0] ?? "", /make check failed/);
 });
-void test("pi: a registered run without a valid result.json is sent the result gate on settle, twice at most", async () => {
+void test("pi: a registered run without a valid result.json is sent the result gate on every settle, with no cap in an unattended run", async () => {
     await registeredRun(resultManifest(), async (cwd) => {
         const { handlers, sent, api } = fakePi();
         guardExtension(api, trusted());
         for (let i = 0; i < 3; i++) {
             await handlers.agent_settled?.({ aborted: false }, piCtx(cwd));
         }
-        assert.equal(sent.length, 2);
-        assert.match(sent[0] ?? "", /^Run result gate \(block 1 of 2\)/);
-        assert.match(sent[1] ?? "", /^Run result gate \(block 2 of 2\)/);
+        assert.equal(sent.length, 3);
+        assert.match(sent[0] ?? "", /^Run result gate \(block 1; /);
+        assert.match(sent[1] ?? "", /^Run result gate \(block 2; /);
+        assert.match(sent[2] ?? "", /^Run result gate \(block 3; /);
     });
 });
 void test("opencode and pi: a registered run that names a checker is sent the result gate on every idle and settle, with no cap", async () => {

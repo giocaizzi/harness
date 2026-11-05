@@ -1321,11 +1321,7 @@ export function shellEdit(command, env = {}) {
 // a dot file), a brace list is expanded (one group a level, 64 words at most), and one whose start is a variable or a
 // `cd` not followed is matched by the rest of its path anywhere (`$ROOT/.github/x`). A registered glob is waived for
 // `protect.exempt` (the registration's exemptions, e.g. files inside a run directory) when the normalised path is spelled out;
-// a glob in `protect.globs` (the floor, GUARD_RUN_PROTECTED_PATHS) is never waived. Guard's own data directories (`protect.data`,
-// absolute: the result gate's block counter and the make-check state live there) are protected the same way and before
-// any glob: a write inside one, or a remove or move of one or of a directory above it, hits whatever the exemptions say;
-// a target whose start is unknown (a variable, `~`, a `cd` not followed) hits when it ends in the data directory's name
-// followed by anything (`~/.claude/plugins/data/<name>/result-gate/x`). A command that may write fails
+// a glob in `protect.globs` (the floor, GUARD_RUN_PROTECTED_PATHS) is never waived. A command that may write fails
 // closed past the limits (`rules.run.protectedLimits`: targets, characters, milliseconds) or when the check throws,
 // since a hook that times out or emits nothing lets the command through; globs past the limits are ignored. Returns { target } (the first protected target as written), { unsure } (a limit it hit) or null.
 const PROTECT_RM = /^(?:rm|rmdir|unlink|remove-item|ri|del|erase|rd)$/;
@@ -1350,45 +1346,10 @@ function normalizeSegments(path) {
     }
     return out;
 }
-// Windows drops the dots and spaces that end a name (`.github.`, `.github /x`, `.. `): each segment loses them, and an
-// emptied one stays `.` or `..` when it was one.
-function foldWindows(path) {
-    return path
-        .split("/")
-        .map((s) => {
-        if (s === "" || s === "." || s === "..")
-            return s;
-        const t = s.replace(/[. ]+$/, "");
-        if (t !== "")
-            return t;
-        return s.startsWith("..") ? ".." : s.startsWith(".") ? "." : "";
-    })
-        .join("/");
-}
-// The repo-relative readings of a target, each { segs } from the root, { segs, suffix: true } when its start is unknown;
-// none when it is outside the repo. A target is read as written and as Windows reads it (trailing dots and spaces of
-// its segments dropped, `folded`): a dots-only segment (`...`, `.. `) is a plain name on POSIX and `..` once folded, so
-// either reading may be the real one and the caller checks both. A folded reading is never exempted.
+// The repo-relative segments of a target: { segs } from the root, { segs, suffix: true } when its start is unknown,
+// or null outside the repo.
 function repoSegments(target, dir, protect) {
     const p = posixPath(target);
-    const keep = dir === UNKNOWN_DIR ? dir : posixPath(dir);
-    const fold = (x) => x === undefined ? x : foldWindows(posixPath(x));
-    const at = repoSegmentsOf(foldWindows(p), dir === UNKNOWN_DIR ? dir : foldWindows(keep), { ...protect, root: fold(protect.root), cwd: fold(protect.cwd) });
-    const raw = repoSegmentsOf(p, keep, protect);
-    // Only a fold inside the repo-relative part counts: a root or cwd that merely ends in a dot changes both spellings alike.
-    const same = !!at &&
-        !!raw &&
-        raw.suffix === at.suffix &&
-        raw.segs.length === at.segs.length &&
-        raw.segs.every((x, i) => x === at.segs[i]);
-    const out = [];
-    if (raw)
-        out.push(same ? raw : { ...raw, folded: true });
-    if (at && !same)
-        out.push({ ...at, folded: true });
-    return out;
-}
-function repoSegmentsOf(p, dir, protect) {
     const cwdRel = protect.root && protect.cwd
         ? relativeTo(posixPath(protect.root), posixPath(protect.cwd))
         : [];
@@ -1420,35 +1381,17 @@ function repoSegmentsOf(p, dir, protect) {
 function relativeTo(root, path, wrap = false) {
     const r = normalizeSegments(root);
     const s = normalizeSegments(path);
-    let exact = true;
-    const same = (a, b) => a.slice(0, Math.min(a.length, b.length)).every((x, i) => {
-        const y = defined(b[i]);
-        if (x.toLowerCase() === y.toLowerCase())
-            return true;
-        if (!segmentsMayBeSame(x, y))
-            return false;
-        exact = false;
-        return true;
-    });
+    const same = (a, b) => a
+        .slice(0, Math.min(a.length, b.length))
+        .every((x, i) => x.toLowerCase() === defined(b[i]).toLowerCase());
     const inside = r.length <= s.length && same(r, s);
     if (!wrap)
         return inside ? s.slice(r.length) : [];
-    // A root part matched only through an 8.3 name is a guess: nothing is exempt there.
     return inside
-        ? { segs: s.slice(r.length), ...(exact ? {} : { folded: true }) }
+        ? { segs: s.slice(r.length) }
         : same(s, r)
             ? { segs: [] }
             : null;
-}
-// Whether two path segments may name one directory when one is a Windows 8.3 short name (`RUNNER~1` and `runneradmin`,
-// either way round); the matching is the protected-pattern matcher's, and "may" counts: a root is compared the same way.
-export function segmentsMayBeSame(a, b) {
-    const SHORT = /~\d+(?:\.[^./]{1,3})?$/;
-    if (a.toLowerCase() === b.toLowerCase())
-        return true;
-    if (!SHORT.test(a) && !SHORT.test(b))
-        return false;
-    return segMayMatch(a, b) || segMayMatch(b, a);
 }
 // Whether two globs may name one word: the text before the first wildcard of each, and after the last, agree (`*.log`
 // never meets `*.tf`).
@@ -1464,19 +1407,6 @@ function globsMayMeet(a, b) {
 // Whether one target segment may be one protected-pattern segment.
 // A variable may hold a leading dot, so only a written `*`, `?` or `[` at the start keeps a dot file out.
 function segMayMatch(pat, seg) {
-    // A Windows 8.3 short name (`GITHUB~1`, `CONFIG~1.YAM`) stands for any name, dot dropped, that starts with its prefix
-    // and, when it has one, whose extension starts with the short one.
-    const short = /^([^~./]{1,6})~\d+(?:\.([^./]{1,3}))?$/.exec(seg);
-    if (short) {
-        const pre = defined(short[1]).toLowerCase();
-        const ext = short[2] === undefined ? "" : `.${short[2].toLowerCase()}*`;
-        if (segMayMatch(pat, `${pre}*${ext}`) || segMayMatch(pat, `.${pre}*${ext}`))
-            return true;
-        // The hashed form (`GI1A2B~1`: two letters, four hash characters) cannot be mapped back: it may be the floor's
-        // `.github` whenever it starts with `gi` and goes on with four hexadecimal characters.
-        if (pat.toLowerCase() === ".github" && /^gi[0-9a-f]{4}$/.test(pre))
-            return true;
-    }
     const glob = seg.replace(/\$(?:\{[^}]*\}|\w+|\([^)]*\))|%\w+%|`[^`]*`/g, "*");
     if (SEG_GLOB.test(glob)) {
         if (/^[*?[]/.test(seg) && pat.startsWith("."))
@@ -1546,12 +1476,7 @@ function expandBraces(text, limit = 64) {
 const LIMITED = new Error("limited");
 // A command that may write at all: an output redirection or a writer's name. Only such a command can fail closed.
 const MAY_WRITE = /[>]|(?:^|[^\w-])(?:tee|sed|perl|rm|rmdir|unlink|mv|cp|move|copy|set-content|add-content|out-file|tee-object|remove-item|move-item|copy-item|ri|mi|ci|cpi|del|erase|rd|sc|ac)(?![\w-])/i;
-// A shell write to a protected path, or any command naming a path inside guard's data directory (`protect.data`):
-// whatever the program (touch, ln, dd of=, tar -C, a read), since no session needs that directory. The data check reads
-// every word and redirection target, `key=value` and `--opt=value` words by their value too, the plugin-data variable in
-// every shell's spelling, and a Git Bash `/c/...` path against a drive-letter directory. Merely naming a directory above
-// it (`ls ~/.claude`) is fine; only the writers' remove or move of one is denied. A link made earlier under another
-// name is out of reach (the `ln -s` that makes it names the directory, so it is denied itself).
+// A shell write to a protected path.
 export function protectedWrite(command, protect, env = {}, limits = { globs: 256, targets: 512, chars: 1024, ms: 2000 }) {
     // A setting past the limits is cut, not failed: globs over `chars` are dropped, then all past `globs` (the floor first,
     // so it is never cut). `protect.registered` (the registration's globs) come after and may be exempted
@@ -1579,88 +1504,21 @@ export function protectedWrite(command, protect, env = {}, limits = { globs: 256
         if (++targets > limits.targets || w.val.length > limits.chars)
             throw LIMITED;
     };
-    const dataDirs = (protect.data ?? [])
-        .filter((d) => d.length <= limits.chars)
-        .slice(0, limits.globs)
-        .map((d) => normalizeSegments(posixPath(d).replace(/^\/(?=[a-z]:)/i, "")));
-    // Guard's own data directory: a path inside it (any command, a read too), or, for the writers, a remove or move of it or
-    // a directory above it. A Git Bash drive path (`/c/Users/...`) also counts as `c:/Users/...` against a drive-letter dir.
-    const inData = (dir, resolved, above) => {
-        if (!dataDirs.length)
-            return false;
-        const p = posixPath(resolved);
-        const unknown = /^[$~%`]/.test(p) || (dir === UNKNOWN_DIR && !ABS_DIR.test(p));
-        let full = null;
-        if (!unknown) {
-            full =
-                dir && !ABS_DIR.test(p)
-                    ? `${posixPath(dir).replace(/\/+$/, "")}/${p}`
-                    : p;
-            if (!ABS_DIR.test(full))
-                full = protect.cwd
-                    ? `${posixPath(protect.cwd).replace(/\/+$/, "")}/${full}`
-                    : null;
-        }
-        for (const d of dataDirs) {
-            if (full !== null) {
-                const s = normalizeSegments(full.replace(/^\/(?=[a-z]:)/i, ""));
-                const same = (a, b) => a.every((x, i) => x.toLowerCase() === defined(b[i]).toLowerCase());
-                if (d.length <= s.length ? same(d, s) : above && same(s, d))
-                    return true;
-                const git = /^\/([a-z])(?:\/|$)/i.exec(full);
-                if (git && /^[a-z]:$/i.test(d[0] ?? "")) {
-                    const g = [`${defined(git[1])}:`, ...s.slice(1)];
-                    if (d.length <= g.length ? same(d, g) : above && same(g, d))
-                        return true;
-                }
-                continue;
-            }
-            const base = d.at(-1);
-            if (base !== undefined &&
-                patternHits([base, "**"], repoSegments(p, dir, { ...protect, root: undefined })[0]?.segs ?? [], above, true, tick))
-                return true;
-        }
-        return false;
-    };
-    // A word naming a path inside the data directory, as a path or through the plugin-data variable; `key=value` and
-    // `--opt=value` words count by their value too.
-    const named = (word, dir, resolve) => {
-        if (!dataDirs.length)
-            return false;
-        for (const t of [
-            word,
-            ...(word.includes("=") ? [word.slice(word.indexOf("=") + 1)] : []),
-        ]) {
-            tick();
-            if (DATA_VAR.test(t) || inData(dir, resolve(t), false))
-                return true;
-        }
-        return false;
-    };
     const hits = (target, dir, resolve, above) => {
-        if (inData(dir, resolve(target), above))
+        const at = repoSegments(resolve(target), dir, protect);
+        if (at === null)
+            return false;
+        const hit = globs.filter((g) => patternHits(g.segs, at.segs, above, at.suffix, tick));
+        if (hit.some((g) => !g.base))
             return true;
-        const resolved = resolve(target);
-        // Relative to every directory with a .git above the cwd, not only the nearest: a planted `x/.git` moves no root.
-        for (const root of new Set([protect.root, ...(protect.roots ?? [])])) {
-            for (const at of repoSegments(resolved, dir, { ...protect, root })) {
-                const hit = globs.filter((g) => patternHits(g.segs, at.segs, above, at.suffix, tick));
-                if (hit.some((g) => !g.base))
-                    return true;
-                // A registered glob is waived for the run's own files: the whole normalised path is spelled out (no wildcard,
-                // variable or brace, which could stand for `..`, nor a segment Windows would alter: `12\.. ` is `12\..`) and
-                // starts at the root, so `runs/../config.yaml` is no exemption.
-                if (hit.length > 0 &&
-                    !(!at.folded &&
-                        at.segs.every((x) => !/[*?[\]{}$`%~]|[. ]$/.test(x)) &&
-                        exempt.some((g) => patternHits(g, at.segs, false, false, tick))))
-                    return true;
-            }
-        }
-        return false;
+        // A registered glob is waived for the run's own files: the whole normalised path is spelled out (no wildcard, variable
+        // or brace, which could stand for `..`, nor a segment ending in a dot or space, which Windows strips: `12\.. ` is `12\..`) and starts at the root, so `.factory/runs/../config.yaml` is no exemption.
+        return (hit.length > 0 &&
+            !(at.segs.every((x) => !/[*?[\]{}$`%~]|[. ]$/.test(x)) &&
+                exempt.some((g) => patternHits(g, at.segs, false, false, tick))));
     };
     try {
-        const target = scanWrites(command, env, count, hits, dataDirs.length ? named : null);
+        const target = scanWrites(command, env, count, hits);
         return target === null ? null : { target };
     }
     catch (e) {
@@ -1695,23 +1553,13 @@ export function protectedPathHit(path, protect, limits = { globs: 256, targets: 
             if ((++work & 255) === 0 && Date.now() > until)
                 throw LIMITED;
         };
-        const slashed = posixPath(path);
-        const folded = foldWindows(slashed);
-        // As written and as Windows reads it: a dots-only segment (`...`) is a name on POSIX and `..` once folded. Either
-        // reading hits; only the unfolded one can be exempt.
-        const readings = [slashed, ...(folded === slashed ? [] : [folded])];
-        for (const text of readings) {
-            const segs = normalizeSegments(text);
-            const hit = tagged.filter((x) => patternHits(segsOf(x.g), segs, false, false, tick));
-            if (hit.some((x) => !x.base))
-                return true;
-            if (hit.length > 0 &&
-                !(folded === slashed &&
-                    segs.every((x) => !/[*?[\]{}$`%~]|[. ]$/.test(x)) &&
-                    exempt.some((g) => patternHits(g, segs, false, false, tick))))
-                return true;
-        }
-        return false;
+        const segs = normalizeSegments(posixPath(path));
+        const hit = tagged.filter((x) => patternHits(segsOf(x.g), segs, false, false, tick));
+        if (hit.some((x) => !x.base))
+            return true;
+        return (hit.length > 0 &&
+            !(segs.every((x) => !/[*?[\]{}$`%~]|[. ]$/.test(x)) &&
+                exempt.some((g) => patternHits(g, segs, false, false, tick))));
     }
     catch {
         return true;
@@ -1732,18 +1580,10 @@ function spellings(w) {
     return [...out, ...words];
 }
 const POSIX_MOVERS = /^(?:cp|mv)$/;
-// The plugin-data variable in any shell's spelling, at the start of a word and followed by its end or a separator.
-const DATA_VAR = /^(?:\$\{?|\$env:|%)(?:claude|copilot)_plugin_data(?:\}|%)?(?:$|[\\/])/i;
-function scanWrites(command, env, count, hits, named) {
+function scanWrites(command, env, count, hits) {
     for (const { words, redirs = [], dir, remote, resolve } of segments(command, env)) {
         if (remote)
             continue;
-        // Any command naming a path inside guard's data directory, whatever its program (a redirection target too).
-        if (named)
-            for (const w of [...redirs, ...words])
-                for (const t of spellings(w))
-                    if (named(defined(t), dir, resolve, false))
-                        return t;
         for (const w of redirs) {
             if (NOT_A_FILE.test(w.val))
                 continue;

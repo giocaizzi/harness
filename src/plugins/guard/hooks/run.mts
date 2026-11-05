@@ -16,6 +16,7 @@ import {
   unregisteredLine,
 } from "../core/registration.mjs";
 import type { RunFacts } from "../core/types.mjs";
+import { appendDataFile } from "./data.mjs";
 import type { LoadOptions } from "./registration.mjs";
 import { loadRegistration } from "./registration.mjs";
 
@@ -56,6 +57,8 @@ export interface RegisteredRun {
 }
 
 export interface RunDeny {
+  // the session pin alone failed the registration
+  pin?: true;
   rule: typeof RULE | typeof UNREGISTERED_RULE;
   state: "deny";
   why: string;
@@ -68,7 +71,12 @@ export function runContext(env: Env, opts: LoadOptions = {}): RunContext {
   try {
     const loaded = loadRegistration(env, opts);
     if (loaded.state === "deny") {
-      return { state: "deny", rule: RULE, why: loaded.why };
+      return {
+        state: "deny",
+        rule: RULE,
+        why: loaded.why,
+        ...(loaded.pin ? { pin: true as const } : {}),
+      };
     }
     if (loaded.state === "none") {
       return legacySet(env)
@@ -106,10 +114,10 @@ export function runContext(env: Env, opts: LoadOptions = {}): RunContext {
 }
 
 // The shell and edit rules' facts for a registered run, or null for an attended one (result gate only).
-// `at` is where the session is: the repo root, the cwd (`/` separators) and guard's data directories.
+// `at` is where the session is: the repo root and the cwd (`/` separators).
 export function runFacts(
   run: RegisteredRun,
-  at: { cwd?: string; data?: string[]; root?: string; roots?: string[] },
+  at: { cwd?: string; root?: string },
 ): RunFacts | null {
   if (run.mode === "attended") return null;
   const reg = run.registration;
@@ -179,7 +187,7 @@ export function recordUnregistered(
     }
     try {
       mkdirSync(dataDir, { recursive: true, mode: 0o700 });
-      appendFileSync(unregisteredLog(dataDir), line);
+      appendDataFile(unregisteredLog(dataDir), line);
     } catch {
       // unwritable data dir: the deny stands
     }

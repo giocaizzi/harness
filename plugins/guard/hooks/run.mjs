@@ -7,6 +7,7 @@ import { createHash } from "node:crypto";
 import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { RULE, UNREGISTERED_REASON, UNREGISTERED_RULE, unregisteredLine, } from "../core/registration.mjs";
+import { appendDataFile } from "./data.mjs";
 import { loadRegistration } from "./registration.mjs";
 // The contract v1 run variables. Any of them set (to a non-blank value) without a registration trips the tripwire.
 export const LEGACY_VARS = [
@@ -25,7 +26,12 @@ export function runContext(env, opts = {}) {
     try {
         const loaded = loadRegistration(env, opts);
         if (loaded.state === "deny") {
-            return { state: "deny", rule: RULE, why: loaded.why };
+            return {
+                state: "deny",
+                rule: RULE,
+                why: loaded.why,
+                ...(loaded.pin ? { pin: true } : {}),
+            };
         }
         if (loaded.state === "none") {
             return legacySet(env)
@@ -63,7 +69,7 @@ export function runContext(env, opts = {}) {
     }
 }
 // The shell and edit rules' facts for a registered run, or null for an attended one (result gate only).
-// `at` is where the session is: the repo root, the cwd (`/` separators) and guard's data directories.
+// `at` is where the session is: the repo root and the cwd (`/` separators).
 export function runFacts(run, at) {
     if (run.mode === "attended")
         return null;
@@ -124,7 +130,7 @@ export function recordUnregistered(env, dataDir, sessionId, now = new Date()) {
         }
         try {
             mkdirSync(dataDir, { recursive: true, mode: 0o700 });
-            appendFileSync(unregisteredLog(dataDir), line);
+            appendDataFile(unregisteredLog(dataDir), line);
         }
         catch {
             // unwritable data dir: the deny stands

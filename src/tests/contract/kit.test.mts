@@ -595,6 +595,67 @@ void test(
   },
 );
 
+void test(
+  "contract: an unattended run's stop is never released on a count, only by a passing result",
+  { skip: skipWithout(subjectJson().result, "result") },
+  () => {
+    const run = newRun("unattended");
+    const file = (subjectJson().result?.file ?? "")
+      .replaceAll("{ticket_number}", "1")
+      .replaceAll("{run_id}", run.env.GUARD_RUN_ID ?? "");
+    mkdirSync(path.join(run.cwd, path.dirname(file)), { recursive: true });
+    writeFileSync(
+      path.join(run.cwd, file),
+      JSON.stringify({ run_id: run.env.GUARD_RUN_ID }),
+    );
+    // more stops than any cap of two: every one stays blocked while the result fails
+    for (let i = 1; i <= 4; i++) {
+      const stdout = stopOf(run);
+      assert.notEqual(
+        stdout.trim(),
+        "",
+        `stop ${String(i)} was released while the result still fails the core check`,
+      );
+      const out = JSON.parse(stdout) as { decision?: string };
+      assert.equal(out.decision, "block", `stop ${String(i)}`);
+    }
+  },
+);
+
+void test(
+  "contract: a forged session pin does not release an unattended run's stop",
+  { skip: skipWithout(subjectJson().result, "result") },
+  () => {
+    const run = newRun("unattended");
+    const file = (subjectJson().result?.file ?? "")
+      .replaceAll("{ticket_number}", "1")
+      .replaceAll("{run_id}", run.env.GUARD_RUN_ID ?? "");
+    mkdirSync(path.join(run.cwd, path.dirname(file)), { recursive: true });
+    writeFileSync(
+      path.join(run.cwd, file),
+      JSON.stringify({ run_id: run.env.GUARD_RUN_ID }),
+    );
+    const blocked = (label: string): void => {
+      const stdout = stopOf(run);
+      assert.notEqual(stdout.trim(), "", `${label}: the stop was released`);
+      assert.equal(
+        (JSON.parse(stdout) as { decision?: string }).decision,
+        "block",
+        label,
+      );
+    };
+    blocked("first stop");
+    // guard's data dir is writable by the agent: break the session pin, with another sha256 in it
+    const sessions = path.join(run.env.CLAUDE_PLUGIN_DATA ?? "", "sessions");
+    const pin = path.join(sessions, `${run.session}.run.jsonl`);
+    writeFileSync(
+      pin,
+      `${JSON.stringify({ manifest: "x", sha256: "0".repeat(64), run_id: "x", mode: "attended", ticket: "x" })}\n`,
+    );
+    for (let i = 1; i <= 4; i++) blocked(`stop ${String(i)} after the forgery`);
+  },
+);
+
 void test("contract: legacy run variables without a registration trip the legacy-only tripwire", () => {
   scenarioCount += 1;
   const legacy = path.join(scratch("legacy"), "events.jsonl");

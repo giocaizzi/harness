@@ -41,7 +41,7 @@ import { coreErrors, couldNotRun, report } from "../core/result.mjs";
 import { rules } from "../core/rules.mjs";
 import { prepareChecker, runChecker } from "./checker.mjs";
 import type { PrepareOptions, Prepared } from "./checker.mjs";
-import { pluginDataDir } from "./data.mjs";
+import { pluginDataDir, readDataFile, readDataFileStrict } from "./data.mjs";
 import { sessionStore } from "./guard.mjs";
 import { detectHarnessName } from "./harnesses.mjs";
 import { STOP_DEADLINE_MS, readStdin } from "./stdin.mjs";
@@ -205,22 +205,22 @@ export function changes(
   return { paths, rules: ruleText };
 }
 
-const stateFile = (cwd: string): string =>
+export const stateFile = (cwd: string): string =>
   join(pluginDataDir(), "stop", `${sha(cwd).slice(0, 16)}.txt`);
+
+const GREEN_MAX_BYTES = 4096;
+const LOCK_MAX_BYTES = 64;
 
 interface GreenState {
   fp?: string;
   head?: string;
 }
 
-function lastGreen(cwd: string): GreenState {
-  try {
-    const raw = readFileSync(stateFile(cwd), "utf8").trim();
-    const [fp, head] = raw.split("\n");
-    return { fp, head };
-  } catch {
-    return {};
-  }
+export function lastGreen(cwd: string): GreenState {
+  const text = readDataFile(stateFile(cwd), GREEN_MAX_BYTES);
+  if (text === null) return {};
+  const [fp, head] = text.trim().split("\n");
+  return { fp, head };
 }
 
 function markGreen(cwd: string, fp: string, run: SyncRunner): void {
@@ -230,11 +230,21 @@ function markGreen(cwd: string, fp: string, run: SyncRunner): void {
       encoding: "utf8",
       windowsHide: true,
     });
-    mkdirSync(join(stateFile(cwd), ".."), { recursive: true });
-    writeFileSync(
-      stateFile(cwd),
-      head.status === 0 ? `${fp}\n${head.stdout.trim()}` : fp,
-    );
+    const file = stateFile(cwd);
+    mkdirSync(dirname(file), { recursive: true });
+    // temp file and rename: whatever sits at the path (a FIFO, a symlink) is replaced, never written through
+    const tmp = `${file}.${String(process.pid)}.${randomBytes(4).toString("hex")}.tmp`;
+    try {
+      writeFileSync(
+        tmp,
+        head.status === 0 ? `${fp}\n${head.stdout.trim()}` : fp,
+        { flag: "wx" },
+      );
+      renameSync(tmp, file);
+    } catch (e: unknown) {
+      rmSync(tmp, { force: true });
+      throw e;
+    }
   } catch {
     // best effort: the next stop just runs the check again
   }
@@ -283,7 +293,7 @@ export function takeLock(file: string): (() => void) | null {
       };
     }
     try {
-      const holderPid = Number(readFileSync(file, "utf8"));
+      const holderPid = Number(readDataFileStrict(file, LOCK_MAX_BYTES));
       process.kill(holderPid, 0);
       return null;
     } catch {
@@ -367,6 +377,14 @@ function stopContext(
     cache: opts.cache,
     vet: opts,
   });
+  // The data dir is writable by the agent, so the pin carries no weight at stop: when only the pin failed the
+  // registration, load it again without the pin. The env and the manifest (vetted as ever) are the authority.
+  if (ctx.state === "deny" && ctx.pin) {
+    return {
+      ctx: runContext(env, { cache: opts.cache, vet: opts }),
+      dataDir,
+    };
+  }
   return { ctx, dataDir };
 }
 
@@ -418,23 +436,11 @@ const blockFile = (runId: string): string =>
 // a symlink, counts. Everything else (missing, empty, garbage, a FIFO, a directory, a symlink, a hardlink, an
 // unreadable path) is 0, so the write below replaces it and the block is counted.
 function blockCount(runId: string): number {
-  try {
-    const c = constants as { O_NONBLOCK?: number; O_NOFOLLOW?: number };
-    const fd = openSync(
-      blockFile(runId),
-      constants.O_RDONLY | (c.O_NONBLOCK ?? 0) | (c.O_NOFOLLOW ?? 0),
-    );
-    try {
-      const st = fstatSync(fd);
-      if (!st.isFile() || st.nlink > 1 || st.size > COUNTER_MAX_BYTES) return 0;
-      const text = readFileSync(fd, "utf8").trim();
-      return /^\d{1,9}$/.test(text) ? Number(text) : 0;
-    } finally {
-      closeSync(fd);
-    }
-  } catch {
-    return 0;
-  }
+  const text = readDataFile(blockFile(runId), COUNTER_MAX_BYTES, {
+    singleLink: true,
+  });
+  const n = text?.trim() ?? "";
+  return /^\d{1,9}$/.test(n) ? Number(n) : 0;
 }
 
 // Records one more block and returns the new count. Written to a temp file and renamed over the counter, so whatever
@@ -644,7 +650,9 @@ export async function resultGate(
 
     if (!errors.length) return null;
     const blocks = blockCount(runId);
-    if (!strict && blocks >= RESULT_GATE_MAX) {
+    // An unattended run is never released on a count: the counter lives in agent-writable state, so only a passing
+    // result (or the runner's timeout) ends the block. Attended and unregistered sessions keep the cap.
+    if (!strict && !runtime && blocks >= RESULT_GATE_MAX) {
       event("capped", { mode });
       return null;
     }
@@ -652,7 +660,9 @@ export async function resultGate(
     event("block", { mode, blocks: n });
     const head = strict
       ? `Run result gate (block ${String(n)}; the registration names a result checker, so the stop stays blocked until the result passes)`
-      : `Run result gate (block ${String(n)} of ${String(RESULT_GATE_MAX)})`;
+      : runtime
+        ? `Run result gate (block ${String(n)}; an unattended run's stop stays blocked until the result passes)`
+        : `Run result gate (block ${String(n)} of ${String(RESULT_GATE_MAX)})`;
     return [
       `${head}: ${file} is not a valid result for run ${runId}:`,
       ...report(errors),

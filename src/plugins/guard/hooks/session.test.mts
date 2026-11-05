@@ -26,6 +26,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { harnessPid, keepAwake, keeperArgv } from "./awake.mjs";
 import { lintFile } from "./lint.mjs";
+import { pinFile } from "./registration.mjs";
 import {
   fingerprint,
   gateFailClosed,
@@ -444,13 +445,18 @@ const strictEnv = (
   envFor(manifest({ file: TEMPLATE, checker }), extra);
 const STRICT = strictEnv(checkerFile(passes));
 
-void test("result gate: an unattended run with no result file is blocked twice, then may stop", async () => {
+const UNATTENDED_HEAD = (n: number): RegExp =>
+  new RegExp(
+    `^Run result gate \\(block ${String(n)}; an unattended run's stop stays blocked until the result passes\\)`,
+  );
+
+void test("result gate: an unattended run with no result file stays blocked on every stop, then passes with a valid result", async () => {
   const cwd = gateRepo();
   try {
     const first = await gate({ cwd }, RUNTIME);
     assert.match(
       first ?? "",
-      /^Run result gate \(block 1 of 2\): .*result\.json is not a valid result for run run-1:\nno such file\n/,
+      /^Run result gate \(block 1; an unattended run's stop stays blocked until the result passes\): .*result\.json is not a valid result for run run-1:\nno such file\n/,
     );
     assert.match(
       first ?? "",
@@ -462,25 +468,63 @@ void test("result gate: an unattended run with no result file is blocked twice, 
       (await gate({ cwd, stop_hook_active: true }, RUNTIME, undefined, (e) =>
         events.push(e),
       )) ?? "",
-      /block 2 of 2/,
+      UNATTENDED_HEAD(2),
+    );
+    for (let i = 3; i <= 10; i++) {
+      assert.match(
+        (await gate({ cwd }, RUNTIME, undefined, (e) => events.push(e))) ?? "",
+        UNATTENDED_HEAD(i),
+        `stop ${String(i)} stays blocked`,
+      );
+    }
+    assert.deepEqual(
+      events.map((e) => e.result),
+      Array<string>(9).fill("block"),
+    );
+    assert.deepEqual(events[8], {
+      result: "block",
+      target: "result-gate",
+      mode: "unattended",
+      blocks: 10,
+    });
+    // another run has its own counter
+    assert.match(
+      (await gate({ cwd }, { ...RUNTIME, GUARD_RUN_ID: "run-2" })) ?? "",
+      UNATTENDED_HEAD(1),
+    );
+    // the same run releases once its result passes
+    assert.equal(await gate({ cwd: gateRepo(validResult()) }, RUNTIME), null);
+  } finally {
+    delete process.env.CLAUDE_PLUGIN_DATA;
+  }
+});
+
+void test("result gate: an attended run without a checker still releases after two blocks", async () => {
+  // an attended gate only holds a result file that names the run
+  const cwd = gateRepo(validResult({ ticket: 12 }));
+  try {
+    const events: Record<string, unknown>[] = [];
+    assert.match(
+      (await gate({ cwd }, ATTENDED)) ?? "",
+      /^Run result gate \(block 1 of 2\)/,
+    );
+    assert.match(
+      (await gate({ cwd }, ATTENDED, undefined, (e) => events.push(e))) ?? "",
+      /^Run result gate \(block 2 of 2\)/,
     );
     assert.equal(
-      await gate({ cwd }, RUNTIME, undefined, (e) => events.push(e)),
+      await gate({ cwd }, ATTENDED, undefined, (e) => events.push(e)),
       null,
     );
     assert.deepEqual(events, [
       {
         result: "block",
         target: "result-gate",
-        mode: "unattended",
+        mode: "attended",
         blocks: 2,
       },
-      { result: "capped", target: "result-gate", mode: "unattended" },
+      { result: "capped", target: "result-gate", mode: "attended" },
     ]);
-    assert.match(
-      (await gate({ cwd }, { ...RUNTIME, GUARD_RUN_ID: "run-2" })) ?? "",
-      /block 1 of 2/,
-    );
   } finally {
     delete process.env.CLAUDE_PLUGIN_DATA;
   }
@@ -645,8 +689,8 @@ void test("result gate: an unattended run never fails open on a missing checkout
       events.map((e) => [e.result, e.target]),
       [["error", "result-gate"]],
     );
-    // these blocks are not counted: the cap still allows two result blocks
-    assert.match((await gate({ cwd }, RUNTIME)) ?? "", /block 1 of 2/);
+    // these blocks are not counted: the first result block is still number 1
+    assert.match((await gate({ cwd }, RUNTIME)) ?? "", UNATTENDED_HEAD(1));
   } finally {
     delete process.env.CLAUDE_PLUGIN_DATA;
   }
@@ -715,12 +759,135 @@ const mkfifo = (file: string): void => {
   assert.equal(spawnSync("mkfifo", [file]).status, 0);
 };
 
-void test("result gate: a counter set to 2 releases an unset unattended run (the unset trust model)", async () => {
+void test("result gate: a counter forged to 2 or 99 does not release an unattended run; an attended one still releases at 2", async () => {
   try {
+    for (const [forged, next] of [
+      ["2", 3],
+      ["99", 100],
+    ] as const) {
+      const cwd = plantCounter((f) => {
+        writeFileSync(f, forged);
+      });
+      assert.match(
+        (await gate({ cwd }, RUNTIME)) ?? "",
+        UNATTENDED_HEAD(next),
+        forged,
+      );
+      assert.equal(readFileSync(counterPath(), "utf8"), String(next));
+    }
     const cwd = plantCounter((f) => {
       writeFileSync(f, "2");
     });
-    assert.equal(await gate({ cwd }, RUNTIME), null);
+    assert.equal(await gate({ cwd }, ATTENDED), null);
+  } finally {
+    delete process.env.CLAUDE_PLUGIN_DATA;
+  }
+});
+
+// The data dir is writable by the agent, so a broken session pin must neither release a stop nor fail the registration.
+const FORGERIES: [string, (dataDir: string, sid: string) => void][] = [
+  [
+    "another sha256 in the pin line",
+    (d, sid) => {
+      const f = pinFile(d, sid);
+      const pin = JSON.parse(readFileSync(f, "utf8").split("\n")[0] ?? "") as {
+        sha256: string;
+      };
+      pin.sha256 = "0".repeat(64);
+      writeFileSync(f, `${JSON.stringify(pin)}\n`);
+    },
+  ],
+  [
+    "a directory at the pin path",
+    (d, sid) => {
+      rmSync(pinFile(d, sid), { force: true });
+      mkdirSync(pinFile(d, sid));
+    },
+  ],
+  [
+    "a plain file at <data>/sessions",
+    (d) => {
+      rmSync(join(d, "sessions"), { recursive: true, force: true });
+      writeFileSync(join(d, "sessions"), "x");
+    },
+  ],
+  [
+    "garbage in the pin line with another run id and mode",
+    (d, sid) => {
+      writeFileSync(
+        pinFile(d, sid),
+        `${JSON.stringify({ manifest: "/x", sha256: "f".repeat(64), run_id: "other", mode: "attended", ticket: "t" })}\n`,
+      );
+    },
+  ],
+];
+const failingChecker = checkerFile(
+  'export const resultErrors = () => ["acme says no"]',
+);
+
+void test("result gate: a forged or broken session pin never releases a stop, unattended or strict, and a passing result releases it", async () => {
+  try {
+    for (const [name, forge] of FORGERIES) {
+      for (const [kind, failing, passing] of [
+        ["unattended", envFor(manifest()), envFor(manifest())],
+        ["strict", strictEnv(failingChecker), strictEnv(checkerFile(passes))],
+      ] as const) {
+        for (const counter of [false, true]) {
+          const cwd = gateRepo();
+          const dataDir = process.env.CLAUDE_PLUGIN_DATA ?? "";
+          const sid = `s-forge-${kind}`;
+          const input = { cwd, session_id: sid };
+          const label = `${name} / ${kind} / counter=${String(counter)}`;
+          const result = join(cwd, RESULT_REL);
+          mkdirSync(dirname(result), { recursive: true });
+          // a result the failing checker rejects, or none at all
+          if (kind === "strict")
+            writeFileSync(result, JSON.stringify(validResult()));
+          // the pin exists from the first call
+          assert.match(
+            (await gate(input, failing)) ?? "",
+            /Run result gate/,
+            label,
+          );
+          forge(dataDir, sid);
+          if (counter) {
+            const key = createHash("sha256")
+              .update(`registration:${sid}`)
+              .digest("hex")
+              .slice(0, 16);
+            mkdirSync(join(dataDir, "result-gate"), { recursive: true });
+            writeFileSync(join(dataDir, "result-gate", `${key}.txt`), "2");
+          }
+          for (let i = 0; i < 5; i++) {
+            const out = (await gate(input, failing)) ?? "";
+            assert.match(out, /^Run result gate/, `${label} stop ${String(i)}`);
+            assert.doesNotMatch(out, /registration failed/, label);
+          }
+          // a passing result releases it
+          writeFileSync(result, JSON.stringify(validResult()));
+          const wasStrict = kind === "strict";
+          assert.equal(
+            await gate(input, wasStrict ? passing : failing),
+            null,
+            label,
+          );
+        }
+      }
+    }
+  } finally {
+    delete process.env.CLAUDE_PLUGIN_DATA;
+  }
+});
+
+void test("result gate: a pin that names another run id or mode does not change the run's mode", async () => {
+  try {
+    const cwd = gateRepo();
+    const dataDir = process.env.CLAUDE_PLUGIN_DATA ?? "";
+    const input = { cwd, session_id: "s-mode" };
+    await gate(input, RUNTIME);
+    FORGERIES[3]?.[1](dataDir, "s-mode");
+    // the env says unattended: still blocked on a missing result, however the pin reads
+    assert.match((await gate(input, RUNTIME)) ?? "", UNATTENDED_HEAD(2));
   } finally {
     delete process.env.CLAUDE_PLUGIN_DATA;
   }
@@ -734,7 +901,7 @@ void test("result gate: a malformed, empty or oversized counter counts as 0, so 
       });
       assert.match(
         (await gate({ cwd }, RUNTIME)) ?? "",
-        /block 1 of 2/,
+        UNATTENDED_HEAD(1),
         JSON.stringify(text),
       );
       assert.equal(readFileSync(counterPath(), "utf8"), "1");
@@ -742,7 +909,7 @@ void test("result gate: a malformed, empty or oversized counter counts as 0, so 
     const cwd = plantCounter((f) => {
       writeFileSync(f, " 1\n");
     });
-    assert.match((await gate({ cwd }, RUNTIME)) ?? "", /block 2 of 2/);
+    assert.match((await gate({ cwd }, RUNTIME)) ?? "", UNATTENDED_HEAD(2));
   } finally {
     delete process.env.CLAUDE_PLUGIN_DATA;
   }
@@ -755,7 +922,7 @@ void test(
     try {
       const cwd = plantCounter(mkfifo);
       const started = Date.now();
-      assert.match((await gate({ cwd }, RUNTIME)) ?? "", /block 1 of 2/);
+      assert.match((await gate({ cwd }, RUNTIME)) ?? "", UNATTENDED_HEAD(1));
       assert.ok(Date.now() - started < 5000);
       assert.ok(lstatSync(counterPath()).isFile());
       assert.equal(readFileSync(counterPath(), "utf8"), "1");
@@ -776,7 +943,7 @@ void test(
         const cwd = plantCounter((f) => {
           symlinkSync(to, f);
         });
-        assert.match((await gate({ cwd }, RUNTIME)) ?? "", /block 1 of 2/);
+        assert.match((await gate({ cwd }, RUNTIME)) ?? "", UNATTENDED_HEAD(1));
         assert.ok(lstatSync(counterPath()).isFile());
         assert.equal(readFileSync(counterPath(), "utf8"), "1");
       }
@@ -794,7 +961,7 @@ void test("result gate: a hardlink at the counter path is replaced and counted, 
     const cwd = plantCounter((f) => {
       linkSync(other, f);
     });
-    assert.match((await gate({ cwd }, RUNTIME)) ?? "", /block 1 of 2/);
+    assert.match((await gate({ cwd }, RUNTIME)) ?? "", UNATTENDED_HEAD(1));
     assert.equal(readFileSync(other, "utf8"), "9");
     assert.equal(readFileSync(counterPath(), "utf8"), "1");
     assert.equal(lstatSync(counterPath()).nlink, 1);
@@ -1086,7 +1253,7 @@ void test("result gate: runs before make check, and both reasons go in one block
     assert.equal(out.decision, "block");
     assert.match(
       out.reason ?? "",
-      /^Run result gate \(block 1 of 2\)[\s\S]*\n\nmake check failed[\s\S]*FAIL z$/,
+      /^Run result gate \(block 1; an unattended run's stop stays blocked until the result passes\)[\s\S]*\n\nmake check failed[\s\S]*FAIL z$/,
     );
     assert.deepEqual(out.hookSpecificOutput, {
       hookEventName: "Stop",
@@ -1099,15 +1266,14 @@ void test("result gate: runs before make check, and both reasons go in one block
     });
     assert.match(
       activeOut?.reason ?? "",
-      /^Run result gate \(block 2 of 2\)[\s\S]*Fix the result file[\s\S]*\.$/,
+      /^Run result gate \(block 2; an unattended run's stop stays blocked until the result passes\)[\s\S]*Fix the result file[\s\S]*\.$/,
     );
-    assert.equal(
-      await stopCheck({ cwd, stop_hook_active: true }, run, {
-        strain: () => null,
-        gate: gateOpts,
-      }),
-      null,
-    );
+    // no cap: a third stop with the result still failing stays blocked
+    const third = await stopCheck({ cwd, stop_hook_active: true }, run, {
+      strain: () => null,
+      gate: gateOpts,
+    });
+    assert.match(third?.reason ?? "", /^Run result gate \(block 3;/);
   });
 });
 
@@ -1131,7 +1297,7 @@ void test("result gate: a failing make check never denies a stop, whether or not
       gate: gateOpts,
     });
     assert.equal(out?.decision, "block");
-    assert.match(out.reason ?? "", /^Run result gate \(block 1 of 2\)/);
+    assert.match(out.reason ?? "", /^Run result gate \(block 1;/);
     // the gate passed: a later make error does not deny the stop
     const ok = gateRepo(validResult());
     assert.equal(
@@ -1276,7 +1442,7 @@ void test("result gate: the checker gets the run's environment, GUARD_RUN_FILE r
   }
 });
 
-void test("result gate: strict mode is never capped, unset is capped after two blocks", async () => {
+void test("result gate: strict and unattended modes are never capped", async () => {
   try {
     const events: Record<string, unknown>[] = [];
     const cwd = gateRepo();
@@ -1294,9 +1460,9 @@ void test("result gate: strict mode is never capped, unset is capped after two b
       ["block", "block", "block", "block"],
     );
     const plain = gateRepo();
-    assert.ok(await gate({ cwd: plain }, RUNTIME));
-    assert.ok(await gate({ cwd: plain }, RUNTIME));
-    assert.equal(await gate({ cwd: plain }, RUNTIME), null);
+    for (let i = 0; i < 10; i++) {
+      assert.ok(await gate({ cwd: plain }, RUNTIME));
+    }
   } finally {
     delete process.env.CLAUDE_PLUGIN_DATA;
   }
@@ -1498,10 +1664,20 @@ void test("result gate: a failed registration blocks twice per session even with
         result: { file: ".acme/other/{ticket_number}.json" },
       }),
     );
-    assert.match(
-      (await gate(input, { ...env, GUARD_RESULT_GATE: "off" })) ?? "",
-      /^Run registration failed: manifest changed during the session/,
-    );
+    // the pin is not the authority at stop: the changed manifest still passes its trust checks, so it is the run
+    assert.equal(await gate(input, { ...env, GUARD_RESULT_GATE: "off" }), null);
+    // a manifest that stops passing its trust checks is a real failure, capped as before
+    rmSync(m);
+    const real = { cwd, session_id: "s-gone" };
+    for (const n of [1, 2]) {
+      assert.match(
+        (await gate(real, env)) ?? "",
+        new RegExp(
+          `^Run registration failed: .* \\(block ${String(n)} of 2\\)$`,
+        ),
+      );
+    }
+    assert.equal(await gate(real, env), null);
   } finally {
     delete process.env.CLAUDE_PLUGIN_DATA;
   }

@@ -161,7 +161,7 @@ void test("runFacts: an attended run has none; labels and protect map from the r
   const attended = reg(envFor(file, { GUARD_RUN_MODE: "attended" }));
   assert.equal(runFacts(attended, { cwd: "/r", root: "/r" }), null);
   const run = reg(envFor(file, { GUARD_RUN_PROTECTED_PATHS: "infra/**" }));
-  assert.deepEqual(runFacts(run, { cwd: "/r/src", root: "/r", data: ["/d"] }), {
+  assert.deepEqual(runFacts(run, { cwd: "/r/src", root: "/r" }), {
     labels: {
       approval: "go-ahead",
       takeover: "hand-over",
@@ -170,7 +170,6 @@ void test("runFacts: an attended run has none; labels and protect map from the r
     protect: {
       cwd: "/r/src",
       root: "/r",
-      data: ["/d"],
       registered: ["out/**"],
       exempt: ["out/runs/*/*/**"],
       extra: ["infra/**"],
