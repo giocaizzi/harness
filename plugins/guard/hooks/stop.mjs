@@ -23,7 +23,7 @@ import { sessionStore } from "./guard.mjs";
 import { detectHarnessName } from "./harnesses.mjs";
 import { STOP_DEADLINE_MS, readStdin } from "./stdin.mjs";
 import { denyReason, legacySet, recordUnregistered, runContext, } from "./run.mjs";
-import { emitAntigravityUsage, failedTarget, harnessName, recordAttrs, scrub, } from "./telemetry.mjs";
+import { emitAntigravityUsage, failedTarget, harnessName, recordAttrs, resolveAntigravityTranscriptPath, scrub, } from "./telemetry.mjs";
 const DEFAULT_TIMEOUT_MS = 300_000;
 const MAX_UNTRACKED = 2000;
 const sha = (s) => createHash("sha256").update(s).digest("hex");
@@ -765,15 +765,18 @@ if (entryArg && import.meta.url === pathToFileURL(entryArg).href) {
         writeOut(out);
         answered = true;
         try {
-            if (isAntigravity() &&
-                (input.transcriptPath ||
-                    input.transcript_path)) {
-                const tPath = input.transcriptPath ??
-                    input.transcript_path;
+            const transcriptPath = isAntigravity()
+                ? resolveAntigravityTranscriptPath({
+                    conversationId: input.conversationId,
+                    transcriptPath: input.transcriptPath,
+                    transcript_path: input.transcript_path,
+                })
+                : undefined;
+            if (transcriptPath) {
                 const dataDir = pluginDataDir();
                 const store = sessionStore(dataDir, input.session_id);
                 const state = store.load();
-                const newStep = await emitAntigravityUsage(tPath, input.conversationId ?? input.session_id, input.modelName, state.lastTranscriptStep, process.env);
+                const newStep = await emitAntigravityUsage(transcriptPath, input.conversationId ?? input.session_id, input.modelName, state.lastTranscriptStep, input.cwd, process.env);
                 if (newStep !== undefined && newStep !== state.lastTranscriptStep) {
                     state.lastTranscriptStep = newStep;
                     store.save(state);

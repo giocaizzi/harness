@@ -15,11 +15,12 @@ import {
   pythonManager,
   run,
 } from "./guard.mjs";
+import { canonicalHarnessName } from "./harnesses.mjs";
 import { type SpawnSyncFn, lintFile } from "./lint.mjs";
 import { createRegistrationCache } from "./registration.mjs";
 import type { RegistrationCache } from "./registration.mjs";
 import { gateFailClosed, stopCheck } from "./stop.mjs";
-import { recordAttrs } from "./telemetry.mjs";
+import { recordAttrs, usageAttributes } from "./telemetry.mjs";
 import type {
   GuardAskResultParams,
   GuardBridge,
@@ -64,6 +65,11 @@ export function createGuard({
   dataDir = DATA_DIR,
   deps = {},
 }: CreateGuardOptions): GuardBridge {
+  const env = deps.env ?? process.env;
+  const report =
+    deps.report ??
+    ((event: string, attrs: Record<string, unknown>) =>
+      emit(env, event, attrs, fetch, canonicalHarnessName(harness)));
   // one per bridge: the parsed run manifest is reused while its file is unchanged
   const registrationCache = createRegistrationCache();
   const d: GuardDeps & {
@@ -80,16 +86,16 @@ export function createGuard({
     dataDir,
     harness,
     processId: process.pid,
-    env: process.env,
+    env,
     hostFacts,
     run,
     pythonManager,
     noAsk,
     registrationCache,
     emit: (event, attrs, cwd) =>
-      emit(process.env, event, recordAttrs(attrs, cwd, harness)),
-    // The harness's own usage, as the harness (service.name opencode or pi): neither exports telemetry itself.
-    report: (event, attrs) => emit(process.env, event, attrs, fetch, harness),
+      emit(env, event, recordAttrs(attrs, cwd, harness, env)),
+    // The harness's own usage, as the harness: neither exports telemetry itself.
+    report,
     ...deps,
   };
 
@@ -300,25 +306,34 @@ export function createGuard({
     // Named like Claude Code's api_request, so one query covers every harness. Never throws.
     usage({
       sessionId,
+      cwd,
       model,
       provider,
       tokens = {},
       costUsd,
     }: GuardModelUsageParams): Promise<void> {
-      const n = (v: unknown): number | undefined =>
-        Number.isFinite(Number(v)) ? Number(v) : undefined;
       return Promise.resolve(
-        d.report?.("api_request", {
-          "session.id": sessionId,
-          model,
-          provider,
-          input_tokens: n(tokens.input),
-          output_tokens: n(tokens.output),
-          cache_read_tokens: n(tokens.cacheRead),
-          cache_creation_tokens: n(tokens.cacheWrite),
-          reasoning_tokens: n(tokens.reasoning),
-          cost_usd: n(costUsd),
-        }),
+        d.report?.(
+          "api_request",
+          usageAttributes({
+            harness,
+            cwd,
+            env: d.env,
+            sessionId,
+            model,
+            provider,
+            inputTokens: tokens.input,
+            outputTokens: tokens.output,
+            cacheReadTokens: tokens.cacheRead,
+            cacheCreationTokens: tokens.cacheWrite,
+            reasoningTokens: tokens.reasoning,
+            costUsd,
+            costSource:
+              costUsd !== undefined && Number.isFinite(costUsd)
+                ? "reported"
+                : undefined,
+          }),
+        ),
       ).catch(() => {
         // ignored
       });

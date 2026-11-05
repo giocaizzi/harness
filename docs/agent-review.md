@@ -9,7 +9,7 @@ A weekly review of agent telemetry: what the agents cost, which skills get used,
 
 ## Prerequisites
 
-Telemetry in Loki: Claude Code OTel logs (`service_name="claude-code"`) and the guard's decision log (`service_name="guard"`, [guard.md](guard.md)). Codex, Copilot, opencode and pi add to the cost section when the collector maps their records to `agent_event="api_request"`.
+Telemetry in Loki: native harness usage where configured, Guard logs (`service_name="guard"`) and synthetic usage for opencode, pi and Antigravity ([guard.md](guard.md)). The collector maps native and `usage_schema="guard.usage.v1"` records to `agent_event="api_request"`; canonical `harness` values are `claude-code`, `copilot-cli`, `vscode-copilot`, `codex-cli`, `opencode`, `pi` and `antigravity`. During alias migration, queries may also read `harness_legacy` on the four renamed values only. Cost is available only when the source reports it. Antigravity synthetic usage supplies observed token counts but no cost because its artifacts lack enough pricing discriminators; native Codex telemetry also has no documented cost field.
 
 ## Queries and how to read them
 

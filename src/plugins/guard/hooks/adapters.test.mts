@@ -20,6 +20,7 @@ import { GuardPlugin } from "./opencode.mjs";
 import type { OpencodeClient } from "./opencode.mjs";
 import guardExtension from "./pi.mjs";
 import type { PiApp, PiContext } from "./pi.mjs";
+import { guardVersion } from "./telemetry.mjs";
 import type { GuardDeps } from "./types.mjs";
 
 const inheritedParentSession = process.env.GUARD_PARENT_SESSION;
@@ -66,6 +67,20 @@ const dir = (files: Record<string, string> = {}): string => {
     writeFileSync(join(d, name), content);
   }
   return d;
+};
+
+const genericRepo = (): string => {
+  const cwd = dir();
+  execFileSync("git", ["init", "-q", cwd]);
+  execFileSync("git", [
+    "-C",
+    cwd,
+    "remote",
+    "add",
+    "origin",
+    "https://example.invalid/acme/app.git",
+  ]);
+  return cwd;
 };
 
 const deps = (): GuardDeps => ({
@@ -791,10 +806,17 @@ void test("opencode and pi: GUARD_TRACEPARENT adds trace_id and span_id to the e
   }
 });
 
+interface OtelAttribute {
+  key: string;
+  value: { stringValue: string };
+}
+
 interface OtelExportBody {
   resourceLogs: {
+    resource: { attributes: OtelAttribute[] };
     scopeLogs: {
       logRecords: {
+        attributes: OtelAttribute[];
         body: { stringValue: string };
         spanId: string;
         traceId: string;
@@ -802,6 +824,18 @@ interface OtelExportBody {
     }[];
   }[];
 }
+
+const isOtelExportBody = (value: unknown): value is OtelExportBody =>
+  typeof value === "object" &&
+  value !== null &&
+  "resourceLogs" in value &&
+  Array.isArray(value.resourceLogs);
+
+const otelAttribute = (
+  attributes: readonly OtelAttribute[] | undefined,
+  key: string,
+): string | undefined =>
+  attributes?.find((attribute) => attribute.key === key)?.value.stringValue;
 
 void test("pi: the default emit sends the guard.decision OTLP record with traceId and spanId", async () => {
   const sent: OtelExportBody[] = [];
@@ -1186,112 +1220,423 @@ void test("opencode and pi: a throwing gate in an unattended run is sent the una
   );
 });
 
-void test("usage: opencode and pi report each assistant message once, as their own service", async () => {
-  const sent: unknown[][] = [];
+void test("usage: opencode and pi emit the shared schema and omit unknowns without dropping zero", async () => {
+  const sent: [string, Record<string, unknown>][] = [];
   const report = async (event: string, attrs: Record<string, unknown>) => {
     await Promise.resolve();
-    sent.push([
-      event,
-      attrs.model,
-      attrs.input_tokens,
-      attrs.cache_read_tokens,
-      attrs.cost_usd,
-      attrs["session.id"],
-    ]);
+    sent.push([event, attrs]);
   };
-  const mockClient = {
-    session: {
-      get: async () => {
-        await Promise.resolve();
-        return null;
-      },
-      prompt: async () => {
-        await Promise.resolve();
-      },
-    },
-    tui: {
-      showToast: async () => {
-        await Promise.resolve();
-      },
-    },
-  } as unknown as OpencodeClient;
-  const hooks = await GuardPlugin(
-    { client: mockClient, directory: dir() },
-    { ...deps(), report },
-  );
-  const info = {
-    id: "m1",
-    role: "assistant",
-    sessionID: "s1",
-    modelID: "gpt-6.1-sol",
-    providerID: "openai",
-    time: { completed: true },
-    tokens: {
-      input: 10,
-      output: 5,
-      reasoning: 0,
-      cache: { read: 3, write: 0 },
-    },
-    cost: 0.002,
-  };
-  await hooks.event({
-    event: {
-      type: "message.updated",
-      properties: { info: { ...info, time: {} } },
-    },
-  });
-  await hooks.event({
-    event: { type: "message.updated", properties: { info } },
-  });
-  await hooks.event({
-    event: { type: "message.updated", properties: { info } },
-  });
-
-  const handlers: Record<string, (e: unknown, ctx: PiContext) => unknown> = {};
-  const mockPiApp: PiApp = {
-    on: ((e: string, f: (ev: unknown, ctx: PiContext) => unknown) => {
-      handlers[e] = f;
-    }) as PiApp["on"],
-    sendUserMessage: async () => {
-      await Promise.resolve();
-    },
-  };
-  guardExtension(mockPiApp, { ...deps(), report });
-  const ctx: PiContext = {
-    cwd: dir(),
-    sessionManager: { getSessionId: () => "p1" },
-    ui: {
-      confirm: async () => {
-        await Promise.resolve();
-        return true;
-      },
-      notify: () => {
-        /* noop */
-      },
-    },
-  };
-  await handlers.message_end?.({ message: { role: "user" } }, ctx);
-  await handlers.message_end?.(
-    {
-      message: {
-        role: "assistant",
-        model: "claude-sonnet-5-5",
-        provider: "anthropic",
-        usage: {
-          input: 7,
-          output: 2,
-          cacheRead: 1,
-          cacheWrite: 0,
-          cost: { total: 0.0001 },
+  const previousCwd = process.cwd();
+  const launchCwd = dir();
+  const observedCwd = genericRepo();
+  process.chdir(launchCwd);
+  try {
+    const mockClient: OpencodeClient = {
+      session: {
+        get: async () => {
+          await Promise.resolve();
+          return null;
+        },
+        prompt: async () => {
+          await Promise.resolve();
         },
       },
-    },
-    ctx,
-  );
+      tui: {
+        showToast: async () => {
+          await Promise.resolve();
+        },
+      },
+    };
+    const hooks = await GuardPlugin(
+      { client: mockClient, directory: observedCwd },
+      {
+        ...deps(),
+        env: {
+          GUARD_OTEL_EXPORTER_OTLP_ENDPOINT: "http://collector.invalid",
+        },
+        report,
+      },
+    );
+    const info = {
+      id: "m1",
+      role: "assistant",
+      sessionID: "s1",
+      modelID: "gpt-6.1-sol",
+      providerID: "openai",
+      time: { completed: true },
+      tokens: {
+        input: 10,
+        output: 5,
+        reasoning: 0,
+        cache: { read: 3, write: 0 },
+      },
+      cost: 0.002,
+    };
+    await hooks.event({
+      event: {
+        type: "message.updated",
+        properties: { info: { ...info, time: {} } },
+      },
+    });
+    await hooks.event({
+      event: { type: "message.updated", properties: { info } },
+    });
+    await hooks.event({
+      event: { type: "message.updated", properties: { info } },
+    });
+    await hooks.event({
+      event: {
+        type: "message.updated",
+        properties: {
+          info: {
+            id: "m2",
+            role: "assistant",
+            sessionID: "",
+            modelID: " ",
+            providerID: "",
+            time: { completed: true },
+            tokens: {
+              input: Number.NaN,
+              output: 0,
+              reasoning: Number.NaN,
+              cache: { read: Number.NaN, write: 0 },
+            },
+            cost: Number.NaN,
+          },
+        },
+      },
+    });
+
+    const { handlers, api } = fakePi();
+    guardExtension(api, {
+      ...deps(),
+      env: { GUARD_OTEL_EXPORTER_OTLP_ENDPOINT: "http://collector.invalid" },
+      report,
+    });
+    const ctx: PiContext = {
+      cwd: observedCwd,
+      sessionManager: { getSessionId: () => "p1" },
+      ui: {
+        confirm: async () => {
+          await Promise.resolve();
+          return true;
+        },
+        notify: () => {
+          /* noop */
+        },
+      },
+    };
+    await handlers.message_end?.({ message: { role: "user" } }, ctx);
+    await handlers.message_end?.(
+      {
+        message: {
+          role: "assistant",
+          model: "claude-sonnet-5-5",
+          provider: "anthropic",
+          usage: {
+            input: 7,
+            output: 2,
+            cacheRead: 1,
+            cacheWrite: 0,
+            cost: { total: 0.0001 },
+          },
+        },
+      },
+      ctx,
+    );
+    await handlers.message_end?.(
+      {
+        message: {
+          role: "assistant",
+          model: "",
+          provider: " ",
+          usage: {
+            input: Number.NaN,
+            output: 0,
+            cacheRead: Number.NaN,
+            cacheWrite: 0,
+            cost: { total: Number.NaN },
+          },
+        },
+      },
+      { ...ctx, sessionManager: { getSessionId: () => "" } },
+    );
+  } finally {
+    process.chdir(previousCwd);
+  }
+
+  const common = {
+    usage_schema: "guard.usage.v1",
+    guard_version: guardVersion(),
+    repo: "acme/app",
+  };
   assert.deepEqual(sent, [
-    ["api_request", "gpt-6.1-sol", 10, 3, 0.002, "s1"],
-    ["api_request", "claude-sonnet-5-5", 7, 1, 0.0001, "p1"],
+    [
+      "api_request",
+      {
+        ...common,
+        "session.id": "s1",
+        model: "gpt-6.1-sol",
+        provider: "openai",
+        input_tokens: 10,
+        output_tokens: 5,
+        cache_read_tokens: 3,
+        cache_creation_tokens: 0,
+        reasoning_tokens: 0,
+        cost_usd: 0.002,
+        cost_source: "reported",
+        harness: "opencode",
+      },
+    ],
+    [
+      "api_request",
+      {
+        ...common,
+        output_tokens: 0,
+        cache_creation_tokens: 0,
+        harness: "opencode",
+      },
+    ],
+    [
+      "api_request",
+      {
+        ...common,
+        "session.id": "p1",
+        model: "claude-sonnet-5-5",
+        provider: "anthropic",
+        input_tokens: 7,
+        output_tokens: 2,
+        cache_read_tokens: 1,
+        cache_creation_tokens: 0,
+        cost_usd: 0.0001,
+        cost_source: "reported",
+        harness: "pi",
+      },
+    ],
+    [
+      "api_request",
+      {
+        ...common,
+        output_tokens: 0,
+        cache_creation_tokens: 0,
+        harness: "pi",
+      },
+    ],
   ]);
+});
+
+void test("usage: an absent observed workspace omits repo instead of using the process cwd", async () => {
+  const sent: Record<string, unknown>[] = [];
+  const guard = createGuard({
+    harness: "opencode",
+    deps: {
+      ...deps(),
+      env: { GUARD_OTEL_EXPORTER_OTLP_ENDPOINT: "http://collector.invalid" },
+      report: async (_event, attrs) => {
+        await Promise.resolve();
+        sent.push(attrs);
+      },
+    },
+  });
+
+  await guard.usage({ model: "model-1" });
+
+  assert.deepEqual(sent, [
+    {
+      usage_schema: "guard.usage.v1",
+      guard_version: guardVersion(),
+      model: "model-1",
+      harness: "opencode",
+    },
+  ]);
+});
+
+void test("usage: injected reporters keep the common schema without enrichment when telemetry cannot transmit", async () => {
+  for (const env of [
+    {
+      GUARD_OTEL: "off",
+      GUARD_OTEL_EXPORTER_OTLP_ENDPOINT: "http://collector.invalid",
+    },
+    {},
+  ]) {
+    const sent: Record<string, unknown>[] = [];
+    const guard = createGuard({
+      harness: "opencode",
+      deps: {
+        ...deps(),
+        env,
+        report: async (_event, attrs) => {
+          await Promise.resolve();
+          sent.push(attrs);
+        },
+      },
+    });
+    await guard.usage({
+      model: "model-1",
+      provider: "provider-1",
+      tokens: { input: 0 },
+    });
+    assert.deepEqual(sent, [
+      {
+        usage_schema: "guard.usage.v1",
+        model: "model-1",
+        provider: "provider-1",
+        input_tokens: 0,
+        harness: "opencode",
+      },
+    ]);
+  }
+});
+
+void test("usage: opencode and pi use canonical OTLP resources and inherit trace context", async () => {
+  const sent: OtelExportBody[] = [];
+  const keys = [
+    "GUARD_OTEL",
+    "OTEL_EXPORTER_OTLP_ENDPOINT",
+    "GUARD_OTEL_EXPORTER_OTLP_ENDPOINT",
+    "GUARD_TRACEPARENT",
+  ];
+  const saved = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
+  const realFetch = globalThis.fetch;
+  const previousCwd = process.cwd();
+  const launchCwd = dir();
+  const observedCwd = genericRepo();
+  const telemetryEnv: NodeJS.ProcessEnv = {
+    GUARD_OTEL: "",
+    GUARD_OTEL_EXPORTER_OTLP_ENDPOINT: "http://collector.invalid",
+    GUARD_TRACEPARENT:
+      "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+  };
+  process.chdir(launchCwd);
+  Object.assign(process.env, telemetryEnv);
+  globalThis.fetch = async (
+    _input: string | URL | Request,
+    init?: RequestInit,
+  ): Promise<Response> => {
+    await Promise.resolve();
+    if (typeof init?.body === "string") {
+      const body: unknown = JSON.parse(init.body);
+      if (isOtelExportBody(body)) sent.push(body);
+    }
+    return new Response(null, { status: 200 });
+  };
+
+  try {
+    const mockClient: OpencodeClient = {
+      session: {
+        get: async () => {
+          await Promise.resolve();
+          return null;
+        },
+        prompt: async () => {
+          await Promise.resolve();
+        },
+      },
+      tui: {
+        showToast: async () => {
+          await Promise.resolve();
+        },
+      },
+    };
+    const hooks = await GuardPlugin(
+      { client: mockClient, directory: observedCwd },
+      { ...deps(), env: telemetryEnv },
+    );
+    await hooks.event({
+      event: {
+        type: "message.updated",
+        properties: {
+          info: {
+            id: "otel-opencode",
+            role: "assistant",
+            sessionID: "oc-session",
+            modelID: "model-oc",
+            providerID: "provider-oc",
+            time: { completed: true },
+            tokens: { input: 1, output: 2, cache: { read: 3, write: 4 } },
+            cost: 0.5,
+          },
+        },
+      },
+    });
+
+    const { handlers, api } = fakePi();
+    guardExtension(api, { ...deps(), env: telemetryEnv });
+    await handlers.message_end?.(
+      {
+        message: {
+          role: "assistant",
+          model: "model-pi",
+          provider: "provider-pi",
+          usage: { input: 5, output: 6, cost: { total: 0.7 } },
+        },
+      },
+      {
+        cwd: observedCwd,
+        sessionManager: { getSessionId: () => "pi-session" },
+        ui: {
+          confirm: async () => {
+            await Promise.resolve();
+            return true;
+          },
+          notify: () => {
+            /* noop */
+          },
+        },
+      },
+    );
+  } finally {
+    globalThis.fetch = realFetch;
+    process.chdir(previousCwd);
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) Reflect.deleteProperty(process.env, key);
+      else process.env[key] = value;
+    }
+  }
+
+  const usage = sent
+    .flatMap((body) => body.resourceLogs)
+    .flatMap((resourceLog) =>
+      resourceLog.scopeLogs.flatMap((scopeLog) =>
+        scopeLog.logRecords.map((record) => ({
+          record,
+          resource: resourceLog.resource.attributes,
+        })),
+      ),
+    )
+    .filter(({ record }) => record.body.stringValue === "api_request");
+  assert.equal(usage.length, 2);
+  assert.deepEqual(
+    usage.map(({ record, resource }) => ({
+      harness: otelAttribute(record.attributes, "harness"),
+      namespace: otelAttribute(resource, "service.namespace"),
+      repo: otelAttribute(record.attributes, "repo"),
+      service: otelAttribute(resource, "service.name"),
+      spanId: record.spanId,
+      traceId: record.traceId,
+      usageSchema: otelAttribute(record.attributes, "usage_schema"),
+    })),
+    [
+      {
+        harness: "opencode",
+        namespace: "opencode",
+        repo: "acme/app",
+        service: "opencode",
+        spanId: "00f067aa0ba902b7",
+        traceId: "4bf92f3577b34da6a3ce929d0e0e4736",
+        usageSchema: "guard.usage.v1",
+      },
+      {
+        harness: "pi",
+        namespace: "pi",
+        repo: "acme/app",
+        service: "pi",
+        spanId: "00f067aa0ba902b7",
+        traceId: "4bf92f3577b34da6a3ce929d0e0e4736",
+        usageSchema: "guard.usage.v1",
+      },
+    ],
+  );
 });
 
 void test("opencode and pi: the approval label is denied in a registered run, allowed without", async () => {

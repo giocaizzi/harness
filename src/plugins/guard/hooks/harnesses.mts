@@ -1,7 +1,11 @@
 // Modular abstraction towards harnesses and their configuration.
 // Centralizes harness-specific tool identifiers, execution environments, and capabilities.
 
-import type { HarnessConfig, HarnessName } from "./types.mjs";
+import type {
+  HarnessConfig,
+  HarnessName,
+  TelemetryHarnessName,
+} from "./types.mjs";
 
 export const HARNESS_CONFIGS: Record<HarnessName, HarnessConfig> = {
   claude: {
@@ -122,6 +126,34 @@ export const ALL_EDIT_TOOLS: ReadonlySet<string> = new Set(
 export const ALL_TASK_TOOLS: ReadonlySet<string> = new Set(
   Object.values(HARNESS_CONFIGS).flatMap((c) => c.taskTools),
 );
+
+/** Map an internal harness alias to its canonical telemetry identity. */
+export function canonicalHarnessName(
+  name?: string | null,
+): TelemetryHarnessName {
+  switch (name?.trim().toLowerCase()) {
+    case "claude":
+    case "claude-code":
+      return "claude-code";
+    case "copilot":
+    case "copilot-cli":
+      return "copilot-cli";
+    case "vscode":
+    case "vscode-copilot":
+      return "vscode-copilot";
+    case "codex":
+    case "codex-cli":
+      return "codex-cli";
+    case "opencode":
+      return "opencode";
+    case "pi":
+      return "pi";
+    case "antigravity":
+      return "antigravity";
+    default:
+      return "other";
+  }
+}
 
 export function resolveHarness(name?: string | null): HarnessConfig {
   if (!name) return HARNESS_CONFIGS.other;

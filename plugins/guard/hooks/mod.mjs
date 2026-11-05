@@ -1,7 +1,7 @@
 // Claude Code mod (hooks.json `modules`; Copilot ignores the key): the usage throttle and the ask timeout.
 // The command guards run as command hooks for both harnesses; this holds only what needs the mods API.
 import { cmdClass, evaluateSpawn, throttleMode } from '../core/engine.mjs'
-import { logRequest, otelOff, repoSlug } from '../core/otel.mjs'
+import { logRequest, otelOff, repoSlug, traceContext } from '../core/otel.mjs'
 import { rules } from '../core/rules.mjs'
 
 // The window closest to its limit (a gateway spend limit is not a plan window).
@@ -11,10 +11,13 @@ const worstWindow = (limits) => limits.filter((r) => r.kind !== 'spend_limit').s
 // (core/otel.mjs); null when GUARD_OTEL=off.
 async function otelConfig($) {
   if (otelOff({ GUARD_OTEL: await $.env.get('GUARD_OTEL') })) return null
+  const endpoint = (await $.env.get('OTEL_EXPORTER_OTLP_ENDPOINT')) || (await $.env.get('GUARD_OTEL_EXPORTER_OTLP_ENDPOINT'))
+  if (!endpoint) return null
   return {
-    endpoint: (await $.env.get('OTEL_EXPORTER_OTLP_ENDPOINT')) || (await $.env.get('GUARD_OTEL_EXPORTER_OTLP_ENDPOINT')),
+    endpoint,
     headers: (await $.env.get('OTEL_EXPORTER_OTLP_HEADERS')) || (await $.env.get('GUARD_OTEL_EXPORTER_OTLP_HEADERS')),
     resource: (await $.env.get('OTEL_RESOURCE_ATTRIBUTES')) || (await $.env.get('GUARD_OTEL_RESOURCE_ATTRIBUTES')),
+    trace: traceContext({ GUARD_TRACEPARENT: await $.env.get('GUARD_TRACEPARENT') }),
   }
 }
 
@@ -52,7 +55,15 @@ async function whereAttrs($) {
 async function emitRecord($, event, attrs) {
   try {
     const config = await otelConfig($)
-    const req = config && logRequest(config, event, { ...attrs, harness: 'claude', ...(await whereAttrs($)) })
+    if (!config) return
+    const req = logRequest(
+      config,
+      event,
+      { ...attrs, harness: 'claude-code', harness_legacy: 'claude', ...(await whereAttrs($)) },
+      Date.now(),
+      'guard',
+      config.trace,
+    )
     if (req) await $.http.fetch(req.url, { method: 'POST', headers: req.headers, body: req.body })
   } catch {
     // collector unreachable: the decision stands
