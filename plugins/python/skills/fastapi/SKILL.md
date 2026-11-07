@@ -39,7 +39,7 @@ Blocking I/O inside `async def` starves every concurrent request and is the most
 
 ## Errors
 
-Map domain/application exceptions to HTTP with exception handlers, using one format `{"error": str, "code": str, "details": dict | None}`. Never expose tracebacks in production.
+Map domain/application exceptions to HTTP with exception handlers, using one format: RFC 9457 `application/problem+json` as the `api-design` skill defines it (override the default `RequestValidationError` handler too, since FastAPI's 422 body is not problem+json). Never expose tracebacks in production.
 
 ## Performance and deployment
 
