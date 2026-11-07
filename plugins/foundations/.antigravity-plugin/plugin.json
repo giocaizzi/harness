@@ -1,0 +1,19 @@
+{
+  "$schema": "https://antigravity.google/schemas/v1/plugin.json",
+  "name": "foundations",
+  "version": "0.0.0",
+  "description": "Language-neutral design and practice: domain-driven design, system design, architecture fitness tests, API design, design patterns; plus the api-reviewer agent",
+  "author": {
+    "name": "giocaizzi",
+    "url": "https://github.com/giocaizzi"
+  },
+  "repository": "https://github.com/giocaizzi/harness",
+  "license": "MIT",
+  "keywords": [
+    "design",
+    "ddd",
+    "architecture",
+    "api",
+    "patterns"
+  ]
+}

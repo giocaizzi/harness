@@ -1,7 +1,7 @@
 {
   "name": "python",
   "version": "1.7.0",
-  "description": "Python development and testing best practices",
+  "description": "Python development and testing, FastAPI and SQLAlchemy",
   "author": {
     "name": "giocaizzi",
     "url": "https://github.com/giocaizzi"
@@ -12,7 +12,10 @@
     "python",
     "development",
     "testing",
-    "pytest"
+    "pytest",
+    "fastapi",
+    "sqlalchemy",
+    "pydantic"
   ],
   "agents": [
     "./.generated/copilot/"

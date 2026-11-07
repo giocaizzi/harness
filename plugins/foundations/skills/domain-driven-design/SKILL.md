@@ -1,5 +1,5 @@
 ---
-name: ddd
+name: domain-driven-design
 description: Domain-Driven Design with Hexagonal Architecture (ports and adapters) in Python. Use when designing bounded contexts, aggregates, domain events, use-case handlers, repositories, ports/adapters, or context maps.
 ---
 

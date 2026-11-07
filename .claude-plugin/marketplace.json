@@ -12,26 +12,29 @@
     {
       "name": "python",
       "source": "./plugins/python",
-      "description": "Python development and testing best practices",
+      "description": "Python development and testing, FastAPI and SQLAlchemy",
       "version": "1.7.0",
       "keywords": [
         "python",
         "development",
         "testing",
-        "pytest"
+        "pytest",
+        "fastapi",
+        "sqlalchemy",
+        "pydantic"
       ]
     },
     {
-      "name": "api",
-      "source": "./plugins/api",
-      "description": "API development with FastAPI, SQLAlchemy and DDD patterns",
-      "version": "1.4.0",
+      "name": "foundations",
+      "source": "./plugins/foundations",
+      "description": "Language-neutral design and practice: domain-driven design, system design, architecture fitness tests, API design, design patterns; plus the api-reviewer agent",
+      "version": "0.0.0",
       "keywords": [
-        "fastapi",
-        "sqlalchemy",
+        "design",
         "ddd",
+        "architecture",
         "api",
-        "python"
+        "patterns"
       ]
     },
     {
