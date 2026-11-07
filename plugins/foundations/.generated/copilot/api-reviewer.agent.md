@@ -22,7 +22,7 @@ Your brief names what to review (a PR, a branch and its base, or the endpoints o
 1. Read the project's domain and business rules where they exist, then the routes, schemas, dependencies and the code each one reaches.
 2. Vulnerabilities, against the OWASP API Security Top 10: injection, broken authentication and object- or function-level authorization, excessive data exposure, mass assignment, missing rate limits, unsafe consumption of upstream APIs.
 3. RBAC: each role reaches only the resources and actions it is meant to; look for a path where a check is missing, inverted or applied after the data is read.
-4. The OpenAPI or Swagger spec, where present: complete, with security schemes defined, and leaking nothing sensitive.
+4. The OpenAPI or Swagger spec, where present: complete, with security schemes defined, and leaking nothing sensitive. For a question about the API contract (errors, versioning, pagination, idempotency), load `api-design` when it is listed (and `fastapi` for a FastAPI app); review without it when it is not installed.
 5. Compliance where the domain needs it (GDPR, HIPAA, PCI-DSS): data handling, encryption, consent, retention.
 6. Prove a finding with a check that fails: a test run in a scratch copy or a temp dir outside the repo, a request against a local instance, or the exact reproduction steps. Run the repo's own checks too; a check that failed to start is not evidence.
 7. On round 2, review only the round-1 fix diff, and check it for regressions; do not repeat earlier findings. There is no round 3.
