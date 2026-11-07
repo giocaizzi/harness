@@ -2598,7 +2598,7 @@ void test("the new risky rules reach Codex and opencode as prompt prefixes (D3)"
   ])
     assert.ok(rulesFile.includes(`pattern = ${p}`), p);
   assert.equal(opencodeAsks(rules)["docker volume rm *"], "ask");
-  assert.equal(nativeAsk("docker volume rm firefly_db", "docker", rules), true);
+  assert.equal(nativeAsk("docker volume rm app_db", "docker", rules), true);
   assert.equal(
     nativeAsk("gcloud projects delete p", "cloud-delete", rules),
     false,
