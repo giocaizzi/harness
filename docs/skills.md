@@ -6,6 +6,7 @@ The skills and agents here follow two posts: [The new rules of context engineeri
 
 - **A guide, not a rulebook.** A skill helps the agent find what it needs and leaves the rest to its judgement. Keep hard rules for the places where a mistake is costly.
 - **Opinions only.** Write down what is particular to us (conventions, choices, gotchas). Leave out what the model already knows or can read from the repo.
+- **A published style guide is a baseline, not content.** A language skill names its baseline once (the Google style guides for Go, Python and TypeScript) and writes only what adds to it: stricter rules, choices the guide leaves open, and the tooling that enforces it. A rule that contradicts the baseline is a bug; a guide rule a linter can check is switched on in the skill's shipped config, and the rest are listed as review-only.
 - **No conflicting instructions.** Two rules that pull in different directions cost more than either one is worth. Before adding a rule, check that no other skill or `AGENTS.md` contradicts it.
 - **Interfaces over examples.** Examples narrow what the agent tries. Make the scripts, make targets and parameters a skill points to expressive enough that no worked example is needed.
 - **Progressive disclosure.** Keep `SKILL.md` short and move detail to `references/` or `scripts/`, which the agent loads only when it needs them. A separate step, such as verification or review, gets its own skill.
