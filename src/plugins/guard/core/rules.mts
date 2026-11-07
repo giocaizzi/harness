@@ -103,7 +103,8 @@ export const rules: GuardRules = {
     },
     {
       id: "migration-file",
-      match: "(^|/)(migrations|alembic/versions|db/migrate)/[^/]+\\.(sql|py|go|ts)$",
+      match:
+        "(^|/)(migrations|alembic/versions|db/migrate)/[^/]+\\.(sql|py|go|ts)$",
       skills: ["system-design"],
       why: "schema changes on live data ship as expand/contract (foundations plugin)",
     },
@@ -115,7 +116,8 @@ export const rules: GuardRules = {
     },
     {
       id: "arch-config",
-      match: "(^|/)(\\.importlinter|\\.dependency-cruiser\\.(c?js|json)|\\.go-arch-lint\\.ya?ml|arch(itecture)?_test\\.go|test_architecture\\.py)$",
+      match:
+        "(^|/)(\\.importlinter|\\.dependency-cruiser\\.(c?js|json)|\\.go-arch-lint\\.ya?ml|arch(itecture)?_test\\.go|test_architecture\\.py)$",
       skills: ["architecture-fitness"],
       why: "architecture rules are enforced as checks and ratchets (foundations plugin)",
     },
