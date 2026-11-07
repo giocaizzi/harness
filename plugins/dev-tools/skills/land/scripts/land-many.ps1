@@ -10,10 +10,15 @@
 # check, never counted as a gh failure. A PR in a stack, which gh refuses with `part of a stack`, goes through the
 # asynchronous merge REST API instead (PUT pulls/<n>/merge-async with the head sha: merge_queue with a queue, else
 # default with squash), which lands the stack up to that PR atomically; the refusal is never a gh failure, and the
-# request is polled until merged, enqueued or failed. Nothing is bypassed. One line per PR, as soon as it ends:
+# request is polled until merged, enqueued or failed. A merge-async `failed` naming a required check that is `in
+# progress` or `expected` is not an end: the request is made again on a later poll. A PR based on another branch
+# whose REST object carries a non-null `stack` is a layer of a native stack: one merge-async request goes to the top
+# layer (the highest `position` among the open PRs of that stack, sha of its head, merge_queue when the default
+# branch has a merge queue rule), which lands every layer; the other layers of that stack in the batch wait for it,
+# and the server gates the checks. Nothing is bypassed. One line per PR, as soon as it ends:
 #   PR <n>: MERGED <sha> | CLOSED | DIRTY | BEHIND | STACKED <base> | FAILED <why> | ERROR <gh error> | TIMEOUT <state>
 # DIRTY is a conflict; BEHIND (only without a queue) needs the base merged in; STACKED is a PR based on another
-# branch than the default one (land it with `gh stack merge`, or retarget it as `land` step 3 says); ERROR is gh
+# branch than the default one and outside a native stack (retarget it as `land` step 3 says); ERROR is gh
 # failing 3 polls in a row; TIMEOUT names what it waited on (pending required checks, running workflows, gh's
 # refusal, a merge-async request still pending). A cancelled run superseded by a newer, non-skipped run of the same
 # check (name, workflow, event) is ignored, and a cancelled newest run waits while its workflow still runs on the head, then fails. Exits 0 when every PR merged, 1 otherwise, 2 on usage. Needs gh.
@@ -115,9 +120,10 @@ function Get-Rollup($Pr) {
 $n = $prs.Count
 $left = $n; $status = 0
 $done = @(0) * $n; $enq = @(0) * $n; $fails = @(0) * $n; $armed = @('0') * $n; $last = @('unknown') * $n
-$stacked = @(0) * $n; $uuid = @('') * $n
+$stacked = @(0) * $n; $uuid = @('') * $n; $tgt = @($prs); $res = @('') * $n
 function Complete-Pr([int]$I, [string]$What) {
     "PR $($prs[$I]): $What"
+    $script:res[$I] = $What
     $script:done[$I] = 1; $script:left--
     if (-not $What.StartsWith('MERGED')) { $script:status = 1 }
 }
@@ -150,7 +156,11 @@ function Complete-Async([int]$I, [string]$Body, $Pr) {
     if ($s -ceq 'pending') { $script:uuid[$I] = $u; $script:last[$I] = "$state, merge-async pending $u" }
     elseif ($s -ceq 'enqueued') { $script:uuid[$I] = ''; $script:enq[$I]++; $script:last[$I] = "$state, queued through merge-async" }
     elseif ($s -ceq 'merged') { Complete-Pr $I "MERGED $c" }
-    elseif ($s -ceq 'failed') { Complete-Pr $I "FAILED merge-async: $m" }
+    elseif ($s -ceq 'failed') {
+        # A required check still running or not reported yet is a wait, not an end: request again on a later poll.
+        if ($m -cmatch 'Required status check .* is (in progress|expected)') { $script:uuid[$I] = ''; $script:armed[$I] = '0'; $script:last[$I] = "$state, waiting: $m" }
+        else { Complete-Pr $I "FAILED merge-async: $m" }
+    }
     else {
         if (-not (Get-Content $errFile -ErrorAction SilentlyContinue)) {
             $b = if ($Body.Length -gt 200) { $Body.Substring(0, 200) } else { $Body }
@@ -160,12 +170,32 @@ function Complete-Async([int]$I, [string]$Body, $Pr) {
     }
     $script:fails[$I] = 0
 }
-# Request the asynchronous merge of that PR's head (enqueue with a queue, else the default action).
-function Request-MergeAsync([int]$I, $Pr) {
-    $script:stacked[$I] = 1; $script:armed[$I] = 'async'
-    $action = if ($Pr.isMergeQueueEnabled) { @('-f', 'merge_action=merge_queue') } else { @('-f', 'merge_action=default', '-f', 'merge_method=squash') }
-    $body = Invoke-GhBody (@('api', '-X', 'PUT', "repos/$repo/pulls/$($prs[$I])/merge-async", '-H', "X-GitHub-Api-Version: $apiVersion") + $action + @('-f', "sha=$($Pr.headRefOid)"))
+# Request the asynchronous merge of that PR's head (enqueue with a queue, else the default action); a stack layer
+# passes its top layer's number, head and the default branch's queue flag instead.
+function Request-MergeAsync([int]$I, $Pr, [string]$Target = $prs[$I], [string]$Sha = $Pr.headRefOid, $Queue = $Pr.isMergeQueueEnabled) {
+    $script:stacked[$I] = 1; $script:armed[$I] = 'async'; $script:tgt[$I] = $Target
+    $action = if ($Queue) { @('-f', 'merge_action=merge_queue') } else { @('-f', 'merge_action=default', '-f', 'merge_method=squash') }
+    $body = Invoke-GhBody (@('api', '-X', 'PUT', "repos/$repo/pulls/$Target/merge-async", '-H', "X-GitHub-Api-Version: $apiVersion") + $action + @('-f', "sha=$Sha"))
     Complete-Async -I $I -Body $body -Pr $Pr
+}
+# For a PR whose REST object has a non-null `stack`: its top layer (the highest position among the open PRs of that
+# stack) as number and head sha; 'none' when the PR is in no stack, $null when gh failed.
+function Get-StackTop([string]$Pr) {
+    $r = Invoke-Gh @('api', "repos/$repo/pulls/$Pr")
+    if ($null -eq $r) { return $null }
+    $s = (ConvertFrom-Json -InputObject $r).stack
+    if ($null -eq $s) { return 'none' }
+    $l = Invoke-Gh @('api', "repos/$repo/pulls?per_page=100", '--paginate')
+    if ($null -eq $l) { return $null }
+    $top = @((ConvertFrom-Json -InputObject $l) | Where-Object { $_.stack -and $_.stack.number -eq $s.number } | Sort-Object { [int]$_.stack.position } -Descending | Select-Object -First 1)
+    if ($top.Count -eq 0) { Set-Content -Path $errFile -Value "stack $($s.number) lists no open layer"; return $null }
+    [pscustomobject]@{ number = "$($top[0].number)"; sha = "$($top[0].head.sha)" }
+}
+# True when the default branch has a merge queue rule (a layer's own base is a branch without one); $null when gh failed.
+function Get-DefaultQueue {
+    $r = Invoke-Gh @('api', "repos/$repo/rules/branches/$default")
+    if ($null -eq $r) { return $null }
+    @(ConvertFrom-Json -InputObject $r | Where-Object { $_.type -eq 'merge_queue' }).Count -gt 0
 }
 $deadline = [DateTime]::UtcNow.AddSeconds($timeout)
 try {
@@ -182,11 +212,30 @@ try {
             if ($p.state -ceq 'CLOSED') { Complete-Pr $i 'CLOSED'; continue }
             # A merge-async request still pending: poll it until it ends.
             if ($uuid[$i]) {
-                $body = Invoke-GhBody @('api', "repos/$repo/pulls/$pr/merge-async/$($uuid[$i])", '-H', "X-GitHub-Api-Version: $apiVersion")
+                $body = Invoke-GhBody @('api', "repos/$repo/pulls/$($tgt[$i])/merge-async/$($uuid[$i])", '-H', "X-GitHub-Api-Version: $apiVersion")
                 Complete-Async -I $i -Body $body -Pr $p
                 continue
             }
-            if ($p.baseRefName -cne $default) { Complete-Pr $i "STACKED on $($p.baseRefName): land it with gh stack merge, or retarget it (land step 3)"; continue }
+            if ($p.baseRefName -cne $default) {
+                # A layer of a native stack: one merge-async request on the top layer lands the whole stack.
+                $top = Get-StackTop $pr
+                if ($null -eq $top) { Add-Strike $i; continue }
+                if ($top -is [string]) { Complete-Pr $i "STACKED on $($p.baseRefName): retarget it (land step 3)"; continue }
+                if ($top.number -cne $pr) {
+                    $j = [array]::IndexOf($prs, $top.number)
+                    if ($j -ge 0) {
+                        # The top layer's own request covers this one.
+                        if ($res[$j] -and -not $res[$j].StartsWith('MERGED')) { Complete-Pr $i "FAILED its stack's top layer $($top.number) ended first ($($res[$j]))"; continue }
+                        $last[$i] = "$($p.state) $($p.mergeStateStatus), covered by the merge of stack layer $($top.number)"; $fails[$i] = 0; continue
+                    }
+                }
+                if ($p.isInMergeQueue) { $fails[$i] = 0; continue }
+                if ($enq[$i] -gt $requeues) { Complete-Pr $i "FAILED left the merge queue $($enq[$i]) times (read its merge_group run)"; continue }
+                $sq = Get-DefaultQueue
+                if ($null -eq $sq) { Add-Strike $i; continue }
+                Request-MergeAsync -I $i -Pr $p -Target $top.number -Sha $top.sha -Queue $sq
+                continue
+            }
             if ($p.mergeStateStatus -ceq 'DIRTY') { Complete-Pr $i 'DIRTY'; continue }
             if ($p.mergeStateStatus -ceq 'BEHIND' -and -not $p.isMergeQueueEnabled) { Complete-Pr $i 'BEHIND'; continue }
             $req = Get-Required $p.baseRefName
