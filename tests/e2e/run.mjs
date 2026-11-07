@@ -305,6 +305,7 @@ const EXPECT = {
         invokeMock: { MOCK_SKILL: "wt" },
         substitutes: false,
         skill: (s) => `<name>${s.name}</name>`,
+        skillsByName: /Additional skills available \(invoke by name\): ([^\n]*)/,
         agent: (a) => `- **${a.plugin}:${a.name}**: `,
         asked: /unable to ask user for confirmation/,
     },
@@ -423,8 +424,12 @@ async function check(name) {
                 failures.push(`${command}: tool result ${JSON.stringify(result.slice(0, 200))} does not match ${String(expect)}\n${out.stdout.slice(-600)}\n${out.stderr.slice(-600)}`);
             if (command.startsWith("pip")) {
                 const prompt = entries.map((e) => e.prompt).join("\n");
+                const byName = ((exp.skillsByName && prompt.match(exp.skillsByName)?.[1]) ??
+                    "")
+                    .split(",")
+                    .map((n) => n.trim());
                 const missing = [
-                    ...SKILLS.filter((s) => !prompt.includes(exp.skill(s))).map((s) => `skill ${s.name}`),
+                    ...SKILLS.filter((s) => !prompt.includes(exp.skill(s)) && !byName.includes(s.name)).map((s) => `skill ${s.name}`),
                     ...AGENTS.filter((a) => !prompt.includes(exp.agent(a))).map((a) => `agent ${a.name}`),
                 ];
                 if (missing.length)

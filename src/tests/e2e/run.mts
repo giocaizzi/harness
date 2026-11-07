@@ -424,6 +424,8 @@ interface ExpectShape {
   invokeMock?: Record<string, string>;
   substitutes: boolean;
   skill: (s: { name: string; plugin: string }) => string;
+  // Skills past the harness's described-skill cap, listed by name only (Copilot CLI).
+  skillsByName?: RegExp;
   agent: (a: { name: string; plugin: string }) => string;
   asked: RegExp;
 }
@@ -434,6 +436,7 @@ const EXPECT: Record<string, ExpectShape> = {
     invokeMock: { MOCK_SKILL: "wt" },
     substitutes: false,
     skill: (s): string => `<name>${s.name}</name>`,
+    skillsByName: /Additional skills available \(invoke by name\): ([^\n]*)/,
     agent: (a): string => `- **${a.plugin}:${a.name}**: `,
     asked: /unable to ask user for confirmation/,
   },
@@ -619,10 +622,16 @@ async function check(name: string): Promise<string[]> {
         );
       if (command.startsWith("pip")) {
         const prompt = entries.map((e) => e.prompt).join("\n");
+        const byName = (
+          (exp.skillsByName && prompt.match(exp.skillsByName)?.[1]) ??
+          ""
+        )
+          .split(",")
+          .map((n) => n.trim());
         const missing = [
-          ...SKILLS.filter((s) => !prompt.includes(exp.skill(s))).map(
-            (s) => `skill ${s.name}`,
-          ),
+          ...SKILLS.filter(
+            (s) => !prompt.includes(exp.skill(s)) && !byName.includes(s.name),
+          ).map((s) => `skill ${s.name}`),
           ...AGENTS.filter((a) => !prompt.includes(exp.agent(a))).map(
             (a) => `agent ${a.name}`,
           ),
