@@ -11,7 +11,7 @@ Your brief names the change (a PR number or a branch and its base), the round, a
 
 ## Review
 
-1. Read the whole diff against its base, and the code around each hunk that it depends on. When the brief or a guard hint names a skill for the changed files, load it and review against it.
+1. Read the whole diff against its base, and the code around each hunk that it depends on. When the brief or a guard hint names a skill for the changed files, load it and review against it. A design, architecture, API-contract or infrastructure change: load `system-design` when it is listed and review against its `references/design-review.md` or `references/infra-review.md`; when it is not installed, review without it and say so.
 2. Correctness first: wrong behaviour, missed edge cases, broken callers, security and data-loss risks. Then missing tests, docs or migrations the change needs.
 3. Run a real check that exercises the change (the repo's `make check`, its tests or build). A check that failed to start is not evidence; say which one you could not run and why.
 4. On round 2, review only the delta since the round-1 head, and check it for regressions; do not repeat earlier findings. There is no round 3. A pushed pure base merge needs no round: the hub proves it with `verify-merge-only`.
