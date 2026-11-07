@@ -325,6 +325,8 @@ const preToolUse = (decision, reason, harness) => {
         }),
     };
 };
+// Risky for the crash fallback. (stub: same as isRisky)
+export const crashRisky = (command, rules) => isRisky(command, rules);
 // The answer when guard itself crashed: a PreToolUse in a run is denied (a crash must not let a tool call through), in
 // every mode; the manifest variable counts as set when defined, even blank, as the loader reads it. Anything else is
 // allowed.
@@ -614,7 +616,7 @@ async function onShell(input, state, deps, ctx) {
         const errorObj = err instanceof Error ? err : null;
         // A crash must not let an unattended run's write through: every command is denied there, not only risky ones.
         const strict = ctx.state === "registered" && ctx.mode === "unattended";
-        if (strict || isRisky(command, rules)) {
+        if (strict || crashRisky(command, rules)) {
             appendDecision(deps.env, {
                 decision: "deny",
                 rule: "guard-error",
@@ -630,7 +632,7 @@ async function onShell(input, state, deps, ctx) {
                 cmd_hash: commandHash(command),
             }, input.cwd);
         }
-        return strict || isRisky(command, rules)
+        return strict || crashRisky(command, rules)
             ? preToolUse("deny", `The command guard failed, so this ${strict ? "" : "risky "}command was not run: ${errorObj ? errorObj.message : String(err)}`, deps.harness)
             : {};
     }

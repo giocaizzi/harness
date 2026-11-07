@@ -27,6 +27,7 @@ import {
   codexAsks,
   codexReviewer,
   crashResult,
+  crashRisky,
   handle,
   inWorkTree,
   protectFacts,
@@ -2199,6 +2200,17 @@ void test("a registered run: a `..` in the edit tool's own path applies after th
   // a link that leads somewhere harmless stays allowed
   assert.ok(!denied(await run(edit(`${repo}/ok/../x.md`, repo))));
   assert.ok(!denied(await run(edit(join(repo, "src", "x.md"), repo))));
+});
+
+void test("crashRisky: a lease push counts as risky when the guard crashes (G17 round 5)", () => {
+  for (const c of [
+    "git push --force-with-lease",
+    "git push --force-w origin HEAD",
+    "git push --force origin main",
+  ])
+    assert.equal(crashRisky(c, rules), true, c);
+  for (const c of ["git push origin feat/x", "ls"])
+    assert.equal(crashRisky(c, rules), false, c);
 });
 
 void test("crashResult: a crash denies a tool call in a run, whatever its mode, and allows the rest", () => {

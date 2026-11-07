@@ -331,6 +331,57 @@ void test("a lease push passes without facts only when an allow-list holds; ever
     ])
         assert.equal(await outcome(c, onFeat), "allow", c);
 });
+void test("a lease push: head and @ are the current branch, an earlier step that can move HEAD or push config asks (G17 round 5)", async () => {
+    const decide = async (c, f) => evaluateCommand({
+        command: c,
+        state: fresh(),
+        host: calm,
+        pushes: await pushFacts(c, rules, fakePush(f)),
+        rules,
+    });
+    const onMain = { branch: "main" };
+    const onFeat = { branch: "feat/x" };
+    for (const c of [
+        "git push --force-with-lease origin head",
+        "git push --force-with-lease origin Head",
+        "git push --force-with-lease origin @",
+    ]) {
+        assert.equal((await decide(c, onMain)).action, "ask", c);
+        assert.equal((await decide(c, onFeat)).action, "allow", c);
+    }
+    // an earlier step may have moved HEAD or the push config after the facts were read
+    for (const c of [
+        "git checkout main && git push --force-with-lease",
+        "git switch main; git push --force-with-lease origin HEAD",
+        "git rebase origin/main main && git push --force-with-lease",
+        "gh pr checkout 7 && git push --force-with-lease",
+        "echo hi && git push --force-with-lease",
+        "git config push.default matching && git push --force-with-lease",
+        "git config remote.origin.push refs/heads/feat/x:refs/heads/main && git push --force-with-lease origin feat/x",
+        "git symbolic-ref HEAD refs/heads/main && git push --force-with-lease origin feat/x",
+    ])
+        assert.equal((await decide(c, onFeat)).action, "ask", c);
+    for (const c of [
+        "git rebase origin/main && git push --force-with-lease",
+        "git fetch && git push --force-with-lease",
+        "git status && git log -1 && git diff && git push --force-with-lease",
+        "git pull --ff-only && git push --force-with-lease",
+        "git pull && git push --force-with-lease",
+        "git add -A && git commit -m 'chore: x' && git push --force-with-lease",
+        "cd /r && git push --force-with-lease",
+        "git checkout main && git push --force-with-lease origin feat/x",
+    ])
+        assert.equal((await decide(c, onFeat)).action, "allow", c);
+    // the ask names the lease push for every current-branch form
+    for (const c of [
+        "git push --force-w",
+        "git push --force-w origin HEAD",
+        "git push --force-with-lease origin head",
+        "git push --force-with-lease origin @",
+        "git push --force-with-lease -u origin",
+    ])
+        assert.match(defined((await decide(c, onMain)).reason), /Lease-pushes the current branch/, c);
+});
 void test("a recursive delete of a temp dir held in a variable or a quoted $TMPDIR path does not ask", () => {
     const env = { TMPDIR: "/var/folders/ab/T/" };
     const act = (command) => evaluateCommand({ command, state: fresh(), host: calm, env, rules }).action;
