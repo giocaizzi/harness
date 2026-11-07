@@ -83,6 +83,27 @@ export const rules = {
             skills: ["system-design"],
             why: "schema changes on live data ship as expand/contract (foundations plugin)",
         },
+        {
+            id: "terraform-local",
+            remind: true,
+            match: "(?:^|[;&|(\\n]\\s*)(?:(?:uv\\s+run|uvx|npx|pnpm\\s+(?:exec|dlx)|bunx|go\\s+(?:tool|run))\\s+(?:\\S+@\\S+\\s+)?)?(?:terraform|tofu)(?:\\s+-{1,2}[\\w-]+(?:=\\S+)?)*\\s+(?:fmt|validate|plan|init|test|state|import|force-unlock)\\b",
+            skills: ["terraform"],
+            why: "Terraform follows the house plan/apply and state rules (infra plugin)",
+        },
+        {
+            id: "docker-build",
+            remind: true,
+            match: "(?:^|[;&|(\\n]\\s*)(?:(?:uv\\s+run|uvx|npx|pnpm\\s+(?:exec|dlx)|bunx|go\\s+(?:tool|run))\\s+(?:\\S+@\\S+\\s+)?)?(?:docker\\s+(?:buildx\\s+)?build|hadolint)\\b",
+            skills: ["docker"],
+            why: "images follow the house Dockerfile and build rules (infra plugin)",
+        },
+        {
+            id: "k8s-local",
+            remind: true,
+            match: "(?:^|[;&|(\\n]\\s*)(?:(?:uv\\s+run|uvx|npx|pnpm\\s+(?:exec|dlx)|bunx|go\\s+(?:tool|run))\\s+(?:\\S+@\\S+\\s+)?)?(?:helm\\s+(?:lint|template|package|install|upgrade)|kustomize\\s+build|kubeconform|kind\\s+create|kubectl(?:\\s+-{1,2}[\\w-]+(?:[=\\s]\\S+)?)*\\s+(?:apply|diff|rollout))\\b",
+            skills: ["kubernetes"],
+            why: "manifests and charts follow the house Kubernetes rules (infra plugin)",
+        },
     ],
     // Edits whose path matches: a once-per-session hint toward the skill.
     files: [
@@ -115,6 +136,24 @@ export const rules = {
             match: "(^|/)(domain|ports)/[^/]+\\.(py|go|ts)$",
             skills: ["domain-driven-design"],
             why: "domain and port code follows the house DDD rules (foundations plugin)",
+        },
+        {
+            id: "terraform-file",
+            match: "(^|/)([^/]*\\.(tf|tfvars|tftest\\.hcl)|\\.terraform\\.lock\\.hcl)$",
+            skills: ["terraform"],
+            why: "Terraform follows the house plan/apply and state rules (infra plugin)",
+        },
+        {
+            id: "docker-file",
+            match: "(^|/)(Dockerfile[^/]*|[^/]+\\.dockerfile|\\.dockerignore|(docker-)?compose[^/]*\\.ya?ml)$",
+            skills: ["docker"],
+            why: "images follow the house Dockerfile and build rules (infra plugin)",
+        },
+        {
+            id: "k8s-file",
+            match: "(^|/)(Chart\\.yaml|kustomization\\.ya?ml)$|(^|/)charts?/(.+/)?(values[^/]*\\.ya?ml|templates/.+)$|(^|/)config/(crd|rbac|manager|default)/.+$",
+            skills: ["kubernetes"],
+            why: "manifests and charts follow the house Kubernetes rules (infra plugin)",
         },
         {
             id: "docs",
