@@ -315,6 +315,24 @@ void test("a cd followed across ; only when its directory exists (G23 review)", 
     assert.equal(decision(await h2({ ...pre("Bash", "cd sub; git branch -D feat/x"), cwd: dir })), undefined, "existing dir: followed");
     assert.equal(decision(await h2({ ...pre("Bash", "cd gone; git branch -D feat/x"), cwd: dir }))?.permissionDecision, "ask", "missing dir: not followed");
 });
+void test("a bare lease push asks from main and when the branch cannot be read, and passes from a feature branch", async () => {
+    const branchRun = (branch) => async (argv) => {
+        await Promise.resolve();
+        return argv.includes("--abbrev-ref") &&
+            argv.includes("HEAD") &&
+            branch !== null
+            ? `${branch}\n`
+            : null;
+    };
+    const ask = async (command, branch) => decision(await setup({ run: branchRun(branch) })({
+        ...pre("Bash", command),
+        cwd: "/r",
+    }))?.permissionDecision;
+    assert.equal(await ask("git push --force-with-lease", "main"), "ask");
+    assert.equal(await ask("git push --force-with-lease origin", null), "ask");
+    assert.equal(await ask("git push --force-with-lease", "feat/x"), undefined);
+    assert.equal(await ask("git push --force-with-lease origin feat/x", null), undefined);
+});
 void test("a branch ref deleted through gh api passes once a merged PR holds its tip, looked up where the command cds (G23)", async () => {
     const calls = [];
     const run = async (argv, cwd) => {

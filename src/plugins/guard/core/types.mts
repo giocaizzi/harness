@@ -512,6 +512,7 @@ export interface StackFixtureOptions {
   fail?: string | null;
 }
 export interface CorpusOptions {
+  branch?: string | null;
   python?: string | null;
   hints?: boolean;
   run?: "registered" | "configured" | "unsure" | "protected" | null;

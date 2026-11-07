@@ -495,6 +495,33 @@ void test("a cd followed across ; only when its directory exists (G23 review)", 
   );
 });
 
+void test("a bare lease push asks from main and when the branch cannot be read, and passes from a feature branch", async () => {
+  const branchRun =
+    (branch: string | null) =>
+    async (argv: readonly string[]): Promise<string | null> => {
+      await Promise.resolve();
+      return argv.includes("--abbrev-ref") &&
+        argv.includes("HEAD") &&
+        branch !== null
+        ? `${branch}\n`
+        : null;
+    };
+  const ask = async (command: string, branch: string | null) =>
+    decision(
+      await setup({ run: branchRun(branch) })({
+        ...pre("Bash", command),
+        cwd: "/r",
+      }),
+    )?.permissionDecision;
+  assert.equal(await ask("git push --force-with-lease", "main"), "ask");
+  assert.equal(await ask("git push --force-with-lease origin", null), "ask");
+  assert.equal(await ask("git push --force-with-lease", "feat/x"), undefined);
+  assert.equal(
+    await ask("git push --force-with-lease origin feat/x", null),
+    undefined,
+  );
+});
+
 void test("a branch ref deleted through gh api passes once a merged PR holds its tip, looked up where the command cds (G23)", async () => {
   const calls: [string, string | undefined][] = [];
   const run = async (

@@ -237,8 +237,10 @@ export const rules = {
         {
             id: "force",
             // `--force-with-lease` to a feature branch passes: it cannot clobber work it has not seen, and a branch
-            // ruleset rejects it on a protected default branch. ponytail: a bare lease push from main is not caught.
-            // `--force-if-includes` alone is not a force push; a lease push naming main or master anywhere is.
+            // ruleset rejects it on a protected default branch. `--force-if-includes` alone is not a force push; a lease
+            // push naming main or master anywhere is. A bare lease push (no refspec) is not matched here: the engine
+            // fires this rule for it when the push facts (current branch, upstream, origin/HEAD) mark the branch main,
+            // master or the default branch, or cannot be read.
             match: "\\bgit\\s+push\\b[^;&|\\n]*(--force(?![\\w-])|\\s-[a-z]*f[a-z]*\\b|\\s\\+[^\\s;&|])|\\bgit\\s+push\\b(?=[^;&|\\n]*--force-with-lease\\b)[^;&|\\n]*[\\s:](?:refs/heads/)?(main|master)(?=[\\s;&|)]|$)",
             why: "rewrites remote history",
             prefixes: [

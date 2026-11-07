@@ -42,6 +42,7 @@ import {
   previewCommand,
   protectedPathHit,
   pureRead,
+  pushFacts,
   refFacts,
   regenFacts,
   stackFacts,
@@ -60,6 +61,7 @@ import { commandWords, units } from "../core/shell.mjs";
 import type {
   GuardEnv,
   HostFacts,
+  PushFact,
   SafeFact,
   StackFact,
   TagFact,
@@ -655,6 +657,7 @@ async function onShell(
       branches?: Record<string, SafeFact | undefined>;
       env: GuardEnv;
       python?: string | null;
+      pushes?: Record<string, PushFact | undefined>;
       refs?: Record<string, SafeFact | undefined>;
       regenerable?: Record<string, boolean | undefined>;
       stack?: StackFact | null;
@@ -691,6 +694,16 @@ async function onShell(
       } else {
         unfinished = true;
       }
+    }
+
+    // A bare lease push is no risky match by itself: its facts are gathered for it, and none (timeout) asks.
+    if (command.includes("--force-with-lease")) {
+      facts.pushes =
+        (await within(
+          pushFacts(command, rules, inCwd, facts.env),
+          deps.factsMs ?? FACTS_MS,
+          null,
+        )) ?? {};
     }
 
     if (

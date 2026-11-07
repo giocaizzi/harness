@@ -1382,14 +1382,74 @@ export async function branchFacts(
   );
 }
 
-// STUB
-export function pushFacts(
-  _command: string,
-  _rules: GuardRules,
-  _run: RunnerFn,
-  _env: GuardEnv = {},
-): Promise<Record<string, PushFact | undefined>> {
-  return Promise.resolve({});
+// The directory of every bare `git push --force-with-lease` of a command (no refspec: at most the remote is named),
+// '' for the cwd. It pushes the current branch, so the `force` rule needs to know which branch that is. One on another
+// host or in a container has dir REMOTE_DIR: no fact is gathered for it, so it asks.
+function leaseTargets(command: string, rules: GuardRules, env: GuardEnv = {}) {
+  if (!rules.risky.some((r) => r.id === "force")) return [];
+  return segments(command, env).flatMap(({ words, dir, remote }) => {
+    let vals = commandWords(words).map((w) => w.val);
+    if (vals[0] === "git") {
+      let k = 1;
+      while (vals[k]?.startsWith("-"))
+        k += GIT_VALUE.has(defined(vals[k])) ? 2 : 1;
+      vals = ["git", ...vals.slice(k)];
+    }
+    const args = vals.slice(2);
+    const lease = args.some(
+      (a) => a === "--force-with-lease" || a.startsWith("--force-with-lease="),
+    );
+    const refs = args.filter((a) => !a.startsWith("-")).length;
+    return vals[0] === "git" && vals[1] === "push" && lease && refs <= 1
+      ? [remote ? REMOTE_DIR : dir]
+      : [];
+  });
+}
+
+// Push facts for every bare lease push of a command, in parallel: { [dir]: { branch, upstream, head } }. A call that
+// fails or prints nothing leaves that field null.
+export async function pushFacts(
+  command: string,
+  rules: GuardRules,
+  run: RunnerFn,
+  env: GuardEnv = {},
+) {
+  const dirs = [...new Set(leaseTargets(command, rules, env))].filter(
+    (d) => d !== REMOTE_DIR && PLAIN_PATH.test(d || "."),
+  );
+  const read = (dir: string, ...args: string[]) =>
+    Promise.resolve()
+      .then(() => run(["git", "-C", dir || ".", ...args]))
+      .catch(() => null)
+      .then((out) => {
+        const text = out?.trim() ?? "";
+        return text === "" ? null : text;
+      });
+  const facts = await Promise.all(
+    dirs.map(async (dir): Promise<PushFact> => {
+      const [branch, upstream, head] = await Promise.all([
+        read(dir, "rev-parse", "--abbrev-ref", "HEAD"),
+        read(dir, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"),
+        read(dir, "symbolic-ref", "--short", "refs/remotes/origin/HEAD"),
+      ]);
+      return { branch, upstream, head };
+    }),
+  );
+  return Object.fromEntries(
+    dirs.map((d, i): [string, PushFact | undefined] => [d, facts[i]]),
+  );
+}
+
+// A bare lease push is protected when it cannot be shown to leave main, master and the default branch alone: no
+// facts, a detached or unreadable current branch, or the current branch or its upstream is one of them. A missing
+// upstream or origin/HEAD is normal (a new branch, a clone without it) and does not count.
+const stripRemote = (ref: string) => ref.replace(/^[^/]+\//, "");
+function leaseProtected(fact: PushFact | undefined) {
+  if (!fact?.branch || fact.branch === "HEAD") return true;
+  const def = fact.head ? stripRemote(fact.head) : null;
+  return [fact.branch, fact.upstream ? stripRemote(fact.upstream) : null].some(
+    (n) => n !== null && (n === "main" || n === "master" || n === def),
+  );
 }
 
 // Build output and caches a tool regenerates. A delete of one passes when git ignores it (`git check-ignore`, so it
@@ -1565,6 +1625,8 @@ function summary(
   }
   if (rule.id === "force") {
     const args = plainArgs(/\bpush\b(.*)$/.exec(gitPlain(step.raw))?.[1] ?? "");
+    if (args.length <= 1 && /--force-with-lease\b/.test(step.raw))
+      return "Lease-pushes the current branch, which is main, master, the default branch or could not be read";
     return `Force-pushes${args.length ? ` ${args.join(" ")}` : " the current branch"}`;
   }
   return rule.say ?? defined(rule.why[0]).toUpperCase() + rule.why.slice(1);
@@ -2728,7 +2790,8 @@ function changesLabels(command: string) {
 }
 
 // `readTool`: the harness has a file-read tool (all but Codex), so a shell read gets a once-per-session hint.
-// `worktrees`, `branches`, `regenerable`: facts the adapters gather (worktreeFacts, branchFacts, regenFacts).
+// `worktrees`, `branches`, `pushes`, `regenerable`: facts the adapters gather (worktreeFacts, branchFacts, pushFacts,
+// regenFacts).
 export function evaluateCommand({
   command,
   loadedSkills = new Set<string>(),
@@ -2737,6 +2800,7 @@ export function evaluateCommand({
   env = {},
   worktrees = {},
   branches = {},
+  pushes = {},
   regenerable = {},
   refs = {},
   tags = {},
@@ -2828,9 +2892,13 @@ export function evaluateCommand({
       : []),
     ...(safeRefDelete(command, rules, refs, env) ? ["gh-delete"] : []),
   ]);
-  const risky = rules.risky.find(
-    (r) => riskyMatch(r, command) && !exempt.has(r.id),
+  // A bare lease push is the `force` rule's when its branch is protected or unreadable (pushFacts).
+  const leaseHit = leaseTargets(command, rules, env).some((d) =>
+    leaseProtected(pushes[d]),
   );
+  const risky =
+    rules.risky.find((r) => riskyMatch(r, command) && !exempt.has(r.id)) ??
+    (leaseHit ? rules.risky.find((r) => r.id === "force") : undefined);
   if (risky) {
     const why = [
       ...Object.entries(worktrees)

@@ -148,6 +148,17 @@
 
   ["git push --force-if-includes origin feat", "allow", "G17", "C-L3"],
   ["git push --force origin feat", "ask:force", "G17", "control"],
+  ["git push --force-with-lease origin feat/x", "allow", "G17", "control (lease to a feature branch)"],
+  ["git push --force-with-lease", "allow", "G17", "control (bare lease push, current branch feat/x)"],
+  ["git push origin HEAD:feat/x --force-with-lease", "allow", "G17", "control"],
+  ["git push --force-if-includes --force-with-lease origin feat/x", "allow", "G17", "control"],
+  ["git push --force origin feat/x", "ask:force", "G17", "control"],
+  ["git push -f origin feat/x", "ask:force", "G17", "control"],
+  ["git push origin +feat/x", "ask:force", "G17", "control"],
+  ["git push --force-with-lease origin main", "ask:force", "G17", "control"],
+  ["git push --force-with-lease origin master", "ask:force", "G17", "control"],
+  ["git push --force-with-lease origin HEAD:main", "ask:force", "G17", "control"],
+  ["git push --force-with-lease origin", "ask:force", "G17", "bare lease push from main", {"branch": "main"}],
 
   ["rm -rf /var/folders/ab/xyz", "ask:rm", "G18", "C-L4"],
   ["rm -rf /var/folders/ab", "ask:rm", "G18", "C-L4"],
