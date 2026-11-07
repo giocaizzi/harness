@@ -68,9 +68,63 @@ export const rules: GuardRules = {
       skills: ["go-development"],
       why: "build and lint follow the house Go conventions",
     },
+    {
+      id: "arch-fitness",
+      remind: true,
+      match:
+        "(?:^|[;&|(\\n]\\s*)(?:(?:uv\\s+run|uvx|npx|pnpm\\s+(?:exec|dlx)|bunx|go\\s+(?:tool|run))\\s+(?:\\S+@\\S+\\s+)?)?(?:lint-imports|depcruise|dependency-cruiser|go-arch-lint)\\b",
+      skills: ["architecture-fitness"],
+      why: "architecture rules are enforced as checks and ratchets (foundations plugin)",
+    },
+    {
+      id: "api-contract",
+      remind: true,
+      match:
+        "(?:^|[;&|(\\n]\\s*)(?:(?:uv\\s+run|uvx|npx|pnpm\\s+(?:exec|dlx)|bunx|go\\s+(?:tool|run))\\s+(?:\\S+@\\S+\\s+)?)?(?:oapi-codegen|openapi-generator(?:-cli)?|oasdiff|redocly\\s+lint|spectral\\s+lint|buf\\s+(?:lint|breaking))\\b",
+      skills: ["api-design"],
+      why: "API contracts follow the house API design rules (foundations plugin)",
+    },
+    {
+      id: "migration",
+      remind: true,
+      match:
+        "(?:^|[;&|(\\n]\\s*)(?:(?:uv\\s+run|uvx|npx|pnpm\\s+(?:exec|dlx)|bunx|go\\s+(?:tool|run))\\s+(?:\\S+@\\S+\\s+)?)?(?:alembic\\s+revision|goose\\s+(?:-\\S+\\s+(?:[^-\\s]\\S*\\s+)?)*create|migrate\\s+create|atlas\\s+migrate\\s+diff|prisma\\s+migrate\\s+dev|drizzle-kit\\s+generate)\\b",
+      skills: ["system-design"],
+      why: "schema changes on live data ship as expand/contract (foundations plugin)",
+    },
   ],
   // Edits whose path matches: a once-per-session hint toward the skill.
   files: [
+    {
+      id: "adr",
+      match: "(^|/)docs/(adr|decisions?)/[^/]+\\.md$",
+      skills: ["system-design"],
+      why: "an ADR records options, trade-offs and consequences (foundations plugin)",
+    },
+    {
+      id: "migration-file",
+      match: "(^|/)(migrations|alembic/versions|db/migrate)/[^/]+\\.(sql|py|go|ts)$",
+      skills: ["system-design"],
+      why: "schema changes on live data ship as expand/contract (foundations plugin)",
+    },
+    {
+      id: "openapi",
+      match: "(^|/)[^/]*(openapi|swagger)[^/]*\\.(ya?ml|json)$|\\.proto$",
+      skills: ["api-design"],
+      why: "API contracts follow the house API design rules (foundations plugin)",
+    },
+    {
+      id: "arch-config",
+      match: "(^|/)(\\.importlinter|\\.dependency-cruiser\\.(c?js|json)|\\.go-arch-lint\\.ya?ml|arch(itecture)?_test\\.go|test_architecture\\.py)$",
+      skills: ["architecture-fitness"],
+      why: "architecture rules are enforced as checks and ratchets (foundations plugin)",
+    },
+    {
+      id: "domain",
+      match: "(^|/)(domain|ports)/[^/]+\\.(py|go|ts)$",
+      skills: ["domain-driven-design"],
+      why: "domain and port code follows the house DDD rules (foundations plugin)",
+    },
     {
       id: "docs",
       match: "(^|/)(docs/.+\\.md|README\\.md|AGENTS\\.md)$",
@@ -94,7 +148,7 @@ export const rules: GuardRules = {
       "dev-tools:driver",
       "dev-tools:reviewer",
       "dev-tools:escalate",
-      "api:api-reviewer",
+      "foundations:api-reviewer",
     ],
     aliases: { "dev-tools-worker": "dev-tools:worker" },
     codexBuiltin: ["default", "worker", "explorer"],

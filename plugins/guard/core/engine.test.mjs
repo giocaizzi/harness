@@ -1124,6 +1124,61 @@ void test("remind rules hint once per session and never deny", () => {
         rules,
     }).rule, undefined);
 });
+void test("foundations commands remind once, never deny, and stay quiet with the skill loaded", () => {
+    const cases = [
+        ["uv run lint-imports", "arch-fitness", "architecture-fitness"],
+        ["npx depcruise src", "arch-fitness", "architecture-fitness"],
+        ["oasdiff breaking base.yaml head.yaml", "api-contract", "api-design"],
+        ["buf breaking --against .git#branch=main", "api-contract", "api-design"],
+        ["uv run alembic revision -m add_currency", "migration", "system-design"],
+        ["goose -dir db create add_currency sql", "migration", "system-design"],
+    ];
+    for (const [command, id, skill] of cases) {
+        const state = fresh();
+        const first = evaluateCommand({ command, state, host: calm, rules });
+        assert.equal(first.rule, id, command);
+        assert.equal(first.action, "allow", command);
+        assert.equal(first.remind, true, command);
+        assert.equal(evaluateCommand({ command, state, host: calm, rules }).rule, undefined, command);
+        for (const loaded of [`foundations:${skill}`, skill]) {
+            assert.equal(evaluateCommand({
+                command,
+                loadedSkills: new Set([loaded]),
+                state: fresh(),
+                host: calm,
+                rules,
+            }).remind, undefined, `${command} with ${loaded}`);
+        }
+    }
+    for (const command of [
+        "grep -rn lint-imports .",
+        "git log --grep alembic",
+        "alembic upgrade head",
+    ]) {
+        assert.equal(evaluateCommand({ command, state: fresh(), host: calm, rules }).rule, undefined, command);
+    }
+});
+void test("an edit to an ADR, migration, contract, architecture config or domain file hints at its foundations skill once", () => {
+    const rule = (path) => evaluateEdit({ path, state: fresh(), rules }).rule;
+    assert.equal(rule("docs/adr/0003-queue.md"), "adr");
+    assert.equal(rule("C:\\r\\docs\\adr\\0001.md"), "adr");
+    assert.equal(rule("docs/guard.md"), "docs");
+    assert.equal(rule("internal/orders/domain/order.go"), "domain");
+    assert.equal(rule("src/domainx/a.py"), undefined);
+    assert.equal(rule("api/openapi.yaml"), "openapi");
+    assert.equal(rule("proto/orders/v1/orders.proto"), "openapi");
+    assert.equal(rule("alembic/versions/1a2b_add_currency.py"), "migration-file");
+    assert.equal(rule("/r/.importlinter"), "arch-config");
+    const state = fresh();
+    assert.equal(evaluateEdit({ path: "docs/adr/1.md", state, rules }).rule, "adr");
+    assert.equal(evaluateEdit({ path: "docs/adr/2.md", state, rules }).rule, undefined);
+    assert.equal(evaluateEdit({
+        path: "docs/adr/1.md",
+        loadedSkills: new Set(["foundations:system-design"]),
+        state: fresh(),
+        rules,
+    }).rule, undefined);
+});
 void test("a shell-only file read hints at the read tool once, only where the harness has one", () => {
     const state = fresh();
     for (const c of [
@@ -1205,7 +1260,8 @@ void test("a spawn that bypasses the typed agents gets one routing hint per case
     // A typed agent's model or effort override, in any plugin, bare names included.
     assert.equal(rule("dev-tools:driver", "opus"), "routing-override");
     assert.equal(rule("scout", "haiku"), "routing-override");
-    assert.equal(rule("api:api-reviewer", "opus"), "routing-override");
+    assert.equal(rule("foundations:api-reviewer", "opus"), "routing-override");
+    assert.equal(rule("api-reviewer", "opus"), "routing-override");
     assert.equal(rule("dev-tools:driver", undefined, fresh(), "high"), "routing-override");
     assert.equal(rule("dev-tools:reviewer", undefined, fresh(), "max"), "routing-override");
     assert.match(defined(evaluateRouting({

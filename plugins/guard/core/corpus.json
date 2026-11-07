@@ -614,5 +614,15 @@
   ["mv build/$OLD build/new", "allow", "G45", "run contract v2: a variable last in a path re-roots nothing", {"run": "registered"}],
   ["rm -f out/$NAME", "allow", "G45", "run contract v2: a variable last in a path is not the repo root (rm -f)", {"run": "registered"}],
   ["rm -rf build/$DIR", "ask:rm", "G45", "run contract v2: a variable last in a path is a risky rm, not a protected path", {"run": "registered"}],
-  ["rm -rf src/a/$X", "ask:rm", "G45", "run contract v2: a variable last in a nested path is a risky rm, not a protected path", {"run": "registered"}]
+  ["rm -rf src/a/$X", "ask:rm", "G45", "run contract v2: a variable last in a nested path is a risky rm, not a protected path", {"run": "registered"}],
+
+  ["uv run lint-imports", "allow:arch-fitness", "CTRL", "control: foundations remind"],
+  ["npx depcruise src", "allow:arch-fitness", "CTRL", "control: foundations remind"],
+  ["oasdiff breaking base.yaml head.yaml", "allow:api-contract", "CTRL", "control: foundations remind"],
+  ["buf breaking --against .git#branch=main", "allow:api-contract", "CTRL", "control: foundations remind"],
+  ["uv run alembic revision -m add_currency", "allow:migration", "CTRL", "control: foundations remind"],
+  ["goose -dir db create add_currency sql", "allow:migration", "CTRL", "control: foundations remind"],
+  ["grep -rn lint-imports .", "allow", "CTRL", "control: foundations remind, a search is no run"],
+  ["git log --grep alembic", "allow", "CTRL", "control: foundations remind, a search is no run"],
+  ["alembic upgrade head", "allow", "CTRL", "control: foundations remind, applying is no schema change"]
 ]
