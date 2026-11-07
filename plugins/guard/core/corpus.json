@@ -112,7 +112,7 @@
   ["git push origin feat", "allow", "G15", "control"],
   ["terraform plan", "allow:terraform-local", "G15", "control: no ask, only the infra reminder"],
 
-  ["docker volume rm firefly_db", "ask:docker", "G16", "T-B1"],
+  ["docker volume rm app_db", "ask:docker", "G16", "T-B1"],
   ["docker system prune -af --volumes", "ask:docker", "G16", "C-M9"],
   ["docker volume prune -f", "ask:docker", "G16", "C-M9"],
   ["docker rm -v c1", "ask:docker", "G16", "D3"],
