@@ -1083,26 +1083,83 @@ export async function branchFacts(command, rules, run, env = {}) {
         facts[i],
     ]));
 }
-// The directory of every bare `git push --force-with-lease` of a command (no refspec: at most the remote is named),
-// '' for the cwd. It pushes the current branch, so the `force` rule needs to know which branch that is. One on another
-// host or in a container has dir REMOTE_DIR: no fact is gathered for it, so it asks.
+// push options that take a separate value (the `=` forms take none): it is no refspec and no remote.
+const PUSH_VALUE = new Set([
+    "-o",
+    "--push-option",
+    "--receive-pack",
+    "--exec",
+    "--repo",
+]);
+// `--force-with-lease` or any unique abbreviation git accepts (`--force-w`), with or without `=value`.
+const isLease = (a) => {
+    const name = a.split("=")[0] ?? "";
+    return name.length >= 9 && "--force-with-lease".startsWith(name);
+};
+// `--all` / `--branches` or an abbreviation (`--al`, `--br`).
+const isAllRefs = (a) => {
+    const name = a.split("=")[0] ?? "";
+    return ((name.length >= 4 && "--all".startsWith(name)) ||
+        (name.length >= 4 && "--branches".startsWith(name)));
+};
+// A refspec that is the current branch: HEAD, @ or a word that cannot be read statically, without a `:dst`.
+const currentBranchRef = (w) => !w.val.includes(":") &&
+    (w.val === "HEAD" ||
+        w.val === "@" ||
+        w.substs.length > 0 ||
+        /[$`]/.test(w.raw));
+// The directory of every `git push --force-with-lease` of a command that pushes the current branch (no refspec, or
+// HEAD, @ or a non-static word without `:dst`; at most the remote is named), '' for the cwd. The `force` rule needs
+// to know which branch that is. One on another host or in a container, one with `--all`/`--branches`, one whose
+// pushed refs git config can change (`-c push.default=…`, `-c remote.<x>.push=…`, GIT_CONFIG_* in the environment)
+// and a bare one in another repo (`--git-dir`, `--work-tree`, GIT_DIR, GIT_WORK_TREE) have dir REMOTE_DIR: no fact is
+// gathered for it, so it asks.
 function leaseTargets(command, rules, env = {}) {
     if (!rules.risky.some((r) => r.id === "force"))
         return [];
     return segments(command, env).flatMap(({ words, dir, remote }) => {
-        let vals = commandWords(words).map((w) => w.val);
-        if (vals[0] === "git") {
-            let k = 1;
-            while (vals[k]?.startsWith("-"))
-                k += GIT_VALUE.has(defined(vals[k])) ? 2 : 1;
-            vals = ["git", ...vals.slice(k)];
+        const all = commandWords(words);
+        if (all[0]?.val !== "git")
+            return [];
+        let k = 1;
+        let config = false;
+        let repo = false;
+        while (all[k]?.val.startsWith("-")) {
+            const opt = defined(all[k]).val;
+            const value = all[k + 1]?.val ?? "";
+            if ((opt === "-c" && /^(push\.default|remote\..*\.push)=/i.test(value)) ||
+                opt.startsWith("--config-env"))
+                config = true;
+            if (/^--(git-dir|work-tree)\b/.test(opt))
+                repo = true;
+            k += GIT_VALUE.has(opt) ? 2 : 1;
         }
-        const args = vals.slice(2);
-        const lease = args.some((a) => a === "--force-with-lease" || a.startsWith("--force-with-lease="));
-        const refs = args.filter((a) => !a.startsWith("-")).length;
-        return vals[0] === "git" && vals[1] === "push" && lease && refs <= 1
-            ? [remote ? REMOTE_DIR : dir]
-            : [];
+        if (all[k]?.val !== "push")
+            return [];
+        const args = all.slice(k + 1);
+        if (!args.some((a) => isLease(a.val)))
+            return [];
+        const positional = [];
+        for (let n = 0; n < args.length; n++) {
+            const a = defined(args[n]).val;
+            if (a.startsWith("-"))
+                n += PUSH_VALUE.has(a) ? 1 : 0;
+            else
+                positional.push(defined(args[n]));
+        }
+        const bare = positional.length <= 1 ||
+            (positional.length === 2 && currentBranchRef(defined(positional[1])));
+        const envPrefix = (re) => words.some((w) => re.test(w.val));
+        if (envPrefix(/^GIT_CONFIG_(COUNT|PARAMETERS)=/))
+            config = true;
+        if (envPrefix(/^GIT_(DIR|WORK_TREE)=/))
+            repo = true;
+        const everyRef = args.some((a) => isAllRefs(a.val));
+        if (everyRef || config)
+            return [REMOTE_DIR];
+        if (!bare)
+            return [];
+        return [remote || repo ? REMOTE_DIR : dir];
     });
 }
 // Push facts for every bare lease push of a command, in parallel: { [dir]: { branch, upstream, head } }. A call that
@@ -1118,7 +1175,7 @@ export async function pushFacts(command, rules, run, env = {}) {
     });
     const facts = await Promise.all(dirs.map(async (dir) => {
         const [branch, upstream, head] = await Promise.all([
-            read(dir, "rev-parse", "--abbrev-ref", "HEAD"),
+            read(dir, "rev-parse", "--abbrev-ref", "HEAD").then((b) => b?.replace(/^heads\//, "") ?? null),
             read(dir, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"),
             read(dir, "symbolic-ref", "--short", "refs/remotes/origin/HEAD"),
         ]);

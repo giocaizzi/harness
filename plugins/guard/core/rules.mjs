@@ -241,7 +241,7 @@ export const rules = {
             // push naming main or master anywhere is. A bare lease push (no refspec) is not matched here: the engine
             // fires this rule for it when the push facts (current branch, upstream, origin/HEAD) mark the branch main,
             // master or the default branch, or cannot be read.
-            match: "\\bgit\\s+push\\b[^;&|\\n]*(--force(?![\\w-])|\\s-[a-z]*f[a-z]*\\b|\\s\\+[^\\s;&|])|\\bgit\\s+push\\b(?=[^;&|\\n]*--force-with-lease\\b)[^;&|\\n]*[\\s:](?:refs/heads/)?(main|master)(?=[\\s;&|)]|$)",
+            match: "\\bgit\\s+push\\b[^;&|\\n]*(--force(?![\\w-])|\\s-[a-z]*f[a-z]*\\b|\\s\\+[^\\s;&|])|\\bgit\\s+push\\b(?=[^;&|\\n]*--force-w(?:i(?:t(?:h(?:-(?:l(?:e(?:a(?:s(?:e)?)?)?)?)?)?)?)?)?(?![\\w-]))[^;&|\\n]*[\\s:](?:refs/heads/)?(main|master)(?=[\\s;&|)]|$)",
             why: "rewrites remote history",
             prefixes: [
                 ["git", "push", "--force"],

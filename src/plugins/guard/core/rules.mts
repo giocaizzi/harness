@@ -256,7 +256,7 @@ export const rules: GuardRules = {
       // fires this rule for it when the push facts (current branch, upstream, origin/HEAD) mark the branch main,
       // master or the default branch, or cannot be read.
       match:
-        "\\bgit\\s+push\\b[^;&|\\n]*(--force(?![\\w-])|\\s-[a-z]*f[a-z]*\\b|\\s\\+[^\\s;&|])|\\bgit\\s+push\\b(?=[^;&|\\n]*--force-with-lease\\b)[^;&|\\n]*[\\s:](?:refs/heads/)?(main|master)(?=[\\s;&|)]|$)",
+        "\\bgit\\s+push\\b[^;&|\\n]*(--force(?![\\w-])|\\s-[a-z]*f[a-z]*\\b|\\s\\+[^\\s;&|])|\\bgit\\s+push\\b(?=[^;&|\\n]*--force-w(?:i(?:t(?:h(?:-(?:l(?:e(?:a(?:s(?:e)?)?)?)?)?)?)?)?)?(?![\\w-]))[^;&|\\n]*[\\s:](?:refs/heads/)?(main|master)(?=[\\s;&|)]|$)",
       why: "rewrites remote history",
       prefixes: [
         ["git", "push", "--force"],

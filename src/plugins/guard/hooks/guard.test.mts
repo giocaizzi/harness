@@ -530,7 +530,11 @@ void test("a push lookup that times out yields no facts and the bare lease push 
       : null;
   };
   const slow = async (): Promise<string | null> =>
-    new Promise((resolve) => setTimeout(() => resolve("feat/x\n"), 2000));
+    new Promise((resolve) => {
+      setTimeout(() => {
+        resolve("feat/x\n");
+      }, 2000);
+    });
   const ask = async (r: typeof run) =>
     decision(
       await setup({ run: r, factsMs: 50 })({

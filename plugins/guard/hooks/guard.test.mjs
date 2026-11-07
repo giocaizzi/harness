@@ -333,6 +333,25 @@ void test("a bare lease push asks from main and when the branch cannot be read, 
     assert.equal(await ask("git push --force-with-lease", "feat/x"), undefined);
     assert.equal(await ask("git push --force-with-lease origin feat/x", null), undefined);
 });
+void test("a push lookup that times out yields no facts and the bare lease push asks (G17 review)", async () => {
+    const run = async (argv) => {
+        await Promise.resolve();
+        return argv.includes("--abbrev-ref") && argv.includes("HEAD")
+            ? "feat/x\n"
+            : null;
+    };
+    const slow = async () => new Promise((resolve) => {
+        setTimeout(() => {
+            resolve("feat/x\n");
+        }, 2000);
+    });
+    const ask = async (r) => decision(await setup({ run: r, factsMs: 50 })({
+        ...pre("Bash", "git push --force-with-lease"),
+        cwd: "/r",
+    }))?.permissionDecision;
+    assert.equal(await ask(run), undefined);
+    assert.equal(await ask(slow), "ask");
+});
 void test("a branch ref deleted through gh api passes once a merged PR holds its tip, looked up where the command cds (G23)", async () => {
     const calls = [];
     const run = async (argv, cwd) => {

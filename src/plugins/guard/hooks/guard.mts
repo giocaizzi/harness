@@ -697,7 +697,7 @@ async function onShell(
     }
 
     // A bare lease push is no risky match by itself: its facts are gathered for it, and none (timeout) asks.
-    if (command.includes("--force-with-lease")) {
+    if (command.includes("--force-w")) {
       facts.pushes =
         (await within(
           pushFacts(command, rules, inCwd, facts.env),
