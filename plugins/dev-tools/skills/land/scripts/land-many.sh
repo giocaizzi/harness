@@ -11,10 +11,15 @@
 # check, never counted as a gh failure. A PR in a stack, which gh refuses with `part of a stack`, goes through the
 # asynchronous merge REST API instead (PUT pulls/<n>/merge-async with the head sha: merge_queue with a queue, else
 # default with squash), which lands the stack up to that PR atomically; the refusal is never a gh failure, and the
-# request is polled until merged, enqueued or failed. Nothing is bypassed. One line per PR, as soon as it ends:
+# request is polled until merged, enqueued or failed. A merge-async `failed` naming a required check that is `in
+# progress` or `expected` is not an end: the request is made again on a later poll. A PR based on another branch
+# whose REST object carries a non-null `stack` is a layer of a native stack: one merge-async request goes to the top
+# layer (the highest `position` among the open PRs of that stack, sha of its head, merge_queue when the default
+# branch has a merge queue rule), which lands every layer; the other layers of that stack in the batch wait for it,
+# and the server gates the checks. Nothing is bypassed. One line per PR, as soon as it ends:
 #   PR <n>: MERGED <sha> | CLOSED | DIRTY | BEHIND | STACKED <base> | FAILED <why> | ERROR <gh error> | TIMEOUT <state>
 # DIRTY is a conflict; BEHIND (only without a queue) needs the base merged in; STACKED is a PR based on another
-# branch than the default one (land it with `gh stack merge`, or retarget it as `land` step 3 says); ERROR is gh
+# branch than the default one and outside a native stack (retarget it as `land` step 3 says); ERROR is gh
 # failing 3 polls in a row; TIMEOUT names what it waited on (pending required checks, running workflows, gh's
 # refusal, a merge-async request still pending). A cancelled run superseded by a newer, non-skipped run of the same
 # check (name, workflow, event) is ignored, and a cancelled newest run waits while its workflow still runs on the head, then fails. Exits 0 when every PR merged, 1 otherwise, 2 on usage. Needs gh and jq.
@@ -98,9 +103,9 @@ verdict() {
 }
 
 n=${#prs[@]} left=$n status=0
-done_=() enq=() fails=() armed=() last=() stacked=() uuid=()
-for ((i = 0; i < n; i++)); do done_[i]=0 enq[i]=0 fails[i]=0 armed[i]=0 last[i]='unknown' stacked[i]=0 uuid[i]=-; done
-finish() { echo "PR ${prs[$1]}: $2"; done_[$1]=1 left=$((left - 1)); case $2 in MERGED*) ;; *) status=1 ;; esac; }
+done_=() enq=() fails=() armed=() last=() stacked=() uuid=() tgt=() res=()
+for ((i = 0; i < n; i++)); do done_[i]=0 enq[i]=0 fails[i]=0 armed[i]=0 last[i]='unknown' stacked[i]=0 uuid[i]=- tgt[i]=${prs[i]} res[i]=; done
+finish() { echo "PR ${prs[$1]}: $2"; res[$1]=$2 done_[$1]=1 left=$((left - 1)); case $2 in MERGED*) ;; *) status=1 ;; esac; }
 # expected <i>: true when gh refused because a required check is not reported yet; the PR then waits like a pending one.
 expected() {
   grep -q 'Required status check .* is expected' "$tmp/err" || return 1
@@ -122,19 +127,39 @@ async_result() {
     pending) uuid[$1]=$u last[$1]="$state $merge, merge-async pending $u" ;;
     enqueued) uuid[$1]=- enq[$1]=$((enq[$1] + 1)) last[$1]="$state $merge, queued through merge-async" ;;
     merged) finish "$1" "MERGED $c" ;;
-    failed) finish "$1" "FAILED merge-async: $m" ;;
+    failed)
+      # A required check still running or not reported yet is a wait, not an end: request again on a later poll.
+      if printf '%s' "$m" | grep -Eq 'Required status check .* is (in progress|expected)'; then
+        uuid[$1]=- armed[$1]=0 last[$1]="$state $merge, waiting: $m"
+      else finish "$1" "FAILED merge-async: $m"; fi ;;
     *) [ -s "$tmp/err" ] || echo "merge-async: unexpected reply $(head -c 200 "$tmp/async")" >"$tmp/err"; strike "$1"; return ;;
   esac
   fails[$1]=0
 }
-# merge_async <i>: request the asynchronous merge of that PR's head (enqueue with a queue, else the default action).
+# merge_async <i> [<pr> <sha> <queue>]: request the asynchronous merge of that PR's head (enqueue with a queue, else
+# the default action); a stack layer passes its top layer's number, head and the default branch's queue flag instead.
 merge_async() {
+  local pr=${2:-${prs[$1]}} sha=${3:-$head} q=${4:-$queue}
   local action=(-f merge_action=merge_queue)
-  [ "$queue" = true ] || action=(-f merge_action=default -f merge_method=squash)
-  stacked[$1]=1 armed[$1]=async
-  gh api -X PUT "repos/$repo/pulls/${prs[$1]}/merge-async" -H "X-GitHub-Api-Version: $api_version" \
-    "${action[@]}" -f sha="$head" >"$tmp/async" 2>"$tmp/err"
+  [ "$q" = true ] || action=(-f merge_action=default -f merge_method=squash)
+  stacked[$1]=1 armed[$1]=async tgt[$1]=$pr
+  gh api -X PUT "repos/$repo/pulls/$pr/merge-async" -H "X-GitHub-Api-Version: $api_version" \
+    "${action[@]}" -f sha="$sha" >"$tmp/async" 2>"$tmp/err"
   async_result "$1"
+}
+# stack_top <pr>: for a PR whose REST object has a non-null `stack`, prints "<top number> <top head sha>" (the highest
+# position among the open PRs of that stack); returns 1 when the PR is in no stack, 2 when gh failed.
+stack_top() {
+  local s
+  s=$(gh api "repos/$repo/pulls/$1" --jq '.stack | if . == null then "-" else .number end' 2>"$tmp/err") || return 2
+  [ "$s" != - ] || return 1
+  gh api "repos/$repo/pulls?state=open&per_page=100" --paginate \
+    --jq ".[] | select(.stack.number == $s) | [.stack.position, .number, .head.sha] | @tsv" >"$tmp/layers" 2>"$tmp/err" || return 2
+  sort -k1,1nr "$tmp/layers" | head -n 1 | cut -f2,3 | grep . || { echo "stack $s lists no open layer" >"$tmp/err"; return 2; }
+}
+# default_queue: true when the default branch has a merge queue rule (a layer's own base is a branch without one).
+default_queue() {
+  gh api "repos/$repo/rules/branches/$default" --jq 'any(.[]; .type == "merge_queue")' 2>"$tmp/err"
 }
 deadline=$(($(date +%s) + timeout))
 while :; do
@@ -151,10 +176,32 @@ while :; do
     esac
     # A merge-async request still pending: poll it until it ends.
     if [ "${uuid[i]}" != - ]; then
-      gh api "repos/$repo/pulls/$pr/merge-async/${uuid[i]}" -H "X-GitHub-Api-Version: $api_version" >"$tmp/async" 2>"$tmp/err"
+      gh api "repos/$repo/pulls/${tgt[i]}/merge-async/${uuid[i]}" -H "X-GitHub-Api-Version: $api_version" >"$tmp/async" 2>"$tmp/err"
       async_result "$i"; continue
     fi
-    [ "$base" = "$default" ] || { finish "$i" "STACKED on $base: land it with gh stack merge, or retarget it (land step 3)"; continue; }
+    if [ "$base" != "$default" ]; then
+      # A layer of a native stack: one merge-async request on the top layer lands the whole stack.
+      top=$(stack_top "$pr"); rc=$?
+      [ "$rc" != 1 ] || { finish "$i" "STACKED on $base: retarget it (land step 3)"; continue; }
+      [ "$rc" = 0 ] || { strike "$i"; continue; }
+      IFS=$'\t' read -r top_pr top_head <<<"$top"
+      if [ "$top_pr" != "$pr" ]; then
+        j=-; for ((k = 0; k < n; k++)); do [ "${prs[k]}" != "$top_pr" ] || j=$k; done
+        if [ "$j" != - ]; then
+          # The top layer's own request covers this one.
+          case ${res[j]} in
+            '') ;;
+            MERGED*) ;;
+            *) finish "$i" "FAILED its stack's top layer $top_pr ended first (${res[j]})"; continue ;;
+          esac
+          last[i]="$state $merge, covered by the merge of stack layer $top_pr"; fails[i]=0; continue
+        fi
+      fi
+      [ "$queued" = false ] || { fails[i]=0; continue; }
+      if [ "${enq[i]}" -gt "$requeues" ]; then finish "$i" "FAILED left the merge queue ${enq[i]} times (read its merge_group run)"; continue; fi
+      sq=$(default_queue) || { strike "$i"; continue; }
+      merge_async "$i" "$top_pr" "$top_head" "$sq"; continue
+    fi
     [ "$merge" != DIRTY ] || { finish "$i" "DIRTY"; continue; }
     [ "$merge" != BEHIND ] || [ "$queue" = true ] || { finish "$i" "BEHIND"; continue; }
     req=$(required "$base") || { strike "$i"; continue; }
