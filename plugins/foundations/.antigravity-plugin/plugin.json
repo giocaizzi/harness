@@ -1,7 +1,7 @@
 {
   "$schema": "https://antigravity.google/schemas/v1/plugin.json",
   "name": "foundations",
-  "version": "0.0.0",
+  "version": "1.0.0",
   "description": "Language-neutral design and practice: domain-driven design, system design, architecture fitness tests, API design, design patterns; plus the api-reviewer agent",
   "author": {
     "name": "giocaizzi",
