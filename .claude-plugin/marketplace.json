@@ -38,6 +38,20 @@
       ]
     },
     {
+      "name": "infra",
+      "source": "./plugins/infra",
+      "description": "Infrastructure as code and containers: Terraform and OpenTofu, Docker images, Kubernetes manifests, Helm and operators",
+      "version": "1.0.0",
+      "keywords": [
+        "infrastructure",
+        "terraform",
+        "opentofu",
+        "docker",
+        "kubernetes",
+        "helm"
+      ]
+    },
+    {
       "name": "javascript",
       "source": "./plugins/javascript",
       "description": "JavaScript, TypeScript, React and Next.js development",

@@ -22,6 +22,7 @@ Works with [Claude Code](https://code.claude.com/), [GitHub Copilot CLI](https:/
 | Plugin | Description |
 |---|---|
 | [`foundations`](plugins/foundations/README.md) | Language-neutral design and practice: DDD, system design, architecture fitness, API design, design patterns; plus the `api-reviewer` agent. |
+| [`infra`](plugins/infra/README.md) | Infrastructure as code and containers: Terraform and OpenTofu, Docker, Kubernetes, Helm and operators. |
 | [`python`](plugins/python/README.md) | Python development and testing best practices, FastAPI, SQLAlchemy. |
 | [`go`](plugins/go/README.md) | Go development and testing best practices. |
 | [`javascript`](plugins/javascript/README.md) | JavaScript/TypeScript, React, Next.js. |
