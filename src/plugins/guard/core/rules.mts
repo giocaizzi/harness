@@ -96,7 +96,7 @@ export const rules: GuardRules = {
       id: "terraform-local",
       remind: true,
       match:
-        "(?:^|[;&|(\\n]\\s*)(?:(?:uv\\s+run|uvx|npx|pnpm\\s+(?:exec|dlx)|bunx|go\\s+(?:tool|run))\\s+(?:\\S+@\\S+\\s+)?)?(?:terraform|tofu)(?:\\s+-{1,2}[\\w-]+(?:=\\S+)?)*\\s+(?:fmt|validate|plan|init|test|state|import|force-unlock)\\b",
+        "(?:^|[;&|(\\n]\\s*)(?:(?:uv\\s+run|uvx|npx|pnpm\\s+(?:exec|dlx)|bunx|go\\s+(?:tool|run))\\s+(?:\\S+@\\S+\\s+)?)?(?:terraform|tofu)(?:\\s+--?\\w[\\w-]*(?:=\\S+)?)*\\s+(?:fmt|validate|plan|init|test|state|import|force-unlock)\\b",
       skills: ["terraform"],
       why: "Terraform follows the house plan/apply and state rules (infra plugin)",
     },
@@ -112,7 +112,7 @@ export const rules: GuardRules = {
       id: "k8s-local",
       remind: true,
       match:
-        "(?:^|[;&|(\\n]\\s*)(?:(?:uv\\s+run|uvx|npx|pnpm\\s+(?:exec|dlx)|bunx|go\\s+(?:tool|run))\\s+(?:\\S+@\\S+\\s+)?)?(?:helm\\s+(?:lint|template|package|install|upgrade)|kustomize\\s+build|kubeconform|kind\\s+create|kubectl(?:\\s+-{1,2}[\\w-]+(?:[=\\s]\\S+)?)*\\s+(?:apply|diff|rollout))\\b",
+        "(?:^|[;&|(\\n]\\s*)(?:(?:uv\\s+run|uvx|npx|pnpm\\s+(?:exec|dlx)|bunx|go\\s+(?:tool|run))\\s+(?:\\S+@\\S+\\s+)?)?(?:helm\\s+(?:lint|template|package|install|upgrade)|kustomize\\s+build|kubeconform|kind\\s+create|kubectl(?:\\s+--?\\w[\\w-]*(?:=\\S+|\\s+[^-\\s]\\S*)?)*\\s+(?:apply|diff|rollout))\\b",
       skills: ["kubernetes"],
       why: "manifests and charts follow the house Kubernetes rules (infra plugin)",
     },

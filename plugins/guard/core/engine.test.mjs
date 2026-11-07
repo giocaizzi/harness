@@ -1204,6 +1204,29 @@ void test("infra commands remind once, never deny, and stay quiet with the skill
         assert.equal(evaluateCommand({ command, state: fresh(), host: calm, rules }).rule, undefined, command);
     }
 });
+void test("long flag runs in infra commands do not backtrack", () => {
+    const flags = Array.from({ length: 30 }, (_, i) => `--f${String(i)}`).join(" ");
+    const cases = [
+        [`terraform ${flags} plan`, "terraform-local"],
+        [`terraform ${flags} apply`, "terraform"],
+        [`terraform ${flags} nope`, undefined],
+        [`kubectl ${flags} rollout status x`, "k8s-local"],
+        [`kubectl ${flags} delete pod x`, "k8s"],
+        [`kubectl ${flags} get pods`, undefined],
+        [`kubectl ${"-n a ".repeat(30)}x y`, undefined],
+    ];
+    for (const [command, rule] of cases) {
+        const start = performance.now();
+        const result = evaluateCommand({
+            command,
+            state: fresh(),
+            host: calm,
+            rules,
+        });
+        assert.ok(performance.now() - start < 100, command);
+        assert.equal(result.rule, rule, command);
+    }
+});
 void test("the infra risk rules still win over the infra reminders", () => {
     const cases = [
         ["terraform apply", "terraform"],
