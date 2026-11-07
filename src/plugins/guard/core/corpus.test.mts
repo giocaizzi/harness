@@ -12,6 +12,7 @@ import type {
 // options: { python: 'uv' } the repo's Python manager; { hints: true } the read and edit hints not yet shown;
 // { read: false } the command must not get the plain-read allow (`pureRead`), so the harness's own prompt decides.
 // { run: 'registered' | 'configured' | 'unsure' | 'protected' } a registered unattended run: example labels and protected paths, other label names (for 'configured'), a registration that requires labels but names none, or one protecting only a label.
+// { branch: 'main' } the current branch the fake git reports for a bare lease push (default 'feat/x'; null: unreadable).
 // { stack: <facts> } the stacked-PR facts `stackFacts` gathered: { below: { number, branch }, base }, or {} for none.
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -20,6 +21,7 @@ import {
   branchFacts,
   evaluateCommand,
   pureRead,
+  pushFacts,
   refFacts,
   regenFacts,
   worktreeFacts,
@@ -94,17 +96,26 @@ const RUN: Record<
 const decide = async (
   command: string,
   {
+    branch = "feat/x",
     python = null,
     hints = false,
     run: runOption = null,
     stack = null,
   }: CorpusOptions = {},
 ) => {
-  const [worktrees, branches, regenerable, refs] = await Promise.all([
+  // The current branch the fake git reports for a bare lease push (`branch`, a feature branch unless a row says so).
+  const pushRun = (argv: string[]) =>
+    argv.includes("--abbrev-ref") && argv.includes("HEAD")
+      ? branch === null
+        ? null
+        : `${branch}\n`
+      : run(argv);
+  const [worktrees, branches, regenerable, refs, pushes] = await Promise.all([
     worktreeFacts(command, env, rules, run),
     branchFacts(command, rules, run, env),
     regenFacts(command, env, rules, run),
     refFacts(command, rules, run, env),
+    pushFacts(command, rules, pushRun, env),
   ]);
   const state = { reminded: new Set(hints ? [] : ["read", "edit"]) };
   const d = evaluateCommand({
@@ -114,6 +125,7 @@ const decide = async (
     env,
     worktrees,
     branches,
+    pushes,
     regenerable,
     refs,
     python,
@@ -168,6 +180,9 @@ function isStack(value: unknown): value is StackFact {
 function isOptions(value: unknown): value is CorpusOptions {
   return (
     isRecord(value) &&
+    (value.branch === undefined ||
+      value.branch === null ||
+      typeof value.branch === "string") &&
     (value.python === undefined ||
       value.python === null ||
       typeof value.python === "string") &&

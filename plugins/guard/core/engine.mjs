@@ -1083,6 +1083,193 @@ export async function branchFacts(command, rules, run, env = {}) {
         facts[i],
     ]));
 }
+// `--force-with-lease` or any unique abbreviation git accepts (`--force-w`), with or without `=value`.
+const isLease = (a) => {
+    const name = a.split("=")[0] ?? "";
+    return name.length >= 9 && "--force-with-lease".startsWith(name);
+};
+// Push options a lease push may carry and still pass without facts, spelled exactly (git accepts abbreviations and
+// short clusters, which this list does not): anything else asks.
+const SAFE_PUSH_OPTS = new Set([
+    "-u",
+    "--set-upstream",
+    "-q",
+    "--quiet",
+    "-v",
+    "--verbose",
+    "--no-verify",
+    "--verify",
+    "--atomic",
+    "--porcelain",
+    "--progress",
+    "--no-progress",
+    "-n",
+    "--dry-run",
+    "--follow-tags",
+    "--force-if-includes",
+]);
+const STATIC_REF = /^[A-Za-z0-9._/-]+(:[A-Za-z0-9._/-]+)?$/;
+const PROTECTED_DST = new Set(["main", "master", "HEAD", "@"]);
+// A word that is the same whatever the shell does with it.
+const isStatic = (w) => w.substs.length === 0 && !/[$`]/.test(w.raw);
+// What a lease push step needs: "feature" (passes), "current" (the branch git pushes decides) or "ask". An allow-list,
+// failing closed: only the forms below are understood, and every other one asks.
+function leaseKind(all, k) {
+    const args = all.slice(k + 1);
+    const options = args.filter((a) => a.val.startsWith("-"));
+    if (!options.every((o) => SAFE_PUSH_OPTS.has(o.val) || isLease(o.val)) ||
+        options.some((o) => o.val === "--" || o.val === "-"))
+        return "ask";
+    const positional = args.filter((a) => !a.val.startsWith("-"));
+    const [remote, ...refs] = positional;
+    if (remote && (!isStatic(remote) || !/^[A-Za-z0-9._-]+$/.test(remote.val)))
+        return "ask";
+    let current = refs.length === 0;
+    for (const ref of refs) {
+        if (!isStatic(ref))
+            return "ask";
+        // `head` is HEAD on a case-insensitive filesystem
+        if (/^(?:head|@)$/i.test(ref.val)) {
+            current = true;
+            continue;
+        }
+        if (!STATIC_REF.test(ref.val))
+            return "ask";
+        const [src = "", dst] = ref.val.split(":");
+        const name = (dst ?? src).replace(/^(?:refs\/)?heads\//, "");
+        if (PROTECTED_DST.has(name))
+            return "ask";
+    }
+    return current ? "current" : "feature";
+}
+// A git step's subcommand and whether its global options are plain (only `-C <static dir>`, `--no-pager`, `-P`).
+function gitStep(all) {
+    let k = 1;
+    let plain = true;
+    while (all[k]?.val.startsWith("-")) {
+        const opt = defined(all[k]).val;
+        if (opt === "-C" && all[k + 1] && isStatic(defined(all[k + 1])))
+            k += 2;
+        else {
+            if (opt !== "--no-pager" && opt !== "-P")
+                plain = false;
+            k += GIT_VALUE.has(opt) ? 2 : 1;
+        }
+    }
+    return { k, plain, sub: all[k]?.val };
+}
+// A step before a lease push in the same command runs after the facts were read, so one that can move HEAD or change
+// the push config makes them stale. Only these cannot (an allow-list; every other step, a non-git one too, counts):
+// fetch, status, log, diff, add, commit, `pull` or `pull --ff-only`, and `rebase <one static upstream>`.
+const READ_ONLY_GIT = new Set([
+    "fetch",
+    "status",
+    "log",
+    "diff",
+    "add",
+    "commit",
+]);
+function movesHead(all) {
+    if (all.length === 0)
+        return false;
+    if (all[0]?.val !== "git")
+        return true;
+    const { k, plain, sub } = gitStep(all);
+    if (!plain || sub === undefined)
+        return true;
+    if (READ_ONLY_GIT.has(sub))
+        return false;
+    const rest = all.slice(k + 1);
+    if (sub === "pull")
+        return !(rest.length === 0 ||
+            (rest.length === 1 && rest[0]?.val === "--ff-only"));
+    if (sub === "rebase") {
+        const one = rest[0];
+        return !(rest.length === 1 &&
+            one &&
+            isStatic(one) &&
+            !one.val.startsWith("-"));
+    }
+    return true;
+}
+function changesConfig(all) {
+    if (all[0]?.val !== "git")
+        return false;
+    const sub = gitStep(all).sub;
+    return sub === "config" || sub === "symbolic-ref";
+}
+// Every `git push --force-with-lease` step of a command with what it needs, as the facts to read are keyed: a push that
+// leaseKind calls "current" (no refspec, or HEAD, head or @) has its step's dir, or REMOTE_DIR on another host or in a
+// container; one it calls "ask" has REMOTE_DIR, where no fact is gathered, so it asks; a "feature" push has none.
+// git's global options other than `-C <static dir>`, `--no-pager` and `-P`, and any GIT_* variable, HOME or
+// XDG_CONFIG_HOME assigned anywhere in the command (they change what git pushes) make a push ask. So does an earlier
+// step that is `git config` or `git symbolic-ref` (any lease push), or one that movesHead (a "current" push, "stale").
+function leaseSteps(command, rules, env = {}) {
+    if (!rules.risky.some((r) => r.id === "force"))
+        return [];
+    const envSet = /(?<![A-Za-z0-9_])(?:GIT_[A-Za-z0-9_]*|HOME|XDG_CONFIG_HOME)=/.test(command);
+    const steps = segments(command, env);
+    return steps.flatMap(({ words, dir, remote }, i) => {
+        const all = commandWords(words);
+        if (all[0]?.val !== "git")
+            return [];
+        const { k, plain, sub } = gitStep(all);
+        if (sub !== "push")
+            return [];
+        if (!all.slice(k + 1).some((a) => isLease(a.val)))
+            return [];
+        let kind = plain && !envSet ? leaseKind(all, k) : "ask";
+        const before = steps.slice(0, i).map((s) => commandWords(s.words));
+        if (before.some(changesConfig))
+            kind = "ask";
+        if (kind === "current" && before.some(movesHead))
+            kind = "stale";
+        const target = kind === "ask" || kind === "stale"
+            ? REMOTE_DIR
+            : kind === "feature"
+                ? undefined
+                : remote
+                    ? REMOTE_DIR
+                    : dir;
+        return [{ kind, target }];
+    });
+}
+function leaseTargets(command, rules, env = {}) {
+    return leaseSteps(command, rules, env).flatMap((s) => s.target === undefined ? [] : [s.target]);
+}
+// True when a lease push of the command pushes the current branch, whatever else makes it ask.
+const leaseCurrent = (command, rules, env = {}) => leaseSteps(command, rules, env).some((s) => s.kind === "current" || s.kind === "stale");
+// Push facts for every bare lease push of a command, in parallel: { [dir]: { branch, upstream, head } }. A call that
+// fails or prints nothing leaves that field null.
+export async function pushFacts(command, rules, run, env = {}) {
+    const dirs = [...new Set(leaseTargets(command, rules, env))].filter((d) => d !== REMOTE_DIR && PLAIN_PATH.test(d || "."));
+    const read = (dir, ...args) => Promise.resolve()
+        .then(() => run(["git", "-C", dir || ".", ...args]))
+        .catch(() => null)
+        .then((out) => {
+        const text = out?.trim() ?? "";
+        return text === "" ? null : text;
+    });
+    const facts = await Promise.all(dirs.map(async (dir) => {
+        const [branch, upstream, head] = await Promise.all([
+            read(dir, "rev-parse", "--abbrev-ref", "HEAD").then((b) => b?.replace(/^heads\//, "") ?? null),
+            read(dir, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"),
+            read(dir, "symbolic-ref", "--short", "refs/remotes/origin/HEAD"),
+        ]);
+        return { branch, upstream, head };
+    }));
+    return Object.fromEntries(dirs.map((d, i) => [d, facts[i]]));
+}
+// A bare lease push is protected when it cannot be shown to leave main, master and the default branch alone: no
+// facts, a detached or unreadable current branch, or the current branch or its upstream is one of them. A missing
+// upstream or origin/HEAD is normal (a new branch, a clone without it) and does not count.
+const stripRemote = (ref) => ref.replace(/^[^/]+\//, "");
+function leaseProtected(fact) {
+    if (!fact?.branch || fact.branch === "HEAD")
+        return true;
+    const def = fact.head ? stripRemote(fact.head) : null;
+    return [fact.branch, fact.upstream ? stripRemote(fact.upstream) : null].some((n) => n !== null && (n === "main" || n === "master" || n === def));
+}
 // Build output and caches a tool regenerates. A delete of one passes when git ignores it (`git check-ignore`, so it
 // is inside a repo and untracked): nothing there is lost that a build or install cannot make again. `results` only
 // under `evals/` (`claude plugin eval` output). No glob, no secret-looking segment, ever.
@@ -1210,6 +1397,8 @@ function summary(command, rule, step, rules, env) {
     }
     if (rule.id === "force") {
         const args = plainArgs(/\bpush\b(.*)$/.exec(gitPlain(step.raw))?.[1] ?? "");
+        if (leaseCurrent(step.raw, rules, env))
+            return "Lease-pushes the current branch, which is main, master, the default branch, could not be read or may be changed by an earlier step";
         return `Force-pushes${args.length ? ` ${args.join(" ")}` : " the current branch"}`;
     }
     return rule.say ?? defined(rule.why[0]).toUpperCase() + rule.why.slice(1);
@@ -2255,8 +2444,9 @@ function changesLabels(command) {
     return !args || ghAction(args) !== "read";
 }
 // `readTool`: the harness has a file-read tool (all but Codex), so a shell read gets a once-per-session hint.
-// `worktrees`, `branches`, `regenerable`: facts the adapters gather (worktreeFacts, branchFacts, regenFacts).
-export function evaluateCommand({ command, loadedSkills = new Set(), state, host = {}, env = {}, worktrees = {}, branches = {}, regenerable = {}, refs = {}, tags = {}, stack = null, python = null, readTool = false, run = null, rules, }) {
+// `worktrees`, `branches`, `pushes`, `regenerable`: facts the adapters gather (worktreeFacts, branchFacts, pushFacts,
+// regenFacts).
+export function evaluateCommand({ command, loadedSkills = new Set(), state, host = {}, env = {}, worktrees = {}, branches = {}, pushes = {}, regenerable = {}, refs = {}, tags = {}, stack = null, python = null, readTool = false, run = null, rules, }) {
     // In a registered unattended run the agent never touches the approval label: with an owner token it would count as the owner's.
     const labelDeny = (name) => ({
         action: "deny",
@@ -2333,7 +2523,10 @@ export function evaluateCommand({ command, loadedSkills = new Set(), state, host
             : []),
         ...(safeRefDelete(command, rules, refs, env) ? ["gh-delete"] : []),
     ]);
-    const risky = rules.risky.find((r) => riskyMatch(r, command) && !exempt.has(r.id));
+    // A bare lease push is the `force` rule's when its branch is protected or unreadable (pushFacts).
+    const leaseHit = leaseTargets(command, rules, env).some((d) => leaseProtected(pushes[d]));
+    const risky = rules.risky.find((r) => riskyMatch(r, command) && !exempt.has(r.id)) ??
+        (leaseHit ? rules.risky.find((r) => r.id === "force") : undefined);
     if (risky) {
         const why = [
             ...Object.entries(worktrees)

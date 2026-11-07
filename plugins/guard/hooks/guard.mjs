@@ -8,7 +8,7 @@ import { statfs } from "node:fs/promises";
 import { cpus, homedir, loadavg, platform } from "node:os";
 import { dirname, isAbsolute, join, parse, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { analysis, branchFacts, cdDirs, cmdClass, codexRules, deniedBy, deniedDir, evaluateCommand, evaluateEdit, evaluateRouting, hostJudged, isHeavy, isRisky, nativeAsk, previewCommand, protectedPathHit, pureRead, refFacts, regenFacts, stackFacts, stackTargets, tagFacts, tagTargets, unattendedSet, withPreview, worktreeFacts, } from "../core/engine.mjs";
+import { analysis, branchFacts, cdDirs, cmdClass, codexRules, deniedBy, deniedDir, evaluateCommand, evaluateEdit, evaluateRouting, hostJudged, isHeavy, isRisky, nativeAsk, previewCommand, protectedPathHit, pureRead, pushFacts, refFacts, regenFacts, stackFacts, stackTargets, tagFacts, tagTargets, unattendedSet, withPreview, worktreeFacts, } from "../core/engine.mjs";
 import { cpuPercentFrom, hostCaps } from "../core/host.mjs";
 import { emit } from "../core/otel.mjs";
 import { sessionAttrs } from "../core/registration.mjs";
@@ -325,6 +325,8 @@ const preToolUse = (decision, reason, harness) => {
         }),
     };
 };
+// Risky for the crash fallback: also a lease push, which is risky only through facts the crashed engine did not judge.
+export const crashRisky = (command, rules) => isRisky(command, rules) || command.includes("--force-w");
 // The answer when guard itself crashed: a PreToolUse in a run is denied (a crash must not let a tool call through), in
 // every mode; the manifest variable counts as set when defined, even blank, as the loader reads it. Anything else is
 // allowed.
@@ -428,6 +430,11 @@ async function onShell(input, state, deps, ctx) {
         envObj.dirs = existingDirs(command, envObj, input.cwd);
         const facts = { env: envObj };
         const inCwd = (argv, cwd, ms) => (deps.run ?? run)(argv, cwd == null ? input.cwd : resolve(input.cwd ?? ".", cwd), ms);
+        // A bare lease push is no risky match by itself: its facts are gathered for it, and none (timeout) asks. Started
+        // with the risky lookups so both share one budget, keeping the hook under its timeout.
+        const pushing = command.includes("--force-w")
+            ? within(pushFacts(command, rules, inCwd, facts.env), deps.factsMs ?? FACTS_MS, null)
+            : null;
         if (isRisky(command, rules)) {
             const gathered = await within(Promise.all([
                 worktreeFacts(command, facts.env, rules, inCwd),
@@ -443,6 +450,8 @@ async function onShell(input, state, deps, ctx) {
                 unfinished = true;
             }
         }
+        if (pushing)
+            facts.pushes = (await pushing) ?? {};
         if (!/^(0|false|off)$/i.test(deps.env?.GUARD_STACK_HINT ?? "") &&
             !state.reminded.includes("stack") &&
             stackTargets(command, rules, facts.env).length) {
@@ -607,7 +616,7 @@ async function onShell(input, state, deps, ctx) {
         const errorObj = err instanceof Error ? err : null;
         // A crash must not let an unattended run's write through: every command is denied there, not only risky ones.
         const strict = ctx.state === "registered" && ctx.mode === "unattended";
-        if (strict || isRisky(command, rules)) {
+        if (strict || crashRisky(command, rules)) {
             appendDecision(deps.env, {
                 decision: "deny",
                 rule: "guard-error",
@@ -623,7 +632,7 @@ async function onShell(input, state, deps, ctx) {
                 cmd_hash: commandHash(command),
             }, input.cwd);
         }
-        return strict || isRisky(command, rules)
+        return strict || crashRisky(command, rules)
             ? preToolUse("deny", `The command guard failed, so this ${strict ? "" : "risky "}command was not run: ${errorObj ? errorObj.message : String(err)}`, deps.harness)
             : {};
     }

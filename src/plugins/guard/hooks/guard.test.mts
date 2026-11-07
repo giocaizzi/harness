@@ -27,6 +27,7 @@ import {
   codexAsks,
   codexReviewer,
   crashResult,
+  crashRisky,
   handle,
   inWorkTree,
   protectFacts,
@@ -493,6 +494,57 @@ void test("a cd followed across ; only when its directory exists (G23 review)", 
     "ask",
     "missing dir: not followed",
   );
+});
+
+void test("a bare lease push asks from main and when the branch cannot be read, and passes from a feature branch", async () => {
+  const branchRun =
+    (branch: string | null) =>
+    async (argv: readonly string[]): Promise<string | null> => {
+      await Promise.resolve();
+      return argv.includes("--abbrev-ref") &&
+        argv.includes("HEAD") &&
+        branch !== null
+        ? `${branch}\n`
+        : null;
+    };
+  const ask = async (command: string, branch: string | null) =>
+    decision(
+      await setup({ run: branchRun(branch) })({
+        ...pre("Bash", command),
+        cwd: "/r",
+      }),
+    )?.permissionDecision;
+  assert.equal(await ask("git push --force-with-lease", "main"), "ask");
+  assert.equal(await ask("git push --force-with-lease origin", null), "ask");
+  assert.equal(await ask("git push --force-with-lease", "feat/x"), undefined);
+  assert.equal(
+    await ask("git push --force-with-lease origin feat/x", null),
+    undefined,
+  );
+});
+
+void test("a push lookup that times out yields no facts and the bare lease push asks (G17 review)", async () => {
+  const run = async (argv: readonly string[]): Promise<string | null> => {
+    await Promise.resolve();
+    return argv.includes("--abbrev-ref") && argv.includes("HEAD")
+      ? "feat/x\n"
+      : null;
+  };
+  const slow = async (): Promise<string | null> =>
+    new Promise((resolve) => {
+      setTimeout(() => {
+        resolve("feat/x\n");
+      }, 2000);
+    });
+  const ask = async (r: typeof run) =>
+    decision(
+      await setup({ run: r, factsMs: 50 })({
+        ...pre("Bash", "git push --force-with-lease"),
+        cwd: "/r",
+      }),
+    )?.permissionDecision;
+  assert.equal(await ask(run), undefined);
+  assert.equal(await ask(slow), "ask");
 });
 
 void test("a branch ref deleted through gh api passes once a merged PR holds its tip, looked up where the command cds (G23)", async () => {
@@ -2148,6 +2200,17 @@ void test("a registered run: a `..` in the edit tool's own path applies after th
   // a link that leads somewhere harmless stays allowed
   assert.ok(!denied(await run(edit(`${repo}/ok/../x.md`, repo))));
   assert.ok(!denied(await run(edit(join(repo, "src", "x.md"), repo))));
+});
+
+void test("crashRisky: a lease push counts as risky when the guard crashes (G17 round 5)", () => {
+  for (const c of [
+    "git push --force-with-lease",
+    "git push --force-w origin HEAD",
+    "git push --force origin main",
+  ])
+    assert.equal(crashRisky(c, rules), true, c);
+  for (const c of ["git push origin feat/x", "ls"])
+    assert.equal(crashRisky(c, rules), false, c);
 });
 
 void test("crashResult: a crash denies a tool call in a run, whatever its mode, and allows the rest", () => {
