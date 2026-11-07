@@ -11,7 +11,7 @@ claude plugin marketplace add giocaizzi/harness
 for p in dev-tools guard hud sounds python go javascript; do claude plugin install "$p@giocaizzi-harness"; done
 ```
 
-Skip the language plugins (`python`, `go`, `javascript`) you do not need. `foundations` (language-neutral design and practice skills and `api-reviewer`) is optional: `claude plugin install foundations@giocaizzi-harness`. Then add the status line and the agent-panel rows to `~/.claude/settings.json`:
+Skip the language plugins (`python`, `go`, `javascript`) you do not need. `foundations` (language-neutral design and practice skills and `api-reviewer`) is optional: `claude plugin install foundations@giocaizzi-harness`. `infra` (Terraform, Docker and Kubernetes skills, not tied to a language) is optional too: `claude plugin install infra@giocaizzi-harness`. Then add the status line and the agent-panel rows to `~/.claude/settings.json`:
 
 ```json
 "statusLine": { "type": "command", "command": "node ~/.claude/plugins/marketplaces/giocaizzi-harness/plugins/hud/hooks/statusline.mjs claude" },

@@ -8,7 +8,7 @@ There are four kinds of feature, and you call each one differently:
 
 | Kind | Plugins | How it starts |
 |---|---|---|
-| Skills | `dev-tools`, `python`, `go`, `javascript`, `foundations` | **By itself** when the request matches its description ("open a PR" loads `ship`), or **by you** with its slash command. |
+| Skills | `dev-tools`, `python`, `go`, `javascript`, `foundations`, `infra` | **By itself** when the request matches its description ("open a PR" loads `ship`), or **by you** with its slash command. |
 | Agents | `dev-tools` (`scout`, `worker`, `driver`, `reviewer`, `escalate`), `foundations` (`api-reviewer`) | **By the main session**, which routes to them on its own (judgement work to `driver`, edits to `worker`, lookups to `scout`, review to `reviewer`). Name one to force it ("use scout to ..."). |
 | Hooks | `guard`, `sounds` | **Never called.** They run on their own around tool calls, prompts and turns. |
 | Display | `hud` | **Always on**, plus a few slash commands for panes. |
@@ -84,6 +84,9 @@ These load by themselves when the work touches their subject; call them by name 
 | `foundations` | `architecture-fitness` | keep an architecture honest with fitness functions and dependency checks |
 | `foundations` | `api-design` | design an API contract: resources, errors, versioning, compatibility |
 | `foundations` | `design-patterns` | pick or apply a design pattern when a concrete design problem calls for one |
+| `infra` | `terraform` | write or change Terraform/OpenTofu, modules, state, plan/apply in CI |
+| `infra` | `docker` | write or change a Dockerfile, compose file, image build |
+| `infra` | `kubernetes` | write or change Kubernetes manifests, Helm charts, Kustomize overlays, operators |
 
 ## Agents
 

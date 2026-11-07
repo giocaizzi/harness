@@ -2,13 +2,13 @@
 
 Runbook for every supported harness. What each one gets: [compatibility.md](compatibility.md). The hooks need `node` 22+ on PATH; everything works on macOS, Linux and Windows.
 
-Plugins: `foundations`, `python`, `go`, `javascript`, `dev-tools`, `guard`, `hud`, `sounds` (`hud` does something in Claude Code and pi, its status line also in Copilot CLI, running subagents in opencode; `sounds` in Claude Code, pi, Codex and opencode).
+Plugins: `foundations`, `infra`, `python`, `go`, `javascript`, `dev-tools`, `guard`, `hud`, `sounds` (`hud` does something in Claude Code and pi, its status line also in Copilot CLI, running subagents in opencode; `sounds` in Claude Code, pi, Codex and opencode).
 
 ## Claude Code
 
 ```bash
 claude plugin marketplace add giocaizzi/harness
-claude plugin install dev-tools@giocaizzi-harness   # and foundations, python, go, javascript, guard, hud, sounds
+claude plugin install dev-tools@giocaizzi-harness   # and foundations, infra, python, go, javascript, guard, hud, sounds
 ```
 
 Update: `claude plugin marketplace update giocaizzi-harness`; an installed plugin updates when its version changes. Check: `/plugin` lists them, `/agents` shows `scout`. Old versions stay in the plugin cache: `sweep-stale.sh --plugins` (dev-tools `host-hygiene`) lists them, and keeps any version a session started before the update may still run. It covers every marketplace in the cache; add `--marketplace giocaizzi-harness` to leave other marketplaces' plugins alone. Once every open session ran `/reload-plugins`, `sweep-stale.sh --plugins --marketplace giocaizzi-harness --after-reload --apply` removes this marketplace's old versions.
@@ -32,7 +32,7 @@ Plugins (skills, the guard's hooks and sounds' Stop hook) come from the marketpl
 
 ```bash
 codex plugin marketplace add giocaizzi/harness
-codex plugin add dev-tools@giocaizzi-harness        # and foundations, python, go, javascript, guard, sounds
+codex plugin add dev-tools@giocaizzi-harness        # and foundations, infra, python, go, javascript, guard, sounds
 git clone https://github.com/giocaizzi/harness ~/.local/share/giocaizzi-harness
 make -C ~/.local/share/giocaizzi-harness install HARNESS=codex   # agents -> ~/.codex/agents, guard prompt rules -> ~/.codex/rules ($CODEX_HOME)
 ```
