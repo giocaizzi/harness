@@ -5,13 +5,15 @@ description: "House rules for Go 1.26+ code: errors, context, slog, goroutines a
 
 # Go Development (1.26+)
 
+Baseline: the [Google Go Style Guide](https://google.github.io/styleguide/go/) (guide, decisions, best practices); the rules below add to it or settle what it leaves open, and the lint template enforces it wherever a linter can.
+
 The floor is the oldest supported Go release (two are supported at a time; 1.26 while 1.27 is current). Libraries declare the lowest `go` version whose features they use, never above that floor. Binaries we ship track the latest release: `go 1.27.0` plus `toolchain go1.27.x`, so `GOTOOLCHAIN=auto` and `actions/setup-go` with `go-version-file: go.mod` build with the same compiler everywhere. Bump both with `go get go@1.N.0 toolchain@go1.N.x`.
 
 ## Tooling
 
 - **Tools are module dependencies, not host installs.** Pin them in the repo and run them with `go tool`: `go get -tool golang.org/x/vuln/cmd/govulncheck`, then `go tool govulncheck ./...`. The host needs only `go` (and `goreleaser` for local snapshots). No `go install` of tools, no `tools.go`.
 - **golangci-lint lives in its own modfile** (`golangci-lint.mod`). This is a deliberate deviation: upstream recommends its prebuilt binary and does not recommend `go tool`, but documents this isolated modfile for those who use it anyway. We accept a locally built binary for one pin per repo and no host install; never let its dependencies mix with yours or update them by hand: `go get -tool -modfile=golangci-lint.mod github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.x`. It is the only linter and formatter entry point: `govet`, `staticcheck` (which absorbed gosimple and stylecheck in v2), `gofumpt` and `gci` all run inside it.
-- **Every linter on**, the way Python starts from ruff `ALL`: `linters.default: all`, then `disable` a linter only with the reason inline. Start from [references/golangci.yml](./references/golangci.yml). Silence one finding with `//nolint:<linter> // reason`; `nolintlint` rejects a bare one.
+- **Every linter on**, the way Python starts from ruff `ALL`: `linters.default: all`, then `disable` a linter only with the reason inline. Start from [references/golangci.yml](./references/golangci.yml): its revive rules carry Google's naming, doc-comment, import and error-string decisions. Silence one finding with `//nolint:<linter> // reason`; `nolintlint` rejects a bare one.
 - **Make is the command surface**: `help`, `fmt`, `lint`, `vuln`, `test`, `check` (= `lint` + `test`), `build`. `lint` runs golangci-lint once per target `GOOS`, because files behind `//go:build windows` are invisible to a Linux or macOS run. `vuln` needs the network, so it runs in CI as its own job, not inside `check`.
 - `go fix ./...` (the modernizers since 1.26) runs in `make fmt`: it rewrites code to current idioms (`for range n`, `min`/`max`, `slices`, `strings.Cut`, `wg.Go`). Accept its diff; the `modernize` linter flags what it would change.
 
@@ -21,22 +23,25 @@ Read [references/PROJECT_SETUP.md](./references/PROJECT_SETUP.md) when scaffoldi
 
 - One module per repo. `cmd/<name>/main.go` is thin; everything else is under `internal/`, which the compiler keeps private.
 - No `pkg/`. A library module puts its public API in the root package and its helpers in `internal/`; an application has no public packages at all.
-- Packages are named for what they provide (`supervise`, `runstate`), never `util`, `common`, `models` or `types`.
+- **Package by feature or domain** (`supervise`, `runstate`, `billing`), not by technical layer (`handlers/`, `models/`, `services/`): a change to one feature stays in one package. Never `util`, `common`, `helpers`, `types` (revive `package-naming` rejects them and a top-level `pkg/`).
 
 ## Design
 
-- **No global state.** No package-level `var` other than sentinel errors, no `init()`, no `flag.CommandLine` (test-only flags like `-update` excepted), no `slog.SetDefault` outside `main`. `main` builds the dependencies and calls `run(ctx, args, getenv, stdout, stderr) error`, which tests call directly. Configuration is flags on a `flag.FlagSet` with env fallbacks read through the injected `getenv`.
-- **Interfaces are small and declared by the consumer**, next to the code that needs them; constructors return concrete types. Don't define an interface for a single implementation unless a test needs the seam.
+- **No global state.** No package-level `var` other than sentinel errors and immutable values a `Must` function builds at startup (`regexp.MustCompile`), no `init()`, no `flag.CommandLine` (test-only flags like `-update` excepted), no `slog.SetDefault` outside `main`. `main` builds the dependencies and calls `run(ctx, args, getenv, stdout, stderr) error`, which tests call directly. Configuration is flags on a `flag.FlagSet` with env fallbacks read through the injected `getenv`.
+- **Interfaces are small and declared by the consumer**, next to the code that needs them; constructors return concrete types. Don't define an interface for a single implementation unless a test needs the seam. A second implementation (another storage backend) gets the consumer's interface, not a `*Factory`, a registry or a new package tree.
+- **Name types for what they are, not for a pattern**: no `*Factory`, `*Manager`, `*Helper`, `Abstract*`, `Base*` unless the type really is that pattern. A `New` function is the factory.
+- **Extract on the third duplicate.** Two similar blocks stay inline; the third earns a function, type or generic (`dupl`, and `goconst` at three uses, flag it).
+- **Options**: an option struct (`Config`, passed by value or pointer, zero value means defaults) when most callers set something; variadic functional options (`...Option`) only when most callers set nothing and the options may grow. Never both on one constructor.
 - **Generics remove real duplication** (containers, `iter.Seq` helpers, typed wrappers), not hypothetical future types. Generic methods (1.27) cannot satisfy interface methods.
 - Use the current standard library before a dependency: `slices`, `maps`, `iter` (return `iter.Seq`/`iter.Seq2` for streams instead of callbacks or full slices), `log/slog`, `uuid` (1.27), `encoding/json/v2` in modules on 1.27 (strict UTF-8, no duplicate names, `omitzero`), `os.Root` for every path that comes from outside, `errors.AsType` (1.26).
 - An `http.Client` always has a `Timeout` or a per-request deadline, every request takes a `context`, and every body is closed (`noctx`, `bodyclose` enforce it). Never `http.DefaultClient`.
 
 ## Errors
 
-- Wrap with context at every boundary: `fmt.Errorf("open state %s: %w", dir, err)`, lowercase, no "failed to". `%v` deliberately cuts the chain.
+- Wrap with context at every boundary: `fmt.Errorf("load run %s: %w", id, err)`, lowercase, no "failed to". Add what the callee's error lacks, never repeat it: `*os.PathError` already names the path, `*url.Error` the method and URL. `%v` deliberately cuts the chain.
 - **Sentinel** (`var ErrNotFound = errors.New(...)`) when callers branch on the condition; **typed** (`*ExitError`) when they need data from it, always returned and matched as a pointer; match with `errors.Is` and `errors.AsType[*T]`, never `==` or a type assertion (`errorlint`).
 - `errors.Join` for several failures (cleanup after a failed operation, closing many resources).
-- No panics across a package boundary. A panic is a bug in our own code; recover only at a boundary that must survive it (an HTTP handler, a supervised goroutine), and log the stack there.
+- No panics across a package boundary. A panic is a bug in our own code; recover only at a boundary that must survive it (an HTTP handler, a supervised goroutine), and log the stack there. `MustX` functions only for startup-time constants and test helpers, never on input.
 
 ## Context, logging, concurrency
 
@@ -53,6 +58,10 @@ Read [references/PATTERNS.md](./references/PATTERNS.md) for the `main`/`run` ske
 - **`GOFLAGS=-trimpath` for every command, so worktrees share the build cache.** Without it, the cache key of a package built from a local directory (the main module, a `replace` to a path) includes that absolute directory, so the same sources in two worktrees are compiled and stored twice; with it, the directory leaves the key. `-trimpath` is itself part of the key, so builds with and without it never share entries: set it once, in the Makefile (`export GOFLAGS := -trimpath $(GOFLAGS)`) and in the CI workflow's `env`, not on single commands. File paths in stack traces and debug info become module paths, so a debugger needs a source-path mapping (delve's `substitute-path`).
 - **Every `-race`, `-cover`, `CGO_ENABLED` and `GOOS`/`GOARCH` variant is its own set of cache entries.** On a shared host run the narrow loop locally (`go test ./internal/foo/...`, `make lint LINT_GOOS=$(go env GOOS)`) and leave the race, cover and per-GOOS matrix to CI, which runs `make check` on every PR. Cache budget and cleanup: the `host-hygiene` skill.
 - Releases: release-please owns the version, tag and notes; goreleaser builds, archives, checksums, SBOMs and the Homebrew cask from that tag, and the workflow attests the artifacts. Read [references/RELEASE.md](./references/RELEASE.md) when setting it up.
+
+## Review: what no linter checks
+
+Google rules the template cannot enforce, so a reviewer checks them: no `Get` prefix on accessors (`Counts`, not `GetCounts`; HTTP `Get` is fine); names do not repeat the package (`widget.New`, not `widget.NewWidget` when the package has one type) or carry their type (`users`, not `usersMap`); name length grows with scope; `%q` for strings in messages; an API does not tell a nil slice from an empty one; synchronous functions, with the caller adding concurrency; doc comments say what a caller needs (cancellation, concurrency safety, who closes what), not how.
 
 ## Gotchas
 

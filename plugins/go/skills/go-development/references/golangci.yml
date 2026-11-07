@@ -1,4 +1,5 @@
-# golangci-lint v2 baseline: every linter on, then opt out with a reason.
+# golangci-lint v2 baseline (checked with v2.15): every linter on, then opt out with a reason.
+# It enforces the Google Go Style Guide where a linter can; SKILL.md lists the rules left to review.
 # Copy to the repo root as .golangci.yml. Pinned through golangci-lint.mod (see PROJECT_SETUP.md),
 # so a golangci-lint upgrade that adds linters lands in its own PR.
 version: "2"
@@ -22,11 +23,9 @@ linters:
     - wsl_v5
     - nlreturn
     - varnamelen
-    - lll
+    - lll                # Google sets no line length limit
     - noinlineerr        # `if err := f(); err != nil` is idiomatic
     - nonamedreturns     # named results document multi-value returns; nakedret still bans bare returns
-    # Needs a per-repo allow/deny list; add it back with rules once there is one.
-    - depguard
     # To-do comments are tracked (as issues, by CI), not lint errors.
     - godox
     # Dynamic errors with context (fmt.Errorf("open %s: %w", ...)) are the norm; sentinels only where callers branch.
@@ -70,15 +69,43 @@ linters:
     gosec:
       excludes:
         - G204   # subprocess launched with variable: a process supervisor does this on purpose
-    revive:
+    depguard:
       rules:
-        - name: exported
-        - name: package-comments
-        - name: unused-parameter
-        - name: context-as-argument
-        - name: error-return
-        - name: error-strings
-        - name: receiver-naming
+        house:
+          # No allow list: everything not denied is allowed. Add a repo's own bans here.
+          deny:
+            - pkg: github.com/stretchr/testify
+              desc: no assertion libraries (Google decisions); use the testing package and go-cmp
+            - pkg: github.com/golang/mock
+              desc: hand-written fakes, not generated mocks (go-testing)
+            - pkg: go.uber.org/mock
+              desc: hand-written fakes, not generated mocks (go-testing)
+            - pkg: github.com/pkg/errors
+              desc: use the standard errors package and fmt.Errorf with %w
+    nolintlint:
+      require-explanation: true   # //nolint:<linter> // reason
+      require-specific: true
+    staticcheck:
+      # Default checks. Its naming and doc-comment checks (ST1000, ST1003, ST1016, ST1020-22) stay off:
+      # revive's rules below report the same Google rules once.
+      checks: ["all", "-ST1000", "-ST1003", "-ST1016", "-ST1020", "-ST1021", "-ST1022"]
+    revive:
+      # Listing a rule turns revive's defaults (golint's checks: var-naming initialisms, exported doc
+      # comments and stutter, receiver-naming, error-strings, indent-error-flow, unexported-return,
+      # context-as-argument, context-keys-type, blank and dot imports, ...) off unless this is set.
+      enable-default-rules: true
+      rules:
+        # Google naming and imports beyond golint.
+        - name: package-naming          # no util/common/types, no top-level pkg/, no std name clash
+          arguments:
+            - check-extra-bad-name: true   # helpers, models, shared, utilities, api, ...
+              user-defined-bad-names: [helper, handlers, controllers, services, repositories, managers]
+        - name: package-directory-mismatch
+        - name: import-shadowing        # a variable named like an imported package
+        - name: redundant-import-alias
+        - name: import-alias-naming     # lowercase, no underscores
+        - name: deep-exit               # os.Exit and log.Fatal only in main (main/run)
+        - name: use-any
     paralleltest:
       ignore-missing-subtests: true
     usetesting:
