@@ -428,6 +428,11 @@ async function onShell(input, state, deps, ctx) {
         envObj.dirs = existingDirs(command, envObj, input.cwd);
         const facts = { env: envObj };
         const inCwd = (argv, cwd, ms) => (deps.run ?? run)(argv, cwd == null ? input.cwd : resolve(input.cwd ?? ".", cwd), ms);
+        // A bare lease push is no risky match by itself: its facts are gathered for it, and none (timeout) asks. Started
+        // with the risky lookups so both share one budget, keeping the hook under its timeout.
+        const pushing = command.includes("--force-w")
+            ? within(pushFacts(command, rules, inCwd, facts.env), deps.factsMs ?? FACTS_MS, null)
+            : null;
         if (isRisky(command, rules)) {
             const gathered = await within(Promise.all([
                 worktreeFacts(command, facts.env, rules, inCwd),
@@ -443,11 +448,8 @@ async function onShell(input, state, deps, ctx) {
                 unfinished = true;
             }
         }
-        // A bare lease push is no risky match by itself: its facts are gathered for it, and none (timeout) asks.
-        if (command.includes("--force-w")) {
-            facts.pushes =
-                (await within(pushFacts(command, rules, inCwd, facts.env), deps.factsMs ?? FACTS_MS, null)) ?? {};
-        }
+        if (pushing)
+            facts.pushes = (await pushing) ?? {};
         if (!/^(0|false|off)$/i.test(deps.env?.GUARD_STACK_HINT ?? "") &&
             !state.reminded.includes("stack") &&
             stackTargets(command, rules, facts.env).length) {

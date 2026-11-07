@@ -677,6 +677,16 @@ async function onShell(
         ms,
       );
 
+    // A bare lease push is no risky match by itself: its facts are gathered for it, and none (timeout) asks. Started
+    // with the risky lookups so both share one budget, keeping the hook under its timeout.
+    const pushing = command.includes("--force-w")
+      ? within(
+          pushFacts(command, rules, inCwd, facts.env),
+          deps.factsMs ?? FACTS_MS,
+          null,
+        )
+      : null;
+
     if (isRisky(command, rules)) {
       const gathered = await within(
         Promise.all([
@@ -696,15 +706,7 @@ async function onShell(
       }
     }
 
-    // A bare lease push is no risky match by itself: its facts are gathered for it, and none (timeout) asks.
-    if (command.includes("--force-w")) {
-      facts.pushes =
-        (await within(
-          pushFacts(command, rules, inCwd, facts.env),
-          deps.factsMs ?? FACTS_MS,
-          null,
-        )) ?? {};
-    }
+    if (pushing) facts.pushes = (await pushing) ?? {};
 
     if (
       !/^(0|false|off)$/i.test(deps.env?.GUARD_STACK_HINT ?? "") &&
