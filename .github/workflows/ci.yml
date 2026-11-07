@@ -197,4 +197,4 @@ jobs:
           echo "$NEEDS" | jq -e '
             (.changes.result == "success" and .changes.outputs.cross_os == "false") as $md_only
             | to_entries | all(.[]; .value.result == "success" or (.key == "windows-scripts" and .value.result == "skipped" and $md_only))
-          ' >/dev/null ||{ echo "::error::a needed job did not succeed"; exit 1; }
+          ' >/dev/null || { echo "::error::a needed job did not succeed"; exit 1; }
