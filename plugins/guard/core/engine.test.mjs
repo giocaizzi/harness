@@ -271,15 +271,65 @@ void test("a bare lease push hidden behind HEAD, a value option, abbreviations o
         assert.equal(await outcome(c, onFeat), "ask", c);
     for (const c of [
         "git push --force-with-lease origin HEAD",
-        "git push --force-with-lease -o ci.skip origin",
         "git push --force-w origin feat/x",
-        "git push --force-with-lease -o ci.skip origin feat/x",
         "git push origin HEAD:feat/x --force-with-lease",
     ])
         assert.equal(await outcome(c, onFeat), "allow", c);
+    // a value option (`-o`) is outside the allow-list: it asks whatever the branch
+    for (const c of [
+        "git push --force-with-lease -o ci.skip origin",
+        "git push --force-with-lease -o ci.skip origin feat/x",
+    ])
+        assert.equal(await outcome(c, onFeat), "ask", c);
     assert.equal(await outcome("git push origin HEAD:feat/x --force-with-lease", onMain), "allow");
     // a tag named like the branch makes git print heads/main
     assert.equal(await outcome("git push --force-with-lease", { branch: "heads/main" }), "ask");
+});
+void test("a lease push passes without facts only when an allow-list holds; everything else asks (G17 round 3)", async () => {
+    const outcome = async (c, f) => evaluateCommand({
+        command: c,
+        state: fresh(),
+        host: calm,
+        pushes: await pushFacts(c, rules, fakePush(f)),
+        rules,
+    }).action;
+    const onMain = { branch: "main" };
+    const onFeat = { branch: "feat/x" };
+    for (const c of [
+        "git push --force-with-lease origin HEAD feat/x",
+        "git push --force-with-lease origin feat/x HEAD",
+        "git push --force-with-lease --push-opt ci.skip origin",
+        "git push --force-with-lease --rec git-receive-pack origin",
+        "git push --force-with-lease -uo ci.skip origin",
+    ])
+        assert.equal(await outcome(c, onMain), "ask", c);
+    for (const c of [
+        "git push --force-with-lease origin :",
+        "git push --force-with-lease origin 'refs/heads/*:refs/heads/*'",
+        "git push --force-with-lease origin 'refs/heads/*'",
+        "git push --force-with-lease origin heads/main",
+        "git -c remote.origin.mirror=true push --force-with-lease origin",
+        "export GIT_DIR=/other/.git; git push --force-with-lease",
+        "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=push.default GIT_CONFIG_VALUE_0=matching; git push --force-with-lease",
+        "GIT_CONFIG_GLOBAL=/tmp/x git push --force-with-lease origin feat/x",
+        "HOME=/tmp/x git push --force-with-lease origin feat/x",
+        "git push --force-with-lease -- origin feat/x",
+    ])
+        assert.equal(await outcome(c, onFeat), "ask", c);
+    for (const c of [
+        "git push --force-with-lease",
+        "git push --force-with-lease origin HEAD",
+        "git push -u --force-with-lease origin feat/x",
+        "git push --set-upstream --force-with-lease origin HEAD",
+        "git push --no-verify --force-with-lease origin feat/x",
+        "git push --force-with-lease=feat/x origin feat/x",
+        "git push --force-with-lease=feat/x:abc123 origin feat/x",
+        "git push origin HEAD:feat/x --force-with-lease",
+        "git push --force-if-includes --force-with-lease origin feat/x",
+        "git -C /r push --force-with-lease origin feat/x",
+        "git push -q --force-with-lease origin feat/x",
+    ])
+        assert.equal(await outcome(c, onFeat), "allow", c);
 });
 void test("a recursive delete of a temp dir held in a variable or a quoted $TMPDIR path does not ask", () => {
     const env = { TMPDIR: "/var/folders/ab/T/" };
