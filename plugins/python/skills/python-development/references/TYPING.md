@@ -1,6 +1,6 @@
 # Typing
 
-Snippets passed ruff with [ruff.toml](./ruff.toml) and pyrefly's strict preset on CPython 3.14.10 (docstrings trimmed here).
+Snippets passed ruff with [ruff.toml](./ruff.toml) and `mypy --strict` on CPython 3.14.10 (docstrings trimmed here).
 
 ## What each version adds
 

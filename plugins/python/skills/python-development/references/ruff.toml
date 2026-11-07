@@ -47,6 +47,9 @@ ignore = [
   # Google 3.19.13: an `if TYPE_CHECKING:` import is the exception, kept for
   # cycles and heavy modules; on 3.14+ annotations are lazy anyway.
   "TC001", "TC002", "TC003",
+  # The license lives once in LICENSE, not in a header on every file
+  # (Google 3.8.2 asks for one; our repos don't).
+  "CPY001",
 ]
 
 [lint.per-file-ignores]
@@ -74,12 +77,6 @@ ban-relative-imports = "all"     # Google 2.2.4: full package path, always
 force-single-line = true
 single-line-exclusions = ["collections.abc", "typing", "typing_extensions"]
 force-sort-within-sections = true
-
-[lint.flake8-copyright]
-# Google 3.8.2: every file starts with its license boilerplate:
-#   # Copyright 2026 <owner>
-#   # SPDX-License-Identifier: <license>
-notice-rgx = "(?i)Copyright\\s+\\d{4}.*\\n#\\s*SPDX-License-Identifier:\\s+\\S+"
 
 [lint.ruff]
 strictly-empty-init-modules = true  # with RUF067: docstring only

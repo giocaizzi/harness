@@ -1,12 +1,12 @@
 # Project structure
 
-Everything here ran with uv 0.13.7, ruff 0.17.4, pyrefly 1.4.1 and pytest 9.2 on CPython 3.14.10.
+Everything here ran with uv 0.13.7, ruff 0.17.4, mypy 2.4.1 and pytest 9.2 on CPython 3.14.10.
 
 ## Layout
 
 ```
 project-root/
-├── pyproject.toml        # metadata, dependencies, pyrefly, pytest, coverage
+├── pyproject.toml        # metadata, dependencies, mypy, pytest, coverage
 ├── ruff.toml             # references/ruff.toml, unchanged until a rule needs a reason
 ├── uv.lock               # committed
 ├── .python-version       # the interpreter the project runs (uv python pin 3.15)
@@ -14,7 +14,7 @@ project-root/
 ├── README.md
 ├── src/
 │   └── shop/             # import name; the distribution may be shop or shop-api
-│       ├── __init__.py   # license header + docstring only
+│       ├── __init__.py   # docstring only
 │       ├── py.typed      # libraries: PEP 561 marker, empty
 │       ├── cli.py        # main(argv) -> int; builds the dependencies
 │       ├── errors.py     # class Error(Exception) and its subclasses
@@ -52,7 +52,7 @@ shop = "shop.cli:main"
 
 [dependency-groups]
 dev = [
-    "pyrefly>=1.4",
+    "mypy>=2.4",
     "ruff>=0.17",
     # the test stack: python-testing skill
 ]
@@ -61,9 +61,12 @@ dev = [
 requires = ["uv_build>=0.13.7,<0.14"]
 build-backend = "uv_build"
 
-[tool.pyrefly]
-preset = "strict"
-project-includes = ["src", "tests"]
+[tool.mypy]
+strict = true
+files = ["src", "tests"]
+enable_error_code = ["explicit-override", "ignore-without-code", "redundant-expr", "truthy-bool", "possibly-undefined", "unused-awaitable"]
+warn_unreachable = true
+# plugins = ["pydantic.mypy"]  # when Pydantic is a dependency
 
 # [tool.pytest] and [tool.coverage.*]: python-testing skill
 ```
@@ -89,7 +92,7 @@ lint: ## Lockfile, format, lint and type check, changing nothing
 	uv lock --check
 	uv run ruff format --check
 	uv run ruff check
-	uv run pyrefly check
+	uv run mypy
 
 test: ## Run the tests in parallel, with coverage
 	uv run pytest --cov --cov-report=term-missing:skip-covered

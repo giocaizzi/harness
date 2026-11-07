@@ -1,6 +1,6 @@
 # Review-only Google rules
 
-ruff (with [ruff.toml](./ruff.toml)) and pyrefly check everything else; these Google rules have no checker, so a reviewer looks for them. The Imports and Design rules in SKILL.md are review-only too. Section numbers are the [guide's](https://google.github.io/styleguide/pyguide.html).
+ruff (with [ruff.toml](./ruff.toml)) and mypy check everything else; these Google rules have no checker, so a reviewer looks for them. The Imports and Design rules in SKILL.md are review-only too. Section numbers are the [guide's](https://google.github.io/styleguide/pyguide.html).
 
 | Look for | Google |
 |---|---|

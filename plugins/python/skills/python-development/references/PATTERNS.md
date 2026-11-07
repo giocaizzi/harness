@@ -1,6 +1,6 @@
 # Patterns
 
-Every module below is part of one small package (`notify`) that passed `ruff check` with [ruff.toml](./ruff.toml), `pyrefly check` with the strict preset and its tests on CPython 3.14.10. The license header is cut from each listing; real files start with it.
+Every module below is part of one small package (`notify`) that passed `ruff check` with [ruff.toml](./ruff.toml), `mypy --strict` and its tests on CPython 3.14.10.
 
 ## Program skeleton
 
@@ -204,6 +204,7 @@ The third-party exception stops at the adapter; callers catch `errors.DeliveryEr
 
 import dataclasses
 import re
+from typing import override
 
 _UNITS = {"s": 1, "m": 60, "h": 3600}
 _PATTERN = re.compile(r"(?P<count>[1-9][0-9]*)(?P<unit>[smh])")
@@ -244,6 +245,7 @@ class Interval:
         """The interval's length in seconds."""
         return self.count * _UNITS[self.unit]
 
+    @override
     def __str__(self) -> str:
         """Formats the interval the way `parse` reads it.
 

@@ -1,6 +1,6 @@
 # Test patterns
 
-Every test below passed `make check` (ruff with every rule, pyrefly strict, pytest in parallel and random order) on CPython 3.14.10 with pytest 9.2, pytest-asyncio 1.4, pytest-xdist 3.8, pytest-randomly 5.0, pytest-timeout 2.4, pytest-cov 7.1, hypothesis 6.170 and syrupy 6.1. They test the `notify` package in python-development's `references/PATTERNS.md`. License headers are cut.
+Every test below passed `make check` (ruff with every rule, mypy --strict, pytest in parallel and random order) on CPython 3.14.10 with pytest 9.2, pytest-asyncio 1.4, pytest-xdist 3.8, pytest-randomly 5.0, pytest-timeout 2.4, pytest-cov 7.1, hypothesis 6.170 and syrupy 6.1. They test the `notify` package in python-development's `references/PATTERNS.md`.
 
 ## Config
 
@@ -156,7 +156,7 @@ async def test_alert_resends_after_quiet_period() -> None:
     assert sender.sent == ["disk full", "disk still full"]
 ```
 
-`_alerter()` is a factory, not a fixture: each test sees what it gets. The fakes satisfy `alerts.Sender` structurally; pyrefly checks that without the fake importing the protocol. Ten minutes pass in zero real time.
+`_alerter()` is a factory, not a fixture: each test sees what it gets. The fakes satisfy `alerts.Sender` structurally; mypy checks that without the fake importing the protocol. Ten minutes pass in zero real time.
 
 ## An HTTP client against an in-process transport
 
