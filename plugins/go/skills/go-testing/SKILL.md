@@ -5,23 +5,22 @@ description: "Go test rules: the standard testing package with go-cmp instead of
 
 # Go Testing
 
+Baseline: the test sections of the [Google Go Style Guide](https://google.github.io/styleguide/go/decisions#useful-test-failures) (decisions and best practices): no assertion libraries, `got` before `want`, `(-want +got)` diffs, `t.Error` to keep going and `t.Fatal` only when the rest cannot run, never `t.Fatal` off the test goroutine. The rules below add to it.
+
 - Test behaviour through the package's API, so refactors don't break tests. Cover the failure paths (timeouts, cancellation, partial output, exit codes), not only the happy path.
 - TDD for bugs: reproduce with a failing test first, then fix.
 - `make test` runs `go test -race -shuffle=on ./...`. Every test passes under both: data races and order dependence are bugs, not flakes.
 
 ## Standard library, plus go-cmp
 
-Use `testing` with `if got != want { t.Errorf(...) }`, and `github.com/google/go-cmp/cmp` (`cmp.Diff`) for structs, slices and maps. No testify, no assertion libraries: the Go team's review guidance rejects them, `t.Errorf` keeps a test running to report every failure while `require` stops at the first, and `require` called from a goroutine other than the test's silently misbehaves (`FailNow` must run on the test goroutine).
-
-- Messages read `Func(input) = got, want want`; diffs say `(-want +got)`.
-- `t.Fatal` only when continuing is pointless (setup failed, a nil that the next line dereferences); otherwise `t.Error`.
-- Helpers call `t.Helper()` and take `testing.TB` when benchmarks or fuzz targets share them.
+- `testing` plus `github.com/google/go-cmp/cmp` (`cmp.Diff`) for structs, slices and maps; no testify (`depguard` in the lint template rejects it).
+- Helpers call `t.Helper()` (`thelper` enforces it) and take `testing.TB` when benchmarks or fuzz targets share them.
 
 ## Structure
 
 - **Table tests** for one behaviour over many inputs: a slice of structs with a `name`, one `t.Run(tt.name, ...)` per row, `t.Parallel()` in the test and in each subtest (`paralleltest` enforces it). A row that needs different setup or assertions is a separate test.
 - **`t.Context()`** for every context in a test (cancelled when the test ends, before cleanups), **`t.TempDir()`** for every file, **`t.Setenv`/`t.Chdir`** instead of mutating process state (both forbid `t.Parallel`, so keep them in serial tests). `t.Cleanup` over `defer` in helpers.
-- **Fakes over mocks.** A consumer-defined interface of one to three methods gets a hand-written fake in the test file: a struct with fields to program its answers and record its calls. No mockgen or gomock: generated mocks assert call sequences, which is implementation detail.
+- **Fakes over mocks.** A consumer-defined interface of one to three methods gets a hand-written fake in the test file: a struct with fields to program its answers and record its calls. No mockgen or gomock (`depguard` rejects them): generated mocks assert call sequences, which is implementation detail. A double other packages' tests need lives in a `<pkg>test` package (`runstatetest.NewStore`), never exported from the package itself.
 - **Real over fake where cheap**: `httptest.NewServer` for HTTP clients, `net.Pipe` for connections, real child processes (`/bin/sh -c`) for process code, the real filesystem under `t.TempDir()`.
 
 ## Time and concurrency

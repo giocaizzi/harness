@@ -1,0 +1,86 @@
+# ruff baseline for the Google Python Style Guide: every rule on, then opt out
+# with a reason. Copy to the repo root as ruff.toml (it wins over
+# [tool.ruff] in pyproject.toml, so keep no ruff block there).
+# target-version comes from requires-python in the sibling pyproject.toml.
+# Pinned through uv.lock, so a ruff upgrade that adds rules lands in its own PR.
+# Checked with ruff 0.17.4.
+
+line-length = 80                 # Google 3.2
+src = ["src", "tests"]
+
+[format]
+docstring-code-format = true
+# Quotes: double (ruff's default). Google only asks for one style per file.
+
+[lint]
+select = ["ALL"]
+# Preview rules join only when named in extend-select below, so a ruff upgrade
+# never switches on an unreviewed preview rule.
+preview = true
+explicit-preview-rules = true
+extend-select = [
+  # Google 3.8.3 sections. Not DOC502: Raises: also lists exceptions that
+  # propagate from callees (a TaskGroup's ExceptionGroup), which it flags.
+  "DOC102", "DOC201", "DOC202", "DOC402", "DOC403",
+  "E502",     # 3.2: no backslash continuation
+  "FURB118",  # 2.10: operator.mul, not lambda x, y: x * y
+  "PLR6301",  # 2.17: a method without self is a module-level function
+  "PLW0717",  # 2.4.4: minimize the code in a try block
+  "RUF065",   # 3.10.1: logging args are not converted eagerly
+  "RUF067",   # 2.2.4: __init__.py re-exports no names (callers import modules)
+  "PLC2701",  # 3.16.2: a _private name stays in its module
+  "B909",     # 2.8.4: never mutate a container while iterating it
+  "PLW1514",  # open() names its encoding while the floor is 3.14
+]
+ignore = [
+  # The formatter owns these; ruff documents them as conflicting with it.
+  "COM812", "ISC001",
+  # Google raises with the message inline: raise ValueError(f'Bad {p=}').
+  "EM101", "EM102", "EM103", "TRY003",
+  # Google 3.8.3: misuse errors (ValueError on a bad argument) stay out of
+  # Raises:, so not every raised exception is documented.
+  "DOC501",
+  # Google 3.12: the link goes in the parentheses, TODO(issue-url): text, so
+  # TD002 (something in parentheses) holds and the link line TD003 wants and
+  # the any-TODO FIX002 do not.
+  "TD003", "FIX002",
+  # Google 3.19.13: an `if TYPE_CHECKING:` import is the exception, kept for
+  # cycles and heavy modules; on 3.14+ annotations are lazy anyway.
+  "TC001", "TC002", "TC003",
+  # The license lives once in LICENSE, not in a header on every file
+  # (Google 3.8.2 asks for one; our repos don't).
+  "CPY001",
+]
+
+[lint.per-file-ignores]
+"tests/**" = [
+  "S101",     # pytest asserts are the point (Google 2.4.4)
+  "D1",       # Google 3.8.2.1: test modules, tests and fakes need no docstrings
+  "PLR2004",  # literal expected values read better inline
+  "INP001",   # tests/ is not a package (pytest --import-mode=importlib)
+  "PLC2701",  # tests may reach _private names (Google 3.16.2)
+  "SLF001",
+]
+
+[lint.pydocstyle]
+convention = "google"            # Google 3.8: Args:/Returns:/Yields:/Raises:
+
+[lint.pycodestyle]
+max-doc-length = 80              # W505: docstrings and comments, Google 3.2
+
+[lint.flake8-tidy-imports]
+ban-relative-imports = "all"     # Google 2.2.4: full package path, always
+
+[lint.isort]
+# Google 3.13: one import per line, except typing and collections.abc;
+# sorted by full module path, `import x` and `from x import y` mixed.
+force-single-line = true
+single-line-exclusions = ["collections.abc", "typing", "typing_extensions"]
+force-sort-within-sections = true
+
+[lint.ruff]
+strictly-empty-init-modules = true  # with RUF067: docstring only
+
+[lint.flake8-pytest-style]
+fixture-parentheses = false
+mark-parentheses = false

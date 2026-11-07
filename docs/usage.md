@@ -68,11 +68,12 @@ These load by themselves when the work touches their subject; call them by name 
 
 | Plugin | Skill | Loads when you ... |
 |---|---|---|
-| `python` | `python-development` | write, review or scaffold Python (uv, ruff, mypy, typing, layout) |
-| `python` | `python-testing` | write or review pytest tests |
+| `python` | `python-development` | write, review or scaffold Python 3.14+ on the Google Python Style Guide (uv, ruff with every rule on, mypy --strict, module imports, design, layout) |
+| `python` | `python-testing` | write, fix or review pytest tests (factories over fixtures, fakes over mocks, hypothesis, snapshots, async, flaky or slow tests) |
 | `go` | `go-development` | write, review or scaffold Go (go.mod and `go tool` deps, golangci-lint v2, errors, context, slog, concurrency, process supervision, goreleaser) |
 | `go` | `go-testing` | write or review Go tests (table tests, fakes, golden files, synctest, fuzzing, benchmarks, race detector) |
-| `javascript` | `javascript-typescript` | write or review JS/TS or Node |
+| `javascript` | `javascript-typescript` | write, review or scaffold TS/JS or Node on the Google TypeScript Style Guide (TS 7, pnpm, ESLint 10, strict tsconfig, design) |
+| `javascript` | `typescript-testing` | write, fix or review Vitest tests (fakes over mocks, fake timers, MSW, fast-check, flaky or slow tests) |
 | `javascript` | `react` | write or review React 19+ |
 | `javascript` | `nextjs` | work in a Next.js (App Router) project |
 | `javascript` | `atomic-design` | structure a UI kit or component folders, or set up architecture lint |

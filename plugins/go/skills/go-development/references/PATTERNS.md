@@ -123,10 +123,10 @@ func (s *Store) put(rec Record) error {
 	}
 	tmp := rec.ID + ".json.tmp"
 	if err := s.root.WriteFile(tmp, data, 0o600); err != nil {
-		return fmt.Errorf("write %s: %w", rec.ID, err)
+		return fmt.Errorf("save record: %w", err) // the *PathError names the file
 	}
 	if err := s.root.Rename(tmp, rec.ID+".json"); err != nil { // atomic: readers never see half a record
-		return fmt.Errorf("commit %s: %w", rec.ID, err)
+		return fmt.Errorf("commit record: %w", err)
 	}
 	return nil
 }
@@ -153,7 +153,7 @@ func (c *Client) Get(ctx context.Context, path string) ([]byte, error) {
 	...
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("get %s: %w", path, err)
+		return nil, err //nolint:wrapcheck // *url.Error already names the method and URL
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
