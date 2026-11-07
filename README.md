@@ -69,6 +69,12 @@ The `hud` status line needs one more line in your settings: [docs/hud.md](docs/h
 
 ---
 
+## Contributing: required reading
+
+Every new skill or agent follows [The new rules of context engineering for Claude 5 generation models](https://claude.dev/blog/the-new-rules-of-context-engineering-for-claude-5-generation-models/) and [Lessons from building Claude Code: how we use skills](https://claude.dev/blog/lessons-from-building-claude-code-how-we-use-skills/). The house rules drawn from them are in [docs/skills.md](docs/skills.md).
+
+---
+
 ## References
 
 - Claude Code — [plugins](https://code.claude.com/docs/en/plugins) · [marketplaces](https://code.claude.com/docs/en/plugin-marketplaces)

@@ -206,6 +206,10 @@ These are load-bearing — the layout breaks if any of them slip.
 4. Add a row to the **Agents** table in `README.md`.
 5. Run `make validate`.
 
+## Required reading for skills and agents
+
+Every new or changed skill, agent, hook message or brief follows [The new rules of context engineering for Claude 5 generation models](https://claude.dev/blog/the-new-rules-of-context-engineering-for-claude-5-generation-models/) and [Lessons from building Claude Code: how we use skills](https://claude.dev/blog/lessons-from-building-claude-code-how-we-use-skills/). The house rules drawn from them are in [docs/skills.md](docs/skills.md).
+
 ## How to update a skill or agent
 
 | Change | Steps |
