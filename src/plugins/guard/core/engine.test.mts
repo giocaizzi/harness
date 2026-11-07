@@ -437,14 +437,13 @@ void test("a lease push passes without facts only when an allow-list holds; ever
 });
 
 void test("a lease push: head and @ are the current branch, an earlier step that can move HEAD or push config asks (G17 round 5)", async () => {
-  const decide = async (c: string, f: PushFixture) =>
-    evaluateCommand({
-      command: c,
-      state: fresh(),
-      host: calm,
-      pushes: await pushFacts(c, rules, fakePush(f)),
-      rules,
-    });
+  const decide = async (c: string, f: PushFixture) => {
+    const state = fresh();
+    const pushes = await pushFacts(c, rules, fakePush(f));
+    // a commit is denied once, to remind of the skill: the second look is the answer
+    evaluateCommand({ command: c, state, host: calm, pushes, rules });
+    return evaluateCommand({ command: c, state, host: calm, pushes, rules });
+  };
   const onMain = { branch: "main" };
   const onFeat = { branch: "feat/x" };
   for (const c of [

@@ -325,8 +325,8 @@ const preToolUse = (decision, reason, harness) => {
         }),
     };
 };
-// Risky for the crash fallback. (stub: same as isRisky)
-export const crashRisky = (command, rules) => isRisky(command, rules);
+// Risky for the crash fallback: also a lease push, which is risky only through facts the crashed engine did not judge.
+export const crashRisky = (command, rules) => isRisky(command, rules) || command.includes("--force-w");
 // The answer when guard itself crashed: a PreToolUse in a run is denied (a crash must not let a tool call through), in
 // every mode; the manifest variable counts as set when defined, even blank, as the loader reads it. Anything else is
 // allowed.

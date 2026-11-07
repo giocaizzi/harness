@@ -1428,11 +1428,13 @@ function leaseKind(all: ShellWord[], k: number): "feature" | "current" | "ask" {
     return "ask";
   let current = refs.length === 0;
   for (const ref of refs) {
-    if (!isStatic(ref) || !STATIC_REF.test(ref.val)) return "ask";
-    if (ref.val === "HEAD" || ref.val === "@") {
+    if (!isStatic(ref)) return "ask";
+    // `head` is HEAD on a case-insensitive filesystem
+    if (/^(?:head|@)$/i.test(ref.val)) {
       current = true;
       continue;
     }
+    if (!STATIC_REF.test(ref.val)) return "ask";
     const [src = "", dst] = ref.val.split(":");
     const name = (dst ?? src).replace(/^(?:refs\/)?heads\//, "");
     if (PROTECTED_DST.has(name)) return "ask";
@@ -1440,38 +1442,106 @@ function leaseKind(all: ShellWord[], k: number): "feature" | "current" | "ask" {
   return current ? "current" : "feature";
 }
 
-// The directory of every `git push --force-with-lease` of a command, as the facts to read are keyed: a push that
-// leaseKind calls "current" (no refspec, or HEAD or @) has its step's dir, or REMOTE_DIR on another host or in a
+// A git step's subcommand and whether its global options are plain (only `-C <static dir>`, `--no-pager`, `-P`).
+function gitStep(all: ShellWord[]) {
+  let k = 1;
+  let plain = true;
+  while (all[k]?.val.startsWith("-")) {
+    const opt = defined(all[k]).val;
+    if (opt === "-C" && all[k + 1] && isStatic(defined(all[k + 1]))) k += 2;
+    else {
+      if (opt !== "--no-pager" && opt !== "-P") plain = false;
+      k += GIT_VALUE.has(opt) ? 2 : 1;
+    }
+  }
+  return { k, plain, sub: all[k]?.val };
+}
+
+// A step before a lease push in the same command runs after the facts were read, so one that can move HEAD or change
+// the push config makes them stale. Only these cannot (an allow-list; every other step, a non-git one too, counts):
+// fetch, status, log, diff, add, commit, `pull` or `pull --ff-only`, and `rebase <one static upstream>`.
+const READ_ONLY_GIT = new Set([
+  "fetch",
+  "status",
+  "log",
+  "diff",
+  "add",
+  "commit",
+]);
+function movesHead(all: ShellWord[]) {
+  if (all.length === 0) return false;
+  if (all[0]?.val !== "git") return true;
+  const { k, plain, sub } = gitStep(all);
+  if (!plain || sub === undefined) return true;
+  if (READ_ONLY_GIT.has(sub)) return false;
+  const rest = all.slice(k + 1);
+  if (sub === "pull")
+    return !(
+      rest.length === 0 ||
+      (rest.length === 1 && rest[0]?.val === "--ff-only")
+    );
+  if (sub === "rebase") {
+    const one = rest[0];
+    return !(
+      rest.length === 1 &&
+      one &&
+      isStatic(one) &&
+      !one.val.startsWith("-")
+    );
+  }
+  return true;
+}
+function changesConfig(all: ShellWord[]) {
+  if (all[0]?.val !== "git") return false;
+  const sub = gitStep(all).sub;
+  return sub === "config" || sub === "symbolic-ref";
+}
+
+// Every `git push --force-with-lease` step of a command with what it needs, as the facts to read are keyed: a push that
+// leaseKind calls "current" (no refspec, or HEAD, head or @) has its step's dir, or REMOTE_DIR on another host or in a
 // container; one it calls "ask" has REMOTE_DIR, where no fact is gathered, so it asks; a "feature" push has none.
 // git's global options other than `-C <static dir>`, `--no-pager` and `-P`, and any GIT_* variable, HOME or
-// XDG_CONFIG_HOME assigned anywhere in the command (they change what git pushes) make a push ask.
-function leaseTargets(command: string, rules: GuardRules, env: GuardEnv = {}) {
+// XDG_CONFIG_HOME assigned anywhere in the command (they change what git pushes) make a push ask. So does an earlier
+// step that is `git config` or `git symbolic-ref` (any lease push), or one that movesHead (a "current" push, "stale").
+function leaseSteps(command: string, rules: GuardRules, env: GuardEnv = {}) {
   if (!rules.risky.some((r) => r.id === "force")) return [];
   const envSet =
     /(?<![A-Za-z0-9_])(?:GIT_[A-Za-z0-9_]*|HOME|XDG_CONFIG_HOME)=/.test(
       command,
     );
-  return segments(command, env).flatMap(({ words, dir, remote }) => {
+  const steps = segments(command, env);
+  return steps.flatMap(({ words, dir, remote }, i) => {
     const all = commandWords(words);
     if (all[0]?.val !== "git") return [];
-    let k = 1;
-    let plain = true;
-    while (all[k]?.val.startsWith("-")) {
-      const opt = defined(all[k]).val;
-      if (opt === "-C" && all[k + 1] && isStatic(defined(all[k + 1]))) k += 2;
-      else {
-        if (opt !== "--no-pager" && opt !== "-P") plain = false;
-        k += GIT_VALUE.has(opt) ? 2 : 1;
-      }
-    }
-    if (all[k]?.val !== "push") return [];
+    const { k, plain, sub } = gitStep(all);
+    if (sub !== "push") return [];
     if (!all.slice(k + 1).some((a) => isLease(a.val))) return [];
-    const kind = plain && !envSet ? leaseKind(all, k) : "ask";
-    if (kind === "ask") return [REMOTE_DIR];
-    if (kind === "feature") return [];
-    return [remote ? REMOTE_DIR : dir];
+    let kind: ReturnType<typeof leaseKind> | "stale" =
+      plain && !envSet ? leaseKind(all, k) : "ask";
+    const before = steps.slice(0, i).map((s) => commandWords(s.words));
+    if (before.some(changesConfig)) kind = "ask";
+    if (kind === "current" && before.some(movesHead)) kind = "stale";
+    const target =
+      kind === "ask" || kind === "stale"
+        ? REMOTE_DIR
+        : kind === "feature"
+          ? undefined
+          : remote
+            ? REMOTE_DIR
+            : dir;
+    return [{ kind, target }];
   });
 }
+function leaseTargets(command: string, rules: GuardRules, env: GuardEnv = {}) {
+  return leaseSteps(command, rules, env).flatMap((s) =>
+    s.target === undefined ? [] : [s.target],
+  );
+}
+// True when a lease push of the command pushes the current branch, whatever else makes it ask.
+const leaseCurrent = (command: string, rules: GuardRules, env: GuardEnv = {}) =>
+  leaseSteps(command, rules, env).some(
+    (s) => s.kind === "current" || s.kind === "stale",
+  );
 
 // Push facts for every bare lease push of a command, in parallel: { [dir]: { branch, upstream, head } }. A call that
 // fails or prints nothing leaves that field null.
@@ -1694,8 +1764,8 @@ function summary(
   }
   if (rule.id === "force") {
     const args = plainArgs(/\bpush\b(.*)$/.exec(gitPlain(step.raw))?.[1] ?? "");
-    if (args.length <= 1 && /--force-with-lease\b/.test(step.raw))
-      return "Lease-pushes the current branch, which is main, master, the default branch or could not be read";
+    if (leaseCurrent(step.raw, rules, env))
+      return "Lease-pushes the current branch, which is main, master, the default branch, could not be read or may be changed by an earlier step";
     return `Force-pushes${args.length ? ` ${args.join(" ")}` : " the current branch"}`;
   }
   return rule.say ?? defined(rule.why[0]).toUpperCase() + rule.why.slice(1);
