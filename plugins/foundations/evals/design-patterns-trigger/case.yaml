@@ -1,0 +1,10 @@
+schema_version: "1.0"
+name: design-patterns-trigger
+description: The model loads design-patterns when the same cross-cutting code is copied around several clients.
+tags: [trigger]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  prompt: The same retry-and-log code wraps four HTTP clients; clean it up.
+  max_turns: 15
+  allowed_tools: [Read, Glob, Grep, Edit, Write, Skill]
