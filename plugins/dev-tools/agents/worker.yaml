@@ -6,6 +6,7 @@ copilot:
     - edit
     - execute
     - search
+    - skill
 codex:
   model_reasoning_effort: medium
   # Codex ships a built-in `worker` role, and a user agent with a built-in's name replaces it.
