@@ -35,7 +35,10 @@ export const CONCURRENCY = 4;
 // `Required status check ... is expected`. A step with `queued: 'after-enqueue'` reports true once that PR was
 // enqueued. stacked: [n...] refuses those PRs' enqueues and merges as part of a stack; async: { <n>: [reply...] }
 // answers that PR's merge-async request and then each poll of it (the last one repeats), a reply being 'pending',
-// 'enqueued' (which counts as an enqueue), 'merged' or 'failed'. Calls go to <scenario>.log.
+// 'enqueued' (which counts as an enqueue), 'merged', 'failed' or 'failed-in-progress' (a failure naming a required
+// check still in progress). stack: { <n>: { number, position, size } } puts those PRs in a native stack: their REST
+// object (GET pulls/<n>) and the open-PR list carry it, the others have a null stack. mergeQueue: false drops the
+// default branch's merge queue rule. Calls go to <scenario>.log.
 const shim = `
 import { readFileSync, writeFileSync, appendFileSync, existsSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
@@ -78,7 +81,7 @@ if (argv[0] === 'pr' && argv[1] === 'merge') {
 if (argv[0] === 'api' && argv[1] === 'repos/acme/app/branches/main') out({ name: 'main', protection: { required_status_checks: { contexts: sc.classic ?? [] } } })
 if (argv[0] === 'api' && argv[1].startsWith('repos/acme/app/rules/branches/')) {
   log('rules ' + argv[1].split('/').pop())
-  out([{ type: 'deletion' }, { type: 'required_status_checks', parameters: { required_status_checks: sc.required.map((context) => ({ context, integration_id: 1 })) } }])
+  out([{ type: 'deletion' }, ...(sc.mergeQueue === false ? [] : [{ type: 'merge_queue' }]), { type: 'required_status_checks', parameters: { required_status_checks: sc.required.map((context) => ({ context, integration_id: 1 })) } }])
 }
 const asyncPath = argv[0] === 'api' && argv.map((a) => a.split('/')).find((p) => p.slice(0, 4).join('/') === 'repos/acme/app/pulls' && p[5] === 'merge-async')
 if (asyncPath) {
@@ -96,8 +99,12 @@ if (asyncPath) {
   out(r === 'pending' ? { status: 'pending', details: { message: 'Merge requested', uuid: 'u' + n, merge_method: 'squash', merge_action: 'default', expected_head_sha: 'head' + n } }
     : r === 'enqueued' ? { status: 'enqueued', details: { message: 'Added to the merge queue' } }
     : r === 'merged' ? { status: 'merged', details: { message: 'Merged', sha: 'sha' + n } }
+    : r === 'failed-in-progress' ? { status: 'failed', details: { message: 'Required status check "check" is in progress. Stack merges are atomic, so nothing was merged' } }
     : { status: 'failed', details: { message: 'Required status check "check" is failing' } })
 }
+const restPr = (n) => ({ number: Number(n), head: { sha: 'head' + n }, stack: sc.stack?.[n] ?? null })
+if (argv[0] === 'api' && /^repos\\/acme\\/app\\/pulls\\/[0-9]+$/.test(argv[1])) out(restPr(argv[1].split('/').pop()))
+if (argv[0] === 'api' && argv[1].startsWith('repos/acme/app/pulls?')) { log('list-open'); out(Object.keys(sc.stack ?? {}).map(restPr)) }
 if (argv[0] === 'api' && argv[1] === 'graphql') {
   const q = field('query')
   if (q.startsWith('mutation')) {
@@ -216,6 +223,8 @@ export interface Scenario {
   expected?: Record<string, number>;
   stacked?: number[];
   async?: Record<string, string[]>;
+  stack?: Record<string, { number: number; position: number; size: number }>;
+  mergeQueue?: boolean;
 }
 async function landMany(
   kind: string,
@@ -673,16 +682,80 @@ export function landManyTests(kind: string): void {
       prs: { 11: [{ ...green, base: "feat/schema", queue: false }] },
     });
     assert.equal(r.code, 1, r.err);
-    assert.match(
-      r.out,
-      /^PR 11: STACKED on feat\/schema: land it with gh stack merge/,
-    );
+    assert.match(r.out, /^PR 11: STACKED on feat\/schema: retarget it/);
     assert.ok(
       !r.log.some((l) => l.startsWith("merge") || l.startsWith("enqueue")),
     );
   });
 
   const v = "X-GitHub-Api-Version: 2026-03-10";
+  const layer = (position: number) => ({ number: 7, position, size: 3 });
+  const upper: ScenarioStep = { ...green, base: "feat/lower" };
+  void test(`${kind} land-many: a stacked layer batch makes one merge-async on the top layer, never STACKED`, async () => {
+    const r = await landMany(kind, {
+      stack: { 11: layer(1), 12: layer(2), 13: layer(3) },
+      async: { 13: ["pending", "enqueued"] },
+      prs: {
+        11: [queued, queued, queued, merged],
+        12: [upper, upper, upper, merged],
+        13: [upper, { ...upper, queued: "after-enqueue" }, merged],
+      },
+    });
+    assert.equal(r.code, 0, r.err + r.out);
+    assert.doesNotMatch(r.out, /STACKED/);
+    assert.deepEqual(
+      r.log.filter((l) => /^(merge-async|enqueue|merge )/.test(l)),
+      [
+        "enqueue 11 head11",
+        `merge-async 13 merge_action=merge_queue sha=head13 ${v}`,
+        `merge-async-poll 13 u13 ${v}`,
+      ],
+    );
+  });
+
+  void test(`${kind} land-many: a layer outside the batch is merged through its stack's top layer, without a queue by the default branch's rules`, async () => {
+    const r = await landMany(kind, {
+      stack: { 12: layer(2), 13: layer(3) },
+      mergeQueue: false,
+      async: { 13: ["merged"] },
+      prs: { 12: [upper, merged] },
+    });
+    assert.equal(r.code, 0, r.err + r.out);
+    assert.equal(r.out, "PR 12: MERGED sha13\n");
+    assert.deepEqual(
+      r.log.filter((l) => l.startsWith("merge-async")),
+      [
+        `merge-async 13 merge_action=default merge_method=squash sha=head13 ${v}`,
+      ],
+    );
+  });
+
+  void test(`${kind} land-many: a merge-async failed on a required check in progress is requested again, not ended`, async () => {
+    const r = await landMany(kind, {
+      stack: { 13: layer(3) },
+      async: { 13: ["failed-in-progress", "pending", "enqueued"] },
+      prs: {
+        13: [
+          upper,
+          upper,
+          upper,
+          { ...upper, queued: "after-enqueue" },
+          merged,
+        ],
+      },
+    });
+    assert.equal(r.code, 0, r.err + r.out);
+    assert.equal(r.out, "PR 13: MERGED sha13\n");
+    assert.equal(r.log.filter((l) => l.startsWith("merge-async ")).length, 2);
+  });
+
+  void test(`${kind} land-many: a layer based on a branch but outside any stack is still STACKED`, async () => {
+    const r = await landMany(kind, { stack: {}, prs: { 11: [upper] } });
+    assert.equal(r.code, 1, r.err);
+    assert.match(r.out, /^PR 11: STACKED on feat\/lower: retarget it/);
+    assert.ok(!r.log.some((l) => /^(merge|enqueue)/.test(l)));
+  });
+
   void test(`${kind} land-many: a PR gh refuses as part of a stack goes through merge-async, enqueued with a queue, merged without one`, async () => {
     const r = await landMany(kind, {
       stacked: [11, 12],
