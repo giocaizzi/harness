@@ -7,6 +7,7 @@ tools:
 - search
 - execute
 - web
+- skill
 - ms-python.python/getPythonEnvironmentInfo
 - ms-python.python/getPythonExecutableCommand
 ---
