@@ -106,7 +106,7 @@ jobs:
       - shell: bash
         run: |
           node --test --test-reporter=tap tests/land-scripts-ps1.test.mjs | tee tap.txt
-          if ! grep -qx '# tests 71' tap.txt || ! grep -qx '# pass 71' tap.txt; then echo "::error::expected 71 land-many.ps1, resync-after-squash.ps1 and verify-merge-only.ps1 tests to pass"; exit 1; fi
+          if ! grep -qx '# tests 75' tap.txt || ! grep -qx '# pass 75' tap.txt; then echo "::error::expected 75 land-many.ps1, resync-after-squash.ps1 and verify-merge-only.ps1 tests to pass"; exit 1; fi
       # Guard's result check and the stop hook's result gate: Windows path forms, BOM and CRLF, the hook's output per harness.
       - shell: bash
         env:

@@ -185,7 +185,7 @@ function Get-StackTop([string]$Pr) {
     if ($null -eq $r) { return $null }
     $s = (ConvertFrom-Json -InputObject $r).stack
     if ($null -eq $s) { return 'none' }
-    $l = Invoke-Gh @('api', "repos/$repo/pulls?state=open&per_page=100", '--paginate')
+    $l = Invoke-Gh @('api', "repos/$repo/pulls?per_page=100", '--paginate')
     if ($null -eq $l) { return $null }
     $top = @((ConvertFrom-Json -InputObject $l) | Where-Object { $_.stack -and $_.stack.number -eq $s.number } | Sort-Object { [int]$_.stack.position } -Descending | Select-Object -First 1)
     if ($top.Count -eq 0) { Set-Content -Path $errFile -Value "stack $($s.number) lists no open layer"; return $null }
@@ -233,7 +233,7 @@ try {
                 if ($enq[$i] -gt $requeues) { Complete-Pr $i "FAILED left the merge queue $($enq[$i]) times (read its merge_group run)"; continue }
                 $sq = Get-DefaultQueue
                 if ($null -eq $sq) { Add-Strike $i; continue }
-                Request-MergeAsync $i $p $top.number $top.sha $sq
+                Request-MergeAsync -I $i -Pr $p -Target $top.number -Sha $top.sha -Queue $sq
                 continue
             }
             if ($p.mergeStateStatus -ceq 'DIRTY') { Complete-Pr $i 'DIRTY'; continue }

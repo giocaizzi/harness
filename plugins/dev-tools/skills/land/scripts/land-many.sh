@@ -153,7 +153,7 @@ stack_top() {
   local s
   s=$(gh api "repos/$repo/pulls/$1" --jq '.stack | if . == null then "-" else .number end' 2>"$tmp/err") || return 2
   [ "$s" != - ] || return 1
-  gh api "repos/$repo/pulls?state=open&per_page=100" --paginate \
+  gh api "repos/$repo/pulls?per_page=100" --paginate \
     --jq ".[] | select(.stack.number == $s) | [.stack.position, .number, .head.sha] | @tsv" >"$tmp/layers" 2>"$tmp/err" || return 2
   sort -k1,1nr "$tmp/layers" | head -n 1 | cut -f2,3 | grep . || { echo "stack $s lists no open layer" >"$tmp/err"; return 2; }
 }
