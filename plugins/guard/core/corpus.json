@@ -110,7 +110,7 @@
   ["git push origin feat:main", "allow", "G15", "control (D3)"],
   ["git reset --soft HEAD~1", "allow", "G15", "control"],
   ["git push origin feat", "allow", "G15", "control"],
-  ["terraform plan", "allow", "G15", "control"],
+  ["terraform plan", "allow:terraform-local", "G15", "control: no ask, only the infra reminder"],
 
   ["docker volume rm firefly_db", "ask:docker", "G16", "T-B1"],
   ["docker system prune -af --volumes", "ask:docker", "G16", "C-M9"],
@@ -614,5 +614,25 @@
   ["mv build/$OLD build/new", "allow", "G45", "run contract v2: a variable last in a path re-roots nothing", {"run": "registered"}],
   ["rm -f out/$NAME", "allow", "G45", "run contract v2: a variable last in a path is not the repo root (rm -f)", {"run": "registered"}],
   ["rm -rf build/$DIR", "ask:rm", "G45", "run contract v2: a variable last in a path is a risky rm, not a protected path", {"run": "registered"}],
-  ["rm -rf src/a/$X", "ask:rm", "G45", "run contract v2: a variable last in a nested path is a risky rm, not a protected path", {"run": "registered"}]
+  ["rm -rf src/a/$X", "ask:rm", "G45", "run contract v2: a variable last in a nested path is a risky rm, not a protected path", {"run": "registered"}],
+
+  ["uv run lint-imports", "allow:arch-fitness", "CTRL", "control: foundations remind"],
+  ["npx depcruise src", "allow:arch-fitness", "CTRL", "control: foundations remind"],
+  ["oasdiff breaking base.yaml head.yaml", "allow:api-contract", "CTRL", "control: foundations remind"],
+  ["buf breaking --against .git#branch=main", "allow:api-contract", "CTRL", "control: foundations remind"],
+  ["uv run alembic revision -m add_currency", "allow:migration", "CTRL", "control: foundations remind"],
+  ["goose -dir db create add_currency sql", "allow:migration", "CTRL", "control: foundations remind"],
+  ["grep -rn lint-imports .", "allow", "CTRL", "control: foundations remind, a search is no run"],
+  ["git log --grep alembic", "allow", "CTRL", "control: foundations remind, a search is no run"],
+  ["alembic upgrade head", "allow", "CTRL", "control: foundations remind, applying is no schema change"],
+  ["terraform plan -out=tf.plan", "allow:terraform-local", "CTRL", "control: infra remind"],
+  ["tofu -chdir=infra init", "allow:terraform-local", "CTRL", "control: infra remind"],
+  ["docker build -t app .", "allow:docker-build", "CTRL", "control: infra remind"],
+  ["hadolint Dockerfile", "allow:docker-build", "CTRL", "control: infra remind"],
+  ["helm template r ./chart", "allow:k8s-local", "CTRL", "control: infra remind"],
+  ["kubectl apply -f m.yaml", "allow:k8s-local", "CTRL", "control: infra remind"],
+  ["grep -rn terraform .", "allow", "CTRL", "control: infra remind"],
+  ["helm list", "allow", "CTRL", "control: infra remind"],
+  ["terraform apply", "ask:terraform", "CTRL", "control: infra remind"],
+  ["kubectl delete pod x", "ask:k8s", "CTRL", "control: infra remind"]
 ]

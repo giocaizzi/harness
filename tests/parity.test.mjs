@@ -42,14 +42,14 @@ void test("a harness with no delivery at all reports everything", () => {
 });
 void test("the same skill name in two plugins is reported: opencode and pi flatten skills by name", () => {
     const dup = {
-        skills: [...inv.skills, { plugin: "api", name: "ship" }],
+        skills: [...inv.skills, { plugin: "foundations", name: "ship" }],
         agents: [],
     };
     const firstGap = gaps(dup, all(["ship", "python-testing"], []))[0] ?? "";
-    assert.match(firstGap, /skill ship: in both dev-tools and api/);
+    assert.match(firstGap, /skill ship: in both dev-tools and foundations/);
 });
 const def = (over = {}) => ({
-    plugin: "api",
+    plugin: "foundations",
     name: "api-reviewer",
     claude: { model: "opus", effort: "medium" },
     codex: { effort: "medium" },
@@ -63,12 +63,12 @@ void test("this repo: every agent runs at one tier on every harness", () => {
 });
 void test("a model pinned outside Claude is a tier mismatch", () => {
     assert.deepEqual(tierGaps([def({ copilot: { model: "sonnet" } })]), [
-        "agent api:api-reviewer: copilot pins model sonnet; leave it to the session so the tier matches Claude's opus",
+        "agent foundations:api-reviewer: copilot pins model sonnet; leave it to the session so the tier matches Claude's opus",
     ]);
 });
 void test("Claude and Codex effort must agree", () => {
     assert.deepEqual(tierGaps([def()]), []);
     assert.deepEqual(tierGaps([def({ codex: {} })]), [
-        "agent api:api-reviewer: effort medium in Claude but unset in Codex",
+        "agent foundations:api-reviewer: effort medium in Claude but unset in Codex",
     ]);
 });

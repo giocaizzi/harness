@@ -21,8 +21,9 @@ Works with [Claude Code](https://code.claude.com/), [GitHub Copilot CLI](https:/
 
 | Plugin | Description |
 |---|---|
-| [`api`](plugins/api/README.md) | API development — FastAPI, SQLAlchemy, DDD; plus the `api-reviewer` agent. |
-| [`python`](plugins/python/README.md) | Python development and testing best practices. |
+| [`foundations`](plugins/foundations/README.md) | Language-neutral design and practice: DDD, system design, architecture fitness, API design, design patterns; plus the `api-reviewer` agent. |
+| [`infra`](plugins/infra/README.md) | Infrastructure as code and containers: Terraform and OpenTofu, Docker, Kubernetes, Helm and operators. |
+| [`python`](plugins/python/README.md) | Python development and testing best practices, FastAPI, SQLAlchemy. |
 | [`go`](plugins/go/README.md) | Go development and testing best practices. |
 | [`javascript`](plugins/javascript/README.md) | JavaScript/TypeScript, React, Next.js. |
 | [`dev-tools`](plugins/dev-tools/README.md) | General development tooling — git, GitHub, conventional commits, semantic versioning. |
@@ -66,6 +67,12 @@ Each plugin's README lists the skills, agents and hooks it ships.
 | Antigravity | `make install HARNESS=antigravity` from a clone |
 
 The `hud` status line needs one more line in your settings: [docs/hud.md](docs/hud.md#install). Updating, verifying, trusting Codex hooks and running from a checkout: [docs/install.md](docs/install.md).
+
+---
+
+## Contributing: required reading
+
+Every new skill or agent follows [The new rules of context engineering for Claude 5 generation models](https://claude.dev/blog/the-new-rules-of-context-engineering-for-claude-5-generation-models/) and [Lessons from building Claude Code: how we use skills](https://claude.dev/blog/lessons-from-building-claude-code-how-we-use-skills/). The house rules drawn from them are in [docs/skills.md](docs/skills.md).
 
 ---
 

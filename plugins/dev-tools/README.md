@@ -17,7 +17,7 @@ General development tooling — git, GitHub/GitLab/Azure DevOps, conventional co
 | `wt` | Start a task in its own worktree from an issue or slug (`/wt`). |
 | `host-hygiene` | Shared-host rules and scripts: disk floor, load cap, heavy-command semaphore, device leases, service registry, stale-worktree sweep, quota-aware agent fan-out. |
 | `unattended-runs` | Overnight, autopilot and headless runs: `GUARD_UNATTENDED`, what guard denies, worktree and quota prep, what to leave for a human. |
-| `standup` | Terse status: done, in flight, waiting on you, leftovers (`/standup`). |
+| `standup` | Plain-language status: a 3-line story, a numbered "Needs you" list you approve with `all`, then done and in flight; `detail` adds refs, `explain <topic>` explains one part of the work (`/standup`). |
 | `docs-sync` | Update docs and runbooks the diff made stale (`/docs-sync`). |
 | `secrets-handling` | Bitwarden (bw, bws), keyrings and encrypted config; secrets never printed or inlined. |
 | `subagent-orchestration` | Which agent takes which work (judgement to `driver`, edits to `worker`, lookups to `scout`, review to `reviewer`), spawn rules, escalation and gotchas; tiers per harness and review rounds in its references. |
@@ -32,7 +32,7 @@ General development tooling — git, GitHub/GitLab/Azure DevOps, conventional co
 | `reviewer` | Routine-tier reviewer of a change it did not write, raised to the driver tier at `high` effort on the spawn for a sensitive review; posts a verdict with severities, at most two rounds. |
 | `escalate` | Strongest-tier engineer for work a `driver` failed twice on; returns the user's decisions as open questions. |
 
-On pi, which has no subagents or interactive questions, `pi/subagent.mjs` runs these agents (and every other plugin's, such as `api`'s `api-reviewer`) as a `subagent` tool (each in its own `pi -p` session), and provides an `ask_question` tool (mapped from `AskUserQuestion`) with a 60-second timeout.
+On pi, which has no subagents or interactive questions, `pi/subagent.mjs` runs these agents (and every other plugin's, such as `foundations`' `api-reviewer`) as a `subagent` tool (each in its own `pi -p` session), and provides an `ask_question` tool (mapped from `AskUserQuestion`) with a 60-second timeout.
 
 ## Install
 

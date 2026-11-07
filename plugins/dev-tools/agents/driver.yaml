@@ -6,5 +6,6 @@ copilot:
     - edit
     - execute
     - search
+    - skill
 codex:
   model_reasoning_effort: medium

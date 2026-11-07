@@ -8,10 +8,10 @@ You need `node` 22+ on PATH and a [Nerd Font](https://www.nerdfonts.com/) in the
 
 ```bash
 claude plugin marketplace add giocaizzi/harness
-for p in dev-tools guard hud sounds python go javascript api; do claude plugin install "$p@giocaizzi-harness"; done
+for p in dev-tools guard hud sounds python go javascript; do claude plugin install "$p@giocaizzi-harness"; done
 ```
 
-Skip the language plugins (`python`, `go`, `javascript`, `api`) you do not need. Then add the status line and the agent-panel rows to `~/.claude/settings.json`:
+Skip the language plugins (`python`, `go`, `javascript`) you do not need. `foundations` (language-neutral design and practice skills and `api-reviewer`) is optional: `claude plugin install foundations@giocaizzi-harness`. `infra` (Terraform, Docker and Kubernetes skills, not tied to a language) is optional too: `claude plugin install infra@giocaizzi-harness`. Then add the status line and the agent-panel rows to `~/.claude/settings.json`:
 
 ```json
 "statusLine": { "type": "command", "command": "node ~/.claude/plugins/marketplaces/giocaizzi-harness/plugins/hud/hooks/statusline.mjs claude" },
@@ -70,7 +70,7 @@ Along the way `guard` steps in:
 |---|---|
 | "use scout to find where X is configured" | `scout`: cheap, read-only search with `file:line` evidence |
 | "escalate this" (after two failed attempts) | `escalate`: the strongest model for a stuck bug or design call |
-| "review the API's security" | `api-reviewer` (`api` plugin) |
+| "review the API's security" | `api-reviewer` (`foundations` plugin) |
 
 ## Next
 

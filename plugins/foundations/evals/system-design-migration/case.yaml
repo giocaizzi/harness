@@ -1,0 +1,10 @@
+schema_version: "1.0"
+name: system-design-migration
+description: The model loads system-design when asked to add a required column to a table that has production data.
+tags: [trigger]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  prompt: Add a required `currency` column to orders. The table has production data.
+  max_turns: 15
+  allowed_tools: [Read, Glob, Grep, Edit, Write, Skill]

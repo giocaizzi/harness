@@ -1,0 +1,10 @@
+schema_version: "1.0"
+name: standup-explain
+description: The explain argument answers in one line, then a table or diagram, with every technical term explained.
+tags: [behavior]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  prompt: /standup explain the stack. The state of this session is in STATE.md; use it instead of running commands.
+  max_turns: 15
+  allowed_tools: [Read, Glob, Grep, Skill]

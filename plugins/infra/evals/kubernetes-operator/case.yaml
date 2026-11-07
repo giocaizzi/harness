@@ -1,0 +1,10 @@
+schema_version: "1.0"
+name: kubernetes-operator
+description: The model loads kubernetes when debugging a controller's reconcile loop.
+tags: [trigger]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  prompt: The invoices controller keeps re-creating the ConfigMap on every reconcile. Find out why and fix it.
+  max_turns: 15
+  allowed_tools: [Read, Glob, Grep, Edit, Write, Skill]

@@ -1,0 +1,10 @@
+schema_version: "1.0"
+name: docker-cache
+description: The model loads docker when an image build reinstalls every dependency on each run.
+tags: [trigger]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  prompt: Every build reinstalls all dependencies and takes 6 minutes, even when I only change one line. Fix it.
+  max_turns: 15
+  allowed_tools: [Read, Glob, Grep, Edit, Write, Skill]

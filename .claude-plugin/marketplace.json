@@ -6,32 +6,49 @@
   },
   "metadata": {
     "description": "Personal agent harness: skills, agents and guards for Claude Code, Copilot CLI, VS Code, Codex, opencode, pi and Antigravity",
-    "version": "4.0.0"
+    "version": "5.0.0"
   },
   "plugins": [
     {
       "name": "python",
       "source": "./plugins/python",
-      "description": "Python development and testing best practices",
-      "version": "1.7.0",
+      "description": "Python development and testing, FastAPI and SQLAlchemy",
+      "version": "1.8.0",
       "keywords": [
         "python",
         "development",
         "testing",
-        "pytest"
+        "pytest",
+        "fastapi",
+        "sqlalchemy",
+        "pydantic"
       ]
     },
     {
-      "name": "api",
-      "source": "./plugins/api",
-      "description": "API development with FastAPI, SQLAlchemy and DDD patterns",
-      "version": "1.4.0",
+      "name": "foundations",
+      "source": "./plugins/foundations",
+      "description": "Language-neutral design and practice: domain-driven design, system design, architecture fitness tests, API design, design patterns; plus the api-reviewer agent",
+      "version": "1.0.0",
       "keywords": [
-        "fastapi",
-        "sqlalchemy",
+        "design",
         "ddd",
+        "architecture",
         "api",
-        "python"
+        "patterns"
+      ]
+    },
+    {
+      "name": "infra",
+      "source": "./plugins/infra",
+      "description": "Infrastructure as code and containers: Terraform and OpenTofu, Docker images, Kubernetes manifests, Helm and operators",
+      "version": "1.0.0",
+      "keywords": [
+        "infrastructure",
+        "terraform",
+        "opentofu",
+        "docker",
+        "kubernetes",
+        "helm"
       ]
     },
     {
@@ -65,7 +82,7 @@
       "name": "dev-tools",
       "source": "./plugins/dev-tools",
       "description": "General development tooling \u2014 git, GitHub, conventional commits, semantic versioning",
-      "version": "1.52.0",
+      "version": "1.53.0",
       "keywords": [
         "git",
         "github",
@@ -80,7 +97,7 @@
       "name": "guard",
       "source": "./plugins/guard",
       "description": "Agent guardrails for Claude Code, Copilot CLI, VS Code, Codex, opencode, pi and Antigravity: skill enforcer, title guard, pip deny, host guard, risky-command ask, make check on stop, post-edit lint, keep-awake; Claude-only usage throttle",
-      "version": "1.2.0",
+      "version": "1.3.0",
       "keywords": [
         "hooks",
         "guardrails",

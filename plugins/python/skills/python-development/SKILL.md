@@ -40,12 +40,12 @@ Read [references/TYPING.md](./references/TYPING.md) for the version table, proto
 
 - **Abstract late.** Extract a shared function on the third copy, not the second. No `Protocol` or ABC for a single implementation unless a test needs the seam; the second implementation introduces it, declared next to the code that consumes it.
 - **Name a class for what it is** (`SlackSender`, `PriceTable`), never for a pattern (`*Factory`, `*Manager`, `*Helper`, `*Util`, `Abstract*`, `Base*`) unless the class is that pattern and nothing else.
-- **Modules by feature, not by technical kind**: `billing.py`, `notifications/`, never `models/`, `services/`, `utils/`, `helpers.py`. A module holds the related classes and functions together (Google 3.16.2). A project on the `ddd` skill's layers keeps them, with features inside each.
+- **Modules by feature, not by technical kind**: `billing.py`, `notifications/`, never `models/`, `services/`, `utils/`, `helpers.py`. A module holds the related classes and functions together (Google 3.16.2). A project on the `domain-driven-design` skill's layers keeps them, with features inside each.
 - **Composition and constructor injection.** Collaborators (clients, clocks, senders) are constructor parameters; `main()` builds them and passes them down. No DI framework, no service locator, no module-level client or singleton (Google 2.5). Inherit only for framework hooks, exceptions and shallow hierarchies you own.
 - Classes hold state plus behaviour; stateless transforms are module functions. No `@staticmethod`; `@classmethod` only as a named constructor (`Interval.parse`) (Google 2.17). `@property` only for a cheap computed value, never a plain getter or setter (Google 2.13).
 - **Values are `@dataclass(frozen=True, slots=True)`**, `kw_only=True` past two fields; outside input is validated at the boundary into Pydantic models or dataclasses; never a raw `dict` for structured data, whose shape the checker cannot see.
 - Optional parameters are keyword-only (`def fetch(url, *, timeout=5.0)`). An executable module has `main(argv: Sequence[str] | None = None) -> int` behind `if __name__ == "__main__": sys.exit(main())`, which is also the `[project.scripts]` entry point.
-- Architecture across modules (layers, repositories, ports and adapters, use cases) is the `ddd` skill's (api plugin): load it for that, not this.
+- Architecture across modules (layers, repositories, ports and adapters, use cases) is the `domain-driven-design` skill's (foundations plugin): load it for that, not this. Python's layout and wiring for it: [references/HEXAGONAL.md](./references/HEXAGONAL.md).
 
 ## Errors
 

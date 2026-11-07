@@ -1,0 +1,19 @@
+{
+  "name": "infra",
+  "version": "1.0.0",
+  "description": "Infrastructure as code and containers: Terraform and OpenTofu, Docker images, Kubernetes manifests, Helm and operators",
+  "author": {
+    "name": "giocaizzi",
+    "url": "https://github.com/giocaizzi"
+  },
+  "repository": "https://github.com/giocaizzi/harness",
+  "license": "MIT",
+  "keywords": [
+    "infrastructure",
+    "terraform",
+    "opentofu",
+    "docker",
+    "kubernetes",
+    "helm"
+  ]
+}

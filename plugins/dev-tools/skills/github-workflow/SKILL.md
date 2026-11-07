@@ -113,7 +113,13 @@ Techniques only; success is relative to the repo's own baseline, and security is
 - **Trim a matrix** (fewer OS or versions) only on `pull_request` runs, and only where a merge queue runs the full matrix on `merge_group`, so the merged tree always gets the full matrix.
 - **Larger or faster runners** are an owner setting (billing): proposed, never switched on by an agent.
 - **Dependency updates in weekly batches**: grouped, on a weekly schedule, with a cap on open update PRs (`repo-standard`, Dependency update bot): each update PR pays the same PR, queue and push runs as any other.
+- **Diagnose by symptom, measure both sides.** For where to cut given what the run history shows, see `repo-standard`'s `references/ci-cost.md`. Measure with the repo's CI health target over equal windows before and after every CI change, and keep the change only if the numbers improved.
 - **Flakes.** A nightly `schedule` run of the full suite, and a task-runner target (for example `make ci-health`, the repo's own) that finds runs which failed and then passed on the same SHA: `gh run list --workflow <file> --json databaseId,headSha,attempt,conclusion` lists only each run's latest attempt, so read every earlier attempt of a run with `attempt` above 1 (`gh run view <id> --attempt <n> --json jobs`) and a failed job's log (`gh run view <id> --attempt <n> --log-failed`, or the suite's test report artifact) for the failing test's name; two runs of the same workflow on the same SHA with different conclusions count too. A flaky test gets an issue labelled `flaky` with a priority label; it is fixed or quarantined by the owner, never dropped from a required check without the owner.
+
+### CI gotchas
+
+- A trigger-level `paths` (or `paths-ignore`) filter on a workflow that provides a required check leaves the check pending forever when no path matches; filter at the job level behind the aggregate `check`.
+- A CI change that re-triggers itself (a workflow that commits or edits triggers it listens to) loops and makes CI slower; test it on a branch and read the first runs.
 
 ## Squash merges and PR titles
 

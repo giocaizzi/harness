@@ -1,6 +1,6 @@
 # `python` plugin
 
-Python development and testing best practices.
+Python development and testing best practices, FastAPI and SQLAlchemy.
 
 ## Skills
 
@@ -8,6 +8,8 @@ Python development and testing best practices.
 |---|---|
 | `python-development` | Python development best practices and conventions. |
 | `python-testing` | Python testing best practices and conventions. |
+| `fastapi` | FastAPI best practices with Pydantic v2 for production REST APIs. |
+| `sqlalchemy` | SQLAlchemy v2 best practices for ORM, Core, and migrations. |
 
 ## Install
 

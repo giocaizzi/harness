@@ -5,6 +5,7 @@ copilot:
     - read
     - search
     - execute
+    - skill
 codex:
   model_reasoning_effort: medium
 opencode:

@@ -8,8 +8,8 @@ There are four kinds of feature, and you call each one differently:
 
 | Kind | Plugins | How it starts |
 |---|---|---|
-| Skills | `dev-tools`, `python`, `go`, `javascript`, `api` | **By itself** when the request matches its description ("open a PR" loads `ship`), or **by you** with its slash command. |
-| Agents | `dev-tools` (`scout`, `worker`, `driver`, `reviewer`, `escalate`), `api` (`api-reviewer`) | **By the main session**, which routes to them on its own (judgement work to `driver`, edits to `worker`, lookups to `scout`, review to `reviewer`). Name one to force it ("use scout to ..."). |
+| Skills | `dev-tools`, `python`, `go`, `javascript`, `foundations`, `infra` | **By itself** when the request matches its description ("open a PR" loads `ship`), or **by you** with its slash command. |
+| Agents | `dev-tools` (`scout`, `worker`, `driver`, `reviewer`, `escalate`), `foundations` (`api-reviewer`) | **By the main session**, which routes to them on its own (judgement work to `driver`, edits to `worker`, lookups to `scout`, review to `reviewer`). Name one to force it ("use scout to ..."). |
 | Hooks | `guard`, `sounds` | **Never called.** They run on their own around tool calls, prompts and turns. |
 | Display | `hud` | **Always on**, plus a few slash commands for panes. |
 
@@ -34,7 +34,7 @@ The skills that carry one change from start to merge, in order:
 | 3. Fix | `pr-fix` | PR number (optional) | Reads unresolved review threads and failing CI, fixes them, commits and pushes. |
 | 4. Land | `land` | PR number, or several (optional) | Waits for CI, fixes trivial failures, waits until the PR ends however it ends (`wait-pr`: merged, closed, a failed required check, a branch behind or in conflict, or a timeout), merges through auto-merge or the queue (a direct squash merge after every check passed where auto-merge is unavailable, never `--admin`), syncs main, removes the branch and worktree (several approved PRs land together with `land-many`; a branch left behind by a squash-merged integration branch is resynced with `resync-after-squash`; a push after the review verdict is proven a pure base merge with `verify-merge-only`), then verifies the change where it lands (deploy and health, rendered dotfiles, installed plugin version, release tag). Also answers `/verify`. |
 | Any time | `docs-sync` | path (optional) | Updates the docs, runbooks, README and `AGENTS.md` that the current diff made stale. |
-| Any time | `standup` | scope (optional) | Terse status: done (merged PRs with SHAs, releases, deploys), in flight (open PRs and CI, running agents), what waits on you, leftovers (worktrees, branches, temp files). |
+| Any time | `standup` | scope, `detail` or `explain <topic>` (optional) | Plain-language status of the current work: a 3-line story, a numbered "Needs you" list you approve with `all` or `all but 2`, then done and in flight; `detail` adds PR numbers, SHAs and leftovers, `explain <topic>` explains one part of the work with every term glossed. |
 
 Example session:
 
@@ -77,9 +77,16 @@ These load by themselves when the work touches their subject; call them by name 
 | `javascript` | `react` | write or review React 19+ |
 | `javascript` | `nextjs` | work in a Next.js (App Router) project |
 | `javascript` | `atomic-design` | structure a UI kit or component folders, or set up architecture lint |
-| `api` | `fastapi` | write FastAPI routes, schemas, dependencies, tests |
-| `api` | `sqlalchemy` | define models, write queries, manage sessions and migrations |
-| `api` | `ddd` | design bounded contexts, aggregates, ports and adapters |
+| `python` | `fastapi` | write FastAPI routes, schemas, dependencies, tests |
+| `python` | `sqlalchemy` | define models, write queries, manage sessions and migrations |
+| `foundations` | `domain-driven-design` | design bounded contexts, aggregates, ports and adapters |
+| `foundations` | `system-design` | design or review a system or infrastructure change: components, data, failure modes, trade-offs |
+| `foundations` | `architecture-fitness` | keep an architecture honest with fitness functions and dependency checks |
+| `foundations` | `api-design` | design an API contract: resources, errors, versioning, compatibility |
+| `foundations` | `design-patterns` | pick or apply a design pattern when a concrete design problem calls for one |
+| `infra` | `terraform` | write or change Terraform/OpenTofu, modules, state, plan/apply in CI |
+| `infra` | `docker` | write or change a Dockerfile, compose file, image build |
+| `infra` | `kubernetes` | write or change Kubernetes manifests, Helm charts, Kustomize overlays, operators |
 
 ## Agents
 
@@ -90,7 +97,7 @@ These load by themselves when the work touches their subject; call them by name 
 | `driver` | `dev-tools` | a hub hands off judgement work: investigate, plan, split, fan the edits out to `worker`s, integrate, fix review findings | driver tier (Claude: Opus) |
 | `reviewer` | `dev-tools` | a change needs review by someone who did not write it | routine tier (Claude: Sonnet, `medium`); a sensitive review raises it on the spawn to Opus at `high` |
 | `escalate` | `dev-tools` | a `driver` failed twice on the same problem | strongest (Claude: Fable) |
-| `api-reviewer` | `api` | you want an API security review: vulnerabilities, RBAC leaks, compliance. Read-only; posts a verdict like `reviewer` | driver (Claude: Opus, `medium`) |
+| `api-reviewer` | `foundations` | you want an API security review: vulnerabilities, RBAC leaks, compliance. Read-only; posts a verdict like `reviewer` | driver (Claude: Opus, `medium`) |
 
 To force one, name it ("use scout to list every place we read `GUARD_` env vars"). Per harness: Claude Code `/agents` lists them; Copilot CLI `/agent` picks one; opencode `@scout`; Codex and pi by asking (pi runs them through its `subagent` tool). Models per harness: [compatibility.md](compatibility.md).
 

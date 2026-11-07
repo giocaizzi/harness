@@ -1124,6 +1124,192 @@ void test("remind rules hint once per session and never deny", () => {
         rules,
     }).rule, undefined);
 });
+void test("foundations commands remind once, never deny, and stay quiet with the skill loaded", () => {
+    const cases = [
+        ["uv run lint-imports", "arch-fitness", "architecture-fitness"],
+        ["npx depcruise src", "arch-fitness", "architecture-fitness"],
+        ["oasdiff breaking base.yaml head.yaml", "api-contract", "api-design"],
+        ["buf breaking --against .git#branch=main", "api-contract", "api-design"],
+        ["uv run alembic revision -m add_currency", "migration", "system-design"],
+        ["goose -dir db create add_currency sql", "migration", "system-design"],
+    ];
+    for (const [command, id, skill] of cases) {
+        const state = fresh();
+        const first = evaluateCommand({ command, state, host: calm, rules });
+        assert.equal(first.rule, id, command);
+        assert.equal(first.action, "allow", command);
+        assert.equal(first.remind, true, command);
+        assert.equal(evaluateCommand({ command, state, host: calm, rules }).rule, undefined, command);
+        for (const loaded of [`foundations:${skill}`, skill]) {
+            assert.equal(evaluateCommand({
+                command,
+                loadedSkills: new Set([loaded]),
+                state: fresh(),
+                host: calm,
+                rules,
+            }).remind, undefined, `${command} with ${loaded}`);
+        }
+    }
+    for (const command of [
+        "grep -rn lint-imports .",
+        "git log --grep alembic",
+        "alembic upgrade head",
+    ]) {
+        assert.equal(evaluateCommand({ command, state: fresh(), host: calm, rules }).rule, undefined, command);
+    }
+});
+void test("infra commands remind once, never deny, and stay quiet with the skill loaded", () => {
+    const cases = [
+        ["terraform plan -out=tf.plan", "terraform-local", "terraform"],
+        ["tofu -chdir=infra init", "terraform-local", "terraform"],
+        ["terraform state list", "terraform-local", "terraform"],
+        ["cd infra && terraform fmt -check", "terraform-local", "terraform"],
+        ["terraform force-unlock abc", "terraform-local", "terraform"],
+        ["docker build -t app .", "docker-build", "docker"],
+        ["docker buildx build --push .", "docker-build", "docker"],
+        ["hadolint Dockerfile", "docker-build", "docker"],
+        ["helm template r ./chart", "k8s-local", "kubernetes"],
+        ["helm upgrade --install r ./chart", "k8s-local", "kubernetes"],
+        ["kustomize build overlays/dev", "k8s-local", "kubernetes"],
+        ["kubeconform -strict m.yaml", "k8s-local", "kubernetes"],
+        ["kind create cluster", "k8s-local", "kubernetes"],
+        ["kubectl apply -f m.yaml", "k8s-local", "kubernetes"],
+        ["kubectl -n prod rollout status deploy/x", "k8s-local", "kubernetes"],
+    ];
+    for (const [command, id, skill] of cases) {
+        const state = fresh();
+        const first = evaluateCommand({ command, state, host: calm, rules });
+        assert.equal(first.rule, id, command);
+        assert.equal(first.action, "allow", command);
+        assert.equal(first.remind, true, command);
+        assert.equal(evaluateCommand({ command, state, host: calm, rules }).rule, undefined, command);
+        for (const loaded of [`infra:${skill}`, skill]) {
+            assert.equal(evaluateCommand({
+                command,
+                loadedSkills: new Set([loaded]),
+                state: fresh(),
+                host: calm,
+                rules,
+            }).remind, undefined, `${command} with ${loaded}`);
+        }
+    }
+    for (const command of [
+        "kubectl get pods",
+        "grep -rn terraform .",
+        "grep -rn helm .",
+        "docker ps",
+        "helm list",
+        "terraform version",
+    ]) {
+        assert.equal(evaluateCommand({ command, state: fresh(), host: calm, rules }).rule, undefined, command);
+    }
+});
+void test("long flag runs in infra commands do not backtrack", () => {
+    const flags = Array.from({ length: 30 }, (_, i) => `--f${String(i)}`).join(" ");
+    const cases = [
+        [`terraform ${flags} plan`, "terraform-local"],
+        [`terraform ${flags} apply`, "terraform"],
+        [`terraform ${flags} nope`, undefined],
+        [`kubectl ${flags} rollout status x`, "k8s-local"],
+        [`kubectl ${flags} delete pod x`, "k8s"],
+        [`kubectl ${flags} get pods`, undefined],
+        [`kubectl ${"-n a ".repeat(30)}x y`, undefined],
+    ];
+    for (const [command, rule] of cases) {
+        const start = performance.now();
+        const result = evaluateCommand({
+            command,
+            state: fresh(),
+            host: calm,
+            rules,
+        });
+        assert.ok(performance.now() - start < 100, command);
+        assert.equal(result.rule, rule, command);
+    }
+});
+void test("the infra risk rules still win over the infra reminders", () => {
+    const cases = [
+        ["terraform apply", "terraform"],
+        ["tofu destroy", "terraform"],
+        ["terraform plan && terraform apply", "terraform"],
+        ["kubectl delete pod x", "k8s"],
+        ["helm uninstall x", "k8s"],
+        ["kubectl apply -f m.yaml && kubectl delete pod x", "k8s"],
+    ];
+    for (const [command, rule] of cases) {
+        const result = evaluateCommand({
+            command,
+            state: fresh(),
+            host: calm,
+            rules,
+        });
+        assert.equal(result.action, "ask", command);
+        assert.equal(result.rule, rule, command);
+    }
+});
+void test("an edit to a Terraform, Docker or Kubernetes file hints at its infra skill once", () => {
+    const rule = (path) => evaluateEdit({ path, state: fresh(), rules }).rule;
+    for (const path of [
+        "infra/main.tf",
+        "env/prod.tfvars",
+        "tests/net.tftest.hcl",
+        ".terraform.lock.hcl",
+        "C:\\r\\infra\\main.tf",
+    ])
+        assert.equal(rule(path), "terraform-file", path);
+    for (const path of [
+        "Dockerfile",
+        "svc/Dockerfile.dev",
+        "web.dockerfile",
+        ".dockerignore",
+        "compose.yaml",
+        "docker-compose.prod.yml",
+        "C:\\r\\svc\\Dockerfile",
+    ])
+        assert.equal(rule(path), "docker-file", path);
+    for (const path of [
+        "chart/Chart.yaml",
+        "deploy/overlays/dev/kustomization.yaml",
+        "charts/app/values-prod.yaml",
+        "charts/app/templates/deploy.yaml",
+        "config/rbac/role.yaml",
+        "C:\\r\\chart\\Chart.yaml",
+    ])
+        assert.equal(rule(path), "k8s-file", path);
+    for (const path of ["src/main.ts", "docs/compose-notes.md", "values.yaml"])
+        assert.equal(rule(path), path === "docs/compose-notes.md" ? "docs" : undefined, path);
+    assert.equal(rule("config/default/openapi.yaml"), "openapi");
+    assert.equal(evaluateEdit({
+        path: "main.tf",
+        loadedSkills: new Set(["infra:terraform"]),
+        state: fresh(),
+        rules,
+    }).rule, undefined);
+    const state = fresh();
+    assert.equal(evaluateEdit({ path: "a.tf", state, rules }).rule, "terraform-file");
+    assert.equal(evaluateEdit({ path: "b.tf", state, rules }).rule, undefined);
+});
+void test("an edit to an ADR, migration, contract, architecture config or domain file hints at its foundations skill once", () => {
+    const rule = (path) => evaluateEdit({ path, state: fresh(), rules }).rule;
+    assert.equal(rule("docs/adr/0003-queue.md"), "adr");
+    assert.equal(rule("C:\\r\\docs\\adr\\0001.md"), "adr");
+    assert.equal(rule("docs/guard.md"), "docs");
+    assert.equal(rule("internal/orders/domain/order.go"), "domain");
+    assert.equal(rule("src/domainx/a.py"), undefined);
+    assert.equal(rule("api/openapi.yaml"), "openapi");
+    assert.equal(rule("proto/orders/v1/orders.proto"), "openapi");
+    assert.equal(rule("alembic/versions/1a2b_add_currency.py"), "migration-file");
+    assert.equal(rule("/r/.importlinter"), "arch-config");
+    const state = fresh();
+    assert.equal(evaluateEdit({ path: "docs/adr/1.md", state, rules }).rule, "adr");
+    assert.equal(evaluateEdit({ path: "docs/adr/2.md", state, rules }).rule, undefined);
+    assert.equal(evaluateEdit({
+        path: "docs/adr/1.md",
+        loadedSkills: new Set(["foundations:system-design"]),
+        state: fresh(),
+        rules,
+    }).rule, undefined);
+});
 void test("a shell-only file read hints at the read tool once, only where the harness has one", () => {
     const state = fresh();
     for (const c of [
@@ -1205,7 +1391,8 @@ void test("a spawn that bypasses the typed agents gets one routing hint per case
     // A typed agent's model or effort override, in any plugin, bare names included.
     assert.equal(rule("dev-tools:driver", "opus"), "routing-override");
     assert.equal(rule("scout", "haiku"), "routing-override");
-    assert.equal(rule("api:api-reviewer", "opus"), "routing-override");
+    assert.equal(rule("foundations:api-reviewer", "opus"), "routing-override");
+    assert.equal(rule("api-reviewer", "opus"), "routing-override");
     assert.equal(rule("dev-tools:driver", undefined, fresh(), "high"), "routing-override");
     assert.equal(rule("dev-tools:reviewer", undefined, fresh(), "max"), "routing-override");
     assert.match(defined(evaluateRouting({

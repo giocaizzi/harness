@@ -1,8 +1,8 @@
 {
   "$schema": "https://antigravity.google/schemas/v1/plugin.json",
   "name": "python",
-  "version": "1.7.0",
-  "description": "Python development and testing best practices",
+  "version": "1.8.0",
+  "description": "Python development and testing, FastAPI and SQLAlchemy",
   "author": {
     "name": "giocaizzi",
     "url": "https://github.com/giocaizzi"
@@ -13,6 +13,9 @@
     "python",
     "development",
     "testing",
-    "pytest"
+    "pytest",
+    "fastapi",
+    "sqlalchemy",
+    "pydantic"
   ]
 }
