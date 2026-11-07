@@ -1083,83 +1083,97 @@ export async function branchFacts(command, rules, run, env = {}) {
         facts[i],
     ]));
 }
-// push options that take a separate value (the `=` forms take none): it is no refspec and no remote.
-const PUSH_VALUE = new Set([
-    "-o",
-    "--push-option",
-    "--receive-pack",
-    "--exec",
-    "--repo",
-]);
 // `--force-with-lease` or any unique abbreviation git accepts (`--force-w`), with or without `=value`.
 const isLease = (a) => {
     const name = a.split("=")[0] ?? "";
     return name.length >= 9 && "--force-with-lease".startsWith(name);
 };
-// `--all` / `--branches` or an abbreviation (`--al`, `--br`).
-const isAllRefs = (a) => {
-    const name = a.split("=")[0] ?? "";
-    return ((name.length >= 4 && "--all".startsWith(name)) ||
-        (name.length >= 4 && "--branches".startsWith(name)));
-};
-// A refspec that is the current branch: HEAD, @ or a word that cannot be read statically, without a `:dst`.
-const currentBranchRef = (w) => !w.val.includes(":") &&
-    (w.val === "HEAD" ||
-        w.val === "@" ||
-        w.substs.length > 0 ||
-        /[$`]/.test(w.raw));
-// The directory of every `git push --force-with-lease` of a command that pushes the current branch (no refspec, or
-// HEAD, @ or a non-static word without `:dst`; at most the remote is named), '' for the cwd. The `force` rule needs
-// to know which branch that is. One on another host or in a container, one with `--all`/`--branches`, one whose
-// pushed refs git config can change (`-c push.default=…`, `-c remote.<x>.push=…`, GIT_CONFIG_* in the environment)
-// and a bare one in another repo (`--git-dir`, `--work-tree`, GIT_DIR, GIT_WORK_TREE) have dir REMOTE_DIR: no fact is
-// gathered for it, so it asks.
+// Push options a lease push may carry and still pass without facts, spelled exactly (git accepts abbreviations and
+// short clusters, which this list does not): anything else asks.
+const SAFE_PUSH_OPTS = new Set([
+    "-u",
+    "--set-upstream",
+    "-q",
+    "--quiet",
+    "-v",
+    "--verbose",
+    "--no-verify",
+    "--verify",
+    "--atomic",
+    "--porcelain",
+    "--progress",
+    "--no-progress",
+    "-n",
+    "--dry-run",
+    "--follow-tags",
+    "--force-if-includes",
+]);
+const STATIC_REF = /^[A-Za-z0-9._/-]+(:[A-Za-z0-9._/-]+)?$/;
+const PROTECTED_DST = new Set(["main", "master", "HEAD", "@"]);
+// A word that is the same whatever the shell does with it.
+const isStatic = (w) => w.substs.length === 0 && !/[$`]/.test(w.raw);
+// What a lease push step needs: "feature" (passes), "current" (the branch git pushes decides) or "ask". An allow-list,
+// failing closed: only the forms below are understood, and every other one asks.
+function leaseKind(all, k) {
+    const args = all.slice(k + 1);
+    const options = args.filter((a) => a.val.startsWith("-"));
+    if (!options.every((o) => SAFE_PUSH_OPTS.has(o.val) || isLease(o.val)) ||
+        options.some((o) => o.val === "--" || o.val === "-"))
+        return "ask";
+    const positional = args.filter((a) => !a.val.startsWith("-"));
+    const [remote, ...refs] = positional;
+    if (remote && (!isStatic(remote) || !/^[A-Za-z0-9._-]+$/.test(remote.val)))
+        return "ask";
+    let current = refs.length === 0;
+    for (const ref of refs) {
+        if (!isStatic(ref) || !STATIC_REF.test(ref.val))
+            return "ask";
+        if (ref.val === "HEAD" || ref.val === "@") {
+            current = true;
+            continue;
+        }
+        const [src = "", dst] = ref.val.split(":");
+        const name = (dst ?? src).replace(/^(?:refs\/)?heads\//, "");
+        if (PROTECTED_DST.has(name))
+            return "ask";
+    }
+    return current ? "current" : "feature";
+}
+// The directory of every `git push --force-with-lease` of a command, as the facts to read are keyed: a push that
+// leaseKind calls "current" (no refspec, or HEAD or @) has its step's dir, or REMOTE_DIR on another host or in a
+// container; one it calls "ask" has REMOTE_DIR, where no fact is gathered, so it asks; a "feature" push has none.
+// git's global options other than `-C <static dir>`, `--no-pager` and `-P`, and any GIT_* variable, HOME or
+// XDG_CONFIG_HOME assigned anywhere in the command (they change what git pushes) make a push ask.
 function leaseTargets(command, rules, env = {}) {
     if (!rules.risky.some((r) => r.id === "force"))
         return [];
+    const envSet = /(?<![A-Za-z0-9_])(?:GIT_[A-Za-z0-9_]*|HOME|XDG_CONFIG_HOME)=/.test(command);
     return segments(command, env).flatMap(({ words, dir, remote }) => {
         const all = commandWords(words);
         if (all[0]?.val !== "git")
             return [];
         let k = 1;
-        let config = false;
-        let repo = false;
+        let plain = true;
         while (all[k]?.val.startsWith("-")) {
             const opt = defined(all[k]).val;
-            const value = all[k + 1]?.val ?? "";
-            if ((opt === "-c" && /^(push\.default|remote\..*\.push)=/i.test(value)) ||
-                opt.startsWith("--config-env"))
-                config = true;
-            if (/^--(git-dir|work-tree)\b/.test(opt))
-                repo = true;
-            k += GIT_VALUE.has(opt) ? 2 : 1;
+            if (opt === "-C" && all[k + 1] && isStatic(defined(all[k + 1])))
+                k += 2;
+            else {
+                if (opt !== "--no-pager" && opt !== "-P")
+                    plain = false;
+                k += GIT_VALUE.has(opt) ? 2 : 1;
+            }
         }
         if (all[k]?.val !== "push")
             return [];
-        const args = all.slice(k + 1);
-        if (!args.some((a) => isLease(a.val)))
+        if (!all.slice(k + 1).some((a) => isLease(a.val)))
             return [];
-        const positional = [];
-        for (let n = 0; n < args.length; n++) {
-            const a = defined(args[n]).val;
-            if (a.startsWith("-"))
-                n += PUSH_VALUE.has(a) ? 1 : 0;
-            else
-                positional.push(defined(args[n]));
-        }
-        const bare = positional.length <= 1 ||
-            (positional.length === 2 && currentBranchRef(defined(positional[1])));
-        const envPrefix = (re) => words.some((w) => re.test(w.val));
-        if (envPrefix(/^GIT_CONFIG_(COUNT|PARAMETERS)=/))
-            config = true;
-        if (envPrefix(/^GIT_(DIR|WORK_TREE)=/))
-            repo = true;
-        const everyRef = args.some((a) => isAllRefs(a.val));
-        if (everyRef || config)
+        const kind = plain && !envSet ? leaseKind(all, k) : "ask";
+        if (kind === "ask")
             return [REMOTE_DIR];
-        if (!bare)
+        if (kind === "feature")
             return [];
-        return [remote || repo ? REMOTE_DIR : dir];
+        return [remote ? REMOTE_DIR : dir];
     });
 }
 // Push facts for every bare lease push of a command, in parallel: { [dir]: { branch, upstream, head } }. A call that
