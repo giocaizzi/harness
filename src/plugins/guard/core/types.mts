@@ -356,6 +356,14 @@ export interface SessionState {
   reminded: Set<string>;
 }
 
+// What a bare `git push --force-with-lease` would push from, per directory: the current branch, its upstream and the
+// remote default branch (origin/HEAD), each null when git could not say.
+export interface PushFact {
+  branch: string | null;
+  head: string | null;
+  upstream: string | null;
+}
+
 export interface CommandEvaluationInput {
   branches?: Record<string, SafeFact | undefined>;
   command: string;
@@ -363,6 +371,7 @@ export interface CommandEvaluationInput {
   host?: HostFacts;
   loadedSkills?: Iterable<string>;
   python?: string | null;
+  pushes?: Record<string, PushFact | undefined>;
   readTool?: boolean;
   refs?: Record<string, SafeFact | undefined>;
   regenerable?: Record<string, boolean | undefined>;

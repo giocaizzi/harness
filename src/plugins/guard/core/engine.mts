@@ -23,6 +23,7 @@ import type {
   ProtectConfig,
   ProtectHit,
   ProtectedLimits,
+  PushFact,
   RefTarget,
   RelativeSegments,
   RiskyRule,
@@ -1379,6 +1380,16 @@ export async function branchFacts(
       facts[i],
     ]),
   );
+}
+
+// STUB
+export function pushFacts(
+  _command: string,
+  _rules: GuardRules,
+  _run: RunnerFn,
+  _env: GuardEnv = {},
+): Promise<Record<string, PushFact | undefined>> {
+  return Promise.resolve({});
 }
 
 // Build output and caches a tool regenerates. A delete of one passes when git ignores it (`git check-ignore`, so it

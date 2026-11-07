@@ -18,6 +18,7 @@ import {
   protectedPathHit,
   protectedWrite,
   pureRead,
+  pushFacts,
   refFacts,
   regenerableName,
   regenFacts,
@@ -245,7 +246,6 @@ void test("--force-with-lease to a feature branch passes; plain force, + refspec
   const act = (command: string) =>
     evaluateCommand({ command, state: fresh(), host: calm, rules }).action;
   for (const c of [
-    "git push --force-with-lease",
     "git push -q --force-with-lease origin feat/x",
     "git push --force-with-lease=feat/x:abc123 origin feat/x",
     "git push origin --follow-tags",
@@ -260,6 +260,69 @@ void test("--force-with-lease to a feature branch passes; plain force, + refspec
     "git push --force-with-lease origin HEAD:master",
   ])
     assert.equal(act(c), "ask", c);
+});
+
+// Fake git for a bare lease push: the current branch, its upstream and origin/HEAD (null: the call fails).
+interface PushFixture {
+  branch?: string | null;
+  head?: string | null;
+  upstream?: string | null;
+}
+const fakePush = (f: PushFixture) => (argv: string[]) => {
+  const key = argv.includes("@{u}")
+    ? "upstream"
+    : argv.includes("symbolic-ref")
+      ? "head"
+      : "branch";
+  const v = f[key];
+  return v == null ? null : `${v}\n`;
+};
+
+void test("a bare --force-with-lease push asks on main, master or the default branch and when unreadable", async () => {
+  const outcome = async (c: string, f: PushFixture | "none") =>
+    evaluateCommand({
+      command: c,
+      state: fresh(),
+      host: calm,
+      pushes: f === "none" ? {} : await pushFacts(c, rules, fakePush(f)),
+      rules,
+    });
+  for (const c of [
+    "git push --force-with-lease",
+    "git push --force-with-lease origin",
+    "git -C /r push --force-with-lease",
+  ]) {
+    for (const f of [
+      { branch: "main" },
+      { branch: "master" },
+      { branch: "trunk", head: "origin/trunk" },
+      { branch: "feat/x", upstream: "origin/main" },
+      { branch: "feat/x", upstream: "origin/master" },
+      { branch: "feat/x", upstream: "origin/trunk", head: "origin/trunk" },
+      { branch: null },
+      { branch: "HEAD" },
+    ]) {
+      const d = await outcome(c, f);
+      assert.equal(d.action, "ask", `${c} ${JSON.stringify(f)}`);
+      assert.equal(d.rule, "force", c);
+    }
+    assert.equal((await outcome(c, "none")).action, "ask", `${c} no facts`);
+    for (const f of [
+      { branch: "feat/x" },
+      { branch: "feat/x", upstream: "origin/feat/x", head: "origin/main" },
+    ])
+      assert.equal(
+        (await outcome(c, f)).action,
+        "allow",
+        `${c} ${JSON.stringify(f)}`,
+      );
+  }
+  // an explicit feature refspec needs no facts
+  for (const c of [
+    "git push --force-with-lease origin feat/x",
+    "git push origin HEAD:feat/x --force-with-lease",
+  ])
+    assert.equal((await outcome(c, "none")).action, "allow", c);
 });
 
 void test("a recursive delete of a temp dir held in a variable or a quoted $TMPDIR path does not ask", () => {
