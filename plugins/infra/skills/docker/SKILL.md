@@ -12,7 +12,7 @@ Category: code scaffolding and templates. One image per deployable, built once a
 1. **One Dockerfile per deployable**, with named stages (`dev`, `test`, `prod`) in that one file, never `Dockerfile.dev` copies. Monorepo: build from the workspace root with a `.dockerignore` allowlist (`*` then `!path`). Detail: [BUILD.md](references/BUILD.md).
 2. **Multi-stage, minimal final image.** Build tools stay in the build stage. A static Go binary (`CGO_ENABLED=0`) ships on a minimal base (`scratch` or distroless static); anything else on a slim base.
 3. **Non-root, numeric UID** (`USER 10001`), set before `CMD`. `COPY --chown` for files the app writes.
-4. **Base pinned by tag and digest** (`FROM python:3.13-slim@sha256:...`); the update bot (Renovate or Dependabot) bumps both. Never `latest`.
+4. **Base pinned by tag and digest** (`FROM python:3.14-slim@sha256:...`); the update bot (Renovate or Dependabot) bumps both. Never `latest`.
 5. **`.dockerignore` is mandatory**: `.git`, env files, build output, local caches.
 6. **Dependency layers before source**: copy the lockfile, install, then copy the source. Use a BuildKit cache mount for the package cache.
 7. **Secrets via `RUN --mount=type=secret`**, never `ARG`, `ENV` or `COPY`: they stay in the image history.

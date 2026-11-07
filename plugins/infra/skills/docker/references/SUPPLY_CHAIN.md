@@ -22,6 +22,14 @@ LABEL org.opencontainers.image.source=$SOURCE \
 
 hadolint is a `make lint` step (`hadolint Dockerfile`, or its container image where the host has no binary), configured in `.hadolint.yaml` (`failure-threshold`, `ignored`). An ignored rule carries its reason as a comment. Clean means exit 0.
 
+DL3008 (pin apt package versions) is ignored on purpose: the base image is pinned by digest and bumped by the update bot, so apt versions move with it.
+
+```yaml
+# .hadolint.yaml
+ignored:
+  - DL3008 # base pinned by digest, bumped by the bot
+```
+
 ## Scan and provenance
 
 - CI scans every built image (Trivy or Grype) and fails on fixable high or critical findings; the same scan runs on a schedule for images already shipped.
