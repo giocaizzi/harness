@@ -13,7 +13,7 @@
       "name": "python",
       "source": "./plugins/python",
       "description": "Python development and testing best practices",
-      "version": "1.6.2",
+      "version": "1.7.0",
       "keywords": [
         "python",
         "development",
@@ -65,7 +65,7 @@
       "name": "dev-tools",
       "source": "./plugins/dev-tools",
       "description": "General development tooling \u2014 git, GitHub, conventional commits, semantic versioning",
-      "version": "1.51.8",
+      "version": "1.51.9",
       "keywords": [
         "git",
         "github",

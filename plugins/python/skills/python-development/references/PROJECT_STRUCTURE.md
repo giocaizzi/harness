@@ -1,198 +1,131 @@
-# Project Structure Reference
+# Project structure
 
-Standard Python project layout and tooling for 3.12+ projects.
+Everything here ran with uv 0.13.7, ruff 0.17.4, pyrefly 1.4.1 and pytest 9.2 on CPython 3.14.10.
 
-## Directory Layout
+## Layout
 
 ```
 project-root/
-├── pyproject.toml          # Single source of truth
-├── uv.lock                 # Locked dependencies (committed)
+├── pyproject.toml        # metadata, dependencies, pyrefly, pytest, coverage
+├── ruff.toml             # references/ruff.toml, unchanged until a rule needs a reason
+├── uv.lock               # committed
+├── .python-version       # the interpreter the project runs (uv python pin 3.15)
+├── Makefile
 ├── README.md
-├── Makefile                # Task runner (or justfile)
 ├── src/
-│   └── my_package/
-│       ├── __init__.py
-│       ├── py.typed        # PEP 561 marker (for typed libraries)
-│       ├── core/
-│       │   ├── __init__.py
-│       │   └── models.py
-│       └── services/
+│   └── shop/             # import name; the distribution may be shop or shop-api
+│       ├── __init__.py   # license header + docstring only
+│       ├── py.typed      # libraries: PEP 561 marker, empty
+│       ├── cli.py        # main(argv) -> int; builds the dependencies
+│       ├── errors.py     # class Error(Exception) and its subclasses
+│       ├── orders.py     # one feature: its data classes and functions together
+│       ├── pricing.py
+│       └── notifications/  # a feature that outgrew one module
 │           ├── __init__.py
-│           └── user.py
-├── tests/
-│   ├── conftest.py
-│   ├── unit/
-│   │   └── test_models.py
-│   └── integration/
-│       └── test_user_service.py
-├── docs/                   # Optional
-└── scripts/                # One-off scripts, migrations
+│           ├── alerts.py
+│           └── slack.py
+└── tests/                # no __init__.py; mirrors src/shop by feature
+    ├── conftest.py
+    ├── test_orders.py
+    └── notifications/
+        └── test_alerts.py
 ```
 
-### Why `src/` layout?
-
-- Prevents accidental imports of the uninstalled package
-- Forces you to install the package (editable) before testing
-- Matches PyPA recommendations and `uv`/`pip` defaults
+`src/` keeps tests running against the installed package, not the working directory. Modules are named for the feature they hold; there is no `models.py`, `services/` or `utils.py` to collect unrelated code by kind.
 
 ## pyproject.toml
 
-Minimal modern `pyproject.toml` with `uv`:
-
 ```toml
 [project]
-name = "my-package"
+name = "shop"
 version = "0.1.0"
-description = "A short description"
-requires-python = ">=3.12"
+description = "Prices and orders."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.14"
 dependencies = [
-    "httpx>=0.27",
-    "pydantic>=2.0",
+    "httpx>=0.28",
 ]
 
-[project.optional-dependencies]
+[project.scripts]
+shop = "shop.cli:main"
+
+[dependency-groups]
 dev = [
-    "pytest>=8.0",
-    "pytest-cov>=5.0",
-    "mypy>=1.10",
-    "ruff>=0.5",
+    "pyrefly>=1.4",
+    "ruff>=0.17",
+    # the test stack: python-testing skill
 ]
 
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+requires = ["uv_build>=0.13.7,<0.14"]
+build-backend = "uv_build"
 
-[tool.hatch.build.targets.wheel]
-packages = ["src/my_package"]
+[tool.pyrefly]
+preset = "strict"
+project-includes = ["src", "tests"]
 
-[tool.ruff]
-target-version = "py312"
-src = ["src", "tests"]
-
-[tool.ruff.lint]
-select = ["ALL"]
-ignore = [
-    "D",        # pydocstyle (handled separately)
-    "ANN101",   # missing self type
-    "ANN102",   # missing cls type
-    "COM812",   # trailing comma (conflicts with formatter)
-    "ISC001",   # single-line string concat (conflicts with formatter)
-]
-
-[tool.ruff.lint.isort]
-known-first-party = ["my_package"]
-
-[tool.mypy]
-strict = true
-plugins = []
-mypy_path = "src"
-
-[[tool.mypy.overrides]]
-module = "tests.*"
-disallow_untyped_defs = false
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-addopts = "-ra --strict-markers"
+# [tool.pytest] and [tool.coverage.*]: python-testing skill
 ```
 
-## Package Manager: uv
+- `uv add <pkg>` writes a lower bound; the lockfile pins exact versions. `uv add --dev <pkg>` lands in the `dev` group, which `uv sync` installs by default; another group (`docs`, `bench`) is synced with `--group`.
+- `uv_build` expects the import package at `src/<normalized project name>/`; when it differs set `[tool.uv.build-backend] module-name = "..."`.
+- The version lives only in `pyproject.toml` (release-please bumps it and `uv.lock`); read it at runtime with `importlib.metadata.version("shop")`.
 
-`uv` is the only package manager used.
-
-### Common workflows
-
-```bash
-# Initialize new project
-uv init my-project
-cd my-project
-
-# Add dependencies
-uv add httpx pydantic
-uv add --dev pytest mypy ruff
-
-# Install (creates venv automatically)
-uv sync
-
-# Run commands in the venv
-uv run pytest
-uv run mypy src/
-
-# Update lockfile
-uv lock
-
-# Build and publish
-uv build
-uv publish
-```
-
-### Key principles
-
-- **Always commit `uv.lock`** — ensures reproducible installs
-- **Use `uv run`** for one-off commands instead of activating venv
-- **Pin ranges** in `pyproject.toml` (`>=1.0,<2.0`), exact versions in lockfile
-- **Separate dev deps** via `[project.optional-dependencies]` or `[dependency-groups]`
-
-## py.typed Marker
-
-For libraries that ship type information, include an empty `py.typed` file:
-
-```
-src/my_package/py.typed    # empty file, signals PEP 561 compliance
-```
-
-This tells type checkers that your package provides inline type annotations.
-Without it, tools like `mypy` may ignore your package's types.
-
-## Environment Management
-
-```bash
-# uv auto-creates .venv/ — no manual virtualenv creation needed
-uv sync                    # install all deps into .venv/
-
-# Pin Python version
-uv python pin 3.12         # creates .python-version file
-
-# Multiple Python versions for testing
-uv run --python 3.13 pytest
-```
-
-## Makefile (Task Runner)
-
-Standard targets: `help`, `lint`, `test`, `check` (= `lint` + `test`).
+## Makefile
 
 ```makefile
-.PHONY: help lint test check
+.DEFAULT_GOAL := help
+.PHONY: help fmt lint test check
 
-help:  ## List targets
-	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | sed 's/:.*##/\t/'
+help: ## List targets
+	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | sed 's/:.*## /\t/'
 
-lint:  ## Format check, lint, type check
-	uv run ruff format --check src/ tests/
-	uv run ruff check src/ tests/
-	uv run mypy src/
+fmt: ## Format and apply safe lint fixes
+	uv run ruff format
+	uv run ruff check --fix
 
-test:  ## Run tests
-	uv run pytest --cov=my_package
+lint: ## Lockfile, format, lint and type check, changing nothing
+	uv lock --check
+	uv run ruff format --check
+	uv run ruff check
+	uv run pyrefly check
 
-check: lint test  ## lint + test
+test: ## Run the tests in parallel, with coverage
+	uv run pytest --cov --cov-report=term-missing:skip-covered
+
+check: lint test ## lint + test
 ```
 
-## Versioning
+CI runs `uv sync --locked` and then `make check` (workflow shape: the `github-workflow` skill). A library also runs `make test` on each Python version it claims, `uv run --python 3.N`.
 
-- Use **single-source versioning** — version lives in `pyproject.toml` only
-- For dynamic versioning from VCS tags: use `hatch-vcs` or `setuptools-scm`
-- Follow [SemVer](https://semver.org/) for libraries; CalVer acceptable for applications
+## Single-file scripts
 
-## Multi-Package / Monorepo
+A script outside the package carries its own dependencies (PEP 723) and needs no project:
 
-For workspaces with multiple packages:
+```bash
+uv init --script scripts/backfill.py --python 3.15
+uv add --script scripts/backfill.py httpx
+uv run scripts/backfill.py --dry-run
+```
+
+`uv lock --script scripts/backfill.py` writes `backfill.py.lock` beside it when the script must be reproducible. A script that grows tests or a second module becomes a package in `src/`.
+
+## Workspaces
+
+Several packages that release together share one lockfile:
 
 ```toml
-# Root pyproject.toml
+# root pyproject.toml
 [tool.uv.workspace]
 members = ["packages/*"]
+
+[tool.uv.sources]
+shop-core = { workspace = true }
 ```
 
-Each package has its own `pyproject.toml` under `packages/<name>/`.
+Each member has its own `pyproject.toml` and `src/`; `uv run --package shop-api pytest` runs one member's tests. Packages that release separately are separate repos.
+
+## Typed libraries
+
+A library ships `src/<package>/py.typed` (empty) so type checkers read its annotations; without it consumers see `Any`.

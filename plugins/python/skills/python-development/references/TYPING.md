@@ -1,259 +1,120 @@
-# Typing Reference
+# Typing
 
-Deep-dive on Python typing for 3.12+ codebases.
+Snippets passed ruff with [ruff.toml](./ruff.toml) and pyrefly's strict preset on CPython 3.14.10 (docstrings trimmed here).
 
-## Version-Specific Features
+## What each version adds
 
-Use when the project's minimum Python allows; otherwise import from `typing_extensions`.
+Use a feature natively when `requires-python` allows it; otherwise import it from `typing_extensions` unconditionally (it re-exports the stdlib object when there is one). No `if sys.version_info` import blocks: Google 3.19.13 discourages conditional imports.
 
-| Feature | Min version |
+| Version | Typing and syntax that change how code is written |
 |---|---|
-| `class Foo[T]`, `type Alias = ...` (PEP 695), `@override` | 3.12 |
-| `TypeIs` (PEP 742), `@warnings.deprecated` (PEP 702), `ReadOnly` TypedDict (PEP 705), `TypeVar` defaults (PEP 696) | 3.13 |
-| Deferred annotation eval (PEP 649), `except A, B:` without parens (PEP 758), template strings `t"..."` (PEP 750) | 3.14 |
+| 3.12 | `class C[T]`, `def f[T]`, `type Alias = ...` (PEP 695); `@override` (PEP 698) |
+| 3.13 | `TypeIs` (PEP 742), `@warnings.deprecated` (PEP 702), `ReadOnly` TypedDict items (PEP 705), type parameter defaults (PEP 696) |
+| 3.14 (floor) | Lazy annotations and `annotationlib` (PEP 649/749), t-strings and `string.templatelib` (PEP 750), `except A, B:` without parentheses (PEP 758) |
+| 3.15 | `lazy import` (PEP 810), closed TypedDicts and `extra_items` (PEP 728), `TypeForm` (PEP 747), `frozendict` (PEP 814), `sentinel` (PEP 661) |
 
-## Modern Syntax (3.12+)
-
-### Generics
-
-```python
-# ✅ New syntax (3.12+)
-class Stack[T]:
-    def __init__(self) -> None:
-        self._items: list[T] = []
-
-    def push(self, item: T) -> None:
-        self._items.append(item)
-
-    def pop(self) -> T:
-        return self._items.pop()
-
-def first[T](items: Sequence[T]) -> T:
-    return items[0]
-
-# ❌ Legacy (never use on 3.12+)
-from typing import TypeVar, Generic
-T = TypeVar("T")
-class Stack(Generic[T]): ...
-```
-
-### Type Aliases
+## Generics, aliases and their names
 
 ```python
-# ✅ New keyword (3.12+)
-type Vector = list[float]
-type Result[T] = T | Error
-type JSON = str | int | float | bool | None | list["JSON"] | dict[str, "JSON"]
+from collections.abc import Callable, Sequence
+import functools
+import itertools
 
-# ❌ Legacy
-from typing import TypeAlias
-Vector: TypeAlias = list[float]
+type _Pair[T] = tuple[T, T]  # module-local alias: _Private, CapWords
+type JsonValue = (
+    str | int | float | bool | list[JsonValue] | dict[str, JsonValue] | None
+)
+
+
+def neighbours[T](items: Sequence[T]) -> list[_Pair[T]]:
+    return list(itertools.pairwise(items))
+
+
+def largest[AddableT: (int, str)](items: Sequence[AddableT]) -> AddableT:
+    return max(items)  # constrained: a descriptive name (Google 3.19.10)
+
+
+def retry[**P, R](times: int) -> Callable[[Callable[P, R]], Callable[P, R]]:
+    def decorate(func: Callable[P, R]) -> Callable[P, R]:
+        @functools.wraps(func)
+        def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
+            for _ in range(times - 1):
+                try:
+                    return func(*args, **kwargs)
+                except OSError:
+                    continue
+            return func(*args, **kwargs)
+
+        return wrapper
+
+    return decorate
 ```
 
-### Union Syntax
+No `TypeVar`, `ParamSpec`, `Generic[T]` or `TypeAlias` in new code (ruff's UP040, UP046 and UP047 rewrite them). A recursive alias refers to itself unquoted. A decorator's docstring says it is a decorator (Google 2.17).
 
-```python
-# ✅ Always (3.10+ / 3.12 is our floor)
-def process(value: int | str | None) -> str: ...
+## Wide in, narrow out
 
-# ❌ Never
-from typing import Union, Optional
-def process(value: Optional[Union[int, str]]) -> str: ...
-```
+| Parameter takes | Instead of | When the function only |
+|---|---|---|
+| `Iterable[T]` | `list[T]` | Loops once |
+| `Sequence[T]` | `list[T]` | Indexes or loops more than once |
+| `Mapping[K, V]` | `dict[K, V]` | Reads keys |
+| `AbstractSet[T]` (`collections.abc.Set`) | `set[T]` | Tests membership |
 
-## Wide vs. Narrow Types
+Return the concrete type you built (`list[str]`, `dict[str, int]`). Abstract types come from `collections.abc`, never `typing`.
 
-Use the **widest** type for parameters that the implementation actually supports.
-Use the **narrowest** type for return values.
+## Protocol or ABC
 
-```python
-from collections.abc import Sequence, Mapping, Iterable
+A seam exists for a second implementation or a test fake (SKILL.md, Design). When it does:
 
-# ✅ Wide input, narrow output
-def summarize(items: Iterable[str]) -> list[str]:
-    return [item.strip() for item in items]
-
-def lookup(config: Mapping[str, int], key: str) -> int:
-    return config[key]
-
-# ❌ Unnecessarily narrow input
-def summarize(items: list[str]) -> list[str]: ...
-```
-
-### Common type width ladder (narrow → wide)
-
-| Narrow | Wide | Use when |
-|--------|------|----------|
-| `list[T]` | `Sequence[T]` | Read-only ordered access |
-| `list[T]` | `Iterable[T]` | Single-pass iteration |
-| `dict[K, V]` | `Mapping[K, V]` | Read-only key lookup |
-| `set[T]` | `AbstractSet[T]` | Read-only membership |
-| `str` | `str \| bytes` | Accept both text forms |
-
-Import abstract types from `collections.abc`, not from `typing`.
-
-## Protocols (Structural Typing)
-
-Use `Protocol` when you need duck typing with static checking. Prefer over ABC
-when callers shouldn't need to inherit from your type.
-
-```python
-from typing import Protocol, runtime_checkable
-
-class Readable(Protocol):
-    def read(self, n: int = -1) -> bytes: ...
-
-class Closeable(Protocol):
-    def close(self) -> None: ...
-
-class ReadableCloseable(Readable, Closeable, Protocol): ...
-
-# Can also be runtime-checkable (use sparingly — performance cost)
-@runtime_checkable
-class Sized(Protocol):
-    def __len__(self) -> int: ...
-```
-
-### When to use Protocol vs ABC
-
-| Use `Protocol` when | Use `ABC` when |
+| `Protocol` | `ABC` |
 |---|---|
-| Consumers shouldn't know about your type | You own the hierarchy |
-| Duck typing / structural compatibility | Need shared implementation |
-| Third-party types must satisfy interface | Enforcement via `isinstance` required |
+| Implementations need not know the interface (a fake, a third-party class) | Implementations share code through the base class |
+| Declared in the consumer's module | Declared beside the implementations it serves |
+| `@runtime_checkable` only when code really branches on it (`isinstance` checks only method presence) | `@abstractmethod` on every hook a subclass must fill |
 
 ## Overloads
 
-Use `@overload` when the return type depends on argument types or values:
+When the return type follows an argument's value:
 
 ```python
-from typing import overload, Literal
+from typing import Literal, overload
+
 
 @overload
 def fetch(url: str, *, raw: Literal[True]) -> bytes: ...
 @overload
 def fetch(url: str, *, raw: Literal[False] = ...) -> str: ...
 def fetch(url: str, *, raw: bool = False) -> bytes | str:
-    response = _get(url)
-    return response if raw else response.decode()
+    body = url.encode()
+    return body if raw else body.decode()
 ```
 
-## TypeIs vs TypeGuard (3.13+)
+Two functions (`fetch_text`, `fetch_bytes`) are often clearer than the overload; prefer them for new APIs.
 
-`TypeIs` narrows in both branches; `TypeGuard` only narrows in the `True` branch.
-Prefer `TypeIs` unless you need asymmetric narrowing.
+## Narrowing
 
-```python
-from typing import TypeIs
-
-def is_str_list(val: list[object]) -> TypeIs[list[str]]:
-    return all(isinstance(x, str) for x in val)
-
-items: list[object] = ["a", "b"]
-if is_str_list(items):
-    # items is list[str] here
-    print(items[0].upper())
-```
-
-On 3.12 use `from typing_extensions import TypeIs`.
-
-## Keyword-Only and Positional-Only Parameters
-
-```python
-# Keyword-only (after *)
-def connect(host: str, port: int, *, timeout: float = 30.0, ssl: bool = True) -> None: ...
-
-# Positional-only (before /)
-def pow(base: float, exp: float, /) -> float: ...
-
-# Combined
-def create(name: str, /, *, force: bool = False) -> None: ...
-```
-
-## Decorators
-
-```python
-from collections.abc import Callable
-from typing import ParamSpec, TypeVar
-from functools import wraps
-
-P = ParamSpec("P")
-R = TypeVar("R")
-
-def retry(times: int) -> Callable[[Callable[P, R]], Callable[P, R]]:
-    def decorator(func: Callable[P, R]) -> Callable[P, R]:
-        @wraps(func)
-        def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
-            for attempt in range(times):
-                try:
-                    return func(*args, **kwargs)
-                except Exception:
-                    if attempt == times - 1:
-                        raise
-            raise RuntimeError("unreachable")
-        return wrapper
-    return decorator
-```
-
-## Final, Literal, and Constants
-
-```python
-from typing import Final, Literal
-
-# Constants
-MAX_RETRIES: Final = 3
-API_VERSION: Final[str] = "v2"
-
-# Literal types for constrained values
-def set_mode(mode: Literal["read", "write", "append"]) -> None: ...
-
-# Enum alternative for string literals
-from enum import StrEnum
-class Mode(StrEnum):
-    READ = "read"
-    WRITE = "write"
-    APPEND = "append"
-```
-
-## Forward References
-
-| Python version | Solution |
-|---|---|
-| 3.12–3.13 | `from __future__ import annotations` at module top |
-| 3.14+ | Native deferred evaluation (PEP 649) — no action needed |
-
-On 3.12–3.13 you can also quote the reference: `def f() -> "MyClass": ...`
+`TypeIs[T]` narrows both branches. `TypeGuard[T]` narrows only the true one; use it only when `T` is not a subtype of the input type, which `TypeIs` cannot express. `isinstance`, `match` and `is None` narrow on their own: write a guard function only to reuse a check.
 
 ## TypedDict
 
-```python
-from typing import TypedDict, Required, NotRequired
-
-# 3.12+
-class UserCreate(TypedDict):
-    name: str
-    email: str
-    age: NotRequired[int]
-
-# 3.13+ ReadOnly fields
-from typing import ReadOnly
-
-class Config(TypedDict):
-    host: ReadOnly[str]
-    port: ReadOnly[int]
-    debug: bool  # mutable
-```
-
-## typing_extensions Bridge
-
-For features above your minimum Python version, import from `typing_extensions`:
+For a payload you pass through rather than model:
 
 ```python
-import sys
-if sys.version_info >= (3, 13):
-    from typing import TypeIs
-else:
-    from typing_extensions import TypeIs
+from typing_extensions import TypedDict  # typing on 3.15+
+
+
+class Event(TypedDict, closed=True):  # no keys beyond these
+    kind: str
+    id: int
 ```
 
-Or simply always use `typing_extensions` — it re-exports the stdlib version when available.
+`NotRequired[...]` for optional keys, `ReadOnly[...]` for keys the consumer must not write. Data the code owns is a dataclass instead.
+
+## Constants and enums
+
+`MAX_RETRIES: Final = 3` at module level (Google 2.5 constant naming). A closed set of string values is a `StrEnum`; `Literal["read", "write"]` only for a parameter of one function.
+
+## Annotations at runtime
+
+Since 3.14, annotations are evaluated when read, not when the `def` runs. Tools that read them (Pydantic, dataclasses, cattrs) resolve names in the module's globals, so a type they need is imported for real, not under `TYPE_CHECKING`. To read annotations yourself, use `annotationlib.get_annotations(obj, format=annotationlib.Format.FORWARDREF)`, which returns `ForwardRef` for names it cannot resolve instead of raising.
