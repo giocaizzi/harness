@@ -38,7 +38,7 @@
       "name": "javascript",
       "source": "./plugins/javascript",
       "description": "JavaScript, TypeScript, React and Next.js development",
-      "version": "1.5.2",
+      "version": "1.6.0",
       "keywords": [
         "javascript",
         "typescript",
