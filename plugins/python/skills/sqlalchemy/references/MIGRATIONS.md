@@ -1,6 +1,6 @@
 # Alembic Migrations
 
-Alembic is the standard migration tool for SQLAlchemy.
+Alembic is the standard migration tool for SQLAlchemy. A schema change on live data is expand/contract (`system-design` skill).
 
 ## Setup
 

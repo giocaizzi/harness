@@ -1,7 +1,7 @@
 ---
 name: fastapi
 description: FastAPI with Pydantic v2 for production REST APIs. Use when writing routes, schemas, dependencies, middleware, settings, or tests for a FastAPI app.
-compatibility: "Python >=3.10, Pydantic >=2.9.0, Starlette >=1.0.0"
+compatibility: "Python >=3.14, Pydantic >=2.9.0, Starlette >=1.0.0"
 ---
 
 # FastAPI (Pydantic v2)
@@ -50,7 +50,7 @@ Map domain/application exceptions to HTTP with exception handlers, using one for
 
 ## Structure
 
-Simple CRUD: `main.py`, `config.py`, `dependencies.py`, `routes/`, `services/`, `models/`, `schemas/`. With DDD/hexagonal, FastAPI is the driving adapter only: `contexts/{name}/api/{routes,dependencies,schemas,middleware}`, while `domain/` and `application/` never import FastAPI.
+Simple CRUD: modules by feature, as the `python-development` skill lays out: `orders.py` or `orders/` holding that feature's `routes.py`, `schemas.py` and logic, plus `main.py` (the app factory), `config.py` and `dependencies.py`. Never `routes/`, `services/`, `models/` or `schemas/` folders that collect code by kind. With DDD/hexagonal (the `domain-driven-design` skill), FastAPI is the driving adapter only: each context's `api/` holds its routes, schemas and `dependencies.py`, while `domain/` and `application/` never import FastAPI; the tree is in `python-development`'s `references/HEXAGONAL.md`.
 
 ## Testing
 

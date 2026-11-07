@@ -1,6 +1,6 @@
 # DDD Infrastructure Patterns
 
-Read when SQLAlchemy backs a DDD/hexagonal project. ORM models stay separate from domain entities; the repository returns domain objects.
+Read when SQLAlchemy backs a project built on the `domain-driven-design` skill (hexagonal layers). ORM models stay separate from domain entities; the repository returns domain objects.
 
 ```python
 class OrderMapper:

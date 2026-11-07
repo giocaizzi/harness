@@ -87,4 +87,4 @@ engine = create_async_engine(
 - `bulk_save_objects()` -> use `session.execute(insert(Model), [...])`
 - No `lazy="raise"` on relationships -> implicit N+1 queries
 - Business logic in repositories -> repositories are persistence only
-- Exposing ORM models from repositories -> return domain models in DDD
+- Exposing ORM models from repositories -> return domain models (`domain-driven-design` skill)

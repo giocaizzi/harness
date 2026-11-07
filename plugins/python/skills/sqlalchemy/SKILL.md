@@ -31,7 +31,7 @@ compatibility: "SQLAlchemy >=2.0, Python >=3.10"
 
 - Pool for production: `pool_size`, `max_overflow`, `pool_pre_ping=True`, `pool_recycle` (stale connections otherwise surface as random request failures).
 - Bulk writes: `session.execute(insert(Model), [...])`, not `bulk_save_objects()`.
-- With DDD, SQLAlchemy is a driven adapter: ORM models are separate from domain entities, repositories return domain objects and hold no business logic.
+- With the `domain-driven-design` skill's layers, SQLAlchemy is a driven adapter: ORM models are separate from domain entities, repositories return domain objects and hold no business logic.
 
 ## References
 
