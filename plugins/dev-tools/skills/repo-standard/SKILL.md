@@ -55,7 +55,7 @@ Roll out lowest risk first: settings, CI with `check`, and only then the protect
 | `Dockerfile` | hadolint in `lint`. |
 | Infrastructure | validate in `lint` (`terraform validate`, `bicep build`, `helm lint`). |
 | Releases | release-please; the changelog comes from it (see `release-please`). Package publishing is triggered by the release, in its environment. |
-| Coverage | Codecov or similar, informational only, never a required check. |
+| Coverage | Codecov or similar, informational only, never a required check; a floor, where a repo wants one, lives inside `make test` as a ratchet that may only rise. |
 
 Optional: pre-commit (mirrors `make lint`, never replaces CI), `CODEOWNERS`.
 
