@@ -1,0 +1,5 @@
+---
+type: llm
+---
+
+Pass when the final response does all of these: (1) opens with a three-line story labelled `Goal:`, `Where we are:` and `Next:`, where `Where we are:` gives a count with a denominator (for example "1 of 5 changes merged"); (2) puts a numbered "Needs you" list right after the story, before any Done or In flight section; (3) writes each item in plain words with the action, what happens if yes and a recommended option, and marks an item "needs your choice" when it gives no recommendation; (4) puts any PR number or SHA at the end of the line, never at its start; (5) includes the leftover cleanup (the merged worktree and branch, the scratch file) as a numbered item; (6) closes the list with a reply line offering `all`, `all but <number>` and a number with the user's choice; (7) explains each technical term it uses (for example CI, check, PR, merge, auto-merge, stack, worktree, branch, SHA) in plain words at its first mention; (8) shows at most 5 Done rows and no Mermaid diagram. Fail when any of these is missing.
