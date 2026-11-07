@@ -1,0 +1,10 @@
+schema_version: "1.0"
+name: system-design-trigger
+description: The model loads system-design when a feature must react to a payment across a process boundary.
+tags: [trigger]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  prompt: Send the customer an email when an order is paid. Here is the payment handler, src/billing/handler.py.
+  max_turns: 15
+  allowed_tools: [Read, Glob, Grep, Edit, Write, Skill]
