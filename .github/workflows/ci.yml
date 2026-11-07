@@ -26,12 +26,41 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  # Whether the macOS and Windows legs run. A PR that changes only Markdown (docs, skills, READMEs) cannot change
+  # OS-specific behaviour, so it runs Linux only; nightly and manual runs always run every leg. The repo has no merge
+  # queue, so the PR run is the gate. If the diff cannot be computed the job fails (never `false`), and `check` with it.
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      cross_os: ${{ steps.diff.outputs.cross_os }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - id: diff
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if [ "$EVENT" != pull_request ]; then
+            echo "cross_os=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          files=$(git diff --name-only "$BASE...$HEAD") # a failed diff fails the step (bash -e)
+          echo "$files"
+          if [ -n "$files" ] && echo "$files" | grep -qv '\.md$'; then cross_os=true; else cross_os=false; fi
+          echo "cross_os=$cross_os" >> "$GITHUB_OUTPUT"
+
   # Every harness CLI on every OS against a scripted model (tests/e2e): installs, hooks, skills, agents.
   e2e:
+    needs: changes
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        # Linux always; macOS and Windows only when `changes` says cross_os (see above).
+        os: ${{ fromJSON(needs.changes.outputs.cross_os == 'true' && '["ubuntu-latest","macos-latest","windows-latest"]' || '["ubuntu-latest"]') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25 # 1-6 min measured (Windows: about 4, 6 on a cache miss)
     env:
@@ -89,6 +118,8 @@ jobs:
   # `make check` runs on Linux only (Windows runners have no make). The .ps1 scripts are Windows-only
   # and their tests skip elsewhere, so they run here.
   windows-scripts:
+    needs: changes
+    if: needs.changes.outputs.cross_os == 'true' # skipped for Markdown-only PRs, like the macOS and Windows e2e legs
     runs-on: windows-latest
     timeout-minutes: 15 # about 2.5 min measured
     steps:
@@ -151,8 +182,10 @@ jobs:
 
   # Required status check, and only an aggregate: `if: always()` so a failed, cancelled or skipped
   # needed job fails `check` instead of skipping it (a skipped required check counts as passing).
+  # The one allowed skip is windows-scripts, and only when `changes` succeeded and said cross_os is false
+  # (a Markdown-only PR); the macOS and Windows e2e legs are left out of the matrix then, not skipped.
   check:
-    needs: [secrets, make-check, e2e, windows-scripts]
+    needs: [changes, secrets, make-check, e2e, windows-scripts]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -161,4 +194,7 @@ jobs:
           NEEDS: ${{ toJSON(needs) }}
         run: |
           echo "$NEEDS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
-          echo "$NEEDS" | jq -e 'all(.[]; .result == "success")' >/dev/null || { echo "::error::a needed job did not succeed"; exit 1; }
+          echo "$NEEDS" | jq -e '
+            (.changes.result == "success" and .changes.outputs.cross_os == "false") as $md_only
+            | to_entries | all(.[]; .value.result == "success" or (.key == "windows-scripts" and .value.result == "skipped" and $md_only))
+          ' >/dev/null ||{ echo "::error::a needed job did not succeed"; exit 1; }
