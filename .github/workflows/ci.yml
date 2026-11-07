@@ -48,7 +48,7 @@ jobs:
             echo "cross_os=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          files=$(git diff --name-only "$BASE...$HEAD") # a failed diff fails the step (bash -e)
+          files=$(git diff --name-only --no-renames "$BASE...$HEAD") # a failed diff fails the step (bash -e)
           echo "$files"
           if [ -n "$files" ] && echo "$files" | grep -qv '\.md$'; then cross_os=true; else cross_os=false; fi
           echo "cross_os=$cross_os" >> "$GITHUB_OUTPUT"
