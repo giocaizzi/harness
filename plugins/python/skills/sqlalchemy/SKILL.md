@@ -1,7 +1,7 @@
 ---
 name: sqlalchemy
 description: SQLAlchemy 2.x ORM/Core conventions, sync and async. Use when defining models, writing queries, managing sessions/transactions, loading relationships, or tuning performance and migrations.
-compatibility: "SQLAlchemy >=2.0, Python >=3.10"
+compatibility: "SQLAlchemy >=2.0, Python >=3.14"
 ---
 
 # SQLAlchemy v2
