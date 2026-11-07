@@ -2,13 +2,13 @@
 
 Runbook for every supported harness. What each one gets: [compatibility.md](compatibility.md). The hooks need `node` 22+ on PATH; everything works on macOS, Linux and Windows.
 
-Plugins: `api`, `python`, `go`, `javascript`, `dev-tools`, `guard`, `hud`, `sounds` (`hud` does something in Claude Code and pi, its status line also in Copilot CLI, running subagents in opencode; `sounds` in Claude Code, pi, Codex and opencode).
+Plugins: `foundations`, `python`, `go`, `javascript`, `dev-tools`, `guard`, `hud`, `sounds` (`hud` does something in Claude Code and pi, its status line also in Copilot CLI, running subagents in opencode; `sounds` in Claude Code, pi, Codex and opencode).
 
 ## Claude Code
 
 ```bash
 claude plugin marketplace add giocaizzi/harness
-claude plugin install dev-tools@giocaizzi-harness   # and api, python, go, javascript, guard, hud, sounds
+claude plugin install dev-tools@giocaizzi-harness   # and foundations, python, go, javascript, guard, hud, sounds
 ```
 
 Update: `claude plugin marketplace update giocaizzi-harness`; an installed plugin updates when its version changes. Check: `/plugin` lists them, `/agents` shows `scout`. Old versions stay in the plugin cache: `sweep-stale.sh --plugins` (dev-tools `host-hygiene`) lists them, and keeps any version a session started before the update may still run. It covers every marketplace in the cache; add `--marketplace giocaizzi-harness` to leave other marketplaces' plugins alone. Once every open session ran `/reload-plugins`, `sweep-stale.sh --plugins --marketplace giocaizzi-harness --after-reload --apply` removes this marketplace's old versions.
@@ -32,7 +32,7 @@ Plugins (skills, the guard's hooks and sounds' Stop hook) come from the marketpl
 
 ```bash
 codex plugin marketplace add giocaizzi/harness
-codex plugin add dev-tools@giocaizzi-harness        # and api, python, go, javascript, guard, sounds
+codex plugin add dev-tools@giocaizzi-harness        # and foundations, python, go, javascript, guard, sounds
 git clone https://github.com/giocaizzi/harness ~/.local/share/giocaizzi-harness
 make -C ~/.local/share/giocaizzi-harness install HARNESS=codex   # agents -> ~/.codex/agents, guard prompt rules -> ~/.codex/rules ($CODEX_HOME)
 ```
@@ -94,6 +94,17 @@ claude plugin uninstall <name>@giocaizzi-harness
 Install the new one before uninstalling the old one when the moved plugin depends on plugins from here (as `factory` does on `dev-tools` and `guard`). Those were auto-installed as its dependencies, and uninstalling the old copy with nothing else depending on them marks them unneeded, so a later `claude plugin prune` would remove them. With the new copy installed first and declaring them as `dev-tools@giocaizzi-harness` and `guard@giocaizzi-harness`, `prune` keeps them. Its marketplace needs `allowCrossMarketplaceDependenciesOn: ["giocaizzi-harness"]` for Claude Code to install them with it; without that, the plugin installs but does not load until they are installed. The uninstalled version's cache directory stays on disk, marked orphaned (`.orphaned_at`).
 
 Copilot CLI, VS Code and Codex were not probed: uninstall the plugin there with their own plugin command, then install it from its new marketplace. For Codex agents, opencode and Antigravity, re-running `make install` after `git pull` removes the files an earlier run installed that the checkout no longer ships. pi installs the whole repo, so the plugin's skills and agents leave with the package update (`pi update --extensions`, above).
+
+`api` was replaced by `foundations` in 5.0.0, and its `fastapi` and `sqlalchemy` skills moved to `python`. In Claude Code, install the new plugin before uninstalling the old one, so `api-reviewer` stays available, and update `python` so the two skills appear (they show up only through its version change):
+
+```bash
+claude plugin marketplace update giocaizzi-harness
+claude plugin install foundations@giocaizzi-harness
+claude plugin update python@giocaizzi-harness
+claude plugin uninstall api@giocaizzi-harness
+```
+
+Then remove a stale `"api@giocaizzi-harness": true` entry from `enabledPlugins` in your Claude settings (it keeps erroring otherwise), and add `foundations@giocaizzi-harness` there if you list plugins explicitly. On Copilot CLI use the same steps with `copilot plugin` (`install`, `update`, `uninstall`); in VS Code use the Extensions view. On Codex run `codex plugin add foundations@giocaizzi-harness`, then `codex plugin remove api@giocaizzi-harness`, and `make install HARNESS=codex` again (the agent keeps its name). opencode and Antigravity copy files: `git pull`, then `make install HARNESS=opencode` or `HARNESS=antigravity` replaces the skills. pi reads the checkout: `pi update`.
 
 ## From a checkout (development)
 
