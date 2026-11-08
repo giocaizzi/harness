@@ -22,12 +22,12 @@ LABEL org.opencontainers.image.source=$SOURCE \
 
 hadolint is a `make lint` step (`hadolint Dockerfile`, or its container image where the host has no binary), configured in `.hadolint.yaml` (`failure-threshold`, `ignored`). An ignored rule carries its reason as a comment. Clean means exit 0.
 
-DL3008 (pin apt package versions) is ignored on purpose: the base image is pinned by digest and bumped by the update bot, so apt versions move with it.
+DL3008 (pin apt package versions) is ignored on purpose. The digest pins the base image, not what `apt-get install` fetches: that comes from the Debian mirror at build time, so one digest can install different versions on different days, and the update bot never bumps them. Mirrors also drop old versions, so a pinned apt version breaks the build once it is gone.
 
 ```yaml
 # .hadolint.yaml
 ignored:
-  - DL3008 # base pinned by digest, bumped by the bot
+  - DL3008 # mirrors drop old versions, so pinned apt versions break builds
 ```
 
 ## Scan and provenance

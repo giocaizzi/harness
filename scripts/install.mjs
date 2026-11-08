@@ -7,9 +7,9 @@
 //   node scripts/install.mjs antigravity  skills, agents (.generated/antigravity/*.md) -> $GEMINI_CONFIG_DIR (default ~/.gemini/config), guard hooks -> hooks.json
 // Claude Code, Copilot CLI and VS Code install from the marketplace, Codex its plugins too, pi with
 // `pi install git:github.com/giocaizzi/harness`: see docs/install.md.
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync, } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmdirSync, rmSync, writeFileSync, } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { codexRules } from "../plugins/guard/core/engine.mjs";
 import { rules } from "../plugins/guard/core/rules.mjs";
@@ -135,6 +135,10 @@ export function addTuiPlugin(dir) {
     writeFileSync(file, JSON.stringify(tuiObj, null, 2) + "\n");
     return true;
 }
+const isInside = (root, path) => {
+    const rel = relative(root, path);
+    return rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
+};
 export function targetDir(harness, env = process.env) {
     if (harness === "codex")
         return env.CODEX_HOME ?? join(homedir(), ".codex");
@@ -156,6 +160,15 @@ export function install(harness, dir = targetDir(harness)) {
     for (const rel of before) {
         if (!now.includes(rel) && !rel.split(/[\\/]/).includes("..")) {
             rmSync(join(dir, rel), { recursive: true, force: true });
+            // Remove the parent directories the prune left empty, up to (not including) dir.
+            for (let parent = dirname(join(dir, rel)); isInside(dir, parent); parent = dirname(parent)) {
+                try {
+                    rmdirSync(parent);
+                }
+                catch {
+                    break; // not empty, or not there: stop
+                }
+            }
         }
     }
     for (const [src, rel, content] of items) {

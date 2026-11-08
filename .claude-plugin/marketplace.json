@@ -41,7 +41,7 @@
       "name": "infra",
       "source": "./plugins/infra",
       "description": "Infrastructure as code and containers: Terraform and OpenTofu, Docker images, Kubernetes manifests, Helm and operators",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "keywords": [
         "infrastructure",
         "terraform",
