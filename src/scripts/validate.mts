@@ -30,6 +30,7 @@
  *  11. Skills are self-contained: no skill file (.md or script) points at this repo's docs/ (a `../docs`
  *      path, or a relative `docs/<path>` that is a file here), since an installed skill ships without them.
  *  12. TypeScript compilation succeeds and every emitted runtime file matches its tracked output.
+ *  13. Every eval case (plugins/<plugin>/evals/<case>/case.yaml) parses as YAML.
  */
 
 import { spawnSync } from "node:child_process";
@@ -551,6 +552,39 @@ const VSCODE_HOOK_EVENTS = new Set([
 ]);
 const KEBAB = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 
+/** Errors for every evals/<case>/case.yaml under pluginsRoot that is not valid YAML. */
+export function evalCaseErrors(pluginsRoot: string): string[] {
+  const errors: string[] = [];
+  if (!existsSync(pluginsRoot)) return errors;
+  for (const plugin of readdirSync(pluginsRoot).sort()) {
+    const evalsDir = join(pluginsRoot, plugin, "evals");
+    if (!existsSync(evalsDir) || !statSync(evalsDir).isDirectory()) continue;
+    for (const evalCase of readdirSync(evalsDir).sort()) {
+      const caseYaml = join(evalsDir, evalCase, "case.yaml");
+      if (!existsSync(caseYaml)) continue;
+      try {
+        YAML.parse(readFileSync(caseYaml, "utf-8"));
+      } catch (exc) {
+        const firstLine =
+          exc instanceof Error
+            ? (exc.message.split(/\r?\n/)[0] ?? "")
+            : String(exc);
+        errors.push(
+          `plugins/${plugin}/evals/${evalCase}/case.yaml: invalid YAML (${firstLine})`,
+        );
+      }
+    }
+  }
+  return errors;
+}
+
+function check_eval_cases(r: Reporter): void {
+  r.section("Eval cases");
+  const errors = evalCaseErrors(PLUGINS_ROOT);
+  for (const e of errors) r.fail(e);
+  if (errors.length === 0) r.ok("every evals/*/case.yaml is valid YAML");
+}
+
 function check_vscode(r: Reporter): void {
   r.section("VS Code agent-plugin compatibility");
   for (const pluginDir of discoverPlugins()) {
@@ -827,6 +861,7 @@ function main(): void {
   check_build_sync(r);
   check_hooks(r);
   check_vscode(r);
+  check_eval_cases(r);
   check_pi_package(r);
   check_parity(r);
   check_skills_self_contained(r);
