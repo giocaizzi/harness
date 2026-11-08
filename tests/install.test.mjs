@@ -51,3 +51,14 @@ void test("opencode: hud's TUI plugin is merged into tui.json, keeping the user'
         assert.equal(readFileSync(join(fresh, "tui.json"), "utf8"), other);
     }
 });
+void test("antigravity: a removed agent's file and the agents/<name>/ directory it leaves empty are pruned", () => {
+    const dir = mkdtempSync(join(tmpdir(), "install-antigravity-"));
+    mkdirSync(join(dir, "agents", "gone"), { recursive: true });
+    writeFileSync(join(dir, "agents", "gone", "agent.md"), "");
+    writeFileSync(join(dir, "agents", "gone.md"), "");
+    writeFileSync(join(dir, ".giocaizzi-harness.json"), JSON.stringify(["agents/gone/agent.md", "agents/gone.md"]));
+    install("antigravity", dir);
+    assert.ok(!existsSync(join(dir, "agents", "gone")));
+    assert.ok(!existsSync(join(dir, "agents", "gone.md")));
+    assert.ok(existsSync(join(dir, "agents", "scout.md")));
+});

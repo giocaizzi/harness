@@ -13,11 +13,12 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  rmdirSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { codexRules } from "../plugins/guard/core/engine.mjs";
 import { rules } from "../plugins/guard/core/rules.mjs";
@@ -179,6 +180,11 @@ export function addTuiPlugin(dir: string): boolean {
   return true;
 }
 
+const isInside = (root: string, path: string): boolean => {
+  const rel = relative(root, path);
+  return rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
+};
+
 export function targetDir(
   harness: string,
   env: NodeJS.ProcessEnv = process.env,
@@ -205,6 +211,18 @@ export function install(
   for (const rel of before) {
     if (!now.includes(rel) && !rel.split(/[\\/]/).includes("..")) {
       rmSync(join(dir, rel), { recursive: true, force: true });
+      // Remove the parent directories the prune left empty, up to (not including) dir.
+      for (
+        let parent = dirname(join(dir, rel));
+        isInside(dir, parent);
+        parent = dirname(parent)
+      ) {
+        try {
+          rmdirSync(parent);
+        } catch {
+          break; // not empty, or not there: stop
+        }
+      }
     }
   }
   for (const [src, rel, content] of items) {
