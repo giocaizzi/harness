@@ -327,12 +327,68 @@ export function tierGaps(defs: AgentTierDef[]): string[] {
   return found;
 }
 
+// Every agent authored must have skill access across all harnesses that support it:
+// - In Claude Code: Skill in tools (or tools omitted so all tools are inherited).
+// - In Copilot CLI: skill in copilot.tools (or tools omitted so all tools are inherited).
+// - In Antigravity: read_file in tools (allows reading SKILL.md on demand).
+export function skillGaps({ agents }: Inventory): string[] {
+  const found: string[] = [];
+  for (const { plugin, name } of agents) {
+    const dir = join(repo, "plugins", plugin);
+    const claudePath = join(dir, "agents", `${name}.md`);
+    if (existsSync(claudePath)) {
+      const content = readFileSync(claudePath, "utf8");
+      const match = /^tools:\s*(.*)$/m.exec(content);
+      if (match) {
+        const tools =
+          match[1]?.split(",").map((t) => t.trim().toLowerCase()) ?? [];
+        if (!tools.includes("skill")) {
+          found.push(`agent ${plugin}:${name}: missing Skill in Claude tools`);
+        }
+      }
+    }
+    const copilotPath = join(dir, ".generated", "copilot", `${name}.agent.md`);
+    if (existsSync(copilotPath)) {
+      const content = readFileSync(copilotPath, "utf8");
+      if (/^tools:/m.test(content)) {
+        if (
+          !/^\s*-\s*skill\s*$/m.test(content) &&
+          !/tools:.*skill/i.test(content)
+        ) {
+          found.push(`agent ${plugin}:${name}: missing skill in Copilot tools`);
+        }
+      }
+    }
+    const antigravityPath = join(
+      dir,
+      ".generated",
+      "antigravity",
+      `${name}.md`,
+    );
+    if (existsSync(antigravityPath)) {
+      const content = readFileSync(antigravityPath, "utf8");
+      if (/^tools:/m.test(content)) {
+        if (!/^\s*-\s*read_file\s*$/m.test(content)) {
+          found.push(
+            `agent ${plugin}:${name}: missing read_file in Antigravity tools for skill access`,
+          );
+        }
+      }
+    }
+  }
+  return found;
+}
+
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   const inv = inventory();
-  const found = [...gaps(inv, deliveries()), ...tierGaps(tiers(inv))];
+  const found = [
+    ...gaps(inv, deliveries()),
+    ...tierGaps(tiers(inv)),
+    ...skillGaps(inv),
+  ];
   for (const g of found) console.error(g);
   if (found.length) process.exit(1);
   console.log(
-    `${String(inv.skills.length)} skills and ${String(inv.agents.length)} agents reach ${HARNESSES.join(", ")}, each agent at one tier`,
+    `${String(inv.skills.length)} skills and ${String(inv.agents.length)} agents reach ${HARNESSES.join(", ")}, each agent at one tier and with skills`,
   );
 }

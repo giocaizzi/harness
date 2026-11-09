@@ -5,6 +5,7 @@ import {
   gaps,
   HARNESSES,
   inventory,
+  skillGaps,
   tierGaps,
   tiers,
   type AgentTierDef,
@@ -98,4 +99,8 @@ void test("Claude and Codex effort must agree", () => {
   assert.deepEqual(tierGaps([def({ codex: {} })]), [
     "agent foundations:api-reviewer: effort medium in Claude but unset in Codex",
   ]);
+});
+
+void test("this repo: every agent has skill access across harnesses", () => {
+  assert.deepEqual(skillGaps(inventory()), []);
 });

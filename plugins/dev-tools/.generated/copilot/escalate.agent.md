@@ -1,6 +1,12 @@
 ---
 name: escalate
 description: Strongest-tier engineer for work a `driver` failed twice on - root-causes a stubborn bug or replaces an approach that keeps failing, in the driver's worktree, and returns the user's decisions as open questions. Use after two driver reports on the same problem, briefed with both reports and the worktree; spawn it without a `model`. Not a first attempt (driver), and a design choice that is the user's still goes to the user.
+tools:
+- read
+- edit
+- execute
+- search
+- skill
 ---
 
 # Role

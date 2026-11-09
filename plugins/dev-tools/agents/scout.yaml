@@ -5,6 +5,7 @@ copilot:
     - read
     - search
     - execute
+    - skill
 codex:
   # Ignored by Codex today: a subagent inherits the parent's sandbox (docs/compatibility.md). Kept for when it applies.
   sandbox_mode: read-only

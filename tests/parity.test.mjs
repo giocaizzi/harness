@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { deliveries, gaps, HARNESSES, inventory, tierGaps, tiers, } from "../scripts/parity.mjs";
+import { deliveries, gaps, HARNESSES, inventory, skillGaps, tierGaps, tiers, } from "../scripts/parity.mjs";
 const all = (skills, agents) => Object.fromEntries(HARNESSES.map((h) => [
     h,
     { skills: new Set(skills), agents: new Set(agents) },
@@ -71,4 +71,7 @@ void test("Claude and Codex effort must agree", () => {
     assert.deepEqual(tierGaps([def({ codex: {} })]), [
         "agent foundations:api-reviewer: effort medium in Claude but unset in Codex",
     ]);
+});
+void test("this repo: every agent has skill access across harnesses", () => {
+    assert.deepEqual(skillGaps(inventory()), []);
 });

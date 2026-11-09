@@ -50,6 +50,45 @@ const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/;
 const isRecord = (v: unknown): v is Record<string, unknown> =>
   v !== null && typeof v === "object" && !Array.isArray(v);
 
+const CLAUDE_TO_ANTIGRAVITY_TOOLS: Record<string, readonly string[]> = {
+  read: ["read_file"],
+  grep: ["read_file"],
+  glob: ["read_file"],
+  edit: ["edit_file"],
+  multiedit: ["edit_file"],
+  write: ["write_file"],
+  bash: ["run_command", "manage_task"],
+  powershell: ["run_command", "manage_task"],
+  websearch: ["search_web"],
+  webfetch: ["search_web"],
+};
+
+const ALL_ANTIGRAVITY_TOOLS: readonly string[] = [
+  "read_file",
+  "edit_file",
+  "write_file",
+  "run_command",
+  "manage_task",
+  "search_web",
+];
+
+function mapClaudeToolsToAntigravity(claudeTools: unknown): string[] {
+  if (typeof claudeTools !== "string" || !claudeTools.trim()) {
+    return [...ALL_ANTIGRAVITY_TOOLS];
+  }
+  const toolSet = new Set<string>();
+  const parsed = claudeTools.split(",").map((t) => t.trim().toLowerCase());
+  for (const t of parsed) {
+    const mapped = CLAUDE_TO_ANTIGRAVITY_TOOLS[t];
+    if (mapped) {
+      for (const m of mapped) {
+        toolSet.add(m);
+      }
+    }
+  }
+  return ALL_ANTIGRAVITY_TOOLS.filter((t) => toolSet.has(t));
+}
+
 // --------------------------------------------------------------------------- agents
 
 function loadYaml(filePath: string): Record<string, unknown> {
@@ -193,7 +232,15 @@ function buildAgent(agentPath: string, check: boolean): boolean {
     mode: "subagent",
     ...opencodeOverrides,
   };
-  const antigravityFm = { ...base, ...antigravityOverrides };
+  const antigravityTools =
+    "tools" in antigravityOverrides && Array.isArray(antigravityOverrides.tools)
+      ? antigravityOverrides.tools
+      : mapClaudeToolsToAntigravity(claude.tools);
+  const antigravityFm = {
+    ...base,
+    tools: antigravityTools,
+    ...antigravityOverrides,
+  };
 
   const out = join(dirname(dirname(agentPath)), GENERATED);
   const targets: [string, string][] = [

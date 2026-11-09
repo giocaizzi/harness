@@ -1,6 +1,12 @@
 ---
 name: reviewer
 description: Fresh-context code reviewer at the routine tier, raised per spawn for a sensitive review - reads a diff or PR it did not write, runs its checks, maintains and refactors tests, adds x-failing tests to prove issues, and posts a verdict with severities. Never edits production source code. Use to review a change before it merges; spawn it without a `model` or `effort`, except a sensitive review (security, auth, secrets, kill switch, merge or release gates, protected paths, a core process, a large or hard-to-reverse change), which the spawn raises to Opus at effort `high`. Never on your own change, and not where a workflow names its own gate.
+tools:
+- read_file
+- edit_file
+- write_file
+- run_command
+- manage_task
 ---
 
 # Role

@@ -1,6 +1,10 @@
 ---
 name: scout
 description: Read-only search and summarization - finds code, reads logs, triages test output and reports findings with file:line evidence. Use for lookups and reading-heavy subtasks instead of the built-in Explore agent, which runs on the session's model; never for edits.
+tools:
+- read_file
+- run_command
+- manage_task
 ---
 
 # Role

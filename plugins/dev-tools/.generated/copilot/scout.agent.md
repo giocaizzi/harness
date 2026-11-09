@@ -5,6 +5,7 @@ tools:
 - read
 - search
 - execute
+- skill
 ---
 
 # Role
