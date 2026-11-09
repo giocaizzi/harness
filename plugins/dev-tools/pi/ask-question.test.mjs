@@ -1,13 +1,18 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { registerAskQuestionTool } from "./ask-question.mjs";
+let shutdownHandler;
 function setupTool() {
+    shutdownHandler?.();
     let registeredTool;
     const pi = {
         registerTool: (t) => {
             if (t.name === "ask_question") {
                 registeredTool = t;
             }
+        },
+        on: (_event, handler) => {
+            shutdownHandler = handler;
         },
     };
     registerAskQuestionTool(pi);

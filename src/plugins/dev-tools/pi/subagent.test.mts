@@ -1,5 +1,10 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, test } from "node:test";
+import { copyFileSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
+import { registerToolOnce } from "./tool-registration.mjs";
 import subagentExtension, {
   childEnv,
   loadAgents,
@@ -8,8 +13,10 @@ import subagentExtension, {
   piArgs,
 } from "./subagent.mjs";
 import type {
+  AskQuestionToolDefinition,
   AgentDefinition,
   ChildIds,
+  PiHost,
   PiToolDefinition,
   SubagentUpdate,
 } from "./types.mjs";
@@ -19,6 +26,29 @@ type RecordedEvent =
 
 const inheritedParentSession = process.env.GUARD_PARENT_SESSION;
 const inheritedAgentId = process.env.GUARD_AGENT_ID;
+const shutdownHandlers = new Set<() => void>();
+
+interface ToolRegistrationModule {
+  registerToolOnce: typeof registerToolOnce;
+}
+
+function isToolRegistrationModule(
+  value: unknown,
+): value is ToolRegistrationModule {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "registerToolOnce" in value &&
+    typeof value.registerToolOnce === "function"
+  );
+}
+
+function fireSessionShutdown(): void {
+  for (const handler of shutdownHandlers) {
+    handler();
+  }
+  shutdownHandlers.clear();
+}
 
 beforeEach(() => {
   delete process.env.GUARD_PARENT_SESSION;
@@ -26,6 +56,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  fireSessionShutdown();
   if (inheritedParentSession === undefined)
     delete process.env.GUARD_PARENT_SESSION;
   else process.env.GUARD_PARENT_SESSION = inheritedParentSession;
@@ -36,6 +67,7 @@ afterEach(() => {
 const captureTool = (
   deps: Parameters<typeof subagentExtension>[1],
 ): PiToolDefinition => {
+  fireSessionShutdown();
   let registered: PiToolDefinition | undefined;
   subagentExtension(
     {
@@ -43,6 +75,9 @@ const captureTool = (
         if (t.name === "subagent") {
           registered = t as PiToolDefinition;
         }
+      },
+      on: (_event, handler) => {
+        shutdownHandlers.add(handler);
       },
     },
     deps,
@@ -321,5 +356,89 @@ void test("a subagent cannot spawn another driver or escalate (#recursion)", asy
   } finally {
     if (saved === undefined) delete process.env.PI_SUBAGENT_DEPTH;
     else process.env.PI_SUBAGENT_DEPTH = saved;
+  }
+});
+
+void test("duplicate extension instances share tools until shutdown, then reload registers again", () => {
+  const registered: string[][] = [];
+  const makePi = (): PiHost => {
+    const tools: string[] = [];
+    registered.push(tools);
+    return {
+      registerTool: (tool) => {
+        tools.push(tool.name);
+      },
+      on: (_event, handler) => {
+        shutdownHandlers.add(handler);
+      },
+    };
+  };
+  const deps = {
+    loadAgents: () => [
+      { name: "scout", description: "d", tools: null, prompt: "p" },
+    ],
+  };
+
+  subagentExtension(makePi(), deps);
+  subagentExtension(makePi(), deps);
+
+  assert.deepEqual(registered, [["ask_question", "subagent"], []]);
+
+  fireSessionShutdown();
+
+  subagentExtension(makePi(), deps);
+
+  assert.deepEqual(registered, [
+    ["ask_question", "subagent"],
+    [],
+    ["ask_question", "subagent"],
+  ]);
+});
+
+void test("independent tool-registration module copies share deduplication and shutdown reset", async () => {
+  fireSessionShutdown();
+  const directory = mkdtempSync(join(tmpdir(), "pi-tool-registration-"));
+  try {
+    const copiedPath = join(directory, "tool-registration.mjs");
+    copyFileSync(
+      new URL("./tool-registration.mjs", import.meta.url),
+      copiedPath,
+    );
+    const imported: unknown = await import(pathToFileURL(copiedPath).href);
+    assert.ok(isToolRegistrationModule(imported));
+
+    const registered: string[][] = [];
+    const makePi = (): PiHost => {
+      const tools: string[] = [];
+      registered.push(tools);
+      return {
+        registerTool: (tool) => {
+          tools.push(tool.name);
+        },
+        on: (_event, handler) => {
+          shutdownHandlers.add(handler);
+        },
+      };
+    };
+    const tool: AskQuestionToolDefinition = {
+      name: "ask_question",
+      label: "Ask Question",
+      description: "Ask a question",
+      parameters: { type: "object", properties: {} },
+      execute: () => Promise.resolve({ content: [], details: undefined }),
+    };
+
+    registerToolOnce(makePi(), "ask_question", tool);
+    imported.registerToolOnce(makePi(), "ask_question", tool);
+
+    assert.deepEqual(registered, [["ask_question"], []]);
+
+    fireSessionShutdown();
+
+    imported.registerToolOnce(makePi(), "ask_question", tool);
+
+    assert.deepEqual(registered, [["ask_question"], [], ["ask_question"]]);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
   }
 });
