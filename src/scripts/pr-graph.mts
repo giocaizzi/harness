@@ -3,9 +3,9 @@
 // (all owners, every authenticated host). Aggregates only; --repos adds a per-repo table for local reading. Runbook: docs/agent-review.md.
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { fileURLToPath } from "node:url";
+import { pathToFileURL } from "node:url";
 
-const run = promisify(execFile);
+const execFileAsync = promisify(execFile);
 const DAY = 86400000;
 const SKIPPED = "PR graph: skipped (gh is not installed or not authenticated).";
 const MANIFESTS = new Set([
@@ -44,27 +44,6 @@ export interface GraphQLPrNode {
     totalCount: number;
     nodes: { path: string }[];
   };
-}
-
-interface GraphQLSearchResponse {
-  data: {
-    search: {
-      pageInfo: {
-        hasNextPage: boolean;
-        endCursor: string | null;
-      };
-      nodes: (GraphQLPrNode | null)[];
-    };
-  };
-}
-
-interface HostAccount {
-  state?: string;
-  active?: boolean;
-}
-
-interface HostsStatusResponse {
-  hosts?: Record<string, HostAccount[]>;
 }
 
 export interface CollectedPr {
@@ -133,18 +112,53 @@ export function chunks(days: number, now: number): [string, string][] {
 }
 
 export async function ghRunner(args: string[]): Promise<string> {
-  const res = await run("gh", args, { maxBuffer: 64 * 1024 * 1024 });
+  const res = await execFileAsync("gh", args, { maxBuffer: 64 * 1024 * 1024 });
   return res.stdout;
+}
+
+export const isRecord = (v: unknown): v is Record<string, unknown> =>
+  v !== null && typeof v === "object" && !Array.isArray(v);
+
+export function parseJsonSafe<T>(
+  raw: string,
+  guard: (v: unknown) => v is T,
+): T | null;
+export function parseJsonSafe(raw: string): unknown;
+export function parseJsonSafe<T>(
+  raw: string,
+  guard?: (v: unknown) => v is T,
+): unknown {
+  try {
+    const val: unknown = JSON.parse(raw);
+    if (guard) {
+      return guard(val) ? val : null;
+    }
+    return val;
+  } catch {
+    return null;
+  }
+}
+
+export function isGraphQLPrNode(v: unknown): v is GraphQLPrNode {
+  if (!isRecord(v) || typeof v.number !== "number") return false;
+  return (
+    isRecord(v.repository) && typeof v.repository.nameWithOwner === "string"
+  );
 }
 
 export async function hosts(runner: GhRunner): Promise<string[]> {
   try {
     const raw = await runner(["auth", "status", "--json", "hosts"]);
-    const j = JSON.parse(raw) as HostsStatusResponse;
-    const entries = j.hosts ? Object.entries(j.hosts) : [];
-    return entries
-      .filter(([, accts]) =>
-        accts.some((a) => a.state === "success" && a.active !== false),
+    const parsed = parseJsonSafe(raw, isRecord);
+    const hostsMap = parsed && isRecord(parsed.hosts) ? parsed.hosts : null;
+    if (!hostsMap) return [];
+    return Object.entries(hostsMap)
+      .filter(
+        ([, accts]) =>
+          Array.isArray(accts) &&
+          accts.some(
+            (a) => isRecord(a) && a.state === "success" && a.active !== false,
+          ),
       )
       .map(([h]) => h);
   } catch {
@@ -172,12 +186,22 @@ export async function fetchPrs(
       `query=${QUERY}`,
     ];
     if (cursor) args.push("-f", `cursor=${cursor}`);
-    const parsed = JSON.parse(await runner(args)) as GraphQLSearchResponse;
-    const s = parsed.data.search;
-    for (const n of s.nodes) {
-      if (n?.number != null) out.push({ host, ...n });
+    const raw = await runner(args);
+    const parsed = parseJsonSafe(raw, isRecord);
+    const data = parsed && isRecord(parsed.data) ? parsed.data : null;
+    const s = data && isRecord(data.search) ? data.search : null;
+    if (!s) break;
+    const nodes = Array.isArray(s.nodes) ? s.nodes : [];
+    for (const n of nodes) {
+      if (isGraphQLPrNode(n)) {
+        out.push({ host, ...n });
+      }
     }
-    cursor = s.pageInfo.hasNextPage ? s.pageInfo.endCursor : null;
+    const pageInfo = isRecord(s.pageInfo) ? s.pageInfo : null;
+    cursor =
+      pageInfo?.hasNextPage === true && typeof pageInfo.endCursor === "string"
+        ? pageInfo.endCursor
+        : null;
   } while (cursor);
   return out;
 }
@@ -436,8 +460,16 @@ export async function main(
   if (argv.includes("--repos")) process.stdout.write(`\n${repoTable(agg)}`);
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  main(process.argv.slice(2)).catch((e: unknown) => {
+export async function run(
+  argv: string[] = process.argv.slice(2),
+  runner: GhRunner = ghRunner,
+  now = Date.now(),
+): Promise<void> {
+  await main(argv, runner, now);
+}
+
+if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
+  run().catch((e: unknown) => {
     console.error(errorLine(e));
     process.exit(1);
   });

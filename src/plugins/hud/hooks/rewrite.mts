@@ -46,6 +46,27 @@ export const DEFAULTS: Record<string, unknown> = {
   timeFormat: "both",
 };
 
+function featureOption(
+  raw: unknown,
+  plain: boolean,
+  canColour: boolean,
+  glyphs: unknown,
+  colour: unknown,
+): FeatureOptions | null {
+  const mode = raw === true ? "on" : raw === false ? "off" : raw;
+  if (mode === "off") return null;
+  return {
+    glyph:
+      !plain && glyphs !== false && mode !== "no-glyph" && mode !== "plain",
+    colour:
+      canColour &&
+      !plain &&
+      colour !== false &&
+      mode !== "no-colour" &&
+      mode !== "plain",
+  };
+}
+
 export function settings(
   options: Record<string, unknown> = {},
   env: NodeJS.ProcessEnv | Record<string, string | undefined> = {},
@@ -58,33 +79,43 @@ export function settings(
     ),
   };
   const plain = Boolean(env.NO_COLOR);
-  const f = {} as Record<FeatureName, FeatureOptions | null>;
-  for (const k of FEATURES) {
-    const raw = o[k];
-    const mode = raw === true ? "on" : raw === false ? "off" : raw;
-    f[k] =
-      mode === "off"
-        ? null
-        : {
-            glyph:
-              !plain &&
-              o.glyphs !== false &&
-              mode !== "no-glyph" &&
-              mode !== "plain",
-            colour:
-              canColour &&
-              !plain &&
-              o.colour !== false &&
-              mode !== "no-colour" &&
-              mode !== "plain",
-          };
-  }
+  const glyphs = o.glyphs;
+  const colour = o.colour;
+  const f: Record<FeatureName, FeatureOptions | null> = {
+    replySecrets: featureOption(
+      o.replySecrets,
+      plain,
+      canColour,
+      glyphs,
+      colour,
+    ),
+    replyUrls: featureOption(o.replyUrls, plain, canColour, glyphs, colour),
+    replyRefs: featureOption(o.replyRefs, plain, canColour, glyphs, colour),
+    replyState: featureOption(o.replyState, plain, canColour, glyphs, colour),
+    replyPaths: featureOption(o.replyPaths, plain, canColour, glyphs, colour),
+    replyFileLinks: featureOption(
+      o.replyFileLinks,
+      plain,
+      canColour,
+      glyphs,
+      colour,
+    ),
+    replyCommits: featureOption(
+      o.replyCommits,
+      plain,
+      canColour,
+      glyphs,
+      colour,
+    ),
+    replyTimes: featureOption(o.replyTimes, plain, canColour, glyphs, colour),
+    replyStatus: featureOption(o.replyStatus, plain, canColour, glyphs, colour),
+  };
   return {
     glyphs: o.glyphs !== false,
     colour: o.colour !== false,
-    editor: o.editor as string,
-    editorUrl: o.editorUrl as string,
-    timeFormat: o.timeFormat as string,
+    editor: typeof o.editor === "string" ? o.editor : "vscode",
+    editorUrl: typeof o.editorUrl === "string" ? o.editorUrl : "",
+    timeFormat: typeof o.timeFormat === "string" ? o.timeFormat : "both",
     f,
   };
 }
@@ -143,10 +174,11 @@ const EXT: Record<string, string> = {
   lock: "",
 };
 
-export const fileGlyph = (name: string, kind?: string | null): string =>
-  kind === "dir"
+export function fileGlyph(name: string, kind?: string | null): string {
+  return kind === "dir"
     ? GLYPH.dir
     : (EXT[/\.([^.]+)$/.exec(name)?.[1]?.toLowerCase() ?? ""] ?? GLYPH.file);
+}
 
 export const STATE: Record<string, Record<string, string>> = {
   issue: { open: "", closed: "", completed: "", not_planned: "" },
@@ -240,24 +272,27 @@ const KEY_BLOCK =
   /(-----BEGIN [A-Z ]*PRIVATE KEY-----)[\s\S]*?(-----END [A-Z ]*PRIVATE KEY-----)/g;
 const MASK = "••••••••";
 
-function secrets(text: string, ft: FeatureOptions): string {
-  const prefix = (g: unknown[]): string => {
-    for (const x of g) {
-      if (typeof x === "string") return x;
-    }
-    return "";
-  };
+function secretPrefix(groups: unknown[]): string {
+  for (const x of groups) {
+    if (typeof x === "string") return x;
+  }
+  return "";
+}
+
+export function rewriteSecrets(text: string, ft: FeatureOptions): string {
   const styled = pass(
     text,
     SECRET,
     (_all, ...g) =>
-      mark("secret", glyphed(GLYPH.lock, ft, prefix(g)), ft.colour) +
+      mark("secret", glyphed(GLYPH.lock, ft, secretPrefix(g)), ft.colour) +
       mark("dim", MASK, ft.colour),
   );
   return styled
-    .replace(SECRET, (_all, ...g) => prefix(g) + MASK)
+    .replace(SECRET, (_all, ...g) => secretPrefix(g) + MASK)
     .replace(KEY_BLOCK, `$1\n${MASK}\n$2`);
 }
+
+export const secrets = rewriteSecrets;
 
 const forgeOfHost = (host: string): string | null =>
   /github/i.test(host)
@@ -360,53 +395,97 @@ export function shortUrl(
   return { label: `${host}${path}`, kind: "page", forge };
 }
 
-function urls(
+const URL_KIND_STYLE: Record<string, string> = {
+  issue: "issue",
+  pr: "pr",
+  workitem: "workitem",
+  commit: "sha",
+};
+
+function formatUrlToken(
+  href: string,
+  here: ForgeRepoInfo | null,
+  ft: FeatureOptions,
+  tail = "",
+): string | null {
+  const s = shortUrl(href, here);
+  if (!s) return null;
+  const g = (s.forge ? GLYPH[s.forge] : null) ?? GLYPH.globe;
+  const style = URL_KIND_STYLE[s.kind] ?? "host";
+  return (
+    link(mark(style, glyphed(g, ft, esc(s.label)), ft.colour), href) + tail
+  );
+}
+
+export function rewriteUrls(
   text: string,
   ft: FeatureOptions,
   here: ForgeRepoInfo | null,
 ): string {
-  const one = (href: string, tail = ""): string | null => {
-    const s = shortUrl(href, here);
-    if (!s) return null;
-    const g = (s.forge ? GLYPH[s.forge] : null) ?? GLYPH.globe;
-    const style =
-      (
-        {
-          issue: "issue",
-          pr: "pr",
-          workitem: "workitem",
-          commit: "sha",
-        } as Record<string, string>
-      )[s.kind] ?? "host";
-    return (
-      link(mark(style, glyphed(g, ft, esc(s.label)), ft.colour), href) + tail
-    );
-  };
   return pass(text, /(?!)/, null, (span) => {
     let m = /^[a-z][\w+.-]*:\/\/\S+$/i.exec(span);
     if (m) {
       const execRes = /^(.*?)([.,;:!?]*)$/.exec(span);
       if (execRes?.[1] !== undefined && execRes[2] !== undefined) {
-        return one(execRes[1], execRes[2]) ?? span;
+        return formatUrlToken(execRes[1], here, ft, execRes[2]) ?? span;
       }
     }
     m = /^<(https?:[^>]+)>$/.exec(span);
-    if (m?.[1]) return one(m[1]) ?? span;
+    if (m?.[1]) return formatUrlToken(m[1], here, ft) ?? span;
     m = /^\[(https?:[^\]]+)\]\((https?:[^)]+)\)$/.exec(span);
-    if (m?.[1] && m[2] && m[1] === m[2]) return one(m[2]) ?? span;
+    if (m?.[1] && m[2] && m[1] === m[2])
+      return formatUrlToken(m[2], here, ft) ?? span;
     return span;
   });
 }
 
+export const urls = rewriteUrls;
+
 const REF =
   /(?<![\w&#/#!@.\\-])(?:([\w-]+(?:\/[\w.-]+)+)|(AB))?([#!])(\d+)(?![\w-])/g;
-export const refKey = (
+export function refKey(
   r: ForgeRepoInfo,
   { repo, sigil, n }: WorkItemReference,
-): string =>
-  `${r.forge}:${r.host ?? r.org ?? ""}:${repo ?? r.path ?? r.project ?? ""}:${sigil}${String(n)}`;
+): string {
+  return `${r.forge}:${r.host ?? r.org ?? ""}:${repo ?? r.path ?? r.project ?? ""}:${sigil}${String(n)}`;
+}
 
-function refs(
+function formatWorkItemToken(
+  all: string,
+  repo: string | undefined,
+  ab: string | undefined,
+  sigil: string | undefined,
+  n: string | undefined,
+  ft: FeatureOptions,
+  here: ForgeRepoInfo,
+  facts: Facts,
+  st: FeatureOptions | null,
+): string {
+  if (!all) return "";
+  if (ab && sigil !== "#") return all;
+  if (!sigil || !n) return all;
+  const ref: WorkItemReference = { repo, sigil: ab ? "AB#" : sigil, n };
+  const t = target(here, ref);
+  if (!t) return all;
+  const s = st ? facts.state(here, ref) : undefined;
+  const kind = s?.kind ?? t.kind;
+  const fallbackIcon =
+    kind in KIND ? KIND[kind as keyof typeof KIND].icon : KIND.workitem.icon;
+  const icon = (s && STATE[kind]?.[s.state]) ?? fallbackIcon;
+  const colour = s ? (st?.colour ?? ft.colour) : ft.colour;
+  const unsure =
+    !s && Boolean(st) && here.forge === "github" && ref.sigil === "#";
+  return link(
+    mark(
+      s ? s.state : kind,
+      unsure ? esc(all) : glyphed(icon, ft, esc(all)),
+      colour,
+    ),
+    t.url,
+  );
+}
+
+export function rewriteWorkItems(
   text: string,
   ft: FeatureOptions,
   here: ForgeRepoInfo | null,
@@ -414,30 +493,12 @@ function refs(
   st: FeatureOptions | null,
 ): string {
   if (!here) return text;
-  return pass(text, REF, (all, repo, ab, sigil, n) => {
-    if (!all) return "";
-    if (ab && sigil !== "#") return all;
-    if (!sigil || !n) return all;
-    const ref: WorkItemReference = { repo, sigil: ab ? "AB#" : sigil, n };
-    const t = target(here, ref);
-    if (!t) return all;
-    const s = st ? facts.state(here, ref) : undefined;
-    const kind = s?.kind ?? t.kind;
-    const icon =
-      (s && STATE[kind]?.[s.state]) ?? KIND[kind as keyof typeof KIND].icon;
-    const colour = s ? (st?.colour ?? ft.colour) : ft.colour;
-    const unsure =
-      !s && Boolean(st) && here.forge === "github" && ref.sigil === "#";
-    return link(
-      mark(
-        s ? s.state : kind,
-        unsure ? esc(all) : glyphed(icon, ft, esc(all)),
-        colour,
-      ),
-      t.url,
-    );
-  });
+  return pass(text, REF, (all, repo, ab, sigil, n) =>
+    formatWorkItemToken(all, repo, ab, sigil, n, ft, here, facts, st),
+  );
 }
+
+export const refs = rewriteWorkItems;
 
 export function refsRule(
   here: ForgeRepoInfo | null,
@@ -552,7 +613,53 @@ export function editorUrl(
     .replaceAll("{col}", String(col ?? 1));
 }
 
-function paths(
+function formatPathToken(
+  all: string,
+  raw: string | undefined,
+  line: string | undefined,
+  col: string | undefined,
+  o: SettingsOutput,
+  facts: Facts,
+  ctx: RewriteContext,
+  ft: FeatureOptions,
+  fp: FeatureOptions | null,
+  fl: FeatureOptions | null,
+): string {
+  if (!all || !raw) return "";
+  const dots = /\.+$/.exec(raw)?.[0] ?? "";
+  const p = raw.slice(0, raw.length - dots.length);
+  if (!p || (dots && line)) return all;
+  const tail = all.slice(raw.length);
+  const abs = resolvePath(p, ctx);
+  const absolute = isAbs(slash(p)) || p.startsWith("~");
+  const kind = facts.stat(abs);
+  const root = fp && absolute ? rootOf(abs, facts) : null;
+  if (!kind || root === undefined) return all;
+  const shown =
+    fp && absolute
+      ? shortPath(abs, root, ctx.home)
+      : {
+          prefix: p.slice(
+            0,
+            Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\")) + 1,
+          ),
+          name: base(slash(p)),
+        };
+  const g = line ? GLYPH.editor : fileGlyph(shown.name, kind);
+  const label =
+    (ft.glyph ? `${g} ` : "") +
+    mark("dim", esc(shown.prefix), ft.colour) +
+    mark("name", esc(shown.name), ft.colour) +
+    (tail ? mark("line", tail, ft.colour) : "");
+  if (!fl) return label + dots;
+  const url =
+    kind === "dir"
+      ? `file://${encodeURI(abs.startsWith("/") ? abs : `/${abs}`)}`
+      : editorUrl(abs, line, col, o);
+  return link(label, url) + dots;
+}
+
+export function rewritePaths(
   text: string,
   o: SettingsOutput,
   facts: Facts,
@@ -564,41 +671,12 @@ function paths(
     glyph: Boolean(fp?.glyph ?? fl?.glyph),
     colour: Boolean(fp?.colour ?? fl?.colour),
   };
-  return pass(text, PATH, (all, raw, line, col) => {
-    if (!all || !raw) return "";
-    const dots = /\.+$/.exec(raw)?.[0] ?? "";
-    const p = raw.slice(0, raw.length - dots.length);
-    if (!p || (dots && line)) return all;
-    const tail = all.slice(raw.length);
-    const abs = resolvePath(p, ctx);
-    const absolute = isAbs(slash(p)) || p.startsWith("~");
-    const kind = facts.stat(abs);
-    const root = fp && absolute ? rootOf(abs, facts) : null;
-    if (!kind || root === undefined) return all;
-    const shown =
-      fp && absolute
-        ? shortPath(abs, root, ctx.home)
-        : {
-            prefix: p.slice(
-              0,
-              Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\")) + 1,
-            ),
-            name: base(slash(p)),
-          };
-    const g = line ? GLYPH.editor : fileGlyph(shown.name, kind);
-    const label =
-      (ft.glyph ? `${g} ` : "") +
-      mark("dim", esc(shown.prefix), ft.colour) +
-      mark("name", esc(shown.name), ft.colour) +
-      (tail ? mark("line", tail, ft.colour) : "");
-    if (!fl) return label + dots;
-    const url =
-      kind === "dir"
-        ? `file://${encodeURI(abs.startsWith("/") ? abs : `/${abs}`)}`
-        : editorUrl(abs, line, col, o);
-    return link(label, url) + dots;
-  });
+  return pass(text, PATH, (all, raw, line, col) =>
+    formatPathToken(all, raw, line, col, o, facts, ctx, ft, fp, fl),
+  );
 }
+
+export const paths = rewritePaths;
 
 const SHA =
   /(?<![\w#/@.:-])(?=[0-9a-f]{0,39}[a-f])(?=[0-9a-f]{0,39}\d)[0-9a-f]{7,40}(?![\w-])/g;
@@ -612,20 +690,29 @@ export function commitUrl(r: ForgeRepoInfo | null, sha: string): string | null {
   return `https://dev.azure.com/${r.org ?? ""}/${r.project ?? ""}/_git/${r.repo ?? ""}/commit/${sha}`;
 }
 
-function commits(
+function formatCommitToken(
+  sha: string,
+  ft: FeatureOptions,
+  here: ForgeRepoInfo | null,
+  facts: Facts,
+): string {
+  if (!sha) return "";
+  if (facts.commit(sha) !== true) return sha;
+  const label = mark("sha", glyphed(GLYPH.commit, ft, sha), ft.colour);
+  const url = commitUrl(here, sha);
+  return url ? link(label, url) : label;
+}
+
+export function rewriteCommits(
   text: string,
   ft: FeatureOptions,
   here: ForgeRepoInfo | null,
   facts: Facts,
 ): string {
-  return pass(text, SHA, (sha) => {
-    if (!sha) return "";
-    if (facts.commit(sha) !== true) return sha;
-    const label = mark("sha", glyphed(GLYPH.commit, ft, sha), ft.colour);
-    const url = commitUrl(here, sha);
-    return url ? link(label, url) : label;
-  });
+  return pass(text, SHA, (sha) => formatCommitToken(sha, ft, here, facts));
 }
+
+export const commits = rewriteCommits;
 
 const ISO =
   /(?<![\w:-])(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?(?![\w:])/g;
@@ -673,27 +760,45 @@ export function local(ms: number, now: number): string {
   return `${String(d.getDate())} ${month}${year} ${hm}`;
 }
 
-function times(
+function formatTimeToken(
+  all: string,
+  y: string | undefined,
+  mo: string | undefined,
+  d: string | undefined,
+  h: string | undefined,
+  mi: string | undefined,
+  s: string | undefined,
+  zone: string | undefined,
+  ft: FeatureOptions,
+  fmt: string,
+  now: number,
+): string {
+  if (!all || !y || !mo || !d || !h || !mi) return "";
+  const iso = `${y}-${mo}-${d}T${h}:${mi}:${s ?? "00"}${zone ? (zone === "Z" ? "Z" : zone.replace(/^([+-]\d{2})(\d{2})$/, "$1:$2")) : ""}`;
+  const ms = Date.parse(iso);
+  if (Number.isNaN(ms) || Number(mo) > 12 || Number(d) > 31) return all;
+  const abs = local(ms, now);
+  const rel = ago(ms, now);
+  const head = fmt === "relative" ? rel : abs;
+  const label =
+    (ft.glyph ? `${GLYPH.clock} ` : "") +
+    mark("time", head, ft.colour) +
+    (fmt === "both" ? ` ${mark("dim", `(${rel})`, ft.colour)}` : "");
+  return label;
+}
+
+export function rewriteTimes(
   text: string,
   ft: FeatureOptions,
   fmt: string,
   now: number,
 ): string {
-  return pass(text, ISO, (all, y, mo, d, h, mi, s, zone) => {
-    if (!all || !y || !mo || !d || !h || !mi) return "";
-    const iso = `${y}-${mo}-${d}T${h}:${mi}:${s || "00"}${zone ? (zone === "Z" ? "Z" : zone.replace(/^([+-]\d{2})(\d{2})$/, "$1:$2")) : ""}`;
-    const ms = Date.parse(iso);
-    if (Number.isNaN(ms) || Number(mo) > 12 || Number(d) > 31) return all;
-    const abs = local(ms, now);
-    const rel = ago(ms, now);
-    const head = fmt === "relative" ? rel : abs;
-    const label =
-      (ft.glyph ? `${GLYPH.clock} ` : "") +
-      mark("time", head, ft.colour) +
-      (fmt === "both" ? ` ${mark("dim", `(${rel})`, ft.colour)}` : "");
-    return label;
-  });
+  return pass(text, ISO, (all, y, mo, d, h, mi, s, zone) =>
+    formatTimeToken(all, y, mo, d, h, mi, s, zone, ft, fmt, now),
+  );
 }
+
+export const times = rewriteTimes;
 
 const OK =
   /^(?:pass(?:ed|ing)?|ok|success(?:ful)?|succeeded|green|✓|✔|✅|✔️)$/i;
@@ -718,14 +823,12 @@ function badge(word: string, ft: FeatureOptions): string {
   return mark(s, text, ft.colour);
 }
 
-export const summary = (
-  n: Record<string, number>,
-  ft: FeatureOptions,
-): string =>
-  ["ok", "bad", "skip"]
+export function summary(n: Record<string, number>, ft: FeatureOptions): string {
+  return ["ok", "bad", "skip"]
     .filter((k) => Boolean(n[k]))
     .map((k) => mark(k, `${String(n[k] ?? 0)} ${SYMBOL[k] ?? ""}`, ft.colour))
     .join(" · ");
+}
 
 const ITEM = /^(\s*(?:[-*+]|\d+[.)])\s+)(.*)$/;
 const TAIL = new RegExp(
@@ -756,7 +859,47 @@ function statusText(
   return null;
 }
 
-function status(text: string, ft: FeatureOptions): string {
+function transformTableStatusLine(
+  line: string,
+  ft: FeatureOptions,
+  count: (st: string | null) => void,
+): string {
+  return line.replace(/(?<=\|)([^|]*)(?=\|)/g, (cell) => {
+    const w = cell.trim().replace(/^\*\*(.*)\*\*$/, "$1");
+    const s = statusOf(w);
+    if (!s) return cell;
+    count(s);
+    return cell.replace(w, badge(w, ft));
+  });
+}
+
+function transformListStatusLine(
+  line: string,
+  ft: FeatureOptions,
+  count: (st: string | null) => void,
+): string {
+  const execRes = ITEM.exec(line);
+  if (execRes?.[1] !== undefined && execRes[2] !== undefined) {
+    const lead = execRes[1];
+    const body = execRes[2];
+    const t = statusText(body, ft, count);
+    return t ? lead + t : line;
+  }
+  return line;
+}
+
+function transformNamedStatusLine(line: string, ft: FeatureOptions): string {
+  const m = NAMED.exec(line);
+  return m?.[1] &&
+    m[2] &&
+    m[3] !== undefined &&
+    statusOf(m[2]) &&
+    !line.includes("`")
+    ? `${m[1]}${badge(m[2], ft)}${m[3]}`
+    : line;
+}
+
+export function rewriteStatuses(text: string, ft: FeatureOptions): string {
   const out: string[] = [];
   let n: Record<string, number> | null = null;
   const close = (): void => {
@@ -782,41 +925,20 @@ function status(text: string, ft: FeatureOptions): string {
       if (s && n) n[s] = (n[s] ?? 0) + 1;
     };
     if (k === "table") {
-      out.push(
-        line.replace(/(?<=\|)([^|]*)(?=\|)/g, (cell) => {
-          const w = cell.trim().replace(/^\*\*(.*)\*\*$/, "$1");
-          const s = statusOf(w);
-          if (!s) return cell;
-          count(s);
-          return cell.replace(w, badge(w, ft));
-        }),
-      );
+      out.push(transformTableStatusLine(line, ft, count));
       continue;
     }
     if (k === "list") {
-      const execRes = ITEM.exec(line);
-      if (execRes?.[1] !== undefined && execRes[2] !== undefined) {
-        const lead = execRes[1];
-        const body = execRes[2];
-        const t = statusText(body, ft, count);
-        out.push(t ? lead + t : line);
-        continue;
-      }
+      out.push(transformListStatusLine(line, ft, count));
+      continue;
     }
-    const m = NAMED.exec(line);
-    out.push(
-      m?.[1] &&
-        m[2] &&
-        m[3] !== undefined &&
-        statusOf(m[2]) &&
-        !line.includes("`")
-        ? `${m[1]}${badge(m[2], ft)}${m[3]}`
-        : line,
-    );
+    out.push(transformNamedStatusLine(line, ft));
   }
   close();
   return out.join("\n");
 }
+
+export const status = rewriteStatuses;
 
 export const STATE_TTL_MS = 5 * 60_000;
 export const MISS_TTL_MS = 30_000;
@@ -894,6 +1016,10 @@ export function createFacts({
   };
 }
 
+export function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 export async function fetchState(
   run: (argv: string[]) => Promise<string | null>,
   r: ForgeRepoInfo,
@@ -904,7 +1030,9 @@ export async function fetchState(
   ): Promise<Record<string, unknown> | null> => {
     try {
       const out = await run(argv);
-      return out ? (JSON.parse(out) as Record<string, unknown>) : null;
+      if (!out) return null;
+      const parsed: unknown = JSON.parse(out);
+      return isRecord(parsed) ? parsed : null;
     } catch {
       return null;
     }
@@ -917,8 +1045,8 @@ export async function fetchState(
       r.host ?? "github.com",
       `repos/${repo ?? r.path ?? ""}/issues/${String(n)}`,
     ]);
-    if (!j?.state) return null;
-    if (!j.pull_request)
+    if (!j || typeof j.state !== "string") return null;
+    if (!isRecord(j.pull_request))
       return {
         kind: "issue",
         state:
@@ -928,7 +1056,7 @@ export async function fetchState(
               ? "not_planned"
               : "completed",
       };
-    const pr = j.pull_request as Record<string, unknown>;
+    const pr = j.pull_request;
     return {
       kind: "pr",
       state: pr.merged_at
@@ -949,7 +1077,7 @@ export async function fetchState(
       r.host ?? "gitlab.com",
       `projects/${encodeURIComponent(repo ?? r.path ?? "")}/${mr ? "merge_requests" : "issues"}/${String(n)}`,
     ]);
-    if (!j?.state) return null;
+    if (!j || typeof j.state !== "string") return null;
     const state =
       j.state === "merged"
         ? "merged"
@@ -974,7 +1102,7 @@ export async function fetchState(
       "--output",
       "json",
     ]);
-    if (!j?.status) return null;
+    if (!j || typeof j.status !== "string") return null;
     return {
       kind: "pr",
       state:
@@ -999,8 +1127,11 @@ export async function fetchState(
     "--output",
     "json",
   ]);
-  const fields = j?.fields as Record<string, unknown> | undefined;
-  const s = fields?.["System.State"] as string | undefined;
+  const fields = isRecord(j?.fields) ? j.fields : undefined;
+  const s =
+    typeof fields?.["System.State"] === "string"
+      ? fields["System.State"]
+      : undefined;
   return s
     ? {
         kind: "workitem",
@@ -1020,13 +1151,14 @@ export function rewrite(
   if (!text) return text;
   const f = o.f;
   let t = text;
-  if (f.replySecrets) t = secrets(t, f.replySecrets);
-  if (f.replyUrls) t = urls(t, f.replyUrls, ctx.repo);
-  if (f.replyRefs) t = refs(t, f.replyRefs, ctx.repo, facts, f.replyState);
-  if (f.replyPaths || f.replyFileLinks) t = paths(t, o, facts, ctx);
-  if (f.replyCommits) t = commits(t, f.replyCommits, ctx.repo, facts);
+  if (f.replySecrets) t = rewriteSecrets(t, f.replySecrets);
+  if (f.replyUrls) t = rewriteUrls(t, f.replyUrls, ctx.repo);
+  if (f.replyRefs)
+    t = rewriteWorkItems(t, f.replyRefs, ctx.repo, facts, f.replyState);
+  if (f.replyPaths || f.replyFileLinks) t = rewritePaths(t, o, facts, ctx);
+  if (f.replyCommits) t = rewriteCommits(t, f.replyCommits, ctx.repo, facts);
   if (f.replyTimes)
-    t = times(t, f.replyTimes, o.timeFormat, ctx.now ?? Date.now());
-  if (f.replyStatus) t = status(t, f.replyStatus);
+    t = rewriteTimes(t, f.replyTimes, o.timeFormat, ctx.now ?? Date.now());
+  if (f.replyStatus) t = rewriteStatuses(t, f.replyStatus);
   return t;
 }

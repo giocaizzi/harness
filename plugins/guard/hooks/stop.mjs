@@ -24,12 +24,26 @@ import { detectHarnessName } from "./harnesses.mjs";
 import { STOP_DEADLINE_MS, readStdin } from "./stdin.mjs";
 import { denyReason, legacySet, recordUnregistered, runContext, } from "./run.mjs";
 import { emitAntigravityUsage, failedTarget, harnessName, recordAttrs, resolveAntigravityTranscriptPath, scrub, } from "./telemetry.mjs";
+import { isRecord, } from "./types.mjs";
 const DEFAULT_TIMEOUT_MS = 300_000;
 const MAX_UNTRACKED = 2000;
 const sha = (s) => createHash("sha256").update(s).digest("hex");
+function getErrorCode(err) {
+    if (isRecord(err) && typeof err.code === "string") {
+        return err.code;
+    }
+    return undefined;
+}
+export const defaultSyncRunner = (cmd, args, opts) => {
+    const userOpts = isRecord(opts) ? opts : {};
+    return spawnSync(cmd, args, {
+        ...userOpts,
+        encoding: "utf8",
+    });
+};
 // What "unchanged" means: same HEAD, same diff against it, same untracked files, names and contents. Null outside
 // a git repo, when git fails or past MAX_UNTRACKED untracked files, which means "always run".
-export function fingerprint(cwd, run = spawnSync) {
+export function fingerprint(cwd, run = defaultSyncRunner) {
     const git = (args, input) => run("git", args, {
         cwd,
         encoding: "utf8",
@@ -114,7 +128,7 @@ export function runDetached(cmd, args, { cwd, timeout }) {
 // The paths changed since `base` (the last green run's HEAD; HEAD when there is none): `git diff` against it with
 // renames split into delete and add, plus untracked files, all relative to the repo root, and the text of the repo's
 // `.stop-check-ignore` ('' when it has none). Null when git cannot say, which means "run the check".
-export function changes(cwd, base, run = spawnSync) {
+export function changes(cwd, base, run = defaultSyncRunner) {
     const git = (args, at) => run("git", args, { cwd: at, encoding: "utf8", windowsHide: true });
     const top = git(["rev-parse", "--show-toplevel"], cwd);
     const root = top.status === 0 ? top.stdout.trim() : "";
@@ -201,9 +215,7 @@ export function takeLock(file) {
         };
     }
     catch (err) {
-        const code = typeof err === "object" && err !== null && "code" in err
-            ? err.code
-            : undefined;
+        const code = getErrorCode(err);
         if (code !== "EEXIST") {
             return () => {
                 // lock cleanup ignore
@@ -393,7 +405,7 @@ function resolveResultFile(root, rel) {
             break;
         }
         catch (e) {
-            const code = e.code;
+            const code = getErrorCode(e);
             const up = dirname(existing);
             if ((code !== "ENOENT" && code !== "ENOTDIR") || up === existing)
                 throw e;
@@ -411,7 +423,7 @@ function resolveResultFile(root, rel) {
     }
     return resolved;
 }
-export async function resultGate(input, run = spawnSync, env = process.env, onEvent = () => {
+export async function resultGate(input, run = defaultSyncRunner, env = process.env, onEvent = () => {
     // default event ignore
 }, checkerOpts = {}) {
     const event = (result, attrs = {}) => {
@@ -488,15 +500,17 @@ export async function resultGate(input, run = spawnSync, env = process.env, onEv
         catch (e) {
             if (!runtime)
                 return null;
-            const err = e;
+            const err = isRecord(e) ? e : {};
+            const errCode = getErrorCode(e);
+            const errMsg = typeof err.message === "string" ? err.message : undefined;
             errors = [
                 e instanceof ResultReadError
                     ? e.message
-                    : err.code === "ENOENT"
+                    : errCode === "ENOENT"
                         ? "no such file"
                         : e instanceof SyntaxError
-                            ? `not valid JSON (${err.message ?? ""})`
-                            : `cannot read (${err.code ?? err.message ?? ""})`,
+                            ? `not valid JSON (${errMsg ?? ""})`
+                            : `cannot read (${errCode ?? errMsg ?? ""})`,
             ];
         }
         if (parsedOk) {
@@ -565,7 +579,110 @@ export function crashAnswer(gate, env, input, why = "internal error") {
 }
 class StdinReadError extends Error {
 }
-export async function stopCheck(input, run = spawnSync, opts = {}) {
+export function resolveMakeTarget(cwd, run = defaultSyncRunner, timeout = DEFAULT_TIMEOUT_MS) {
+    const opts = { cwd, encoding: "utf8", timeout, windowsHide: true };
+    const target = ["check-fast", "check"].find((t) => run("make", ["-n", t], opts).status === 0);
+    return target ?? null;
+}
+export function verifyChangeEligibility(cwd, run = defaultSyncRunner, env = process.env) {
+    const fp = fingerprint(cwd, run);
+    const green = lastGreen(cwd);
+    if (fp && fp === green.fp)
+        return { eligible: false, fingerprint: fp };
+    const changed = changes(cwd, green.head, run);
+    if (changed?.paths.length === 0 && env.GUARD_STOP_CHECK !== "force") {
+        return { eligible: false, fingerprint: fp };
+    }
+    if (changed &&
+        changed.paths.length > 0 &&
+        docsOnly(changed.paths, changed.rules)) {
+        return { eligible: false, fingerprint: fp };
+    }
+    return { eligible: true, fingerprint: fp };
+}
+export async function executeMakeCheck(target, cwd, fp, run = defaultSyncRunner, { exec = run === defaultSyncRunner
+    ? runDetached
+    : (c, a, o) => {
+        const res = run(c, a, o);
+        const errCode = getErrorCode(res.error);
+        return Promise.resolve({
+            stdout: res.stdout,
+            stderr: res.stderr,
+            status: res.status,
+            error: res.error,
+            timedOut: errCode === "ETIMEDOUT",
+        });
+    }, strain = hostStrain, report = () => {
+    // default report ignore
+}, } = {}, env = process.env) {
+    const timeout = Number(env.GUARD_STOP_TIMEOUT_MS) || DEFAULT_TIMEOUT_MS;
+    const opts = { cwd, encoding: "utf8", timeout, windowsHide: true };
+    const deferred = (why, attrs = {}) => {
+        report({ result: "deferred", target, why, ...attrs });
+        return {
+            systemMessage: `make ${target} deferred (${why}); it runs at the next stop. Run it before you ship.`,
+        };
+    };
+    const strained = env.GUARD_STOP_CHECK === "force" ? null : strain(cwd);
+    if (strained)
+        return deferred(`host strained: ${strained}`);
+    const unlock = lock(cwd);
+    if (!unlock)
+        return deferred("another stop check is running in this repo");
+    const started = Date.now();
+    let r;
+    try {
+        r = await exec("make", [target], opts);
+    }
+    finally {
+        unlock();
+    }
+    const done = (result) => {
+        report({ result, target, duration_ms: Date.now() - started });
+    };
+    if (r.status === 0) {
+        if (fp)
+            markGreen(cwd, fp, run);
+        done("pass");
+        return null;
+    }
+    if (r.timedOut || getErrorCode(r.error) === "ETIMEDOUT") {
+        return deferred(`did not finish within ${String(Math.round(timeout / 1000))} s`, { duration_ms: Date.now() - started });
+    }
+    const all = `${r.stdout}${r.stderr}`.trimEnd();
+    const allLines = all.split("\n");
+    const lastLine = allLines[allLines.length - 1];
+    report({
+        result: "fail",
+        target,
+        duration_ms: Date.now() - started,
+        failed_target: failedTarget(all),
+        last_line: scrub(lastLine),
+    });
+    const out = allLines.slice(-40).join("\n");
+    const fallbackError = r.error?.message ?? `exit ${String(r.status ?? "unknown")}`;
+    const reason = `make ${target} failed; fix before finishing:\n${out ? out : fallbackError}`;
+    return {
+        decision: "block",
+        reason,
+        hookSpecificOutput: { hookEventName: "Stop", decision: "block", reason },
+    };
+}
+async function makeCheck(input, run = defaultSyncRunner, opts = {}) {
+    if (input.stop_hook_active || process.env.GUARD_STOP_CHECK === "off") {
+        return null;
+    }
+    const cwd = input.cwd ?? process.cwd();
+    const timeout = Number(process.env.GUARD_STOP_TIMEOUT_MS) || DEFAULT_TIMEOUT_MS;
+    const target = resolveMakeTarget(cwd, run, timeout);
+    if (!target)
+        return null;
+    const { eligible, fingerprint: fp } = verifyChangeEligibility(cwd, run, process.env);
+    if (!eligible)
+        return null;
+    return executeMakeCheck(target, cwd, fp, run, opts);
+}
+export async function stopCheck(input, run = defaultSyncRunner, opts = {}) {
     const gate = await resultGate(input, run, process.env, opts.report, opts.gate);
     try {
         opts.onGate?.(gate);
@@ -591,99 +708,7 @@ export async function stopCheck(input, run = spawnSync, opts = {}) {
         hookSpecificOutput: { hookEventName: "Stop", decision: "block", reason },
     };
 }
-async function makeCheck(input, run = spawnSync, { exec = run === spawnSync
-    ? runDetached
-    : (c, a, o) => {
-        const res = run(c, a, o);
-        const errCode = res.error && "code" in res.error
-            ? res.error.code
-            : undefined;
-        return Promise.resolve({
-            stdout: res.stdout,
-            stderr: res.stderr,
-            status: res.status,
-            error: res.error,
-            timedOut: errCode === "ETIMEDOUT",
-        });
-    }, strain = hostStrain, report = () => {
-    // default report ignore
-}, } = {}) {
-    if (input.stop_hook_active || process.env.GUARD_STOP_CHECK === "off") {
-        return null;
-    }
-    const cwd = input.cwd ?? process.cwd();
-    const timeout = Number(process.env.GUARD_STOP_TIMEOUT_MS) || DEFAULT_TIMEOUT_MS;
-    const opts = { cwd, encoding: "utf8", timeout, windowsHide: true };
-    const target = ["check-fast", "check"].find((t) => run("make", ["-n", t], opts).status === 0);
-    if (!target)
-        return null;
-    const fp = fingerprint(cwd, run);
-    const green = lastGreen(cwd);
-    if (fp && fp === green.fp)
-        return null;
-    const changed = changes(cwd, green.head, run);
-    if (changed?.paths.length === 0 && process.env.GUARD_STOP_CHECK !== "force") {
-        return null;
-    }
-    if (changed &&
-        changed.paths.length > 0 &&
-        docsOnly(changed.paths, changed.rules)) {
-        return null;
-    }
-    const deferred = (why, attrs = {}) => {
-        report({ result: "deferred", target, why, ...attrs });
-        return {
-            systemMessage: `make ${target} deferred (${why}); it runs at the next stop. Run it before you ship.`,
-        };
-    };
-    const strained = process.env.GUARD_STOP_CHECK === "force" ? null : strain(cwd);
-    if (strained)
-        return deferred(`host strained: ${strained}`);
-    const unlock = lock(cwd);
-    if (!unlock)
-        return deferred("another stop check is running in this repo");
-    const started = Date.now();
-    let r;
-    try {
-        r = await exec("make", [target], opts);
-    }
-    finally {
-        unlock();
-    }
-    const done = (result) => {
-        report({ result, target, duration_ms: Date.now() - started });
-    };
-    if (r.status === 0) {
-        if (fp)
-            markGreen(cwd, fp, run);
-        done("pass");
-        return null;
-    }
-    if (r.timedOut ||
-        r.error?.code === "ETIMEDOUT") {
-        return deferred(`did not finish within ${String(Math.round(timeout / 1000))} s`, { duration_ms: Date.now() - started });
-    }
-    const all = `${r.stdout}${r.stderr}`.trimEnd();
-    const allLines = all.split("\n");
-    const lastLine = allLines[allLines.length - 1];
-    report({
-        result: "fail",
-        target,
-        duration_ms: Date.now() - started,
-        failed_target: failedTarget(all),
-        last_line: scrub(lastLine),
-    });
-    const out = allLines.slice(-40).join("\n");
-    const fallbackError = r.error?.message ?? `exit ${String(r.status ?? "unknown")}`;
-    const reason = `make ${target} failed; fix before finishing:\n${out ? out : fallbackError}`;
-    return {
-        decision: "block",
-        reason,
-        hookSpecificOutput: { hookEventName: "Stop", decision: "block", reason },
-    };
-}
-const entryArg = process.argv[1];
-if (entryArg && import.meta.url === pathToFileURL(entryArg).href) {
+export async function run() {
     const flagHarness = process.argv
         .find((a) => a.startsWith("--harness="))
         ?.slice(10);
@@ -754,7 +779,7 @@ if (entryArg && import.meta.url === pathToFileURL(entryArg).href) {
             input.cwd = firstWorkspace;
         }
         const events = [];
-        const out = await stopCheck(input, spawnSync, {
+        const out = await stopCheck(input, defaultSyncRunner, {
             report: (attrs) => events.push(attrs),
             onGate: (reason) => {
                 gateState.done = true;
@@ -818,4 +843,9 @@ if (entryArg && import.meta.url === pathToFileURL(entryArg).href) {
         });
     });
     process.exit(0);
+}
+export const main = run;
+const entryArg = process.argv[1];
+if (entryArg && import.meta.url === pathToFileURL(entryArg).href) {
+    await run();
 }

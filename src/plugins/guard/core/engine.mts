@@ -8,6 +8,7 @@ import type {
   BranchTarget,
   CommandDecision,
   CommandEvaluationInput,
+  DenyRule,
   EditEvaluationInput,
   ExecutableOptions,
   ExecutionContext,
@@ -15,6 +16,7 @@ import type {
   GitRun,
   GuardEnv,
   GuardRules,
+  HostFacts,
   OpenPr,
   Pipeline,
   PipelineContext,
@@ -26,21 +28,27 @@ import type {
   PushFact,
   RefTarget,
   RelativeSegments,
+  RemovalEntry,
   RiskyRule,
   RoutingEvaluationInput,
+  RunFacts,
   RunnerFn,
   SafeFact,
   ScannedCommand,
   Segment,
+  SessionState,
   ShellAnalysis,
   ShellRun,
   ShellWord,
   SkillRule,
   SpawnDecision,
   SpawnEvaluationInput,
+  StackFact,
   StackTarget,
   StringValue,
   TagFact,
+  ThrottleMode,
+  UsageLevel,
   Variables,
   WriteHits,
 } from "./types.mjs";
@@ -64,7 +72,7 @@ const HEREDOC =
   /(<<-?\s*(['"]?)(\w+)\2[^\n]*)\n[\s\S]*?\n[ \t]*\3[ \t]*(?=\n|$)/g;
 export const OPAQUE = "<guard:opaque>";
 const cache = new Map<string, ShellAnalysis>();
-export function analysis(command: string) {
+export function analysis(command: string): ShellAnalysis {
   if (!cache.has(command)) {
     if (cache.size > 200) cache.clear();
     cache.set(command, analyze(command));
@@ -99,7 +107,7 @@ function levels(
 export function executable(
   command: string,
   { remote = true, injected = true }: ExecutableOptions = {},
-) {
+): string {
   const a = analysis(command);
   return [
     ...levels(a, { remote, injected }),
@@ -111,7 +119,7 @@ export function executable(
 // would hide it from every `git <subcommand>` rule, so rules match with them removed; `gitDirs` keeps the `-C` dirs.
 const GIT_VAL = String.raw`(?:"(?:[^"\\]|\\.)*"|'[^']*'|[^\s;&|"'])+`;
 const GIT_GLOBALS = String.raw`(?<![\w./:@-])git((?:\s+(?:(?:-C|-c|--git-dir|--work-tree|--namespace|--config-env|--attr-source)(?:=|\s+)${GIT_VAL}|-[\w-]+(?:=${GIT_VAL})?))+)(?=\s+[^\s-])`;
-export const gitPlain = (code: string) =>
+export const gitPlain = (code: string): string =>
   code.replace(new RegExp(GIT_GLOBALS, "g"), "git");
 const gitDirs = (seg: string) =>
   [
@@ -236,17 +244,61 @@ function literal(word: ShellWord) {
   return /[$`]/.test(word.raw.replace(/'[^']*'/g, "")) ? null : word.val;
 }
 
+function stripGitGlobalOptions(words: readonly ShellWord[]): ShellWord[] {
+  if (words[0]?.val !== "git") return [...words];
+  let k = 1;
+  while (words[k]?.val.startsWith("-")) {
+    k += GIT_VALUE.has(defined(words[k]).val) ? 2 : 1;
+  }
+  return [words[0], ...words.slice(k)];
+}
+
+interface ExtractedTitleFlag {
+  flag: string | undefined;
+  value: ShellWord | undefined;
+}
+
+function extractTitleFlag(
+  words: readonly ShellWord[],
+  index: number,
+  flagRe: RegExp,
+  fileRe?: RegExp,
+): ExtractedTitleFlag {
+  const current = defined(words[index]);
+  const v = current.val;
+  const eq = /^(--[\w-]+)=([\s\S]*)$/.exec(v);
+  if (eq) {
+    return {
+      flag: defined(eq[1]),
+      value: {
+        ...current,
+        val: defined(eq[2]),
+        raw: current.raw.slice(current.raw.indexOf("=") + 1),
+      },
+    };
+  }
+  const joined = !v.startsWith("--") && /^(-[a-zA-Z]*?[mF])(.+)$/.exec(v);
+  if (joined && !flagRe.test(v) && !fileRe?.test(v)) {
+    return {
+      flag: defined(joined[1]),
+      value: {
+        ...current,
+        val: defined(joined[2]),
+        raw: current.raw.slice(defined(joined[1]).length),
+      },
+    };
+  }
+  return {
+    flag: v,
+    value: words[index + 1],
+  };
+}
+
 // The title one simple command sets, or null: the first title flag's value (`-m "x"`, `-mx`, `--title=x`), or the
 // first line of a heredoc passed as `-F -` / `--file=-`. Only a command at command position counts, so
 // `echo git commit -m x` sets none; a message read from a file or stdin without a heredoc is not read.
-function titleIn(cmd: ScannedCommand) {
-  let words = commandWords(cmd.words);
-  if (words[0]?.val === "git") {
-    let k = 1;
-    while (words[k]?.val.startsWith("-"))
-      k += GIT_VALUE.has(defined(words[k]).val) ? 2 : 1;
-    words = [words[0], ...words.slice(k)];
-  }
+function titleIn(cmd: ScannedCommand): string | null {
+  const words = stripGitGlobalOptions(commandWords(cmd.words));
   const vals = words.map((w) => w.val);
   const titled = TITLED.find(([name]) =>
     name.every((n, i) =>
@@ -256,42 +308,22 @@ function titleIn(cmd: ScannedCommand) {
   if (!titled) return null;
   const [name, flag, file] = titled;
   for (let i = name.length; i < words.length; i++) {
-    const v = vals[i];
-    if (v === "--") break;
-    const eq = /^(--[\w-]+)=([\s\S]*)$/.exec(defined(v));
-    const joined =
-      !defined(v).startsWith("--") &&
-      /^(-[a-zA-Z]*?[mF])(.+)$/.exec(defined(v));
-    const [f, value] = eq
-      ? [
-          eq[1],
-          {
-            ...defined(words[i]),
-            val: defined(eq[2]),
-            raw: defined(words[i]).raw.slice(
-              defined(words[i]).raw.indexOf("=") + 1,
-            ),
-          },
-        ]
-      : joined && !flag.test(defined(v)) && !file?.test(defined(v))
-        ? [
-            joined[1],
-            {
-              ...defined(words[i]),
-              val: defined(joined[2]),
-              raw: defined(words[i]).raw.slice(defined(joined[1]).length),
-            },
-          ]
-        : [v, words[i + 1]];
-    if (file?.test(defined(f)))
-      return value?.val === "-" && cmd.heredocs.length ? cmd.heredocs[0] : null;
-    if (flag.test(defined(f))) return value ? literal(defined(value)) : null;
+    if (vals[i] === "--") break;
+    const { flag: f, value } = extractTitleFlag(words, i, flag, file);
+    if (f !== undefined && file?.test(f)) {
+      return value?.val === "-" && cmd.heredocs.length
+        ? (cmd.heredocs[0] ?? null)
+        : null;
+    }
+    if (f !== undefined && flag.test(f)) {
+      return value ? literal(value) : null;
+    }
   }
   return null;
 }
 
 // Every title a command sets, in order: each simple command at command position, payloads (bash -c, ssh) included.
-export function titlesOf(command: string) {
+export function titlesOf(command: string): string[] {
   return units(analysis(command))
     .map((u) => titleIn(u.cmd))
     .filter((t) => t !== null)
@@ -300,7 +332,7 @@ export function titlesOf(command: string) {
 
 // The first title that does not match the org's PR-title check (giocaizzi/.github `pr-title.yml`), or null. Git's own
 // merge commit subjects ("Merge branch …") are skipped.
-export function badTitle(command: string, rules: GuardRules) {
+export function badTitle(command: string, rules: GuardRules): string | null {
   const re = new RegExp(
     `^(${rules.titles.types.join("|")})(\\([a-z0-9._/-]+\\))?!?: [a-z].*$`,
   );
@@ -336,15 +368,17 @@ const riskyMatch = (r: RiskyRule, command: string) =>
       (!r.raw || new RegExp(r.raw, "i").test(command));
 
 // The deny rule a command hits, so adapters gather repo facts (the Python manager) only when one applies.
-export const deniedBy = (command: string, rules: GuardRules) =>
-  hit(rules.deny ?? [], command);
+export const deniedBy = (
+  command: string,
+  rules: GuardRules,
+): DenyRule | undefined => hit(rules.deny ?? [], command);
 // Where the denied command runs, relative to the cwd ('' for the cwd itself): `cd <uv repo> && pip install x` is
 // judged by that repo's manager. Null when it cannot be known (an unfollowed cd) or it runs on another host.
 export function deniedDir(
   command: string,
   rules: GuardRules,
   env: GuardEnv = {},
-) {
+): string | null {
   const rule = deniedBy(command, rules);
   if (!rule) return null;
   const at = segments(command, env).find(({ seg }) =>
@@ -362,7 +396,7 @@ const LOOP =
   /(?<=^|[\s;&|(])for\s+([A-Za-z_]\w*)\s+in\s+([^;\n]*?)\s*[;\n]\s*do\s([\s\S]*?)[;\n]\s*done(?=[\s;&|)<>]|$)/dg;
 const PLAIN_LIST = /^[\w./@%+=:,-]+(?:\s+[\w./@%+=:,-]+)*$/;
 const LOOP_WORD = /(?:^|[\s;&|(])(?:for|while|until|select|do|done)(?=[\s;]|$)/;
-export function expandLoops(command: string) {
+export function expandLoops(command: string): string {
   const masked = command
     .replace(
       HEREDOC,
@@ -603,7 +637,7 @@ function segments(command: string, env: GuardEnv = {}) {
 }
 // Every directory a `cd` in the command reaches on this machine, as the engine names it (relative to the cwd when it
 // does not start with `/`): the adapter checks which exist and passes them back as `env.dirs`.
-export function cdDirs(command: string, env: GuardEnv = {}) {
+export function cdDirs(command: string, env: GuardEnv = {}): string[] {
   const cds: string[] = [];
   levelSegments(prepared(command), "", false, env, {}, null, cds);
   return [...new Set(cds)];
@@ -628,7 +662,7 @@ export function removalEntries(
   command: string,
   rules: GuardRules,
   env: GuardEnv = {},
-) {
+): RemovalEntry[] {
   const risky = (id: string) => riskyRe(rules.risky.find((r) => r.id === id));
   const removes = [...REMOVAL].map(risky);
   const entries = [];
@@ -654,7 +688,7 @@ export const removalTargets = (
   command: string,
   rules: GuardRules,
   env?: GuardEnv,
-) => removalEntries(command, rules, env).map((e) => e.target);
+): string[] => removalEntries(command, rules, env).map((e) => e.target);
 // Targets on this machine: facts (git, gh) are never gathered for another host's or a container's paths.
 const localTargets = (command: string, rules: GuardRules, env?: GuardEnv) =>
   removalEntries(command, rules, env)
@@ -667,7 +701,7 @@ export function branchTargets(
   command: string,
   rules: GuardRules,
   env: GuardEnv = {},
-) {
+): BranchTarget[] {
   const re = riskyRe(rules.risky.find((r) => r.id === "branch-delete"));
   return segments(command, env)
     .filter(({ seg }) => re.test(seg))
@@ -696,7 +730,7 @@ const norm = (p: string) =>
     .replace(/\\/g, "/")
     .replace(/\/+/g, "/")
     .replace(/(.)\/$/, "$1");
-export function isTempPath(target: string, env: GuardEnv = {}) {
+export function isTempPath(target: string, env: GuardEnv = {}): boolean {
   const path = target.replace(
     TEMP_VAR,
     (
@@ -736,7 +770,10 @@ export function isTempPath(target: string, env: GuardEnv = {}) {
 // Undefined when the target is not the root of a linked worktree (the main checkout never qualifies).
 // "Safe" = clean tree and either every commit on some remote ref (pushed, or merged into origin's default branch)
 // or HEAD contained in the head of a merged PR of its branch (squash merge with the remote branch deleted).
-export async function worktreeFact(path: string, run: RunnerFn) {
+export async function worktreeFact(
+  path: string,
+  run: RunnerFn,
+): Promise<SafeFact | undefined> {
   const sh = (argv: string[], cwd?: string) =>
     Promise.resolve()
       .then(() => run(argv, cwd))
@@ -831,7 +868,7 @@ export async function worktreeFacts(
   env: GuardEnv,
   rules: GuardRules,
   run: RunnerFn,
-) {
+): Promise<Record<string, SafeFact | undefined>> {
   const targets = [...new Set(localTargets(command, rules, env))].filter(
     (t) => !isTempPath(t, env) && PLAIN_PATH.test(t),
   );
@@ -845,7 +882,11 @@ export async function worktreeFacts(
 
 // Facts for one branch a `git branch -D` deletes, in the repo at `dir`: safe when every commit on it is on a remote
 // ref, or its tip is in the head of a merged PR of that name (squash merge, remote branch deleted).
-export async function branchFact(dir: string, name: string, run: RunnerFn) {
+export async function branchFact(
+  dir: string,
+  name: string,
+  run: RunnerFn,
+): Promise<SafeFact> {
   if (!/^[\w./@+-]+$/.test(name) || name.startsWith("-"))
     return { safe: false, why: "branch name not plain" };
   const sh = (argv: string[], cwd?: string) =>
@@ -876,7 +917,7 @@ export function tagTargets(
   command: string,
   rules: GuardRules,
   env: GuardEnv = {},
-) {
+): BranchTarget[] {
   const re = new RegExp(
     defined(rules.skills.find((r) => r.id === "release")).match,
     "i",
@@ -910,7 +951,11 @@ export function tagTargets(
 }
 // A tag no remote has: `git remote` lists none, or `git ls-remote --tags <remote> refs/tags/<name>` is empty on each.
 // A failed lookup (offline, auth) counts as on a remote.
-export async function tagFact(dir: string, name: string, run: RunnerFn) {
+export async function tagFact(
+  dir: string,
+  name: string,
+  run: RunnerFn,
+): Promise<TagFact> {
   const sh = (argv: string[]) =>
     Promise.resolve()
       .then(() => run(argv))
@@ -945,7 +990,7 @@ export async function tagFacts(
   rules: GuardRules,
   run: RunnerFn,
   env: GuardEnv = {},
-) {
+): Promise<Record<string, TagFact | undefined>> {
   const targets = [
     ...new Map(
       tagTargets(command, rules, env).map((t): [string, BranchTarget] => [
@@ -1050,7 +1095,7 @@ export function refTargets(
   command: string,
   rules: GuardRules,
   env: GuardEnv = {},
-) {
+): RefTarget[] {
   const re = riskyRe(rules.risky.find((r) => r.id === "gh-delete"));
   const elsewhere = setsVariable(command, /^GH_(?:REPO|HOST)=/);
   return segments(command, env)
@@ -1071,7 +1116,10 @@ const refKey = ({ dir, repo, name }: RefTarget) =>
 
 // Facts for one branch ref a `gh api` DELETE removes on GitHub: safe when the ref's tip is the head of a merged PR of
 // that branch, so the merge holds every commit the ref has. The default branch never is.
-export async function refFact({ dir, repo, name }: RefTarget, run: RunnerFn) {
+export async function refFact(
+  { dir, repo, name }: RefTarget,
+  run: RunnerFn,
+): Promise<SafeFact> {
   if (!/^[\w./@+-]+$/.test(name) || name.startsWith("-"))
     return { safe: false, why: "branch name not plain" };
   if (/^(?:main|master)$/.test(name))
@@ -1119,7 +1167,7 @@ export async function refFacts(
   rules: GuardRules,
   run: RunnerFn,
   env: GuardEnv = {},
-) {
+): Promise<Record<string, SafeFact | undefined>> {
   const targets = [
     ...new Map(
       refTargets(command, rules, env).map((r): [string, RefTarget] => [
@@ -1184,7 +1232,7 @@ export function stackTargets(
   command: string,
   rules: GuardRules,
   env: GuardEnv = {},
-) {
+): StackTarget[] {
   const re = new RegExp(rules.stack.match);
   return segments(command, env)
     .filter(({ seg, remote }) => !remote && re.test(seg))
@@ -1233,7 +1281,7 @@ export async function stackFacts(
   rules: GuardRules,
   run: RunnerFn,
   env: GuardEnv = {},
-) {
+): Promise<StackFact> {
   try {
     const t = stackTargets(command, rules, env).find((x) =>
       PLAIN_PATH.test(x.dir || "."),
@@ -1362,7 +1410,7 @@ export async function branchFacts(
   rules: GuardRules,
   run: RunnerFn,
   env: GuardEnv = {},
-) {
+): Promise<Record<string, SafeFact | undefined>> {
   const targets = [
     ...new Map(
       branchTargets(command, rules, env).map((b): [string, BranchTarget] => [
@@ -1550,7 +1598,7 @@ export async function pushFacts(
   rules: GuardRules,
   run: RunnerFn,
   env: GuardEnv = {},
-) {
+): Promise<Record<string, PushFact | undefined>> {
   const dirs = [...new Set(leaseTargets(command, rules, env))].filter(
     (d) => d !== REMOTE_DIR && PLAIN_PATH.test(d || "."),
   );
@@ -1619,7 +1667,7 @@ const REGENERABLE = new Set([
   ".nuxt",
 ]);
 const NEVER_REGEN = /^\.env|secret|\.key$/i;
-export function regenerableName(target: string) {
+export function regenerableName(target: string): boolean {
   const segs = target.replace(/\\/g, "/").replace(/\/+$/, "").split("/");
   const last = segs.at(-1);
   if (!PLAIN_PATH.test(target) || segs.some((s) => NEVER_REGEN.test(s)))
@@ -1636,7 +1684,7 @@ export async function regenFacts(
   env: GuardEnv,
   rules: GuardRules,
   run: RunnerFn,
-) {
+): Promise<Record<string, boolean | undefined>> {
   const targets = [...new Set(localTargets(command, rules, env))].filter(
     (t) => !isTempPath(t, env) && regenerableName(t),
   );
@@ -1690,7 +1738,7 @@ function safeRemoval(
 // `GUARD_UNATTENDED=1 cmd`, `env GUARD_UNATTENDED=1 cmd`): true when on (1, true, on), false for any other value or
 // `unset GUARD_UNATTENDED`, null when the command does not set it. Only words in assignment position count, so a commit message or an echo
 // naming it does not; another host's or a container's setting is not this session's.
-export function unattendedSet(command: string) {
+export function unattendedSet(command: string): boolean | null {
   let set = null;
   for (const { cmd, remote } of units(analysis(command))) {
     if (remote) continue;
@@ -1838,7 +1886,7 @@ const regexPairs: [RegExp, RegExp][] = [
   [PY_INLINE, PY_WRITE],
   [NODE_INLINE, NODE_WRITE],
 ];
-export function shellEdit(command: string, env: GuardEnv = {}) {
+export function shellEdit(command: string, env: GuardEnv = {}): boolean {
   const code = executable(command);
   const fileTarget = (t: string) => !NOT_A_FILE.test(t) && !isTempPath(t, env);
   for (const [inline, write] of regexPairs) {
@@ -2316,7 +2364,7 @@ const RELATIVE_PATH = (p: string) =>
     );
 const SECRET_PATH =
   /(?:^|\/)(?:\.git\/config|[^/]*\.tf(?:state|vars)(?:\.[\w.-]+)?|[^/]*\.env|auth\.json|[^/]*history|\.env(?:rc)?(?:\.[\w.-]+)?|\.netrc|\.npmrc|\.pypirc|\.pgpass|\.git-credentials|id_[\w-]+|[^/]*(?:secret|token|credential|passw|private)[^/]*|[^/]*\.(?:pem|key|p12|pfx|kdbx|keychain(?:-db)?|jks|asc|gpg)|kubeconfig|[^/]*\.kubeconfig)$|(?:^|\/)\.(?:ssh|gnupg|aws|azure|kube|docker|password-store|config\/gh|config\/gcloud)(?:\/|$)|^\/(?:dev|proc|sys)\//i;
-export function pureRead(command: string) {
+export function pureRead(command: string): boolean {
   const m = /^\s*(?:cd\s+(\S+)\s*&&\s*)?(\S+)((?:[ \t]+\S+)+)\s*$/.exec(
     command,
   );
@@ -2673,7 +2721,7 @@ function hidesGh(w: ShellWord) {
 // (`sudo -E -u x …`, `timeout -s KILL 5 nice …`; a string a wrapper runs, env -S or watch, is a unit of its own). A unit
 // with a wrapper option the table does not know is read whole. A name the shell builds from a variable (`$GH`) stays
 // out of sight, and so does a command behind a wrapper the reader does not know (`busybox`, `chronic`).
-export function ghHidden(command: string) {
+export function ghHidden(command: string): boolean {
   const plain = (w: ShellWord | undefined) =>
     w !== undefined && !w.val.startsWith("-") && !/^[A-Za-z_]\w*=/.test(w.val);
   for (const { cmd } of units(analyze(command))) {
@@ -2688,7 +2736,7 @@ export function ghHidden(command: string) {
 // A plain `gh` command whose real command the guard cannot see: an alias or extension (`gh <name>` that is not one of gh's
 // own commands), or one that makes, swaps or runs one (`gh alias set|import`, `gh extension install|upgrade|remove|exec`). Other lines are left to
 // touchesApprovalLabel, which denies a non-plain `gh` with an unknown subcommand already.
-export function ghUnseen(command: string, rules: GuardRules) {
+export function ghUnseen(command: string, rules: GuardRules): boolean {
   const args = plainGh(command.replace(/\\\r?\n/g, ""));
   if (!args) return false;
   const positional = [];
@@ -2712,7 +2760,7 @@ export function ghUnseen(command: string, rules: GuardRules) {
 // a `/comments` endpoint or a path outside `/labels` and `/issues`; so is any other line running `gh api` (opaqueGh) unless
 // each such call in it is a plain command (plainGhCalls). A label the shell builds (`$L`) stays out of sight
 // (docs/guard.md).
-export function touchesApprovalLabel(command: string, label: string) {
+export function touchesApprovalLabel(command: string, label: string): boolean {
   const want = label.trim().toLowerCase();
   if (!want) return false;
   // A backslash-newline is a line continuation: the shell joins the word (`agent-o\⏎k`).
@@ -2928,43 +2976,28 @@ function changesLabels(command: string) {
   return !args || ghAction(args) !== "read";
 }
 
-// `readTool`: the harness has a file-read tool (all but Codex), so a shell read gets a once-per-session hint.
-// `worktrees`, `branches`, `pushes`, `regenerable`: facts the adapters gather (worktreeFacts, branchFacts, pushFacts,
-// regenFacts).
-export function evaluateCommand({
-  command,
-  loadedSkills = new Set<string>(),
-  state,
-  host = {},
-  env = {},
-  worktrees = {},
-  branches = {},
-  pushes = {},
-  regenerable = {},
-  refs = {},
-  tags = {},
-  stack = null,
-  python = null,
-  readTool = false,
-  run = null,
-  rules,
-}: CommandEvaluationInput): CommandDecision {
+function evaluateRunLabels(
+  command: string,
+  run: RunFacts | null | undefined,
+  rules: GuardRules,
+): CommandDecision | null {
+  if (!run) return null;
   // In a registered unattended run the agent never touches the approval label: with an owner token it would count as the owner's.
   const labelDeny = (name: string): CommandDecision => ({
     action: "deny",
     rule: "run-label",
     reason: `${rules.run.labelWhy} The \`${name}\` label is registered for this run; it is the owner's to apply or remove, so ask on the ticket instead.`,
   });
-  const approvalHit = run?.labels?.approval;
+  const approvalHit = run.labels?.approval;
   if (approvalHit && touchesApprovalLabel(command, approvalHit))
     return labelDeny(approvalHit);
-  if (run && ghHidden(command))
+  if (ghHidden(command))
     return {
       action: "deny",
       rule: "run-label",
       reason: `${rules.run.labelWhy} This command may run \`gh\` under a spelling the guard cannot read (another letter case, an escape, a glob or brace list); spell \`gh\` literally.`,
     };
-  if (run && ghUnseen(command, rules))
+  if (ghUnseen(command, rules))
     return {
       action: "deny",
       rule: "run-label",
@@ -2972,24 +3005,32 @@ export function evaluateCommand({
     };
   // Nor the protected labels, nor the takeover label: an approver sets it to hand the ticket to an attended run.
   const otherHit = [
-    ...(run?.labels?.protected ?? []),
-    ...(run?.labels?.takeover === undefined ? [] : [run.labels.takeover]),
+    ...(run.labels?.protected ?? []),
+    ...(run.labels?.takeover === undefined ? [] : [run.labels.takeover]),
   ].find((name) => touchesApprovalLabel(command, name));
   if (otherHit !== undefined) return labelDeny(otherHit);
+  return null;
+}
+
+function evaluateProtectedPaths(
+  command: string,
+  run: RunFacts | null | undefined,
+  env: GuardEnv,
+  rules: GuardRules,
+): CommandDecision | null {
+  if (!run) return null;
   // Nor a protected path (the floor, the registration's globs, GUARD_RUN_PROTECTED_PATHS) through a shell write.
-  const shielded =
-    run &&
-    protectedWrite(
-      command,
-      {
-        ...run.protect,
-        globs: [...rules.run.protectedPaths, ...(run.protect?.extra ?? [])],
-        registered: run.protect?.registered ?? [],
-        exempt: run.protect?.exempt ?? [],
-      },
-      env,
-      rules.run.protectedLimits,
-    );
+  const shielded = protectedWrite(
+    command,
+    {
+      ...run.protect,
+      globs: [...rules.run.protectedPaths, ...(run.protect?.extra ?? [])],
+      registered: run.protect?.registered ?? [],
+      exempt: run.protect?.exempt ?? [],
+    },
+    env,
+    rules.run.protectedLimits,
+  );
   if (shielded?.target)
     return {
       action: "deny",
@@ -3002,26 +3043,41 @@ export function evaluateCommand({
       rule: "protected-path",
       reason: `${rules.run.protectedWhy} The guard could not check this command's writes within its limits (${shielded.unsure}), so it denies them; split the command into smaller ones.`,
     };
+  return null;
+}
+
+function evaluateRunConfig(
+  command: string,
+  run: RunFacts | null | undefined,
+  rules: GuardRules,
+): CommandDecision | null {
+  if (!run?.unsure) return null;
   // A registration that requires labels but names none fails closed: every label change is denied.
-  if (run?.unsure && changesLabels(command))
+  if (changesLabels(command))
     return {
       action: "deny",
       rule: "run-config",
       reason: `${rules.run.unsureWhy} Every label change is denied in this run until the registration names its labels; ask on the ticket instead.`,
     };
-  if (run?.unsure && ghBuildsLabelFlag(command))
+  if (ghBuildsLabelFlag(command))
     return {
       action: "deny",
       rule: "run-config",
       reason: `${rules.run.unsureWhy} This \`gh issue|pr create|edit\` has a subcommand or flag the shell builds at run time, which could add a label. Spell the subcommand and flags literally, quote every value, and pass a body as a value or with a literal \`--body-file\` path.`,
     };
-  // Hard denies come first and fire every time, like the title guard. A `when` rule denies only in a repo
-  // that adopted that manager; elsewhere it lets the command through with a once-per-session note.
-  const denied = deniedBy(command, rules);
-  if (denied && (!denied.when || denied.when === python))
-    return { action: "deny", rule: denied.id, reason: denied.why };
-  const note = denied && !state.reminded.has(denied.id) ? denied.id : null;
+  return null;
+}
 
+function evaluateRiskyCommand(
+  command: string,
+  rules: GuardRules,
+  env: GuardEnv,
+  worktrees: Record<string, SafeFact | undefined>,
+  regenerable: Record<string, boolean | undefined>,
+  branches: Record<string, SafeFact | undefined>,
+  refs: Record<string, SafeFact | undefined>,
+  pushes: Record<string, PushFact | undefined>,
+): CommandDecision | null {
   const exempt = new Set([
     ...(safeRemoval(command, rules, env, worktrees, regenerable)
       ? REMOVAL
@@ -3038,58 +3094,54 @@ export function evaluateCommand({
   const risky =
     rules.risky.find((r) => riskyMatch(r, command) && !exempt.has(r.id)) ??
     (leaseHit ? rules.risky.find((r) => r.id === "force") : undefined);
-  if (risky) {
-    const why = [
-      ...Object.entries(worktrees)
-        .filter(([, f]) => !defined(f).safe)
-        .map(([t, f]) => `\nWorktree ${t}: ${defined(f).why}`),
-      ...Object.entries(branches)
-        .filter(([, f]) => !defined(f).safe)
-        .map(
-          ([k, f]) =>
-            `\nBranch ${k.slice(k.indexOf("|") + 1)}: ${defined(f).why}`,
-        ),
-      ...Object.entries(refs)
-        .filter(([, f]) => !defined(f).safe)
-        .map(
-          ([k, f]) =>
-            `\nRef ${k.slice(k.lastIndexOf("|") + 1)}: ${defined(f).why}`,
-        ),
-    ].join("");
-    const step = riskyStep(command, risky);
-    const what = summary(command, risky, step, rules, env);
-    const where = step.host ? ` on ${step.host}` : "";
-    const shown = step.raw !== command.trim() ? `\nStep: ${step.raw}` : "";
-    const rule = `\nRule: ${risky.id} (${risky.why})`;
-    // A risky step buried in a long chain, or in a shell -c, eval or ssh payload next to other commands, is hard to
-    // read at the prompt: the agent runs it on its own instead (owner decision D15).
-    if (step.top > 3 || (step.depth > 0 && step.siblings >= 3)) {
-      return {
-        action: "deny",
-        rule: risky.id,
-        split: true,
-        reason: `Risky step buried in a longer command: ${what}${where}.${shown}${rule}${why}\nRun the risky step as its own simple command, not inside bash -c, eval or ssh next to other commands or in a chain of more than 3, so the user can read what they approve. Then retry.`,
-      };
-    }
-    return {
-      action: "ask",
-      rule: risky.id,
-      command,
-      reason: `Risky command: ${what}${where}.${shown}${rule}${why}`,
-    };
-  }
+  if (!risky) return null;
 
-  const title = badTitle(command, rules);
-  if (title !== null) {
+  const why = [
+    ...Object.entries(worktrees)
+      .filter(([, f]) => !defined(f).safe)
+      .map(([t, f]) => `\nWorktree ${t}: ${defined(f).why}`),
+    ...Object.entries(branches)
+      .filter(([, f]) => !defined(f).safe)
+      .map(
+        ([k, f]) =>
+          `\nBranch ${k.slice(k.indexOf("|") + 1)}: ${defined(f).why}`,
+      ),
+    ...Object.entries(refs)
+      .filter(([, f]) => !defined(f).safe)
+      .map(
+        ([k, f]) =>
+          `\nRef ${k.slice(k.lastIndexOf("|") + 1)}: ${defined(f).why}`,
+      ),
+  ].join("");
+  const step = riskyStep(command, risky);
+  const what = summary(command, risky, step, rules, env);
+  const where = step.host ? ` on ${step.host}` : "";
+  const shown = step.raw !== command.trim() ? `\nStep: ${step.raw}` : "";
+  const rule = `\nRule: ${risky.id} (${risky.why})`;
+  // A risky step buried in a long chain, or in a shell -c, eval or ssh payload next to other commands, is hard to
+  // read at the prompt: the agent runs it on its own instead (owner decision D15).
+  if (step.top > 3 || (step.depth > 0 && step.siblings >= 3)) {
     return {
       action: "deny",
-      rule: "title",
-      reason:
-        `"${title}" is not a Conventional Commit header (${rules.titles.why}). ` +
-        `Use \`type(scope): lowercase description\` with type in ${rules.titles.types.join(", ")}; footers (BREAKING CHANGE, Co-Authored-By) go in the body/PR description. Then retry.`,
+      rule: risky.id,
+      split: true,
+      reason: `Risky step buried in a longer command: ${what}${where}.${shown}${rule}${why}\nRun the risky step as its own simple command, not inside bash -c, eval or ssh next to other commands or in a chain of more than 3, so the user can read what they approve. Then retry.`,
     };
   }
+  return {
+    action: "ask",
+    rule: risky.id,
+    command,
+    reason: `Risky command: ${what}${where}.${shown}${rule}${why}`,
+  };
+}
 
+function evaluateHostStrain(
+  command: string,
+  host: HostFacts,
+  rules: GuardRules,
+  state: SessionState,
+): CommandDecision | null {
   const { loadCap, cpuPercentCap, freeFloorGb } = rules.host;
   const strained =
     (host.load1 ?? 0) > loadCap ||
@@ -3107,7 +3159,34 @@ export function evaluateCommand({
         "it waits for a slot and for load instead of failing.",
     };
   }
+  return null;
+}
 
+interface SkillAndToolAdviceInput {
+  command: string;
+  env: GuardEnv;
+  loadedSkills: Iterable<string>;
+  note: string | null;
+  python: string | null;
+  readTool: boolean;
+  rules: GuardRules;
+  stack: StackFact | null;
+  state: SessionState;
+  tags: Record<string, TagFact | undefined>;
+}
+
+function evaluateSkillAndToolAdvice({
+  command,
+  env,
+  loadedSkills,
+  note,
+  python,
+  readTool,
+  rules,
+  stack,
+  state,
+  tags,
+}: SkillAndToolAdviceInput): CommandDecision {
   const loaded = new Set([...loadedSkills].map(bare));
   // Moving or deleting a tag no remote has is local bookkeeping, not a release.
   const rule = rules.skills.find(
@@ -3180,6 +3259,88 @@ export function evaluateCommand({
     rule: note,
     context: `${uses}, so \`${note}\` is allowed here; uv is preferred where the repo adopts it.`,
   };
+}
+
+// `readTool`: the harness has a file-read tool (all but Codex), so a shell read gets a once-per-session hint.
+// `worktrees`, `branches`, `pushes`, `regenerable`: facts the adapters gather (worktreeFacts, branchFacts, pushFacts,
+// regenFacts).
+export function evaluateCommand({
+  command,
+  loadedSkills = new Set<string>(),
+  state,
+  host = {},
+  env = {},
+  worktrees = {},
+  branches = {},
+  pushes = {},
+  regenerable = {},
+  refs = {},
+  tags = {},
+  stack = null,
+  python = null,
+  readTool = false,
+  run = null,
+  rules,
+}: CommandEvaluationInput): CommandDecision {
+  const runLabelDecision = evaluateRunLabels(command, run, rules);
+  if (runLabelDecision) return runLabelDecision;
+
+  const protectedPathDecision = evaluateProtectedPaths(
+    command,
+    run,
+    env,
+    rules,
+  );
+  if (protectedPathDecision) return protectedPathDecision;
+
+  const runConfigDecision = evaluateRunConfig(command, run, rules);
+  if (runConfigDecision) return runConfigDecision;
+
+  // Hard denies come first and fire every time, like the title guard. A `when` rule denies only in a repo
+  // that adopted that manager; elsewhere it lets the command through with a once-per-session note.
+  const denied = deniedBy(command, rules);
+  if (denied && (!denied.when || denied.when === python))
+    return { action: "deny", rule: denied.id, reason: denied.why };
+  const note = denied && !state.reminded.has(denied.id) ? denied.id : null;
+
+  const riskyDecision = evaluateRiskyCommand(
+    command,
+    rules,
+    env,
+    worktrees,
+    regenerable,
+    branches,
+    refs,
+    pushes,
+  );
+  if (riskyDecision) return riskyDecision;
+
+  const title = badTitle(command, rules);
+  if (title !== null) {
+    return {
+      action: "deny",
+      rule: "title",
+      reason:
+        `"${title}" is not a Conventional Commit header (${rules.titles.why}). ` +
+        `Use \`type(scope): lowercase description\` with type in ${rules.titles.types.join(", ")}; footers (BREAKING CHANGE, Co-Authored-By) go in the body/PR description. Then retry.`,
+    };
+  }
+
+  const hostDecision = evaluateHostStrain(command, host, rules, state);
+  if (hostDecision) return hostDecision;
+
+  return evaluateSkillAndToolAdvice({
+    command,
+    env,
+    loadedSkills,
+    note,
+    python,
+    readTool,
+    rules,
+    stack,
+    state,
+    tags,
+  });
 }
 
 // An edit (any harness's edit or write tool) to a path a `files` rule watches: a once-per-session skill hint.
@@ -3271,7 +3432,7 @@ export function evaluateRouting({
 export function usageLevel(
   percent: number | null | undefined,
   rules: GuardRules,
-) {
+): UsageLevel {
   if (percent == null) return "unknown";
   if (percent >= rules.usage.throttlePercent) return "throttle";
   if (percent >= rules.usage.warnPercent) return "warn";
@@ -3280,11 +3441,14 @@ export function usageLevel(
 
 // What the throttle does at its level, from GUARD_THROTTLE: `warn` (the spawn runs), `ask`, `deny` or `off`. Any
 // other value, unset included, is the default in the rules.
-export function throttleMode(value: StringValue, rules: GuardRules) {
+export function throttleMode(
+  value: StringValue,
+  rules: GuardRules,
+): ThrottleMode {
   const v = String(value ?? "")
     .trim()
     .toLowerCase();
-  return ["warn", "ask", "deny", "off"].includes(v)
+  return v === "warn" || v === "ask" || v === "deny" || v === "off"
     ? v
     : rules.usage.throttleMode;
 }
@@ -3320,21 +3484,21 @@ export function hostJudged(
   command: string,
   rules: GuardRules,
   reminded: Set<string>,
-) {
+): boolean {
   return (
-    hit(rules.heavy, command, { remote: false }) &&
+    hit(rules.heavy, command, { remote: false }) !== undefined &&
     !new RegExp(rules.host.wrapper).test(command) &&
     !reminded.has("host")
   );
 }
 // Adapters ask this before gathering host facts, so the (slow) uptime/df calls run only for heavy commands.
-export function isHeavy(command: string, rules: GuardRules) {
+export function isHeavy(command: string, rules: GuardRules): boolean {
   return rules.heavy.some((r) =>
     new RegExp(r.match, "i").test(matchable(command, { remote: false })),
   );
 }
 
-export function isRisky(command: string, rules: GuardRules) {
+export function isRisky(command: string, rules: GuardRules): boolean {
   return rules.risky.some((r) => riskyMatch(r, command));
 }
 
@@ -3343,7 +3507,11 @@ export function isRisky(command: string, rules: GuardRules) {
 // into the same words and matches the prefix. Anything a shell expands or Codex declines to parse (`$`, globs,
 // `~`, quotes, escapes, operators) is not, and is denied: Codex then skips its prompt rules.
 const PLAIN_WORD = /^[\w./@%+=:,-]+$/;
-export function nativeAsk(command: string, ruleId: string, rules: GuardRules) {
+export function nativeAsk(
+  command: string,
+  ruleId: string,
+  rules: GuardRules,
+): boolean {
   const words = command.trim().split(" ");
   if (!words.every((w) => PLAIN_WORD.test(w))) return false;
   const prefixes = rules.risky.find((r) => r.id === ruleId)?.prefixes ?? [];
@@ -3351,7 +3519,7 @@ export function nativeAsk(command: string, ruleId: string, rules: GuardRules) {
 }
 
 // The Codex execpolicy file (`$CODEX_HOME/rules/`) that prompts for every risky prefix.
-export const codexRules = (rules: GuardRules) =>
+export const codexRules = (rules: GuardRules): string =>
   rules.risky
     .flatMap((r) =>
       (r.prefixes ?? []).map(
@@ -3362,7 +3530,7 @@ export const codexRules = (rules: GuardRules) =>
     .join("");
 
 // opencode `permission.bash` entries that ask for every risky prefix (its wildcard `x *` also matches `x`).
-export const opencodeAsks = (rules: GuardRules) =>
+export const opencodeAsks = (rules: GuardRules): Record<string, string> =>
   Object.fromEntries(
     rules.risky.flatMap((r) =>
       (r.prefixes ?? []).map((p) => [`${p.join(" ")} *`, "ask"]),
@@ -3378,7 +3546,7 @@ export function previewCommand(
   command: string,
   rules?: GuardRules,
   env: GuardEnv = {},
-) {
+): string[] | null {
   // `git -C DIR` previews DIR; a DIR with shell syntax gets no preview.
   const dirs = gitDirs(command);
   if (
@@ -3407,7 +3575,7 @@ export function previewCommand(
 }
 
 // Append a preview (first 12 lines) to an ask reason.
-export function withPreview(reason: string, output: StringValue) {
+export function withPreview(reason: string, output: StringValue): string {
   const lines = String(output ?? "")
     .trim()
     .split("\n")
@@ -3547,15 +3715,17 @@ const PROGRAM_FAMILY: Record<string, string | undefined> = {
 export function cmdClass(
   rule: string | null | undefined,
   command: StringValue,
-) {
+): string {
   if (rule)
-    return Object.hasOwn(RULE_FAMILY, rule) ? RULE_FAMILY[rule] : "other";
+    return Object.hasOwn(RULE_FAMILY, rule)
+      ? (RULE_FAMILY[rule] ?? "other")
+      : "other";
   try {
     for (const { cmd } of units(analysis(String(command ?? "")))) {
       const name = commandWords(cmd.words)[0]?.val.replace(/^.*[\\/]/, "");
       if (name && name !== "cd")
         return Object.hasOwn(PROGRAM_FAMILY, name)
-          ? PROGRAM_FAMILY[name]
+          ? (PROGRAM_FAMILY[name] ?? "other")
           : "other";
     }
   } catch {

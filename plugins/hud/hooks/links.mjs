@@ -109,4 +109,6 @@ export function linkify(text, remote, { format = "markdown", glyph = false, colo
     })
         .join("\n");
 }
-export const styled = (env) => !env?.NO_COLOR;
+export function styled(env) {
+    return !env?.NO_COLOR;
+}

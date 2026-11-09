@@ -167,52 +167,67 @@ function literal(word) {
     }
     return /[$`]/.test(word.raw.replace(/'[^']*'/g, "")) ? null : word.val;
 }
+function stripGitGlobalOptions(words) {
+    if (words[0]?.val !== "git")
+        return [...words];
+    let k = 1;
+    while (words[k]?.val.startsWith("-")) {
+        k += GIT_VALUE.has(defined(words[k]).val) ? 2 : 1;
+    }
+    return [words[0], ...words.slice(k)];
+}
+function extractTitleFlag(words, index, flagRe, fileRe) {
+    const current = defined(words[index]);
+    const v = current.val;
+    const eq = /^(--[\w-]+)=([\s\S]*)$/.exec(v);
+    if (eq) {
+        return {
+            flag: defined(eq[1]),
+            value: {
+                ...current,
+                val: defined(eq[2]),
+                raw: current.raw.slice(current.raw.indexOf("=") + 1),
+            },
+        };
+    }
+    const joined = !v.startsWith("--") && /^(-[a-zA-Z]*?[mF])(.+)$/.exec(v);
+    if (joined && !flagRe.test(v) && !fileRe?.test(v)) {
+        return {
+            flag: defined(joined[1]),
+            value: {
+                ...current,
+                val: defined(joined[2]),
+                raw: current.raw.slice(defined(joined[1]).length),
+            },
+        };
+    }
+    return {
+        flag: v,
+        value: words[index + 1],
+    };
+}
 // The title one simple command sets, or null: the first title flag's value (`-m "x"`, `-mx`, `--title=x`), or the
 // first line of a heredoc passed as `-F -` / `--file=-`. Only a command at command position counts, so
 // `echo git commit -m x` sets none; a message read from a file or stdin without a heredoc is not read.
 function titleIn(cmd) {
-    let words = commandWords(cmd.words);
-    if (words[0]?.val === "git") {
-        let k = 1;
-        while (words[k]?.val.startsWith("-"))
-            k += GIT_VALUE.has(defined(words[k]).val) ? 2 : 1;
-        words = [words[0], ...words.slice(k)];
-    }
+    const words = stripGitGlobalOptions(commandWords(cmd.words));
     const vals = words.map((w) => w.val);
     const titled = TITLED.find(([name]) => name.every((n, i) => typeof n === "string" ? vals[i] === n : n.test(vals[i] ?? "")));
     if (!titled)
         return null;
     const [name, flag, file] = titled;
     for (let i = name.length; i < words.length; i++) {
-        const v = vals[i];
-        if (v === "--")
+        if (vals[i] === "--")
             break;
-        const eq = /^(--[\w-]+)=([\s\S]*)$/.exec(defined(v));
-        const joined = !defined(v).startsWith("--") &&
-            /^(-[a-zA-Z]*?[mF])(.+)$/.exec(defined(v));
-        const [f, value] = eq
-            ? [
-                eq[1],
-                {
-                    ...defined(words[i]),
-                    val: defined(eq[2]),
-                    raw: defined(words[i]).raw.slice(defined(words[i]).raw.indexOf("=") + 1),
-                },
-            ]
-            : joined && !flag.test(defined(v)) && !file?.test(defined(v))
-                ? [
-                    joined[1],
-                    {
-                        ...defined(words[i]),
-                        val: defined(joined[2]),
-                        raw: defined(words[i]).raw.slice(defined(joined[1]).length),
-                    },
-                ]
-                : [v, words[i + 1]];
-        if (file?.test(defined(f)))
-            return value?.val === "-" && cmd.heredocs.length ? cmd.heredocs[0] : null;
-        if (flag.test(defined(f)))
-            return value ? literal(defined(value)) : null;
+        const { flag: f, value } = extractTitleFlag(words, i, flag, file);
+        if (f !== undefined && file?.test(f)) {
+            return value?.val === "-" && cmd.heredocs.length
+                ? (cmd.heredocs[0] ?? null)
+                : null;
+        }
+        if (f !== undefined && flag.test(f)) {
+            return value ? literal(value) : null;
+        }
     }
     return null;
 }
@@ -2443,26 +2458,25 @@ function changesLabels(command) {
     const args = plainGh(command);
     return !args || ghAction(args) !== "read";
 }
-// `readTool`: the harness has a file-read tool (all but Codex), so a shell read gets a once-per-session hint.
-// `worktrees`, `branches`, `pushes`, `regenerable`: facts the adapters gather (worktreeFacts, branchFacts, pushFacts,
-// regenFacts).
-export function evaluateCommand({ command, loadedSkills = new Set(), state, host = {}, env = {}, worktrees = {}, branches = {}, pushes = {}, regenerable = {}, refs = {}, tags = {}, stack = null, python = null, readTool = false, run = null, rules, }) {
+function evaluateRunLabels(command, run, rules) {
+    if (!run)
+        return null;
     // In a registered unattended run the agent never touches the approval label: with an owner token it would count as the owner's.
     const labelDeny = (name) => ({
         action: "deny",
         rule: "run-label",
         reason: `${rules.run.labelWhy} The \`${name}\` label is registered for this run; it is the owner's to apply or remove, so ask on the ticket instead.`,
     });
-    const approvalHit = run?.labels?.approval;
+    const approvalHit = run.labels?.approval;
     if (approvalHit && touchesApprovalLabel(command, approvalHit))
         return labelDeny(approvalHit);
-    if (run && ghHidden(command))
+    if (ghHidden(command))
         return {
             action: "deny",
             rule: "run-label",
             reason: `${rules.run.labelWhy} This command may run \`gh\` under a spelling the guard cannot read (another letter case, an escape, a glob or brace list); spell \`gh\` literally.`,
         };
-    if (run && ghUnseen(command, rules))
+    if (ghUnseen(command, rules))
         return {
             action: "deny",
             rule: "run-label",
@@ -2470,19 +2484,23 @@ export function evaluateCommand({ command, loadedSkills = new Set(), state, host
         };
     // Nor the protected labels, nor the takeover label: an approver sets it to hand the ticket to an attended run.
     const otherHit = [
-        ...(run?.labels?.protected ?? []),
-        ...(run?.labels?.takeover === undefined ? [] : [run.labels.takeover]),
+        ...(run.labels?.protected ?? []),
+        ...(run.labels?.takeover === undefined ? [] : [run.labels.takeover]),
     ].find((name) => touchesApprovalLabel(command, name));
     if (otherHit !== undefined)
         return labelDeny(otherHit);
+    return null;
+}
+function evaluateProtectedPaths(command, run, env, rules) {
+    if (!run)
+        return null;
     // Nor a protected path (the floor, the registration's globs, GUARD_RUN_PROTECTED_PATHS) through a shell write.
-    const shielded = run &&
-        protectedWrite(command, {
-            ...run.protect,
-            globs: [...rules.run.protectedPaths, ...(run.protect?.extra ?? [])],
-            registered: run.protect?.registered ?? [],
-            exempt: run.protect?.exempt ?? [],
-        }, env, rules.run.protectedLimits);
+    const shielded = protectedWrite(command, {
+        ...run.protect,
+        globs: [...rules.run.protectedPaths, ...(run.protect?.extra ?? [])],
+        registered: run.protect?.registered ?? [],
+        exempt: run.protect?.exempt ?? [],
+    }, env, rules.run.protectedLimits);
     if (shielded?.target)
         return {
             action: "deny",
@@ -2495,25 +2513,27 @@ export function evaluateCommand({ command, loadedSkills = new Set(), state, host
             rule: "protected-path",
             reason: `${rules.run.protectedWhy} The guard could not check this command's writes within its limits (${shielded.unsure}), so it denies them; split the command into smaller ones.`,
         };
+    return null;
+}
+function evaluateRunConfig(command, run, rules) {
+    if (!run?.unsure)
+        return null;
     // A registration that requires labels but names none fails closed: every label change is denied.
-    if (run?.unsure && changesLabels(command))
+    if (changesLabels(command))
         return {
             action: "deny",
             rule: "run-config",
             reason: `${rules.run.unsureWhy} Every label change is denied in this run until the registration names its labels; ask on the ticket instead.`,
         };
-    if (run?.unsure && ghBuildsLabelFlag(command))
+    if (ghBuildsLabelFlag(command))
         return {
             action: "deny",
             rule: "run-config",
             reason: `${rules.run.unsureWhy} This \`gh issue|pr create|edit\` has a subcommand or flag the shell builds at run time, which could add a label. Spell the subcommand and flags literally, quote every value, and pass a body as a value or with a literal \`--body-file\` path.`,
         };
-    // Hard denies come first and fire every time, like the title guard. A `when` rule denies only in a repo
-    // that adopted that manager; elsewhere it lets the command through with a once-per-session note.
-    const denied = deniedBy(command, rules);
-    if (denied && (!denied.when || denied.when === python))
-        return { action: "deny", rule: denied.id, reason: denied.why };
-    const note = denied && !state.reminded.has(denied.id) ? denied.id : null;
+    return null;
+}
+function evaluateRiskyCommand(command, rules, env, worktrees, regenerable, branches, refs, pushes) {
     const exempt = new Set([
         ...(safeRemoval(command, rules, env, worktrees, regenerable)
             ? REMOVAL
@@ -2527,49 +2547,42 @@ export function evaluateCommand({ command, loadedSkills = new Set(), state, host
     const leaseHit = leaseTargets(command, rules, env).some((d) => leaseProtected(pushes[d]));
     const risky = rules.risky.find((r) => riskyMatch(r, command) && !exempt.has(r.id)) ??
         (leaseHit ? rules.risky.find((r) => r.id === "force") : undefined);
-    if (risky) {
-        const why = [
-            ...Object.entries(worktrees)
-                .filter(([, f]) => !defined(f).safe)
-                .map(([t, f]) => `\nWorktree ${t}: ${defined(f).why}`),
-            ...Object.entries(branches)
-                .filter(([, f]) => !defined(f).safe)
-                .map(([k, f]) => `\nBranch ${k.slice(k.indexOf("|") + 1)}: ${defined(f).why}`),
-            ...Object.entries(refs)
-                .filter(([, f]) => !defined(f).safe)
-                .map(([k, f]) => `\nRef ${k.slice(k.lastIndexOf("|") + 1)}: ${defined(f).why}`),
-        ].join("");
-        const step = riskyStep(command, risky);
-        const what = summary(command, risky, step, rules, env);
-        const where = step.host ? ` on ${step.host}` : "";
-        const shown = step.raw !== command.trim() ? `\nStep: ${step.raw}` : "";
-        const rule = `\nRule: ${risky.id} (${risky.why})`;
-        // A risky step buried in a long chain, or in a shell -c, eval or ssh payload next to other commands, is hard to
-        // read at the prompt: the agent runs it on its own instead (owner decision D15).
-        if (step.top > 3 || (step.depth > 0 && step.siblings >= 3)) {
-            return {
-                action: "deny",
-                rule: risky.id,
-                split: true,
-                reason: `Risky step buried in a longer command: ${what}${where}.${shown}${rule}${why}\nRun the risky step as its own simple command, not inside bash -c, eval or ssh next to other commands or in a chain of more than 3, so the user can read what they approve. Then retry.`,
-            };
-        }
-        return {
-            action: "ask",
-            rule: risky.id,
-            command,
-            reason: `Risky command: ${what}${where}.${shown}${rule}${why}`,
-        };
-    }
-    const title = badTitle(command, rules);
-    if (title !== null) {
+    if (!risky)
+        return null;
+    const why = [
+        ...Object.entries(worktrees)
+            .filter(([, f]) => !defined(f).safe)
+            .map(([t, f]) => `\nWorktree ${t}: ${defined(f).why}`),
+        ...Object.entries(branches)
+            .filter(([, f]) => !defined(f).safe)
+            .map(([k, f]) => `\nBranch ${k.slice(k.indexOf("|") + 1)}: ${defined(f).why}`),
+        ...Object.entries(refs)
+            .filter(([, f]) => !defined(f).safe)
+            .map(([k, f]) => `\nRef ${k.slice(k.lastIndexOf("|") + 1)}: ${defined(f).why}`),
+    ].join("");
+    const step = riskyStep(command, risky);
+    const what = summary(command, risky, step, rules, env);
+    const where = step.host ? ` on ${step.host}` : "";
+    const shown = step.raw !== command.trim() ? `\nStep: ${step.raw}` : "";
+    const rule = `\nRule: ${risky.id} (${risky.why})`;
+    // A risky step buried in a long chain, or in a shell -c, eval or ssh payload next to other commands, is hard to
+    // read at the prompt: the agent runs it on its own instead (owner decision D15).
+    if (step.top > 3 || (step.depth > 0 && step.siblings >= 3)) {
         return {
             action: "deny",
-            rule: "title",
-            reason: `"${title}" is not a Conventional Commit header (${rules.titles.why}). ` +
-                `Use \`type(scope): lowercase description\` with type in ${rules.titles.types.join(", ")}; footers (BREAKING CHANGE, Co-Authored-By) go in the body/PR description. Then retry.`,
+            rule: risky.id,
+            split: true,
+            reason: `Risky step buried in a longer command: ${what}${where}.${shown}${rule}${why}\nRun the risky step as its own simple command, not inside bash -c, eval or ssh next to other commands or in a chain of more than 3, so the user can read what they approve. Then retry.`,
         };
     }
+    return {
+        action: "ask",
+        rule: risky.id,
+        command,
+        reason: `Risky command: ${what}${where}.${shown}${rule}${why}`,
+    };
+}
+function evaluateHostStrain(command, host, rules, state) {
     const { loadCap, cpuPercentCap, freeFloorGb } = rules.host;
     const strained = (host.load1 ?? 0) > loadCap ||
         (host.cpuPercent ?? 0) > cpuPercentCap ||
@@ -2585,6 +2598,9 @@ export function evaluateCommand({ command, loadedSkills = new Set(), state, host
                 "it waits for a slot and for load instead of failing.",
         };
     }
+    return null;
+}
+function evaluateSkillAndToolAdvice({ command, env, loadedSkills, note, python, readTool, rules, stack, state, tags, }) {
     const loaded = new Set([...loadedSkills].map(bare));
     // Moving or deleting a tag no remote has is local bookkeeping, not a release.
     const rule = rules.skills.find((r) => new RegExp(r.match, "i").test(matchable(command)) &&
@@ -2648,6 +2664,53 @@ export function evaluateCommand({ command, loadedSkills = new Set(), state, host
         rule: note,
         context: `${uses}, so \`${note}\` is allowed here; uv is preferred where the repo adopts it.`,
     };
+}
+// `readTool`: the harness has a file-read tool (all but Codex), so a shell read gets a once-per-session hint.
+// `worktrees`, `branches`, `pushes`, `regenerable`: facts the adapters gather (worktreeFacts, branchFacts, pushFacts,
+// regenFacts).
+export function evaluateCommand({ command, loadedSkills = new Set(), state, host = {}, env = {}, worktrees = {}, branches = {}, pushes = {}, regenerable = {}, refs = {}, tags = {}, stack = null, python = null, readTool = false, run = null, rules, }) {
+    const runLabelDecision = evaluateRunLabels(command, run, rules);
+    if (runLabelDecision)
+        return runLabelDecision;
+    const protectedPathDecision = evaluateProtectedPaths(command, run, env, rules);
+    if (protectedPathDecision)
+        return protectedPathDecision;
+    const runConfigDecision = evaluateRunConfig(command, run, rules);
+    if (runConfigDecision)
+        return runConfigDecision;
+    // Hard denies come first and fire every time, like the title guard. A `when` rule denies only in a repo
+    // that adopted that manager; elsewhere it lets the command through with a once-per-session note.
+    const denied = deniedBy(command, rules);
+    if (denied && (!denied.when || denied.when === python))
+        return { action: "deny", rule: denied.id, reason: denied.why };
+    const note = denied && !state.reminded.has(denied.id) ? denied.id : null;
+    const riskyDecision = evaluateRiskyCommand(command, rules, env, worktrees, regenerable, branches, refs, pushes);
+    if (riskyDecision)
+        return riskyDecision;
+    const title = badTitle(command, rules);
+    if (title !== null) {
+        return {
+            action: "deny",
+            rule: "title",
+            reason: `"${title}" is not a Conventional Commit header (${rules.titles.why}). ` +
+                `Use \`type(scope): lowercase description\` with type in ${rules.titles.types.join(", ")}; footers (BREAKING CHANGE, Co-Authored-By) go in the body/PR description. Then retry.`,
+        };
+    }
+    const hostDecision = evaluateHostStrain(command, host, rules, state);
+    if (hostDecision)
+        return hostDecision;
+    return evaluateSkillAndToolAdvice({
+        command,
+        env,
+        loadedSkills,
+        note,
+        python,
+        readTool,
+        rules,
+        stack,
+        state,
+        tags,
+    });
 }
 // An edit (any harness's edit or write tool) to a path a `files` rule watches: a once-per-session skill hint.
 export function evaluateEdit({ path, loadedSkills = new Set(), state, rules, }) {
@@ -2733,7 +2796,7 @@ export function throttleMode(value, rules) {
     const v = String(value ?? "")
         .trim()
         .toLowerCase();
-    return ["warn", "ask", "deny", "off"].includes(v)
+    return v === "warn" || v === "ask" || v === "deny" || v === "off"
         ? v
         : rules.usage.throttleMode;
 }
@@ -2759,7 +2822,7 @@ export function evaluateSpawn({ usagePercent, resetsAt, rules, mode = rules.usag
 // Whether the host rule judges this command: a heavy command, not already run through the heavy wrapper (which waits
 // for its slot and load on its own), and no host deny yet this session (`reminded`).
 export function hostJudged(command, rules, reminded) {
-    return (hit(rules.heavy, command, { remote: false }) &&
+    return (hit(rules.heavy, command, { remote: false }) !== undefined &&
         !new RegExp(rules.host.wrapper).test(command) &&
         !reminded.has("host"));
 }
@@ -2953,13 +3016,15 @@ const PROGRAM_FAMILY = {
 };
 export function cmdClass(rule, command) {
     if (rule)
-        return Object.hasOwn(RULE_FAMILY, rule) ? RULE_FAMILY[rule] : "other";
+        return Object.hasOwn(RULE_FAMILY, rule)
+            ? (RULE_FAMILY[rule] ?? "other")
+            : "other";
     try {
         for (const { cmd } of units(analysis(String(command ?? "")))) {
             const name = commandWords(cmd.words)[0]?.val.replace(/^.*[\\/]/, "");
             if (name && name !== "cd")
                 return Object.hasOwn(PROGRAM_FAMILY, name)
-                    ? PROGRAM_FAMILY[name]
+                    ? (PROGRAM_FAMILY[name] ?? "other")
                     : "other";
         }
     }

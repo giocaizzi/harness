@@ -8,6 +8,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { emit, otelEnabled, repoSlug, traceContext } from "../core/otel.mjs";
 import { canonicalHarnessName, detectHarnessName } from "./harnesses.mjs";
+import { isRecord } from "./types.mjs";
 export { repoSlug };
 // `--harness=<name>` (the Codex hooks file passes `--harness=codex`) wins; else the data dir variable each harness
 // sets: Claude Code sets CLAUDE_PLUGIN_DATA, Copilot CLI COPILOT_PLUGIN_DATA, VS Code only CLAUDE_PLUGIN_ROOT.
@@ -21,7 +22,11 @@ export function guardVersion() {
         return version;
     try {
         const raw = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", ".claude-plugin", "plugin.json"), "utf8");
-        version = JSON.parse(raw).version ?? null;
+        const parsed = JSON.parse(raw);
+        version =
+            isRecord(parsed) && typeof parsed.version === "string"
+                ? parsed.version
+                : null;
     }
     catch {
         version = null;
@@ -223,26 +228,34 @@ export async function emitAntigravityUsage(transcriptPath, conversationId, model
             continue;
         try {
             const step = JSON.parse(line);
-            const idx = step.step_index;
-            if (typeof idx === "number" && idx > (lastStep ?? -1)) {
-                if (idx > maxStep)
-                    maxStep = idx;
-                if (step.type === "PLANNER_RESPONSE") {
-                    const inTok = nonNegativeFiniteNumber(step.input_tokens);
-                    const outTok = nonNegativeFiniteNumber(step.output_tokens);
-                    const cacheReadTok = nonNegativeFiniteNumber(step.cache_read_tokens);
-                    const model = presentString(modelName);
-                    promises.push(emitRecord("api_request", usageAttributes({
-                        harness: "antigravity",
-                        cwd,
-                        sessionId: conversationId,
-                        model,
-                        provider: "google",
-                        inputTokens: inTok,
-                        outputTokens: outTok,
-                        cacheReadTokens: cacheReadTok,
-                        env,
-                    })).catch(() => undefined));
+            if (isRecord(step)) {
+                const idx = typeof step.step_index === "number" ? step.step_index : undefined;
+                if (typeof idx === "number" && idx > (lastStep ?? -1)) {
+                    if (idx > maxStep)
+                        maxStep = idx;
+                    if (step.type === "PLANNER_RESPONSE") {
+                        const inTok = nonNegativeFiniteNumber(typeof step.input_tokens === "number"
+                            ? step.input_tokens
+                            : undefined);
+                        const outTok = nonNegativeFiniteNumber(typeof step.output_tokens === "number"
+                            ? step.output_tokens
+                            : undefined);
+                        const cacheReadTok = nonNegativeFiniteNumber(typeof step.cache_read_tokens === "number"
+                            ? step.cache_read_tokens
+                            : undefined);
+                        const model = presentString(modelName);
+                        promises.push(emitRecord("api_request", usageAttributes({
+                            harness: "antigravity",
+                            cwd,
+                            sessionId: conversationId,
+                            model,
+                            provider: "google",
+                            inputTokens: inTok,
+                            outputTokens: outTok,
+                            cacheReadTokens: cacheReadTok,
+                            env,
+                        })).catch(() => undefined));
+                    }
                 }
             }
         }

@@ -3,8 +3,8 @@
 // (all owners, every authenticated host). Aggregates only; --repos adds a per-repo table for local reading. Runbook: docs/agent-review.md.
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { fileURLToPath } from "node:url";
-const run = promisify(execFile);
+import { pathToFileURL } from "node:url";
+const execFileAsync = promisify(execFile);
 const DAY = 86400000;
 const SKIPPED = "PR graph: skipped (gh is not installed or not authenticated).";
 const MANIFESTS = new Set([
@@ -38,16 +38,37 @@ export function chunks(days, now) {
     return out;
 }
 export async function ghRunner(args) {
-    const res = await run("gh", args, { maxBuffer: 64 * 1024 * 1024 });
+    const res = await execFileAsync("gh", args, { maxBuffer: 64 * 1024 * 1024 });
     return res.stdout;
+}
+export const isRecord = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+export function parseJsonSafe(raw, guard) {
+    try {
+        const val = JSON.parse(raw);
+        if (guard) {
+            return guard(val) ? val : null;
+        }
+        return val;
+    }
+    catch {
+        return null;
+    }
+}
+export function isGraphQLPrNode(v) {
+    if (!isRecord(v) || typeof v.number !== "number")
+        return false;
+    return (isRecord(v.repository) && typeof v.repository.nameWithOwner === "string");
 }
 export async function hosts(runner) {
     try {
         const raw = await runner(["auth", "status", "--json", "hosts"]);
-        const j = JSON.parse(raw);
-        const entries = j.hosts ? Object.entries(j.hosts) : [];
-        return entries
-            .filter(([, accts]) => accts.some((a) => a.state === "success" && a.active !== false))
+        const parsed = parseJsonSafe(raw, isRecord);
+        const hostsMap = parsed && isRecord(parsed.hosts) ? parsed.hosts : null;
+        if (!hostsMap)
+            return [];
+        return Object.entries(hostsMap)
+            .filter(([, accts]) => Array.isArray(accts) &&
+            accts.some((a) => isRecord(a) && a.state === "success" && a.active !== false))
             .map(([h]) => h);
     }
     catch {
@@ -70,13 +91,23 @@ export async function fetchPrs(runner, host, from, to) {
         ];
         if (cursor)
             args.push("-f", `cursor=${cursor}`);
-        const parsed = JSON.parse(await runner(args));
-        const s = parsed.data.search;
-        for (const n of s.nodes) {
-            if (n?.number != null)
+        const raw = await runner(args);
+        const parsed = parseJsonSafe(raw, isRecord);
+        const data = parsed && isRecord(parsed.data) ? parsed.data : null;
+        const s = data && isRecord(data.search) ? data.search : null;
+        if (!s)
+            break;
+        const nodes = Array.isArray(s.nodes) ? s.nodes : [];
+        for (const n of nodes) {
+            if (isGraphQLPrNode(n)) {
                 out.push({ host, ...n });
+            }
         }
-        cursor = s.pageInfo.hasNextPage ? s.pageInfo.endCursor : null;
+        const pageInfo = isRecord(s.pageInfo) ? s.pageInfo : null;
+        cursor =
+            pageInfo?.hasNextPage === true && typeof pageInfo.endCursor === "string"
+                ? pageInfo.endCursor
+                : null;
     } while (cursor);
     return out;
 }
@@ -311,8 +342,11 @@ export async function main(argv, runner = ghRunner, now = Date.now()) {
     if (argv.includes("--repos"))
         process.stdout.write(`\n${repoTable(agg)}`);
 }
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
-    main(process.argv.slice(2)).catch((e) => {
+export async function run(argv = process.argv.slice(2), runner = ghRunner, now = Date.now()) {
+    await main(argv, runner, now);
+}
+if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
+    run().catch((e) => {
         console.error(errorLine(e));
         process.exit(1);
     });

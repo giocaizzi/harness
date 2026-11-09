@@ -144,7 +144,7 @@ function runClaudeValidate(target) {
     const stderr = result.stderr;
     return [result.status === 0, (stdout + stderr).trim()];
 }
-function check_native_validator(r) {
+function checkNativeValidator(r) {
     r.section("Native `claude plugin validate`");
     if (!which("claude")) {
         r.fail("claude CLI not found on PATH - install Claude Code to run native plugin validation");
@@ -169,7 +169,7 @@ function check_native_validator(r) {
         r.ok(label);
     }
 }
-function check_repo_specific_manifests(r) {
+function checkRepoSpecificManifests(r) {
     r.section("Repo-specific manifest rules (Copilot + auto-discovery)");
     for (const pluginDir of discoverPlugins()) {
         const pluginName = basename(pluginDir);
@@ -241,7 +241,7 @@ function check_repo_specific_manifests(r) {
         r.ok(`${pluginName} (Claude + Copilot + Antigravity manifests)`);
     }
 }
-function check_marketplace(r) {
+function checkMarketplace(r) {
     r.section("Marketplace <-> plugins sync");
     if (!existsSync(MARKETPLACE)) {
         r.fail(`${relPosix(REPO_ROOT, MARKETPLACE)}: missing`);
@@ -295,7 +295,7 @@ function check_marketplace(r) {
         r.ok(`${name} @ ${String(manifest.version)}`);
     }
 }
-function check_repo_version_sync(r) {
+function checkRepoVersionSync(r) {
     r.section("Repo version sync");
     if (!existsSync(PACKAGE_JSON)) {
         r.fail(`${relPosix(REPO_ROOT, PACKAGE_JSON)}: missing`);
@@ -328,7 +328,7 @@ function check_repo_version_sync(r) {
     }
     r.ok(`package.json matches marketplace metadata (${String(pkgVersion)})`);
 }
-function check_readme(r) {
+function checkReadme(r) {
     r.section("Root README <-> plugins sync");
     if (!existsSync(README)) {
         r.fail("README.md: missing");
@@ -390,7 +390,7 @@ function check_readme(r) {
         }
     }
 }
-function check_hooks(r) {
+function checkHooks(r) {
     r.section("Plugin hooks <-> files");
     for (const pluginDir of discoverPlugins()) {
         const hooksJson = join(pluginDir, "hooks", "hooks.json");
@@ -492,7 +492,7 @@ export function evalCaseErrors(pluginsRoot) {
     }
     return errors;
 }
-function check_eval_cases(r) {
+function checkEvalCases(r) {
     r.section("Eval cases");
     const errors = evalCaseErrors(PLUGINS_ROOT);
     for (const e of errors)
@@ -500,7 +500,7 @@ function check_eval_cases(r) {
     if (errors.length === 0)
         r.ok("every evals/*/case.yaml is valid YAML");
 }
-function check_vscode(r) {
+function checkVscode(r) {
     r.section("VS Code agent-plugin compatibility");
     for (const pluginDir of discoverPlugins()) {
         const errors = [];
@@ -570,7 +570,7 @@ function check_vscode(r) {
         }
     }
 }
-function check_build_sync(r) {
+function checkBuildSync(r) {
     r.section("Generated files <-> agents/*.md, manifests and cross-plugin copies");
     const buildScript = join(REPO_ROOT, "scripts", "build_agents.mjs");
     const result = spawnSync(process.execPath, [buildScript, "--check"], {
@@ -589,7 +589,7 @@ function check_build_sync(r) {
         r.ok("all agents in sync");
     }
 }
-function check_pi_package(r) {
+function checkPiPackage(r) {
     r.section("pi package (root package.json)");
     const path = join(REPO_ROOT, "package.json");
     if (!existsSync(path)) {
@@ -628,7 +628,7 @@ function check_pi_package(r) {
 }
 const DOCS_POINTER = /(?<![\w/:.-])((?:\.\.\/)*)docs\/([\w./-]*)/g;
 const SKILL_TEXT = new Set([".md", ".mjs", ".sh", ".ps1", ".py"]);
-function check_skills_self_contained(r) {
+function checkSkillsSelfContained(r) {
     r.section("Skills are self-contained (no pointer to this repo's docs/)");
     let found = 0;
     const paths = [];
@@ -670,7 +670,7 @@ function check_skills_self_contained(r) {
         r.ok("no skill file points at docs/");
     }
 }
-function check_parity(r) {
+function checkParity(r) {
     r.section("Parity: every skill and agent reaches every harness");
     const parityScript = join(REPO_ROOT, "scripts", "parity.mjs");
     const result = spawnSync(process.execPath, [parityScript], {
@@ -689,7 +689,7 @@ function check_parity(r) {
         r.ok(result.stdout.trim());
     }
 }
-function check_typescript_sync(r) {
+function checkTypescriptSync(r) {
     r.section("TypeScript sources <-> emitted runtime files");
     const compiler = join(REPO_ROOT, "node_modules", "typescript", "bin", "tsc");
     if (!existsSync(compiler) || !statSync(compiler).isFile()) {
@@ -732,31 +732,44 @@ function check_typescript_sync(r) {
         rmSync(temporary, { recursive: true, force: true });
     }
 }
-function main() {
+export function run() {
     const r = new Reporter();
-    check_typescript_sync(r);
-    check_native_validator(r);
-    check_repo_specific_manifests(r);
-    check_marketplace(r);
-    check_repo_version_sync(r);
-    check_build_sync(r);
-    check_hooks(r);
-    check_vscode(r);
-    check_eval_cases(r);
-    check_pi_package(r);
-    check_parity(r);
-    check_skills_self_contained(r);
-    check_readme(r);
+    checkTypescriptSync(r);
+    checkNativeValidator(r);
+    checkRepoSpecificManifests(r);
+    checkMarketplace(r);
+    checkRepoVersionSync(r);
+    checkBuildSync(r);
+    checkHooks(r);
+    checkVscode(r);
+    checkEvalCases(r);
+    checkPiPackage(r);
+    checkParity(r);
+    checkSkillsSelfContained(r);
+    checkReadme(r);
     console.log();
     if (r.errors.length > 0) {
         console.error(`ERROR ${String(r.errors.length)} error(s):`);
         for (const e of r.errors) {
             console.error(`  - ${e}`);
         }
-        process.exit(1);
+        return false;
     }
     console.log("OK All checks passed.");
+    return true;
+}
+export function main() {
+    const ok = run();
+    if (!ok) {
+        process.exit(1);
+    }
 }
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
-    main();
+    try {
+        main();
+    }
+    catch (e) {
+        console.error(e instanceof Error ? e.message : String(e));
+        process.exit(1);
+    }
 }

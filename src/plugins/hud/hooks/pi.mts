@@ -228,12 +228,12 @@ export function piOptions(
   }
 }
 
-export const piFacts = (
+export function piFacts(
   cwd: string,
   exec: (argv: string[], cwd?: string) => Promise<string | null> = run,
-): Facts =>
-  createFacts({
-    stat: async (p: string) => {
+): Facts {
+  return createFacts({
+    stat: async (p: string): Promise<string | null> => {
       try {
         const s = await stat(p);
         return s.isDirectory() ? "dir" : s.isFile() ? "file" : null;
@@ -241,11 +241,15 @@ export const piFacts = (
         return null;
       }
     },
-    commit: async (sha: string) =>
+    commit: async (sha: string): Promise<boolean> =>
       (await exec(["git", "cat-file", "-e", `${sha}^{commit}`], cwd)) !== null,
-    state: (r: ForgeRepoInfo, ref: WorkItemReference) =>
+    state: (
+      r: ForgeRepoInfo,
+      ref: WorkItemReference,
+    ): Promise<{ kind: string; state: string } | null> =>
       fetchState((argv) => exec(argv, cwd), r, ref),
   });
+}
 
 const SETTLE_MS = 1500;
 

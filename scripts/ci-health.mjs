@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 // CI health: run volume, run time, queueing, re-runs and workflow hygiene, for the repos you merged a PR into (all
 // owners, every authenticated host). A repo with a failed or truncated query is counted as partial, never read as zeros. Aggregates only; --repos adds a per-repo table for local reading. Runbook: docs/agent-review.md.
-import { fileURLToPath } from "node:url";
-import { parseRange, ghRunner, hosts } from "./pr-graph.mjs";
+import { pathToFileURL } from "node:url";
+import { parseRange, ghRunner, hosts, isRecord, parseJsonSafe, } from "./pr-graph.mjs";
+export { isRecord, parseJsonSafe };
 const DAY = 86400000;
 const SKIPPED = "CI health: skipped (gh is not installed or not authenticated).";
 const READING = "How to read each figure: .agents/skills/agent-review/references/reading.md (CI health).";
@@ -128,12 +129,8 @@ export async function includeRunner(args, exec = ghRunner) {
     catch (e) {
         const stdout = e && typeof e === "object" && "stdout" in e ? String(e.stdout) : "";
         const p = parseIncluded(stdout);
-        let detail = "";
-        try {
-            const parsedDetail = JSON.parse(p.body);
-            detail = parsedDetail.message ?? "";
-        }
-        catch { }
+        const parsedDetail = parseJsonSafe(p.body, isRecord);
+        const detail = typeof parsedDetail?.message === "string" ? parsedDetail.message : "";
         throw new GhError(p.status, p.headers, detail);
     }
     return parseIncluded(out).body;
@@ -193,6 +190,9 @@ async function attempt(fn, tally, kind) {
         return null;
     }
 }
+export function isGraphQLRepoNode(v) {
+    return isRecord(v) && typeof v.nameWithOwner === "string";
+}
 export async function fetchRepos(runner, host, from, to) {
     const out = [];
     let cursor = null;
@@ -209,13 +209,23 @@ export async function fetchRepos(runner, host, from, to) {
         ];
         if (cursor)
             args.push("-f", `cursor=${cursor}`);
-        const parsed = JSON.parse(await runner(args));
-        const s = parsed.data.search;
-        for (const n of s.nodes) {
-            if (n.repository)
+        const raw = await runner(args);
+        const parsed = parseJsonSafe(raw, isRecord);
+        const data = parsed && isRecord(parsed.data) ? parsed.data : null;
+        const s = data && isRecord(data.search) ? data.search : null;
+        if (!s)
+            break;
+        const nodes = Array.isArray(s.nodes) ? s.nodes : [];
+        for (const n of nodes) {
+            if (isRecord(n) && isGraphQLRepoNode(n.repository)) {
                 out.push(n.repository);
+            }
         }
-        cursor = s.pageInfo.hasNextPage ? s.pageInfo.endCursor : null;
+        const pageInfo = isRecord(s.pageInfo) ? s.pageInfo : null;
+        cursor =
+            pageInfo?.hasNextPage === true && typeof pageInfo.endCursor === "string"
+                ? pageInfo.endCursor
+                : null;
     } while (cursor);
     return out;
 }
@@ -226,24 +236,26 @@ export async function fetchRuns(runner, host, repo, from, to) {
     let total = 0;
     for (let page = 1;; page++) {
         const raw = await runner(gh(host, `repos/${repo}/actions/runs`, `created=${from}..${to}`, "per_page=100", `page=${String(page)}`));
-        const j = JSON.parse(raw);
-        if (page === 1)
-            total = j.total_count ?? 0;
-        const list = j.workflow_runs ?? [];
+        const parsed = parseJsonSafe(raw, isRecord);
+        const j = parsed ?? {};
+        if (page === 1 && typeof j.total_count === "number")
+            total = j.total_count;
+        const list = Array.isArray(j.workflow_runs) ? j.workflow_runs : [];
         for (const r of list) {
-            const { id, event, status, conclusion, run_attempt, head_sha, workflow_id, created_at, run_started_at, updated_at, } = r;
-            runs.push({
-                id,
-                event,
-                status,
-                conclusion,
-                run_attempt,
-                head_sha,
-                workflow_id,
-                created_at,
-                run_started_at,
-                updated_at,
-            });
+            if (isRecord(r) && typeof r.id === "number") {
+                runs.push({
+                    id: r.id,
+                    event: typeof r.event === "string" ? r.event : "",
+                    status: typeof r.status === "string" ? r.status : "",
+                    conclusion: typeof r.conclusion === "string" ? r.conclusion : null,
+                    run_attempt: typeof r.run_attempt === "number" ? r.run_attempt : 1,
+                    head_sha: typeof r.head_sha === "string" ? r.head_sha : "",
+                    workflow_id: typeof r.workflow_id === "number" ? r.workflow_id : 0,
+                    created_at: typeof r.created_at === "string" ? r.created_at : "",
+                    run_started_at: typeof r.run_started_at === "string" ? r.run_started_at : "",
+                    updated_at: typeof r.updated_at === "string" ? r.updated_at : "",
+                });
+            }
         }
         if (list.length < 100 || page * 100 >= RUNS_CAP)
             return { runs, truncated: total > RUNS_CAP };
@@ -295,8 +307,13 @@ const mergedCount = async (runner, host, repo, from, to) => {
         "-f",
         `query=${COUNT}`,
     ]);
-    return JSON.parse(raw).data
-        .search.issueCount;
+    const parsed = parseJsonSafe(raw, isRecord);
+    const data = parsed && isRecord(parsed.data) ? parsed.data : null;
+    const search = data && isRecord(data.search) ? data.search : null;
+    if (typeof search?.issueCount === "number") {
+        return search.issueCount;
+    }
+    throw new Error("Invalid GraphQL response for merged PR count");
 };
 const isDone = (r) => r.status === "completed";
 // Queue wait of sampled jobs: the most recent completed PR / merge-group runs, started_at - created_at per non-skipped job.
@@ -308,7 +325,16 @@ export async function sampleWaits(runner, host, repo, runs, tally = {}) {
     const waits = [];
     const pages = await Promise.all(picked.map((r) => attempt(async () => {
         const raw = await runner(gh(host, `repos/${repo}/actions/runs/${String(r.id)}/jobs`, "per_page=100"));
-        return JSON.parse(raw);
+        const parsed = parseJsonSafe(raw, isRecord);
+        if (parsed && Array.isArray(parsed.jobs)) {
+            const jobs = parsed.jobs.filter(isRecord).map((job) => ({
+                started_at: typeof job.started_at === "string" ? job.started_at : undefined,
+                created_at: typeof job.created_at === "string" ? job.created_at : undefined,
+                conclusion: typeof job.conclusion === "string" ? job.conclusion : undefined,
+            }));
+            return { jobs };
+        }
+        return { jobs: [] };
     }, tally, "jobs")));
     for (const j of pages) {
         for (const job of j?.jobs ?? []) {
@@ -324,16 +350,19 @@ export async function countFlakes(runner, host, repo, runs, tally = {}) {
     const reruns = runs.filter((r) => isDone(r) && r.run_attempt > 1 && r.conclusion === "success");
     const prior = await Promise.all(reruns.map((r) => attempt(async () => {
         const raw = await runner(gh(host, `repos/${repo}/actions/runs/${String(r.id)}/attempts/${String(r.run_attempt - 1)}`));
-        return JSON.parse(raw);
+        const parsed = parseJsonSafe(raw, isRecord);
+        return parsed && typeof parsed.conclusion === "string"
+            ? { conclusion: parsed.conclusion }
+            : {};
     }, tally, "attempts")));
     return prior.filter((a) => a?.conclusion === "failure").length;
 }
 // A 404 is "no workflows directory"; any other failure is counted. A file over 1 MB comes back without content
 // (the contents API limit) and is counted as skipped, not dropped.
 export async function fetchWorkflows(runner, host, repo, tally = {}) {
-    let list;
+    let raw;
     try {
-        list = JSON.parse(await runner(gh(host, `repos/${repo}/contents/.github/workflows`)));
+        raw = await runner(gh(host, `repos/${repo}/contents/.github/workflows`));
     }
     catch (e) {
         if (notFound(e))
@@ -342,10 +371,29 @@ export async function fetchWorkflows(runner, host, repo, tally = {}) {
         tally.workflows = (tally.workflows ?? 0) + 1;
         return { files: [], tooLarge: 0 };
     }
-    const wanted = (Array.isArray(list) ? list : []).filter((f) => f.type === "file" && WORKFLOW_FILE.test(f.name));
+    const parsed = parseJsonSafe(raw);
+    const list = Array.isArray(parsed) ? parsed.filter(isRecord) : [];
+    const wanted = list
+        .filter((f) => f.type === "file" &&
+        typeof f.name === "string" &&
+        WORKFLOW_FILE.test(f.name) &&
+        typeof f.path === "string")
+        .map((f) => ({
+        type: "file",
+        name: String(f.name),
+        path: String(f.path),
+    }));
     const got = await Promise.all(wanted.map((f) => attempt(async () => {
-        const raw = await runner(gh(host, `repos/${repo}/contents/${f.path}`));
-        return JSON.parse(raw);
+        const rawItem = await runner(gh(host, `repos/${repo}/contents/${f.path}`));
+        const itemParsed = parseJsonSafe(rawItem, isRecord);
+        return {
+            type: f.type,
+            name: f.name,
+            path: f.path,
+            content: itemParsed && typeof itemParsed.content === "string"
+                ? itemParsed.content
+                : undefined,
+        };
     }, tally, "workflows")));
     const files = [];
     let tooLarge = 0;
@@ -373,8 +421,9 @@ export async function hasMergeQueue(runner, host, repo, branch, tally = {}) {
         return false;
     try {
         const raw = await runner(gh(host, `repos/${repo}/rules/branches/${branch}`));
-        const rules = JSON.parse(raw);
-        return Array.isArray(rules) && rules.some((r) => r.type === "merge_queue");
+        const parsed = parseJsonSafe(raw);
+        return (Array.isArray(parsed) &&
+            parsed.some((r) => isRecord(r) && r.type === "merge_queue"));
     }
     catch (e) {
         if (notFound(e) || noRulesOnPlan(e))
@@ -384,7 +433,26 @@ export async function hasMergeQueue(runner, host, repo, branch, tally = {}) {
         return false;
     }
 }
-async function measure(runner, host, name, branch, w) {
+export async function computeRunMetrics(runner, host, repo, runs, from, to, tally) {
+    const [mergedPrs, waits, flakes] = await Promise.all([
+        attempt(() => mergedCount(runner, host, repo, from, to), tally, "merged"),
+        sampleWaits(runner, host, repo, runs, tally),
+        countFlakes(runner, host, repo, runs, tally),
+    ]);
+    return { runs, mergedPrs, waits, flakes };
+}
+export async function fetchRepoHealth(runner, host, repo, branch, tally) {
+    const [wf, hasQueue] = await Promise.all([
+        fetchWorkflows(runner, host, repo, tally),
+        hasMergeQueue(runner, host, repo, branch, tally),
+    ]);
+    return {
+        files: wf.files,
+        tooLarge: wf.tooLarge,
+        hasQueue,
+    };
+}
+export async function measure(runner, host, name, branch, w) {
     const tally = {};
     const raw = new Map();
     const chunkLists = await Promise.all(dateChunks(w.prevFrom, w.curTo).map(([from, to]) => fetchChunk(runner, host, name, from, to, tally)));
@@ -401,28 +469,19 @@ async function measure(runner, host, name, branch, w) {
         if (winName)
             byWin[winName].push(r);
     }
-    const win = async (runs, from, to) => {
-        const [mergedPrs, waits, flakes] = await Promise.all([
-            attempt(() => mergedCount(runner, host, name, from, to), tally, "merged"),
-            sampleWaits(runner, host, name, runs, tally),
-            countFlakes(runner, host, name, runs, tally),
-        ]);
-        return { runs, mergedPrs, waits, flakes };
-    };
-    const [prev, cur, wf, hasQueue] = await Promise.all([
-        win(byWin.prev, w.prevFrom, w.prevTo),
-        win(byWin.cur, w.curFrom, w.curTo),
-        fetchWorkflows(runner, host, name, tally),
-        hasMergeQueue(runner, host, name, branch, tally),
+    const [prev, cur, health] = await Promise.all([
+        computeRunMetrics(runner, host, name, byWin.prev, w.prevFrom, w.prevTo, tally),
+        computeRunMetrics(runner, host, name, byWin.cur, w.curFrom, w.curTo, tally),
+        fetchRepoHealth(runner, host, name, branch, tally),
     ]);
     const { truncated = 0, ...failures } = tally;
     return {
         key: `${host}/${name}`,
         prev,
         cur,
-        files: wf.files,
-        tooLarge: wf.tooLarge,
-        hasQueue,
+        files: health.files,
+        tooLarge: health.tooLarge,
+        hasQueue: health.hasQueue,
         failures,
         truncated,
     };
@@ -931,8 +990,11 @@ export async function main(argv, runner = includeRunner, now = Date.now()) {
     if (argv.includes("--repos"))
         process.stdout.write(`\n${repoTable(agg)}`);
 }
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
-    main(process.argv.slice(2), includeRunner).catch((e) => {
+export async function run(argv = process.argv.slice(2), runner = includeRunner, now = Date.now()) {
+    await main(argv, runner, now);
+}
+if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
+    run().catch((e) => {
         console.error(errorLine(e));
         process.exit(1);
     });

@@ -13,11 +13,11 @@ export type SoundKey =
   | "soundSubagent"
   | "soundNeedsInput";
 
-type LimitKey = "soundLimit5h" | "soundLimit7d" | "soundLimitSpend";
-type LevelKey = "ctx" | LimitKind;
-type Levels = Partial<Record<LevelKey, AlertLevel>>;
-type Limits = Partial<Record<LimitKind, number>>;
-type TurnReason = "aborted" | "refusal" | "error" | "answer" | "done";
+export type LimitKey = "soundLimit5h" | "soundLimit7d" | "soundLimitSpend";
+export type LevelKey = "ctx" | LimitKind;
+export type Levels = Partial<Record<LevelKey, AlertLevel>>;
+export type Limits = Partial<Record<LimitKind, number>>;
+export type TurnReason = "aborted" | "refusal" | "error" | "answer" | "done";
 
 export interface Turn {
   agentId?: string;
@@ -56,29 +56,50 @@ const LIMITS: readonly { key: LimitKey; kind: LimitKind; label: string }[] = [
 const levelOf = (percent: number): AlertLevel =>
   percent >= 100 ? 100 : percent >= 90 ? 90 : percent >= 80 ? 80 : 0;
 
-/** Return newly crossed context and rate-limit alert levels. */
-export function alerts(
+export interface ContextAlertResult {
+  alert: Alert | null;
+  level: AlertLevel;
+}
+
+/** Detect newly crossed context threshold alert. */
+export function detectContextAlert(
   context: number | null | undefined,
+  beforeLevel: AlertLevel = 0,
+): ContextAlertResult {
+  const contextLevel = levelOf(context ?? 0);
+  const level: AlertLevel = contextLevel >= 90 ? 90 : contextLevel;
+  if (level > beforeLevel) {
+    const percentage = String(context ?? 0);
+    return {
+      alert: {
+        key: "soundContext",
+        text:
+          level === 90
+            ? `Context ${percentage}%: compact now`
+            : `Context ${percentage}%: compact soon`,
+      },
+      level,
+    };
+  }
+  return { alert: null, level };
+}
+
+export interface LimitAlertsResult {
+  alerts: Alert[];
+  levels: Partial<Record<LimitKind, AlertLevel>>;
+}
+
+/** Generate alerts for rate limits that crossed their thresholds. */
+export function generateLimitAlerts(
   limits: Limits,
   before: Levels = {},
-): { alerts: Alert[]; now: Levels } {
-  const contextLevel = levelOf(context ?? 0);
-  const now: Levels = { ctx: contextLevel >= 90 ? 90 : contextLevel };
+): LimitAlertsResult {
   const raised: Alert[] = [];
-  if (now.ctx !== undefined && now.ctx > (before.ctx ?? 0)) {
-    const percentage = String(context ?? 0);
-    raised.push({
-      key: "soundContext",
-      text:
-        now.ctx === 90
-          ? `Context ${percentage}%: compact now`
-          : `Context ${percentage}%: compact soon`,
-    });
-  }
+  const levels: Partial<Record<LimitKind, AlertLevel>> = {};
   for (const { key, kind, label } of LIMITS) {
     const percent = limits[kind];
     const level = percent === undefined ? 0 : levelOf(percent);
-    now[kind] = level;
+    levels[kind] = level;
     if (level > (before[kind] ?? 0)) {
       raised.push({
         key,
@@ -89,16 +110,54 @@ export function alerts(
       });
     }
   }
+  return { alerts: raised, levels };
+}
+
+export interface AlertsResult {
+  alerts: Alert[];
+  now: Levels;
+}
+
+/** Return newly crossed context and rate-limit alert levels. */
+export function alerts(
+  context: number | null | undefined,
+  limits: Limits,
+  before: Levels = {},
+): AlertsResult {
+  const contextResult = detectContextAlert(context, before.ctx ?? 0);
+  const limitResult = generateLimitAlerts(limits, before);
+  const raised: Alert[] = [];
+  if (contextResult.alert !== null) {
+    raised.push(contextResult.alert);
+  }
+  raised.push(...limitResult.alerts);
+  const now: Levels = {
+    ctx: contextResult.level,
+    ...limitResult.levels,
+  };
   return { alerts: raised, now };
 }
 
 /** Select the setting for a completed turn, if it should make a sound. */
 export function turnSound(turn: Turn, doneAfterSeconds = 0): SoundKey | null {
-  if (turn.agentId) return "soundSubagent";
-  if (turn.reason === "aborted") return "soundAborted";
-  if (turn.reason === "refusal") return "soundRefused";
-  if (turn.reason === "error") return "soundError";
-  return turn.durationMs >= doneAfterSeconds * 1000 ? "soundDone" : null;
+  if (turn.agentId) {
+    return "soundSubagent";
+  }
+  switch (turn.reason) {
+    case "aborted":
+      return "soundAborted";
+    case "refusal":
+      return "soundRefused";
+    case "error":
+      return "soundError";
+    case "answer":
+    case "done":
+      return turn.durationMs >= doneAfterSeconds * 1000 ? "soundDone" : null;
+    default: {
+      const _exhaustive: never = turn.reason;
+      return _exhaustive;
+    }
+  }
 }
 
 const took = (milliseconds: number): string =>
@@ -160,6 +219,12 @@ export const CLIPS: Readonly<Record<SoundKey, string | null>> = {
 
 const isClip = (clip: string | null): clip is string => clip !== null;
 
+export interface SettleResult {
+  clips: string[];
+  notices: string[];
+  now: Levels;
+}
+
 /** Collect clips, notices, and the next alert state for a completed harness run. */
 export function settle({
   durationMs,
@@ -168,7 +233,7 @@ export function settle({
   agentId,
   pct,
   before,
-}: SettleInput): { clips: string[]; notices: string[]; now: Levels } {
+}: SettleInput): SettleResult {
   const turn: Turn = {
     durationMs,
     agentId,

@@ -137,6 +137,8 @@ export function linkify(
     .join("\n");
 }
 
-export const styled = (
+export function styled(
   env?: NodeJS.ProcessEnv | Record<string, string | undefined>,
-): boolean => !env?.NO_COLOR;
+): boolean {
+  return !env?.NO_COLOR;
+}

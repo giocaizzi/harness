@@ -9,24 +9,32 @@ const LIMITS = [
     { key: "soundLimitSpend", kind: "spend_limit", label: "Spend limit" },
 ];
 const levelOf = (percent) => percent >= 100 ? 100 : percent >= 90 ? 90 : percent >= 80 ? 80 : 0;
-/** Return newly crossed context and rate-limit alert levels. */
-export function alerts(context, limits, before = {}) {
+/** Detect newly crossed context threshold alert. */
+export function detectContextAlert(context, beforeLevel = 0) {
     const contextLevel = levelOf(context ?? 0);
-    const now = { ctx: contextLevel >= 90 ? 90 : contextLevel };
-    const raised = [];
-    if (now.ctx !== undefined && now.ctx > (before.ctx ?? 0)) {
+    const level = contextLevel >= 90 ? 90 : contextLevel;
+    if (level > beforeLevel) {
         const percentage = String(context ?? 0);
-        raised.push({
-            key: "soundContext",
-            text: now.ctx === 90
-                ? `Context ${percentage}%: compact now`
-                : `Context ${percentage}%: compact soon`,
-        });
+        return {
+            alert: {
+                key: "soundContext",
+                text: level === 90
+                    ? `Context ${percentage}%: compact now`
+                    : `Context ${percentage}%: compact soon`,
+            },
+            level,
+        };
     }
+    return { alert: null, level };
+}
+/** Generate alerts for rate limits that crossed their thresholds. */
+export function generateLimitAlerts(limits, before = {}) {
+    const raised = [];
+    const levels = {};
     for (const { key, kind, label } of LIMITS) {
         const percent = limits[kind];
         const level = percent === undefined ? 0 : levelOf(percent);
-        now[kind] = level;
+        levels[kind] = level;
         if (level > (before[kind] ?? 0)) {
             raised.push({
                 key,
@@ -36,19 +44,43 @@ export function alerts(context, limits, before = {}) {
             });
         }
     }
+    return { alerts: raised, levels };
+}
+/** Return newly crossed context and rate-limit alert levels. */
+export function alerts(context, limits, before = {}) {
+    const contextResult = detectContextAlert(context, before.ctx ?? 0);
+    const limitResult = generateLimitAlerts(limits, before);
+    const raised = [];
+    if (contextResult.alert !== null) {
+        raised.push(contextResult.alert);
+    }
+    raised.push(...limitResult.alerts);
+    const now = {
+        ctx: contextResult.level,
+        ...limitResult.levels,
+    };
     return { alerts: raised, now };
 }
 /** Select the setting for a completed turn, if it should make a sound. */
 export function turnSound(turn, doneAfterSeconds = 0) {
-    if (turn.agentId)
+    if (turn.agentId) {
         return "soundSubagent";
-    if (turn.reason === "aborted")
-        return "soundAborted";
-    if (turn.reason === "refusal")
-        return "soundRefused";
-    if (turn.reason === "error")
-        return "soundError";
-    return turn.durationMs >= doneAfterSeconds * 1000 ? "soundDone" : null;
+    }
+    switch (turn.reason) {
+        case "aborted":
+            return "soundAborted";
+        case "refusal":
+            return "soundRefused";
+        case "error":
+            return "soundError";
+        case "answer":
+        case "done":
+            return turn.durationMs >= doneAfterSeconds * 1000 ? "soundDone" : null;
+        default: {
+            const _exhaustive = turn.reason;
+            return _exhaustive;
+        }
+    }
 }
 const took = (milliseconds) => milliseconds < 60_000
     ? `${String(Math.round(milliseconds / 1000))}s`

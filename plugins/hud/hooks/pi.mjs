@@ -130,19 +130,21 @@ export function piOptions(env = process.env, read = (p) => readFileSync(p, "utf8
         return { ...PI_DEFAULTS };
     }
 }
-export const piFacts = (cwd, exec = run) => createFacts({
-    stat: async (p) => {
-        try {
-            const s = await stat(p);
-            return s.isDirectory() ? "dir" : s.isFile() ? "file" : null;
-        }
-        catch {
-            return null;
-        }
-    },
-    commit: async (sha) => (await exec(["git", "cat-file", "-e", `${sha}^{commit}`], cwd)) !== null,
-    state: (r, ref) => fetchState((argv) => exec(argv, cwd), r, ref),
-});
+export function piFacts(cwd, exec = run) {
+    return createFacts({
+        stat: async (p) => {
+            try {
+                const s = await stat(p);
+                return s.isDirectory() ? "dir" : s.isFile() ? "file" : null;
+            }
+            catch {
+                return null;
+            }
+        },
+        commit: async (sha) => (await exec(["git", "cat-file", "-e", `${sha}^{commit}`], cwd)) !== null,
+        state: (r, ref) => fetchState((argv) => exec(argv, cwd), r, ref),
+    });
+}
 const SETTLE_MS = 1500;
 export default function hudExtension(pi, deps = {}) {
     let repo = null;

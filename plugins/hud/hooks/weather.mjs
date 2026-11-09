@@ -1,5 +1,7 @@
 export const TTL_MS = { "5m": 300_000, "1h": 3_600_000 };
-export const clock = (ms) => `${String(Math.floor(ms / 60_000))}:${String(Math.floor(ms / 1000) % 60).padStart(2, "0")}`;
+export function clock(ms) {
+    return `${String(Math.floor(ms / 60_000))}:${String(Math.floor(ms / 1000) % 60).padStart(2, "0")}`;
+}
 const BLOCKS = "▁▂▃▄▅▆▇█";
 // Nerd Font icons (BMP private use, so a Raster could take them too), checked present in JetBrainsMono Nerd Font,
 // which chezmoi installs and sets in Ghostty, VS Code and Windows Terminal. Each is drawn followed by a space:
@@ -26,19 +28,23 @@ export const ICON = {
     hint: "\uf071", // nf-fa-warning
 };
 // A weather icon for how full the context is: sunny, cloudy, showers, thunderstorm, lightning (nf-weather-*).
-export const glyph = (ctx) => ctx == null
-    ? ""
-    : ctx < 25
-        ? "\ue30d"
-        : ctx < 50
-            ? "\ue302"
-            : ctx < 75
-                ? "\ue319"
-                : ctx < 90
-                    ? "\ue31d"
-                    : "\ue315";
+export function glyph(ctx) {
+    if (ctx == null)
+        return "";
+    if (ctx < 25)
+        return "\ue30d";
+    if (ctx < 50)
+        return "\ue302";
+    if (ctx < 75)
+        return "\ue319";
+    if (ctx < 90)
+        return "\ue31d";
+    return "\ue315";
+}
 // A battery for how much of a rate-limit window is left (nf-fa-battery_0..4, full to empty as `used` rises).
-export const battery = (used) => String.fromCharCode(0xf244 - Math.min(4, Math.max(0, Math.round((100 - used) / 25))));
+export function battery(used) {
+    return String.fromCharCode(0xf244 - Math.min(4, Math.max(0, Math.round((100 - used) / 25))));
+}
 // The spinner's word while a tool runs: a Nerd Font icon and a verb, null for a tool with no personality.
 export const ACTIVITY = {
     Bash: ["\uf489", "Running"],
@@ -184,7 +190,7 @@ export function repoState(pr, counts, shortstat, porcelain) {
     };
 }
 // Human-friendly token count: 120, 4.2k, 180k, 1.2M.
-export const tokens = (n) => {
+export function tokens(n) {
     if (n == null)
         return "0";
     if (n >= 1e6)
@@ -192,13 +198,15 @@ export const tokens = (n) => {
     if (n >= 1000)
         return `${(n / 1000).toFixed(1)}k`;
     return String(n);
-};
+}
 // Human-friendly duration: 42s, 3m12s, 1h04m.
-export const duration = (ms) => ms < 1000
-    ? `${String(Math.round(ms))}ms`
-    : ms < 60_000
-        ? `${(ms / 1000).toFixed(1)}s`
-        : `${String(Math.floor(ms / 60_000))}m ${String(Math.round((ms % 60_000) / 1000))}s`;
+export function duration(ms) {
+    if (ms < 1000)
+        return `${String(Math.round(ms))}ms`;
+    if (ms < 60_000)
+        return `${(ms / 1000).toFixed(1)}s`;
+    return `${String(Math.floor(ms / 60_000))}m ${String(Math.round((ms % 60_000) / 1000))}s`;
+}
 export function footerText(t) {
     const u = t.usage;
     const input = u.input_tokens + u.cache_read_input_tokens + u.cache_creation_input_tokens;

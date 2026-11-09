@@ -6,6 +6,14 @@ export interface AgentDefinition {
   prompt: string;
 }
 
+export interface ParsedAgentFrontmatter {
+  name?: string;
+  description: string;
+  tools: string[] | null;
+  thinking?: string;
+  prompt: string;
+}
+
 export type AgentArgsInput = Pick<AgentDefinition, "tools" | "thinking">;
 
 export interface ChildIds {

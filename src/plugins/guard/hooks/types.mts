@@ -45,12 +45,18 @@ export interface HookInput {
   agent_id?: string;
   cwd?: string;
   hook_event_name?: string;
+  permission_mode?: string;
   prompt?: string;
   session_id?: string;
   source?: string;
   stop_hook_active?: boolean;
   tool_input?: unknown;
   tool_name?: string;
+  tool_use_id?: string;
+}
+
+export function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 export interface HookSpecificOutput {
