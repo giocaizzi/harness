@@ -20,6 +20,74 @@ test.for<[ChargeOutcome, string]>([
 
 `test.for` passes the row as one argument (destructure it) and leaves the second parameter for the test context; `test.each` spreads the row instead and has no context.
 
+## Compacting repetitive tests into a table test
+
+When multiple tests repeat identical arrange/act/assert patterns with only inputs and expected values varying, compact them into a typed `test.for` table. This keeps test suites compact and fast while preserving every test case, error message, and diagnostic boundary.
+
+```ts
+import {expect, test} from 'vitest';
+
+import {validateAmount} from './payment.js';
+
+// Repetitive tests before compacting:
+test('rejects negative amounts', () => {
+  expect(() => validateAmount(-5)).toThrow('amount must be positive');
+});
+test('rejects zero amounts', () => {
+  expect(() => validateAmount(0)).toThrow('amount must be positive');
+});
+test('rejects non-integer amounts', () => {
+  expect(() => validateAmount(12.34)).toThrow('amount must be an integer');
+});
+
+// Compacted into a single typed table test:
+test.for<[number, string]>([
+  [-5, 'amount must be positive'],
+  [0, 'amount must be positive'],
+  [12.34, 'amount must be an integer'],
+])('validates amount %d throws %s', ([amount, wantError]) => {
+  expect(() => validateAmount(amount)).toThrow(wantError);
+});
+```
+
+## Concurrent table test
+
+For independent async tests that do not share mutable state, use `test.concurrent.for`. Each test case executes concurrently across the event loop, shortening suite runtime. Concurrency safety requires isolating dependencies (e.g. unique fake instances, binding servers to port 0, and stubbing environment variables through `vi.stubEnv`).
+
+```ts
+import {expect, test} from 'vitest';
+
+import {FakeProvider} from '../testing/fake_provider.js';
+
+test.concurrent.for<[{currency: string; amountMinor: number}, string]>([
+  [{currency: 'EUR', amountMinor: 1000}, 'eur_ref'],
+  [{currency: 'USD', amountMinor: 2500}, 'usd_ref'],
+  [{currency: 'GBP', amountMinor: 5000}, 'gbp_ref'],
+])('authorizes charge %o concurrently', async ([input, expectedRef]) => {
+  const provider = new FakeProvider([{kind: 'paid', reference: expectedRef}]);
+  const outcome = await provider.charge({orderId: 'o_conc', ...input});
+  expect(outcome).toStrictEqual({kind: 'paid', reference: expectedRef});
+});
+```
+
+## Bug reproduction with test.fails
+
+When isolating or demonstrating a known bug, edge case, or handing off work to another agent or driver, write a reproduction test using `test.fails`. Vitest passes as long as the test fails; if the test passes unexpectedly, Vitest fails the run. Once the underlying bug is fixed in implementation code, remove `.fails` to convert it into a standard regression test.
+
+```ts
+import {expect, test} from 'vitest';
+
+import {parseConfig} from './config.js';
+
+// Demonstrates a known bug: config parser accepts negative port numbers.
+// Vitest passes while the assertion fails; once fixed, Vitest fails until
+// test.fails is converted back to a standard test().
+test.fails('reproduction: parseConfig accepts negative port numbers', () => {
+  const result = parseConfig('{"port": -1, "databaseUrl": "postgres://localhost"}');
+  expect(result.ok).toBe(false);
+});
+```
+
 ## Fake for a consumer interface
 
 The production code declares `PaymentProvider`; the fake implements it, answers from a script and records what it was asked. It lives in `src/testing/` because several features' tests use it.

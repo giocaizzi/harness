@@ -16,7 +16,7 @@ Language-neutral design and practice: domain-driven design, system design, archi
 
 | Agent | Description |
 |---|---|
-| `api-reviewer` | Read-only API security review (vulnerabilities, RBAC leaks, compliance) that posts a verdict with severities; a driver fixes what it finds. |
+| `api-reviewer` | API security review (vulnerabilities, RBAC leaks, compliance) that maintains tests, adds x-failing regression tests to prove vulnerabilities, and posts a verdict with severities. Never edits production code. |
 
 ## Install
 

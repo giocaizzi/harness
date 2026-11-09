@@ -1,13 +1,13 @@
 ---
 name: python-testing
-description: "pytest rules for Python tests: plain asserts, parametrize with ids, fakes over mocks and patching, factories over fixture chains, injected clocks, hypothesis for parsers, syrupy snapshots, async tests, xdist with random order, per-test timeouts, coverage. Use whenever you write, fix, review or debug Python tests (test_*.py, conftest.py, pytest config), including flaky, slow or hanging tests and tests that mock, patch, sleep or share fixtures."
+description: "pytest rules for Python tests: plain asserts, parametrize with ids, fakes over mocks and patching, factories over fixture chains, injected clocks, hypothesis for parsers, syrupy snapshots, async tests, xdist with random order, test compacting and maintenance, xfail for bug handoff, per-test timeouts, coverage. Use whenever you write, fix, review or debug Python tests (test_*.py, conftest.py, pytest config), including flaky, slow or hanging tests and tests that mock, patch, sleep or share fixtures."
 ---
 
 # Python Testing
 
 - Test behaviour through the module's public functions and classes, so refactors don't break tests. Cover the failure paths (bad input, timeouts, partial failure, retries), not only the happy path.
 - TDD for bugs: reproduce with a failing test first, then fix.
-- `make test` runs the suite in parallel and in random order (`pytest-xdist`, `pytest-randomly`). Every test passes under both: shared state and order dependence are bugs, not flakes.
+- `make test` runs the suite in parallel from the start (`pytest-xdist -n auto`, `pytest-randomly`). Concurrency safety: isolate per-worker resources with `worker_id`, `tmp_path`, and avoid shared mutable state or process-global changes. Every test passes under both: shared state and order dependence are bugs, not flakes.
 
 ## pytest and plain `assert`
 
@@ -15,9 +15,11 @@ pytest 9 with its native `[tool.pytest]` table and `strict = true` (an unknown m
 
 - Names say unit and case: `test_parse_rejects_negative_count` (Google 3.16.2). One behaviour per test; arrange, act, assert separated by a blank line.
 - **Parametrize** one behaviour over many inputs, each case with an `id` (`pytest.param(..., id="surrounding-space")`). A case that needs different setup or assertions is its own test.
+- **Test maintenance and compacting.** Keep tests tidy, maintained, and refactored. Eliminate test inefficiencies (slow setups, sleep calls, duplicate assertions, bloated fixtures) by compacting repetitive tests into table-driven `@pytest.mark.parametrize` with explicit `id`s without losing test scenarios or branch coverage.
+- **x-Failures for bug demonstration and handoff.** Reviewers and authors demonstrate failing test cases using `@pytest.mark.xfail(reason="...", strict=True)` (or `raises=ExpectedException`). With `strict=True`, `XPASS` turns red once fixed, ensuring the driver removes the marker after fixing the source code.
 - `tmp_path` for every file, `monkeypatch.setenv`/`monkeypatch.chdir` for process state, never a real home, cwd or env.
 
-Read [references/PATTERNS.md](./references/PATTERNS.md) for the config block and worked tests (parametrize, fakes, injected clock, async, hypothesis, snapshot, HTTP), all run on CPython 3.14.
+Read [references/PATTERNS.md](./references/PATTERNS.md) for the config block and worked tests (parametrize and compacting, xfail reproduction, worker isolation, fakes, injected clock, async, hypothesis, snapshot, HTTP), all run on CPython 3.14.
 
 ## Fixtures and data
 

@@ -99,6 +99,65 @@ def test_parse_accepts_or_raises_value_error(text: str) -> None:
 
 The hand-picked cases pin the documented behaviour; the two properties cover the input space. The last test fails on any exception other than `ValueError`, which is the parser's contract.
 
+## Test compacting and maintenance
+
+Eliminate repetitive test functions that share the same structure by compacting them into a single table-driven test with explicit `pytest.param(..., id=...)` labels, preserving all test scenarios and branch coverage without fixture bloat.
+
+```python
+# Before: repetitive individual tests duplicating assertions and setup
+# def test_empty_string_rejected(): ...
+# def test_zero_interval_rejected(): ...
+# def test_negative_interval_rejected(): ...
+
+# After: compacted table-driven test with clear case IDs
+@pytest.mark.parametrize(
+    ("raw_input", "expected_match"),
+    [
+        pytest.param("", "Not an interval", id="empty-string"),
+        pytest.param("0m", "Not an interval", id="zero-duration"),
+        pytest.param("-5m", "Not an interval", id="negative-duration"),
+        pytest.param("5 m", "Not an interval", id="embedded-space"),
+    ],
+)
+def test_parse_rejects_compacted(raw_input: str, expected_match: str) -> None:
+    with pytest.raises(ValueError, match=expected_match):
+        intervals.Interval.parse(raw_input)
+```
+
+## x-Failures for bug handoff
+
+Reviewers and teammates use `@pytest.mark.xfail(reason="...", strict=True)` to demonstrate bugs in reproductions. With `strict=True`, pytest fails the run (`XPASS`) as soon as the bug is resolved, ensuring the fix author removes the marker before merging.
+
+```python
+@pytest.mark.xfail(
+    reason="reproduction: fractional units like '1.5h' raise unexpected ValueError",
+    strict=True,
+    raises=ValueError,
+)
+def test_parse_fractional_units_reproduction() -> None:
+    # Demonstrates issue for the fix author; fails until fractional units are supported.
+    assert intervals.Interval.parse("1.5h").seconds == 5400
+```
+
+## Parallel-safe fixtures with worker_id
+
+In multi-worker runs under `pytest-xdist` (`-n auto`), session-scoped fixtures execute once per process worker. Isolate resources (directories, SQLite databases, port allocations) by keying off the `worker_id` fixture (e.g. `"gw0"`, `"gw1"`, or `"master"` when running serially).
+
+```python
+import pathlib
+import pytest
+
+
+@pytest.fixture(scope="session")
+def worker_db_path(
+    tmp_path_factory: pytest.TempPathFactory,
+    worker_id: str,
+) -> pathlib.Path:
+    # Worker-specific directory prevents collisions across parallel workers
+    base_dir = tmp_path_factory.getbasetemp()
+    return base_dir / f"test_{worker_id}.db"
+```
+
 ## A fake and an injected clock
 
 ```python

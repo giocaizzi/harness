@@ -6,14 +6,14 @@
   },
   "metadata": {
     "description": "Personal agent harness: skills, agents and guards for Claude Code, Copilot CLI, VS Code, Codex, opencode, pi and Antigravity",
-    "version": "5.0.0"
+    "version": "5.1.0"
   },
   "plugins": [
     {
       "name": "python",
       "source": "./plugins/python",
       "description": "Python development and testing, FastAPI and SQLAlchemy",
-      "version": "1.8.0",
+      "version": "1.9.0",
       "keywords": [
         "python",
         "development",
@@ -28,7 +28,7 @@
       "name": "foundations",
       "source": "./plugins/foundations",
       "description": "Language-neutral design and practice: domain-driven design, system design, architecture fitness tests, API design, design patterns; plus the api-reviewer agent",
-      "version": "1.0.0",
+      "version": "1.1.0",
       "keywords": [
         "design",
         "ddd",
@@ -55,7 +55,7 @@
       "name": "javascript",
       "source": "./plugins/javascript",
       "description": "JavaScript, TypeScript, React and Next.js development",
-      "version": "1.6.0",
+      "version": "1.7.0",
       "keywords": [
         "javascript",
         "typescript",
@@ -68,7 +68,7 @@
       "name": "go",
       "source": "./plugins/go",
       "description": "Go development and testing best practices",
-      "version": "1.2.0",
+      "version": "1.3.0",
       "keywords": [
         "go",
         "golang",
@@ -81,8 +81,8 @@
     {
       "name": "dev-tools",
       "source": "./plugins/dev-tools",
-      "description": "General development tooling \u2014 git, GitHub, conventional commits, semantic versioning",
-      "version": "1.53.0",
+      "description": "General development tooling — git, GitHub, conventional commits, semantic versioning",
+      "version": "1.54.0",
       "keywords": [
         "git",
         "github",

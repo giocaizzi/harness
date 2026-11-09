@@ -1,6 +1,6 @@
 ---
 name: typescript-testing
-description: "TypeScript and Node.js test rules: Vitest, table tests with test.for, hand-written fakes instead of vi.mock, fake timers, MSW for HTTP, property tests with fast-check, snapshot discipline, isolation and timeouts. Use whenever you write, fix, review or debug TypeScript or JavaScript tests (*.test.ts, *.spec.ts, vitest.config.ts), including flaky, slow or hanging tests, tests that sleep, mock modules or hit the network, and adding tests for a function, a retry or an HTTP client."
+description: "TypeScript and Node.js test rules: Vitest, table tests with test.for, hand-written fakes instead of vi.mock, fake timers, MSW for HTTP, property tests with fast-check, test maintenance and compacting, test.fails for bug handoff, concurrent execution, snapshot discipline, isolation and timeouts. Use whenever you write, fix, review or debug TypeScript or JavaScript tests (*.test.ts, *.spec.ts, vitest.config.ts), including flaky, slow or hanging tests, tests that sleep, mock modules or hit the network, and adding tests for a function, a retry or an HTTP client."
 ---
 
 # TypeScript Testing
@@ -9,6 +9,7 @@ description: "TypeScript and Node.js test rules: Vitest, table tests with test.f
 - TDD for bugs: reproduce with a failing test first, then fix.
 - Tests sit beside the code (`retry.ts`, `retry.test.ts`); fakes shared by several features go in `src/testing/`. `make test` runs the `unit` project of the config with coverage, in shuffled order: an order dependence is a bug, not a flake.
 - The javascript-typescript rules hold in tests too (no `as`, no `any`); the one relaxation is `@ts-expect-error` with a description, to test what a caller without types could pass.
+- **Test maintenance and compacting**: maintain and refactor tests e2e to keep suites tidy, fast, and compact. Replace bloated repetitive tests with typed `test.for` table tests while preserving all test cases and edge conditions. Remove sleeps and fixture bloat.
 
 ## Vitest
 
@@ -16,7 +17,8 @@ Vitest 5 is the runner for every package, with the config in [references/vitest.
 
 - `test`, never `it` (lint enforces it); `describe` only to share setup, not to mirror the file.
 - `toStrictEqual` over `toEqual` (it checks `undefined` keys and classes; lint enforces it). Expectations on promises are awaited: `await expect(p).rejects.toThrow(...)`.
-- No `.only`, no `.skip` in a commit (lint enforces both); a test that cannot pass yet is `test.fails` with the issue in its name.
+- **Parallel & concurrent test execution**: Vitest runs test files in parallel; use `test.concurrent` / `describe.concurrent` for async I/O tests. Ensure concurrency safety: isolate mock state, use port 0 for servers, stub environment with `vi.stubEnv` rather than direct mutation.
+- **x-Failures for bug demonstration and handoff**: demonstrate failing tests and edge cases using `test.fails('reproduction: ...', () => { ... })` or `test.todo('...')`. Vitest fails when a `test.fails` passes unexpectedly, ensuring the driver removes `test.fails` once the source fix is in place. No `.only`, no `.skip` in a commit (lint enforces both).
 
 ## Structure
 
@@ -39,7 +41,7 @@ Vitest 5 is the runner for every package, with the config in [references/vitest.
 - **Integration tests** (a real database, Docker, a real third-party API) live in `*.int.test.ts`: the `integration` project, run by `make test-integration` in CI, not by `make test`.
 - **Timeouts**: the 5 s default stays. A test that needs more is slow for a reason to fix (real I/O, real sleeps), not a timeout to raise.
 
-Read [references/PATTERNS.md](./references/PATTERNS.md) for a table test, a fake, fake-timer backoff, an MSW client test and a fast-check property, all run with Vitest 5.1.
+Read [references/PATTERNS.md](./references/PATTERNS.md) for a table test, compacting repetitive tests, concurrent table tests, bug reproduction with test.fails, a fake, fake-timer backoff, an MSW client test and a fast-check property, all run with Vitest 5.1.
 
 ## Gotchas
 

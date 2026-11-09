@@ -3,11 +3,9 @@
 copilot:
   tools:
     - read
+    - edit
     - search
     - execute
     - skill
 codex:
   model_reasoning_effort: medium
-opencode:
-  permission:
-    edit: deny
