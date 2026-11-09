@@ -5,6 +5,7 @@ copilot:
   argument-hint: "API Security Review"
   tools:
     - read
+    - edit
     - search
     - execute
     - web
@@ -13,6 +14,3 @@ copilot:
     - ms-python.python/getPythonExecutableCommand
 codex:
   model_reasoning_effort: medium
-opencode:
-  permission:
-    edit: deny

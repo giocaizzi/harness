@@ -28,6 +28,124 @@ func TestGetMissing(t *testing.T) {
 
 Since Go 1.22 each iteration has its own `tt`; the old `tt := tt` copy is dead code (`copyloopvar` flags it).
 
+## Fully parallel table test with hand-written fake
+
+`t.Parallel()` at the top of the test function and inside each `t.Run()` table subtest (`paralleltest` enforces it). Each subtest gets its own isolated fake instance, context, and temp dir.
+
+```go
+func TestCheckerValidate(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		answers []poll.Status
+		id      string
+		wantErr error
+	}{
+		{
+			name:    "success on complete",
+			answers: []poll.Status{poll.Done},
+			id:      "job-1",
+			wantErr: nil,
+		},
+		{
+			name:    "error on failed status",
+			answers: []poll.Status{"failed"},
+			id:      "job-2",
+			wantErr: poll.ErrJobFailed,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			fake := &fakeChecker{answers: tt.answers}
+			err := poll.CheckStatus(t.Context(), fake, tt.id)
+			if !errors.Is(err, tt.wantErr) {
+				t.Errorf("CheckStatus() error = %v, want %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+```
+
+## Test compacting and maintenance
+
+Refactor repetitive individual test functions into a single table-driven test without losing edge cases, branch coverage, or distinct error assertions.
+
+### Before: repetitive individual tests
+
+```go
+func TestValidateID_Empty(t *testing.T) {
+	t.Parallel()
+	if err := validateID(""); !errors.Is(err, ErrEmptyID) {
+		t.Errorf("validateID(\"\") = %v, want ErrEmptyID", err)
+	}
+}
+
+func TestValidateID_TooLong(t *testing.T) {
+	t.Parallel()
+	long := strings.Repeat("a", 256)
+	if err := validateID(long); !errors.Is(err, ErrIDTooLong) {
+		t.Errorf("validateID(long) = %v, want ErrIDTooLong", err)
+	}
+}
+
+func TestValidateID_Valid(t *testing.T) {
+	t.Parallel()
+	if err := validateID("run-42"); err != nil {
+		t.Errorf("validateID(\"run-42\") = %v, want nil", err)
+	}
+}
+```
+
+### After: compacted table test
+
+```go
+func TestValidateID(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		id      string
+		wantErr error
+	}{
+		{name: "empty", id: "", wantErr: ErrEmptyID},
+		{name: "too long", id: strings.Repeat("a", 256), wantErr: ErrIDTooLong},
+		{name: "valid id", id: "run-42", wantErr: nil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := validateID(tt.id)
+			if !errors.Is(err, tt.wantErr) {
+				t.Errorf("validateID(%q) error = %v, want %v", tt.id, err, tt.wantErr)
+			}
+		})
+	}
+}
+```
+
+## xfail subtest for bug handoff
+
+Reviewers add a skipping subtest with reproduction assertions; drivers resolve the bug, remove `t.Skip`, and verify that the test passes.
+
+```go
+func TestWorkflowRun(t *testing.T) {
+	t.Parallel()
+
+	t.Run("xfail: empty payload triggers panic #123", func(t *testing.T) {
+		t.Skip("xfail: pending driver fix for empty payload parsing")
+		fake := &fakeChecker{answers: []poll.Status{poll.Done}}
+		err := poll.Process(t.Context(), fake, []byte(""))
+		if err != nil {
+			t.Fatalf("Process() error = %v, want nil", err)
+		}
+	})
+}
+```
+
 ## Fake for a consumer interface
 
 The package under test declares what it needs; the test file supplies a fake that answers from a script and records calls.

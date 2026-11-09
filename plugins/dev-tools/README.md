@@ -29,7 +29,7 @@ General development tooling — git, GitHub/GitLab/Azure DevOps, conventional co
 | `scout` | Read-only search and summarization on a cheap model; reports findings with evidence. |
 | `worker` | Routine-tier engineer for edits whose every decision is made (a written plan, a rename, a rollout, one unit of a driver's split), in its own worktree; stops on any unsettled choice. |
 | `driver` | Driver-tier engineer a hub hands judgement work to: investigates, plans and splits it, fans the edits out to parallel `worker`s and integrates them in its own worktree. |
-| `reviewer` | Routine-tier reviewer of a change it did not write, raised to the driver tier at `high` effort on the spawn for a sensitive review; posts a verdict with severities, at most two rounds. |
+| `reviewer` | Routine-tier reviewer of a change it did not write, raised to the driver tier at `high` effort on the spawn for a sensitive review; maintains and refactors tests, adds x-failing tests to prove issues, and posts a verdict with severities. Never edits production code. |
 | `escalate` | Strongest-tier engineer for work a `driver` failed twice on; returns the user's decisions as open questions. |
 
 On pi, which has no subagents or interactive questions, `pi/subagent.mjs` runs these agents (and every other plugin's, such as `foundations`' `api-reviewer`) as a `subagent` tool (each in its own `pi -p` session), and provides an `ask_question` tool (mapped from `AskUserQuestion`) with a 60-second timeout.

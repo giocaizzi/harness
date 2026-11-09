@@ -1,6 +1,6 @@
 ---
 name: go-testing
-description: "Go test rules: the standard testing package with go-cmp instead of testify, table tests with t.Parallel, fakes over mocks, golden files, httptest, testing/synctest for time and concurrency, fuzzing, b.Loop benchmarks, the race detector. Use whenever you write, fix, review or debug Go tests (_test.go), including flaky, slow or hanging tests and tests that sleep or use testify."
+description: "Go test rules: the standard testing package with go-cmp instead of testify, table tests with t.Parallel, test compacting and maintenance, xfail subtests for bug handoff, fakes over mocks, golden files, httptest, testing/synctest for time and concurrency, fuzzing, b.Loop benchmarks, the race detector. Use whenever you write, fix, review or debug Go tests (_test.go), including flaky, slow or hanging tests and tests that sleep or use testify."
 ---
 
 # Go Testing
@@ -18,7 +18,17 @@ Baseline: the test sections of the [Google Go Style Guide](https://google.github
 
 ## Structure
 
-- **Table tests** for one behaviour over many inputs: a slice of structs with a `name`, one `t.Run(tt.name, ...)` per row, `t.Parallel()` in the test and in each subtest (`paralleltest` enforces it). A row that needs different setup or assertions is a separate test.
+- **Parallel execution from the start.** Call `t.Parallel()` at the top of the test function AND inside every `t.Run()` table subtest (`paralleltest` enforces it). Ensure parallel safety: `t.TempDir()`, `t.Context()`, and passing dependencies cleanly. Never call `t.Setenv` or `t.Chdir` in parallel tests (keep those in serial tests).
+- **Table tests** for one behaviour over many inputs: a slice of structs with a `name`, one `t.Run(tt.name, ...)` per row. A row that needs fundamentally different setup or assertions is a separate test.
+- **Test maintenance and compacting.** Keep test suites tidy, maintained, and refactored. Compact multi-scenario tests into table-driven tests (`tests := []struct{ name string; ... }`) without dropping any branch coverage, edge cases, or error checks.
+- **x-Failures for bug demonstration and handoff.** Go has no native `@xfail` attribute. The house pattern for x-failures is a subtest with `t.Skip`:
+  ```go
+  t.Run("xfail: bug description / issue #123", func(t *testing.T) {
+      t.Skip("xfail: pending driver fix for ...")
+      // reproduction assertions here
+  })
+  ```
+  Reviewers add this to demonstrate bugs; drivers resolve the source bug, remove `t.Skip`, and verify that the test passes.
 - **`t.Context()`** for every context in a test (cancelled when the test ends, before cleanups), **`t.TempDir()`** for every file, **`t.Setenv`/`t.Chdir`** instead of mutating process state (both forbid `t.Parallel`, so keep them in serial tests). `t.Cleanup` over `defer` in helpers.
 - **Fakes over mocks.** A consumer-defined interface of one to three methods gets a hand-written fake in the test file: a struct with fields to program its answers and record its calls. No mockgen or gomock (`depguard` rejects them): generated mocks assert call sequences, which is implementation detail. A double other packages' tests need lives in a `<pkg>test` package (`runstatetest.NewStore`), never exported from the package itself.
 - **Real over fake where cheap**: `httptest.NewServer` for HTTP clients, `net.Pipe` for connections, real child processes (`/bin/sh -c`) for process code, the real filesystem under `t.TempDir()`.
@@ -36,7 +46,7 @@ Baseline: the test sections of the [Google Go Style Guide](https://google.github
 - **Benchmarks** with `for b.Loop() { ... }`, never `b.N`; compare with `benchstat`, never by eye.
 - **Integration tests** (network, real services, Docker) carry `//go:build integration` and run via `make test-integration`. `testing.Short()` skips slow but hermetic tests in a `check-fast` target when the full suite takes minutes; CI runs everything.
 
-Read [references/PATTERNS.md](./references/PATTERNS.md) for a golden helper, fake, synctest, fuzz, benchmark, httptest and process test, all run on Go 1.27.2.
+Read [references/PATTERNS.md](./references/PATTERNS.md) for table test with fake, test compacting, xfail subtest, golden helper, fake, synctest, fuzz, benchmark, httptest and process test, all run on Go 1.27.2.
 
 ## Gotchas
 
