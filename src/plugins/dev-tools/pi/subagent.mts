@@ -14,6 +14,7 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { registerAskQuestionTool } from "./ask-question.mjs";
 import { MAX_DEPTH, PLUGINS, THINKING, TOOLS } from "./constants.mjs";
+import { registerToolOnce } from "./tool-registration.mjs";
 import type {
   AgentArgsInput,
   AgentDefinition,
@@ -281,5 +282,5 @@ export default function subagentExtension(
       }
     },
   };
-  pi.registerTool(tool);
+  registerToolOnce(pi, "subagent", tool);
 }

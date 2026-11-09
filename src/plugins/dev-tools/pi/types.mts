@@ -132,6 +132,7 @@ export interface AskQuestionToolDefinition {
 
 export interface PiHost {
   registerTool: (tool: PiToolDefinition | AskQuestionToolDefinition) => void;
+  on: (event: "session_shutdown", handler: () => void) => void;
 }
 
 export type RunSubagent = (

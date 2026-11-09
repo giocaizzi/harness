@@ -5,6 +5,7 @@ import type {
   PiHost,
   SubagentUpdate,
 } from "./types.mjs";
+import { registerToolOnce } from "./tool-registration.mjs";
 
 export function registerAskQuestionTool(pi: PiHost): void {
   const tool: AskQuestionToolDefinition = {
@@ -82,5 +83,5 @@ export function registerAskQuestionTool(pi: PiHost): void {
     },
   };
 
-  pi.registerTool(tool);
+  registerToolOnce(pi, "ask_question", tool);
 }

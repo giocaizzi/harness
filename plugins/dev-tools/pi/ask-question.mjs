@@ -1,3 +1,4 @@
+import { registerToolOnce } from "./tool-registration.mjs";
 export function registerAskQuestionTool(pi) {
     const tool = {
         name: "ask_question",
@@ -62,5 +63,5 @@ export function registerAskQuestionTool(pi) {
             };
         },
     };
-    pi.registerTool(tool);
+    registerToolOnce(pi, "ask_question", tool);
 }

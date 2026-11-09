@@ -7,13 +7,19 @@ import type {
   PiHost,
 } from "./types.mjs";
 
+let shutdownHandler: (() => void) | undefined;
+
 function setupTool(): AskQuestionToolDefinition {
+  shutdownHandler?.();
   let registeredTool: AskQuestionToolDefinition | undefined;
   const pi: PiHost = {
     registerTool: (t) => {
       if (t.name === "ask_question") {
         registeredTool = t as AskQuestionToolDefinition;
       }
+    },
+    on: (_event, handler) => {
+      shutdownHandler = handler;
     },
   };
   registerAskQuestionTool(pi);

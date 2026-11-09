@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { registerAskQuestionTool } from "./ask-question.mjs";
 import { MAX_DEPTH, PLUGINS, THINKING, TOOLS } from "./constants.mjs";
+import { registerToolOnce } from "./tool-registration.mjs";
 export { MAX_DEPTH } from "./constants.mjs";
 /** Parse frontmatter and prompt body from an agent markdown file content. */
 export function parseAgentFrontmatter(content, defaultName) {
@@ -216,5 +217,5 @@ export default function subagentExtension(pi, deps = {}) {
             }
         },
     };
-    pi.registerTool(tool);
+    registerToolOnce(pi, "subagent", tool);
 }
