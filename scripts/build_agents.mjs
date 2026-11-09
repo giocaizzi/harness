@@ -38,6 +38,42 @@ const HARNESS_KEYS = ["copilot", "codex", "opencode", "antigravity"];
 const HARNESS_KEY_SET = new Set(HARNESS_KEYS);
 const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/;
 const isRecord = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+const CLAUDE_TO_ANTIGRAVITY_TOOLS = {
+    read: ["read_file"],
+    grep: ["read_file"],
+    glob: ["read_file"],
+    edit: ["edit_file"],
+    multiedit: ["edit_file"],
+    write: ["write_file"],
+    bash: ["run_command", "manage_task"],
+    powershell: ["run_command", "manage_task"],
+    websearch: ["search_web"],
+    webfetch: ["search_web"],
+};
+const ALL_ANTIGRAVITY_TOOLS = [
+    "read_file",
+    "edit_file",
+    "write_file",
+    "run_command",
+    "manage_task",
+    "search_web",
+];
+function mapClaudeToolsToAntigravity(claudeTools) {
+    if (typeof claudeTools !== "string" || !claudeTools.trim()) {
+        return [...ALL_ANTIGRAVITY_TOOLS];
+    }
+    const toolSet = new Set();
+    const parsed = claudeTools.split(",").map((t) => t.trim().toLowerCase());
+    for (const t of parsed) {
+        const mapped = CLAUDE_TO_ANTIGRAVITY_TOOLS[t];
+        if (mapped) {
+            for (const m of mapped) {
+                toolSet.add(m);
+            }
+        }
+    }
+    return ALL_ANTIGRAVITY_TOOLS.filter((t) => toolSet.has(t));
+}
 // --------------------------------------------------------------------------- agents
 function loadYaml(filePath) {
     if (!existsSync(filePath)) {
@@ -158,7 +194,14 @@ function buildAgent(agentPath, check) {
         mode: "subagent",
         ...opencodeOverrides,
     };
-    const antigravityFm = { ...base, ...antigravityOverrides };
+    const antigravityTools = "tools" in antigravityOverrides && Array.isArray(antigravityOverrides.tools)
+        ? antigravityOverrides.tools
+        : mapClaudeToolsToAntigravity(claude.tools);
+    const antigravityFm = {
+        ...base,
+        tools: antigravityTools,
+        ...antigravityOverrides,
+    };
     const out = join(dirname(dirname(agentPath)), GENERATED);
     const targets = [
         [join(out, "copilot", `${name}.agent.md`), render(copilotFm, body)],

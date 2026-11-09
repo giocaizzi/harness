@@ -1,6 +1,12 @@
 ---
 name: worker
 description: Routine-tier engineer for well-specified edits - carries out a written plan or a mechanical change (a rename, a config rollout, a unit a driver split off, often one of several running in parallel) in its own worktree, proves it with the repo's checks, commits it and stops on any choice the brief does not settle. Use for edits whose every decision is already made, one worker per file-disjoint unit; spawn it without a `model`. Not for planning, debugging or design (driver) or lookups (scout).
+tools:
+- read_file
+- edit_file
+- write_file
+- run_command
+- manage_task
 ---
 
 # Role
