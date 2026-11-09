@@ -255,8 +255,8 @@ function buildAntigravityManifest(pluginDir, check) {
     return sync(antigravityManifest, dumpJson(antigravityData), check);
 }
 // --------------------------------------------------------------------------- main
-export function main() {
-    const check = process.argv.includes("--check");
+export function run(argv = process.argv.slice(2)) {
+    const check = argv.includes("--check");
     const pluginEntries = readdirSync(PLUGINS_ROOT, { withFileTypes: true });
     const plugins = pluginEntries
         .filter((d) => d.isDirectory() &&
@@ -308,12 +308,25 @@ export function main() {
         if (check) {
             console.error("\nRun `make build` to regenerate.");
         }
-        process.exit(1);
+        return false;
     }
     if (check) {
         console.log("All generated files are up to date.");
     }
+    return true;
+}
+export function main(argv = process.argv.slice(2)) {
+    const ok = run(argv);
+    if (!ok) {
+        process.exit(1);
+    }
 }
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
-    main();
+    try {
+        main();
+    }
+    catch (e) {
+        console.error(e instanceof Error ? e.message : String(e));
+        process.exit(1);
+    }
 }

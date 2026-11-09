@@ -18,6 +18,7 @@ import type {
   AgentArgsInput,
   AgentDefinition,
   ChildIds,
+  ParsedAgentFrontmatter,
   PiHost,
   PiToolDefinition,
   RunResult,
@@ -26,6 +27,54 @@ import type {
 
 export { MAX_DEPTH } from "./constants.mjs";
 
+/** Parse frontmatter and prompt body from an agent markdown file content. */
+export function parseAgentFrontmatter(
+  content: string,
+  defaultName?: string,
+): ParsedAgentFrontmatter | null {
+  const m = /^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/.exec(content);
+  const frontmatterText = m?.[1];
+  const promptBody = m?.[2];
+  if (frontmatterText === undefined || promptBody === undefined) return null;
+  const fm: Record<string, string> = {};
+  for (const match of frontmatterText.matchAll(/^(\w+):\s*(.*)$/gm)) {
+    const key = match[1];
+    const value = match[2];
+    if (key !== undefined && value !== undefined) {
+      fm[key] = value.trim();
+    }
+  }
+  const tools = fm.tools
+    ? [
+        ...new Set(
+          fm.tools
+            .split(",")
+            .flatMap((t) => TOOLS[t.trim().toLowerCase()] ?? []),
+        ),
+      ]
+    : null;
+  const effort = fm.effort;
+  const thinking =
+    effort !== undefined && THINKING.has(effort) ? effort : undefined;
+  const configuredName = fm.name;
+  const name =
+    configuredName !== undefined && configuredName.length > 0
+      ? configuredName
+      : defaultName;
+  const result: ParsedAgentFrontmatter = {
+    description: fm.description ?? "",
+    tools,
+    prompt: promptBody.trim(),
+  };
+  if (name !== undefined) {
+    result.name = name;
+  }
+  if (thinking !== undefined) {
+    result.thinking = thinking;
+  }
+  return result;
+}
+
 /** Load the Claude-format agents every plugin ships (`agents/*.md`). */
 export function loadAgents(root: string = PLUGINS): AgentDefinition[] {
   const agents: AgentDefinition[] = [];
@@ -33,43 +82,21 @@ export function loadAgents(root: string = PLUGINS): AgentDefinition[] {
     const dir = join(root, plugin, "agents");
     if (!existsSync(dir)) continue;
     for (const file of readdirSync(dir).filter((f) => f.endsWith(".md"))) {
-      const m = /^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/.exec(
+      const parsed = parseAgentFrontmatter(
         readFileSync(join(dir, file), "utf8"),
+        basename(file, ".md"),
       );
-      const frontmatterText = m?.[1];
-      const promptBody = m?.[2];
-      if (frontmatterText === undefined || promptBody === undefined) continue;
-      const fm: Record<string, string> = {};
-      for (const match of frontmatterText.matchAll(/^(\w+):\s*(.*)$/gm)) {
-        const key = match[1];
-        const value = match[2];
-        if (key !== undefined && value !== undefined) {
-          fm[key] = value.trim();
-        }
+      if (!parsed) continue;
+      const agent: AgentDefinition = {
+        name: parsed.name ?? basename(file, ".md"),
+        description: parsed.description,
+        tools: parsed.tools,
+        prompt: parsed.prompt,
+      };
+      if (parsed.thinking !== undefined) {
+        agent.thinking = parsed.thinking;
       }
-      const tools = fm.tools
-        ? [
-            ...new Set(
-              fm.tools
-                .split(",")
-                .flatMap((t) => TOOLS[t.trim().toLowerCase()] ?? []),
-            ),
-          ]
-        : null;
-      const effort = fm.effort;
-      const thinking =
-        effort !== undefined && THINKING.has(effort) ? effort : undefined;
-      const configuredName = fm.name;
-      agents.push({
-        name:
-          configuredName !== undefined && configuredName.length > 0
-            ? configuredName
-            : basename(file, ".md"),
-        description: fm.description ?? "",
-        tools,
-        thinking,
-        prompt: promptBody.trim(),
-      });
+      agents.push(agent);
     }
   }
   return agents;
@@ -114,13 +141,21 @@ export const depthOf = (env: NodeJS.ProcessEnv = process.env): number =>
 export const childEnv = (
   env: NodeJS.ProcessEnv = process.env,
   { session, agent }: ChildIds = {},
-): NodeJS.ProcessEnv => ({
-  ...env,
-  GUARD_STOP_CHECK: "off",
-  GUARD_RESULT_GATE: "off",
-  PI_SUBAGENT_DEPTH: String(depthOf(env) + 1),
-  ...(session ? { GUARD_PARENT_SESSION: session, GUARD_AGENT_ID: agent } : {}),
-});
+): NodeJS.ProcessEnv => {
+  const child: NodeJS.ProcessEnv = {
+    ...env,
+    GUARD_STOP_CHECK: "off",
+    GUARD_RESULT_GATE: "off",
+    PI_SUBAGENT_DEPTH: String(depthOf(env) + 1),
+  };
+  if (session) {
+    child.GUARD_PARENT_SESSION = session;
+    if (agent) {
+      child.GUARD_AGENT_ID = agent;
+    }
+  }
+  return child;
+};
 
 function run(
   argv: string[],

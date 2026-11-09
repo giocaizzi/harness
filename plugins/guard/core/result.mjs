@@ -9,7 +9,8 @@ export const show = (v) => {
     const json = JSON.stringify(v);
     const text = v === undefined
         ? "undefined"
-        : (json ?? v.toString());
+        : (json ??
+            (typeof v === "function" || typeof v === "symbol" ? v.toString() : ""));
     return text.length > 200 ? `${text.slice(0, 200)}…` : text;
 };
 const MAX_LINE = 300;

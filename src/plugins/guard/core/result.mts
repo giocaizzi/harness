@@ -12,7 +12,8 @@ export const show = (v: unknown): string => {
   const text =
     v === undefined
       ? "undefined"
-      : (json ?? (v as { toString(): string }).toString());
+      : (json ??
+        (typeof v === "function" || typeof v === "symbol" ? v.toString() : ""));
   return text.length > 200 ? `${text.slice(0, 200)}…` : text;
 };
 

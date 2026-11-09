@@ -61,11 +61,23 @@ import {
   resolveAntigravityTranscriptPath,
   scrub,
 } from "./telemetry.mjs";
-import type { HookInput, HookSpecificOutput, StopDecision } from "./types.mjs";
+import {
+  type HookInput,
+  type HookSpecificOutput,
+  type StopDecision,
+  isRecord,
+} from "./types.mjs";
 
 const DEFAULT_TIMEOUT_MS = 300_000;
 const MAX_UNTRACKED = 2000;
 const sha = (s: string): string => createHash("sha256").update(s).digest("hex");
+
+function getErrorCode(err: unknown): string | undefined {
+  if (isRecord(err) && typeof err.code === "string") {
+    return err.code;
+  }
+  return undefined;
+}
 
 export type SyncRunner = (
   cmd: string,
@@ -73,11 +85,23 @@ export type SyncRunner = (
   opts?: unknown,
 ) => SpawnSyncReturns<string>;
 
+export const defaultSyncRunner: SyncRunner = (
+  cmd: string,
+  args: readonly string[],
+  opts?: unknown,
+): SpawnSyncReturns<string> => {
+  const userOpts = isRecord(opts) ? opts : {};
+  return spawnSync(cmd, args, {
+    ...userOpts,
+    encoding: "utf8",
+  });
+};
+
 // What "unchanged" means: same HEAD, same diff against it, same untracked files, names and contents. Null outside
 // a git repo, when git fails or past MAX_UNTRACKED untracked files, which means "always run".
 export function fingerprint(
   cwd: string,
-  run: SyncRunner = spawnSync as unknown as SyncRunner,
+  run: SyncRunner = defaultSyncRunner,
 ): string | null {
   const git = (args: readonly string[], input?: string) =>
     run("git", args, {
@@ -180,7 +204,7 @@ export interface ChangeSet {
 export function changes(
   cwd: string,
   base?: string,
-  run: SyncRunner = spawnSync as unknown as SyncRunner,
+  run: SyncRunner = defaultSyncRunner,
 ): ChangeSet | null {
   const git = (args: readonly string[], at: string) =>
     run("git", args, { cwd: at, encoding: "utf8", windowsHide: true });
@@ -284,10 +308,7 @@ export function takeLock(file: string): (() => void) | null {
       rmSync(file, { force: true });
     };
   } catch (err: unknown) {
-    const code =
-      typeof err === "object" && err !== null && "code" in err
-        ? (err as { code: string }).code
-        : undefined;
+    const code = getErrorCode(err);
     if (code !== "EEXIST") {
       return () => {
         // lock cleanup ignore
@@ -508,7 +529,7 @@ function resolveResultFile(root: string, rel: string): string {
       real = realpathSync(existing);
       break;
     } catch (e: unknown) {
-      const code = (e as { code?: string }).code;
+      const code = getErrorCode(e);
       const up = dirname(existing);
       if ((code !== "ENOENT" && code !== "ENOTDIR") || up === existing) throw e;
       rest.unshift(basename(existing));
@@ -530,7 +551,7 @@ function resolveResultFile(root: string, rel: string): string {
 
 export async function resultGate(
   input: HookInput,
-  run: SyncRunner = spawnSync as unknown as SyncRunner,
+  run: SyncRunner = defaultSyncRunner,
   env: NodeJS.ProcessEnv = process.env,
   onEvent: (attrs: Record<string, unknown>) => void = () => {
     // default event ignore
@@ -613,15 +634,17 @@ export async function resultGate(
       parsedOk = true;
     } catch (e: unknown) {
       if (!runtime) return null;
-      const err = e as { code?: string; message?: string };
+      const err = isRecord(e) ? e : {};
+      const errCode = getErrorCode(e);
+      const errMsg = typeof err.message === "string" ? err.message : undefined;
       errors = [
         e instanceof ResultReadError
           ? e.message
-          : err.code === "ENOENT"
+          : errCode === "ENOENT"
             ? "no such file"
             : e instanceof SyntaxError
-              ? `not valid JSON (${err.message ?? ""})`
-              : `cannot read (${err.code ?? err.message ?? ""})`,
+              ? `not valid JSON (${errMsg ?? ""})`
+              : `cannot read (${errCode ?? errMsg ?? ""})`,
       ];
     }
     if (parsedOk) {
@@ -733,9 +756,166 @@ export interface StopCheckResult {
   systemMessage?: string;
 }
 
+export function resolveMakeTarget(
+  cwd: string,
+  run: SyncRunner = defaultSyncRunner,
+  timeout = DEFAULT_TIMEOUT_MS,
+): "check-fast" | "check" | null {
+  const opts = { cwd, encoding: "utf8" as const, timeout, windowsHide: true };
+  const target = (["check-fast", "check"] as const).find(
+    (t) => run("make", ["-n", t], opts).status === 0,
+  );
+  return target ?? null;
+}
+
+export interface ChangeEligibility {
+  eligible: boolean;
+  fingerprint: string | null;
+}
+
+export function verifyChangeEligibility(
+  cwd: string,
+  run: SyncRunner = defaultSyncRunner,
+  env: NodeJS.ProcessEnv = process.env,
+): ChangeEligibility {
+  const fp = fingerprint(cwd, run);
+  const green = lastGreen(cwd);
+  if (fp && fp === green.fp) return { eligible: false, fingerprint: fp };
+
+  const changed = changes(cwd, green.head, run);
+  if (changed?.paths.length === 0 && env.GUARD_STOP_CHECK !== "force") {
+    return { eligible: false, fingerprint: fp };
+  }
+  if (
+    changed &&
+    changed.paths.length > 0 &&
+    docsOnly(changed.paths, changed.rules)
+  ) {
+    return { eligible: false, fingerprint: fp };
+  }
+
+  return { eligible: true, fingerprint: fp };
+}
+
+export async function executeMakeCheck(
+  target: "check-fast" | "check",
+  cwd: string,
+  fp: string | null,
+  run: SyncRunner = defaultSyncRunner,
+  {
+    exec = run === defaultSyncRunner
+      ? runDetached
+      : (c, a, o) => {
+          const res = run(c, a, o);
+          const errCode = getErrorCode(res.error);
+          return Promise.resolve({
+            stdout: res.stdout,
+            stderr: res.stderr,
+            status: res.status,
+            error: res.error,
+            timedOut: errCode === "ETIMEDOUT",
+          });
+        },
+    strain = hostStrain,
+    report = () => {
+      // default report ignore
+    },
+  }: StopCheckOptions = {},
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<StopCheckResult | null> {
+  const timeout = Number(env.GUARD_STOP_TIMEOUT_MS) || DEFAULT_TIMEOUT_MS;
+  const opts = { cwd, encoding: "utf8", timeout, windowsHide: true };
+
+  const deferred = (
+    why: string,
+    attrs: Record<string, unknown> = {},
+  ): StopCheckResult => {
+    report({ result: "deferred", target, why, ...attrs });
+    return {
+      systemMessage: `make ${target} deferred (${why}); it runs at the next stop. Run it before you ship.`,
+    };
+  };
+
+  const strained = env.GUARD_STOP_CHECK === "force" ? null : strain(cwd);
+  if (strained) return deferred(`host strained: ${strained}`);
+
+  const unlock = lock(cwd);
+  if (!unlock) return deferred("another stop check is running in this repo");
+
+  const started = Date.now();
+  let r: RunDetachedResult;
+  try {
+    r = await exec("make", [target], opts);
+  } finally {
+    unlock();
+  }
+
+  const done = (result: string): void => {
+    report({ result, target, duration_ms: Date.now() - started });
+  };
+
+  if (r.status === 0) {
+    if (fp) markGreen(cwd, fp, run);
+    done("pass");
+    return null;
+  }
+
+  if (r.timedOut || getErrorCode(r.error) === "ETIMEDOUT") {
+    return deferred(
+      `did not finish within ${String(Math.round(timeout / 1000))} s`,
+      { duration_ms: Date.now() - started },
+    );
+  }
+
+  const all = `${r.stdout}${r.stderr}`.trimEnd();
+  const allLines = all.split("\n");
+  const lastLine = allLines[allLines.length - 1];
+  report({
+    result: "fail",
+    target,
+    duration_ms: Date.now() - started,
+    failed_target: failedTarget(all),
+    last_line: scrub(lastLine),
+  });
+
+  const out = allLines.slice(-40).join("\n");
+  const fallbackError =
+    r.error?.message ?? `exit ${String(r.status ?? "unknown")}`;
+  const reason = `make ${target} failed; fix before finishing:\n${out ? out : fallbackError}`;
+  return {
+    decision: "block",
+    reason,
+    hookSpecificOutput: { hookEventName: "Stop", decision: "block", reason },
+  };
+}
+
+async function makeCheck(
+  input: HookInput,
+  run: SyncRunner = defaultSyncRunner,
+  opts: StopCheckOptions = {},
+): Promise<StopCheckResult | null> {
+  if (input.stop_hook_active || process.env.GUARD_STOP_CHECK === "off") {
+    return null;
+  }
+  const cwd = input.cwd ?? process.cwd();
+  const timeout =
+    Number(process.env.GUARD_STOP_TIMEOUT_MS) || DEFAULT_TIMEOUT_MS;
+  const target = resolveMakeTarget(cwd, run, timeout);
+  if (!target) return null;
+
+  const { eligible, fingerprint: fp } = verifyChangeEligibility(
+    cwd,
+    run,
+    process.env,
+  );
+  if (!eligible) return null;
+
+  return executeMakeCheck(target, cwd, fp, run, opts);
+}
+
 export async function stopCheck(
   input: HookInput,
-  run: SyncRunner = spawnSync as unknown as SyncRunner,
+  run: SyncRunner = defaultSyncRunner,
   opts: StopCheckOptions = {},
 ): Promise<StopCheckResult | null> {
   const gate = await resultGate(
@@ -768,126 +948,6 @@ export async function stopCheck(
   };
 }
 
-async function makeCheck(
-  input: HookInput,
-  run: SyncRunner = spawnSync as unknown as SyncRunner,
-  {
-    exec = run === (spawnSync as unknown as SyncRunner)
-      ? runDetached
-      : (c, a, o) => {
-          const res = run(c, a, o);
-          const errCode =
-            res.error && "code" in res.error
-              ? (res.error as { code?: string }).code
-              : undefined;
-          return Promise.resolve({
-            stdout: res.stdout,
-            stderr: res.stderr,
-            status: res.status,
-            error: res.error,
-            timedOut: errCode === "ETIMEDOUT",
-          });
-        },
-    strain = hostStrain,
-    report = () => {
-      // default report ignore
-    },
-  }: StopCheckOptions = {},
-): Promise<StopCheckResult | null> {
-  if (input.stop_hook_active || process.env.GUARD_STOP_CHECK === "off") {
-    return null;
-  }
-  const cwd = input.cwd ?? process.cwd();
-  const timeout =
-    Number(process.env.GUARD_STOP_TIMEOUT_MS) || DEFAULT_TIMEOUT_MS;
-  const opts = { cwd, encoding: "utf8", timeout, windowsHide: true };
-  const target = (["check-fast", "check"] as const).find(
-    (t) => run("make", ["-n", t], opts).status === 0,
-  );
-  if (!target) return null;
-  const fp = fingerprint(cwd, run);
-  const green = lastGreen(cwd);
-  if (fp && fp === green.fp) return null;
-
-  const changed = changes(cwd, green.head, run);
-  if (changed?.paths.length === 0 && process.env.GUARD_STOP_CHECK !== "force") {
-    return null;
-  }
-  if (
-    changed &&
-    changed.paths.length > 0 &&
-    docsOnly(changed.paths, changed.rules)
-  ) {
-    return null;
-  }
-
-  const deferred = (
-    why: string,
-    attrs: Record<string, unknown> = {},
-  ): StopCheckResult => {
-    report({ result: "deferred", target, why, ...attrs });
-    return {
-      systemMessage: `make ${target} deferred (${why}); it runs at the next stop. Run it before you ship.`,
-    };
-  };
-
-  const strained =
-    process.env.GUARD_STOP_CHECK === "force" ? null : strain(cwd);
-  if (strained) return deferred(`host strained: ${strained}`);
-
-  const unlock = lock(cwd);
-  if (!unlock) return deferred("another stop check is running in this repo");
-
-  const started = Date.now();
-  let r: RunDetachedResult;
-  try {
-    r = await exec("make", [target], opts);
-  } finally {
-    unlock();
-  }
-
-  const done = (result: string): void => {
-    report({ result, target, duration_ms: Date.now() - started });
-  };
-
-  if (r.status === 0) {
-    if (fp) markGreen(cwd, fp, run);
-    done("pass");
-    return null;
-  }
-
-  if (
-    r.timedOut ||
-    (r.error as { code?: string } | undefined)?.code === "ETIMEDOUT"
-  ) {
-    return deferred(
-      `did not finish within ${String(Math.round(timeout / 1000))} s`,
-      { duration_ms: Date.now() - started },
-    );
-  }
-
-  const all = `${r.stdout}${r.stderr}`.trimEnd();
-  const allLines = all.split("\n");
-  const lastLine = allLines[allLines.length - 1];
-  report({
-    result: "fail",
-    target,
-    duration_ms: Date.now() - started,
-    failed_target: failedTarget(all),
-    last_line: scrub(lastLine),
-  });
-
-  const out = allLines.slice(-40).join("\n");
-  const fallbackError =
-    r.error?.message ?? `exit ${String(r.status ?? "unknown")}`;
-  const reason = `make ${target} failed; fix before finishing:\n${out ? out : fallbackError}`;
-  return {
-    decision: "block",
-    reason,
-    hookSpecificOutput: { hookEventName: "Stop", decision: "block", reason },
-  };
-}
-
 interface AntigravityStopInput {
   conversationId?: string;
   cwd?: string;
@@ -900,8 +960,7 @@ interface AntigravityStopInput {
   workspacePaths?: readonly string[];
 }
 
-const entryArg = process.argv[1];
-if (entryArg && import.meta.url === pathToFileURL(entryArg).href) {
+export async function run(): Promise<void> {
   const flagHarness = process.argv
     .find((a) => a.startsWith("--harness="))
     ?.slice(10);
@@ -972,7 +1031,7 @@ if (entryArg && import.meta.url === pathToFileURL(entryArg).href) {
     }
 
     const events: Record<string, unknown>[] = [];
-    const out = await stopCheck(input, spawnSync as unknown as SyncRunner, {
+    const out = await stopCheck(input, defaultSyncRunner, {
       report: (attrs) => events.push(attrs),
       onGate: (reason) => {
         gateState.done = true;
@@ -1051,4 +1110,11 @@ if (entryArg && import.meta.url === pathToFileURL(entryArg).href) {
     });
   });
   process.exit(0);
+}
+
+export const main = run;
+
+const entryArg = process.argv[1];
+if (entryArg && import.meta.url === pathToFileURL(entryArg).href) {
+  await run();
 }

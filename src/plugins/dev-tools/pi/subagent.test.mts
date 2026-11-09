@@ -4,6 +4,7 @@ import subagentExtension, {
   childEnv,
   loadAgents,
   MAX_DEPTH,
+  parseAgentFrontmatter,
   piArgs,
 } from "./subagent.mjs";
 import type {
@@ -49,6 +50,37 @@ const captureTool = (
   assert.ok(registered);
   return registered;
 };
+
+void test("parseAgentFrontmatter: extracts metadata and prompt body", () => {
+  const content = `---
+name: custom-agent
+description: Custom agent description
+tools: read, grep
+effort: low
+---
+You are a custom agent.`;
+  const parsed = parseAgentFrontmatter(content, "default-name");
+  assert.deepEqual(parsed, {
+    name: "custom-agent",
+    description: "Custom agent description",
+    tools: ["read", "grep"],
+    thinking: "low",
+    prompt: "You are a custom agent.",
+  });
+
+  const noNameContent = `---
+description: No name agent
+---
+Prompt here.`;
+  const fallback = parseAgentFrontmatter(noNameContent, "fallback-agent");
+  assert.ok(fallback);
+  assert.equal(fallback.name, "fallback-agent");
+  assert.equal(fallback.description, "No name agent");
+  assert.equal(fallback.tools, null);
+  assert.equal(fallback.prompt, "Prompt here.");
+
+  assert.equal(parseAgentFrontmatter("invalid content"), null);
+});
 
 void test("loadAgents: every plugin agent, with Claude tools mapped to pi tools", () => {
   const agents = Object.fromEntries(loadAgents().map((a) => [a.name, a]));

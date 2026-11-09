@@ -8,6 +8,47 @@ import { basename, join } from "node:path";
 import { registerAskQuestionTool } from "./ask-question.mjs";
 import { MAX_DEPTH, PLUGINS, THINKING, TOOLS } from "./constants.mjs";
 export { MAX_DEPTH } from "./constants.mjs";
+/** Parse frontmatter and prompt body from an agent markdown file content. */
+export function parseAgentFrontmatter(content, defaultName) {
+    const m = /^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/.exec(content);
+    const frontmatterText = m?.[1];
+    const promptBody = m?.[2];
+    if (frontmatterText === undefined || promptBody === undefined)
+        return null;
+    const fm = {};
+    for (const match of frontmatterText.matchAll(/^(\w+):\s*(.*)$/gm)) {
+        const key = match[1];
+        const value = match[2];
+        if (key !== undefined && value !== undefined) {
+            fm[key] = value.trim();
+        }
+    }
+    const tools = fm.tools
+        ? [
+            ...new Set(fm.tools
+                .split(",")
+                .flatMap((t) => TOOLS[t.trim().toLowerCase()] ?? [])),
+        ]
+        : null;
+    const effort = fm.effort;
+    const thinking = effort !== undefined && THINKING.has(effort) ? effort : undefined;
+    const configuredName = fm.name;
+    const name = configuredName !== undefined && configuredName.length > 0
+        ? configuredName
+        : defaultName;
+    const result = {
+        description: fm.description ?? "",
+        tools,
+        prompt: promptBody.trim(),
+    };
+    if (name !== undefined) {
+        result.name = name;
+    }
+    if (thinking !== undefined) {
+        result.thinking = thinking;
+    }
+    return result;
+}
 /** Load the Claude-format agents every plugin ships (`agents/*.md`). */
 export function loadAgents(root = PLUGINS) {
     const agents = [];
@@ -16,38 +57,19 @@ export function loadAgents(root = PLUGINS) {
         if (!existsSync(dir))
             continue;
         for (const file of readdirSync(dir).filter((f) => f.endsWith(".md"))) {
-            const m = /^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/.exec(readFileSync(join(dir, file), "utf8"));
-            const frontmatterText = m?.[1];
-            const promptBody = m?.[2];
-            if (frontmatterText === undefined || promptBody === undefined)
+            const parsed = parseAgentFrontmatter(readFileSync(join(dir, file), "utf8"), basename(file, ".md"));
+            if (!parsed)
                 continue;
-            const fm = {};
-            for (const match of frontmatterText.matchAll(/^(\w+):\s*(.*)$/gm)) {
-                const key = match[1];
-                const value = match[2];
-                if (key !== undefined && value !== undefined) {
-                    fm[key] = value.trim();
-                }
+            const agent = {
+                name: parsed.name ?? basename(file, ".md"),
+                description: parsed.description,
+                tools: parsed.tools,
+                prompt: parsed.prompt,
+            };
+            if (parsed.thinking !== undefined) {
+                agent.thinking = parsed.thinking;
             }
-            const tools = fm.tools
-                ? [
-                    ...new Set(fm.tools
-                        .split(",")
-                        .flatMap((t) => TOOLS[t.trim().toLowerCase()] ?? [])),
-                ]
-                : null;
-            const effort = fm.effort;
-            const thinking = effort !== undefined && THINKING.has(effort) ? effort : undefined;
-            const configuredName = fm.name;
-            agents.push({
-                name: configuredName !== undefined && configuredName.length > 0
-                    ? configuredName
-                    : basename(file, ".md"),
-                description: fm.description ?? "",
-                tools,
-                thinking,
-                prompt: promptBody.trim(),
-            });
+            agents.push(agent);
         }
     }
     return agents;
@@ -78,13 +100,21 @@ const piCommand = () => {
 /** Return the current subagent nesting depth from `PI_SUBAGENT_DEPTH`. */
 export const depthOf = (env = process.env) => Number.parseInt(env.PI_SUBAGENT_DEPTH ?? "0", 10) || 0;
 /** Build the child environment with guard stop checks off and nesting depth incremented. */
-export const childEnv = (env = process.env, { session, agent } = {}) => ({
-    ...env,
-    GUARD_STOP_CHECK: "off",
-    GUARD_RESULT_GATE: "off",
-    PI_SUBAGENT_DEPTH: String(depthOf(env) + 1),
-    ...(session ? { GUARD_PARENT_SESSION: session, GUARD_AGENT_ID: agent } : {}),
-});
+export const childEnv = (env = process.env, { session, agent } = {}) => {
+    const child = {
+        ...env,
+        GUARD_STOP_CHECK: "off",
+        GUARD_RESULT_GATE: "off",
+        PI_SUBAGENT_DEPTH: String(depthOf(env) + 1),
+    };
+    if (session) {
+        child.GUARD_PARENT_SESSION = session;
+        if (agent) {
+            child.GUARD_AGENT_ID = agent;
+        }
+    }
+    return child;
+};
 function run(argv, cwd, signal, ids) {
     return new Promise((resolve) => {
         const command = argv[0];

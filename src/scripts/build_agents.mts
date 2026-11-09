@@ -351,8 +351,8 @@ function buildAntigravityManifest(pluginDir: string, check: boolean): boolean {
 
 // --------------------------------------------------------------------------- main
 
-export function main(): void {
-  const check = process.argv.includes("--check");
+export function run(argv: string[] = process.argv.slice(2)): boolean {
+  const check = argv.includes("--check");
 
   const pluginEntries = readdirSync(PLUGINS_ROOT, { withFileTypes: true });
   const plugins = pluginEntries
@@ -417,14 +417,27 @@ export function main(): void {
     if (check) {
       console.error("\nRun `make build` to regenerate.");
     }
-    process.exit(1);
+    return false;
   }
 
   if (check) {
     console.log("All generated files are up to date.");
   }
+  return true;
+}
+
+export function main(argv: string[] = process.argv.slice(2)): void {
+  const ok = run(argv);
+  if (!ok) {
+    process.exit(1);
+  }
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
-  main();
+  try {
+    main();
+  } catch (e: unknown) {
+    console.error(e instanceof Error ? e.message : String(e));
+    process.exit(1);
+  }
 }

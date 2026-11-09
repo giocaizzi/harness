@@ -20,37 +20,44 @@ export const DEFAULTS = {
     editorUrl: "",
     timeFormat: "both",
 };
+function featureOption(raw, plain, canColour, glyphs, colour) {
+    const mode = raw === true ? "on" : raw === false ? "off" : raw;
+    if (mode === "off")
+        return null;
+    return {
+        glyph: !plain && glyphs !== false && mode !== "no-glyph" && mode !== "plain",
+        colour: canColour &&
+            !plain &&
+            colour !== false &&
+            mode !== "no-colour" &&
+            mode !== "plain",
+    };
+}
 export function settings(options = {}, env = {}, canColour = true) {
     const o = {
         ...DEFAULTS,
         ...Object.fromEntries(Object.entries(options).filter(([, v]) => v !== undefined && v !== null)),
     };
     const plain = Boolean(env.NO_COLOR);
-    const f = {};
-    for (const k of FEATURES) {
-        const raw = o[k];
-        const mode = raw === true ? "on" : raw === false ? "off" : raw;
-        f[k] =
-            mode === "off"
-                ? null
-                : {
-                    glyph: !plain &&
-                        o.glyphs !== false &&
-                        mode !== "no-glyph" &&
-                        mode !== "plain",
-                    colour: canColour &&
-                        !plain &&
-                        o.colour !== false &&
-                        mode !== "no-colour" &&
-                        mode !== "plain",
-                };
-    }
+    const glyphs = o.glyphs;
+    const colour = o.colour;
+    const f = {
+        replySecrets: featureOption(o.replySecrets, plain, canColour, glyphs, colour),
+        replyUrls: featureOption(o.replyUrls, plain, canColour, glyphs, colour),
+        replyRefs: featureOption(o.replyRefs, plain, canColour, glyphs, colour),
+        replyState: featureOption(o.replyState, plain, canColour, glyphs, colour),
+        replyPaths: featureOption(o.replyPaths, plain, canColour, glyphs, colour),
+        replyFileLinks: featureOption(o.replyFileLinks, plain, canColour, glyphs, colour),
+        replyCommits: featureOption(o.replyCommits, plain, canColour, glyphs, colour),
+        replyTimes: featureOption(o.replyTimes, plain, canColour, glyphs, colour),
+        replyStatus: featureOption(o.replyStatus, plain, canColour, glyphs, colour),
+    };
     return {
         glyphs: o.glyphs !== false,
         colour: o.colour !== false,
-        editor: o.editor,
-        editorUrl: o.editorUrl,
-        timeFormat: o.timeFormat,
+        editor: typeof o.editor === "string" ? o.editor : "vscode",
+        editorUrl: typeof o.editorUrl === "string" ? o.editorUrl : "",
+        timeFormat: typeof o.timeFormat === "string" ? o.timeFormat : "both",
         f,
     };
 }
@@ -92,9 +99,11 @@ const EXT = {
     sql: "",
     lock: "",
 };
-export const fileGlyph = (name, kind) => kind === "dir"
-    ? GLYPH.dir
-    : (EXT[/\.([^.]+)$/.exec(name)?.[1]?.toLowerCase() ?? ""] ?? GLYPH.file);
+export function fileGlyph(name, kind) {
+    return kind === "dir"
+        ? GLYPH.dir
+        : (EXT[/\.([^.]+)$/.exec(name)?.[1]?.toLowerCase() ?? ""] ?? GLYPH.file);
+}
 export const STATE = {
     issue: { open: "", closed: "", completed: "", not_planned: "" },
     pr: {
@@ -173,20 +182,21 @@ const SECRET = new RegExp([
 ].join("|"), "g");
 const KEY_BLOCK = /(-----BEGIN [A-Z ]*PRIVATE KEY-----)[\s\S]*?(-----END [A-Z ]*PRIVATE KEY-----)/g;
 const MASK = "••••••••";
-function secrets(text, ft) {
-    const prefix = (g) => {
-        for (const x of g) {
-            if (typeof x === "string")
-                return x;
-        }
-        return "";
-    };
-    const styled = pass(text, SECRET, (_all, ...g) => mark("secret", glyphed(GLYPH.lock, ft, prefix(g)), ft.colour) +
+function secretPrefix(groups) {
+    for (const x of groups) {
+        if (typeof x === "string")
+            return x;
+    }
+    return "";
+}
+export function rewriteSecrets(text, ft) {
+    const styled = pass(text, SECRET, (_all, ...g) => mark("secret", glyphed(GLYPH.lock, ft, secretPrefix(g)), ft.colour) +
         mark("dim", MASK, ft.colour));
     return styled
-        .replace(SECRET, (_all, ...g) => prefix(g) + MASK)
+        .replace(SECRET, (_all, ...g) => secretPrefix(g) + MASK)
         .replace(KEY_BLOCK, `$1\n${MASK}\n$2`);
 }
+export const secrets = rewriteSecrets;
 const forgeOfHost = (host) => /github/i.test(host)
     ? "github"
     : /gitlab/i.test(host)
@@ -273,61 +283,68 @@ export function shortUrl(href, here) {
             : "";
     return { label: `${host}${path}`, kind: "page", forge };
 }
-function urls(text, ft, here) {
-    const one = (href, tail = "") => {
-        const s = shortUrl(href, here);
-        if (!s)
-            return null;
-        const g = (s.forge ? GLYPH[s.forge] : null) ?? GLYPH.globe;
-        const style = {
-            issue: "issue",
-            pr: "pr",
-            workitem: "workitem",
-            commit: "sha",
-        }[s.kind] ?? "host";
-        return (link(mark(style, glyphed(g, ft, esc(s.label)), ft.colour), href) + tail);
-    };
+const URL_KIND_STYLE = {
+    issue: "issue",
+    pr: "pr",
+    workitem: "workitem",
+    commit: "sha",
+};
+function formatUrlToken(href, here, ft, tail = "") {
+    const s = shortUrl(href, here);
+    if (!s)
+        return null;
+    const g = (s.forge ? GLYPH[s.forge] : null) ?? GLYPH.globe;
+    const style = URL_KIND_STYLE[s.kind] ?? "host";
+    return (link(mark(style, glyphed(g, ft, esc(s.label)), ft.colour), href) + tail);
+}
+export function rewriteUrls(text, ft, here) {
     return pass(text, /(?!)/, null, (span) => {
         let m = /^[a-z][\w+.-]*:\/\/\S+$/i.exec(span);
         if (m) {
             const execRes = /^(.*?)([.,;:!?]*)$/.exec(span);
             if (execRes?.[1] !== undefined && execRes[2] !== undefined) {
-                return one(execRes[1], execRes[2]) ?? span;
+                return formatUrlToken(execRes[1], here, ft, execRes[2]) ?? span;
             }
         }
         m = /^<(https?:[^>]+)>$/.exec(span);
         if (m?.[1])
-            return one(m[1]) ?? span;
+            return formatUrlToken(m[1], here, ft) ?? span;
         m = /^\[(https?:[^\]]+)\]\((https?:[^)]+)\)$/.exec(span);
         if (m?.[1] && m[2] && m[1] === m[2])
-            return one(m[2]) ?? span;
+            return formatUrlToken(m[2], here, ft) ?? span;
         return span;
     });
 }
+export const urls = rewriteUrls;
 const REF = /(?<![\w&#/#!@.\\-])(?:([\w-]+(?:\/[\w.-]+)+)|(AB))?([#!])(\d+)(?![\w-])/g;
-export const refKey = (r, { repo, sigil, n }) => `${r.forge}:${r.host ?? r.org ?? ""}:${repo ?? r.path ?? r.project ?? ""}:${sigil}${String(n)}`;
-function refs(text, ft, here, facts, st) {
+export function refKey(r, { repo, sigil, n }) {
+    return `${r.forge}:${r.host ?? r.org ?? ""}:${repo ?? r.path ?? r.project ?? ""}:${sigil}${String(n)}`;
+}
+function formatWorkItemToken(all, repo, ab, sigil, n, ft, here, facts, st) {
+    if (!all)
+        return "";
+    if (ab && sigil !== "#")
+        return all;
+    if (!sigil || !n)
+        return all;
+    const ref = { repo, sigil: ab ? "AB#" : sigil, n };
+    const t = target(here, ref);
+    if (!t)
+        return all;
+    const s = st ? facts.state(here, ref) : undefined;
+    const kind = s?.kind ?? t.kind;
+    const fallbackIcon = kind in KIND ? KIND[kind].icon : KIND.workitem.icon;
+    const icon = (s && STATE[kind]?.[s.state]) ?? fallbackIcon;
+    const colour = s ? (st?.colour ?? ft.colour) : ft.colour;
+    const unsure = !s && Boolean(st) && here.forge === "github" && ref.sigil === "#";
+    return link(mark(s ? s.state : kind, unsure ? esc(all) : glyphed(icon, ft, esc(all)), colour), t.url);
+}
+export function rewriteWorkItems(text, ft, here, facts, st) {
     if (!here)
         return text;
-    return pass(text, REF, (all, repo, ab, sigil, n) => {
-        if (!all)
-            return "";
-        if (ab && sigil !== "#")
-            return all;
-        if (!sigil || !n)
-            return all;
-        const ref = { repo, sigil: ab ? "AB#" : sigil, n };
-        const t = target(here, ref);
-        if (!t)
-            return all;
-        const s = st ? facts.state(here, ref) : undefined;
-        const kind = s?.kind ?? t.kind;
-        const icon = (s && STATE[kind]?.[s.state]) ?? KIND[kind].icon;
-        const colour = s ? (st?.colour ?? ft.colour) : ft.colour;
-        const unsure = !s && Boolean(st) && here.forge === "github" && ref.sigil === "#";
-        return link(mark(s ? s.state : kind, unsure ? esc(all) : glyphed(icon, ft, esc(all)), colour), t.url);
-    });
+    return pass(text, REF, (all, repo, ab, sigil, n) => formatWorkItemToken(all, repo, ab, sigil, n, ft, here, facts, st));
 }
+export const refs = rewriteWorkItems;
 export function refsRule(here, o) {
     if (!here || !o.f.replyRefs)
         return null;
@@ -417,7 +434,39 @@ export function editorUrl(abs, line, col, { editor = "vscode", editorUrl: custom
         .replaceAll("{line}", String(line ?? 1))
         .replaceAll("{col}", String(col ?? 1));
 }
-function paths(text, o, facts, ctx) {
+function formatPathToken(all, raw, line, col, o, facts, ctx, ft, fp, fl) {
+    if (!all || !raw)
+        return "";
+    const dots = /\.+$/.exec(raw)?.[0] ?? "";
+    const p = raw.slice(0, raw.length - dots.length);
+    if (!p || (dots && line))
+        return all;
+    const tail = all.slice(raw.length);
+    const abs = resolvePath(p, ctx);
+    const absolute = isAbs(slash(p)) || p.startsWith("~");
+    const kind = facts.stat(abs);
+    const root = fp && absolute ? rootOf(abs, facts) : null;
+    if (!kind || root === undefined)
+        return all;
+    const shown = fp && absolute
+        ? shortPath(abs, root, ctx.home)
+        : {
+            prefix: p.slice(0, Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\")) + 1),
+            name: base(slash(p)),
+        };
+    const g = line ? GLYPH.editor : fileGlyph(shown.name, kind);
+    const label = (ft.glyph ? `${g} ` : "") +
+        mark("dim", esc(shown.prefix), ft.colour) +
+        mark("name", esc(shown.name), ft.colour) +
+        (tail ? mark("line", tail, ft.colour) : "");
+    if (!fl)
+        return label + dots;
+    const url = kind === "dir"
+        ? `file://${encodeURI(abs.startsWith("/") ? abs : `/${abs}`)}`
+        : editorUrl(abs, line, col, o);
+    return link(label, url) + dots;
+}
+export function rewritePaths(text, o, facts, ctx) {
     const [fp, fl] = [o.f.replyPaths, o.f.replyFileLinks];
     if (!fp && !fl)
         return text;
@@ -425,39 +474,9 @@ function paths(text, o, facts, ctx) {
         glyph: Boolean(fp?.glyph ?? fl?.glyph),
         colour: Boolean(fp?.colour ?? fl?.colour),
     };
-    return pass(text, PATH, (all, raw, line, col) => {
-        if (!all || !raw)
-            return "";
-        const dots = /\.+$/.exec(raw)?.[0] ?? "";
-        const p = raw.slice(0, raw.length - dots.length);
-        if (!p || (dots && line))
-            return all;
-        const tail = all.slice(raw.length);
-        const abs = resolvePath(p, ctx);
-        const absolute = isAbs(slash(p)) || p.startsWith("~");
-        const kind = facts.stat(abs);
-        const root = fp && absolute ? rootOf(abs, facts) : null;
-        if (!kind || root === undefined)
-            return all;
-        const shown = fp && absolute
-            ? shortPath(abs, root, ctx.home)
-            : {
-                prefix: p.slice(0, Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\")) + 1),
-                name: base(slash(p)),
-            };
-        const g = line ? GLYPH.editor : fileGlyph(shown.name, kind);
-        const label = (ft.glyph ? `${g} ` : "") +
-            mark("dim", esc(shown.prefix), ft.colour) +
-            mark("name", esc(shown.name), ft.colour) +
-            (tail ? mark("line", tail, ft.colour) : "");
-        if (!fl)
-            return label + dots;
-        const url = kind === "dir"
-            ? `file://${encodeURI(abs.startsWith("/") ? abs : `/${abs}`)}`
-            : editorUrl(abs, line, col, o);
-        return link(label, url) + dots;
-    });
+    return pass(text, PATH, (all, raw, line, col) => formatPathToken(all, raw, line, col, o, facts, ctx, ft, fp, fl));
 }
+export const paths = rewritePaths;
 const SHA = /(?<![\w#/@.:-])(?=[0-9a-f]{0,39}[a-f])(?=[0-9a-f]{0,39}\d)[0-9a-f]{7,40}(?![\w-])/g;
 export function commitUrl(r, sha) {
     if (!r)
@@ -468,17 +487,19 @@ export function commitUrl(r, sha) {
         return `https://${r.host ?? "gitlab.com"}/${r.path ?? ""}/-/commit/${sha}`;
     return `https://dev.azure.com/${r.org ?? ""}/${r.project ?? ""}/_git/${r.repo ?? ""}/commit/${sha}`;
 }
-function commits(text, ft, here, facts) {
-    return pass(text, SHA, (sha) => {
-        if (!sha)
-            return "";
-        if (facts.commit(sha) !== true)
-            return sha;
-        const label = mark("sha", glyphed(GLYPH.commit, ft, sha), ft.colour);
-        const url = commitUrl(here, sha);
-        return url ? link(label, url) : label;
-    });
+function formatCommitToken(sha, ft, here, facts) {
+    if (!sha)
+        return "";
+    if (facts.commit(sha) !== true)
+        return sha;
+    const label = mark("sha", glyphed(GLYPH.commit, ft, sha), ft.colour);
+    const url = commitUrl(here, sha);
+    return url ? link(label, url) : label;
 }
+export function rewriteCommits(text, ft, here, facts) {
+    return pass(text, SHA, (sha) => formatCommitToken(sha, ft, here, facts));
+}
+export const commits = rewriteCommits;
 const ISO = /(?<![\w:-])(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?(?![\w:])/g;
 const MONTHS = [
     "Jan",
@@ -519,23 +540,25 @@ export function local(ms, now) {
     const month = MONTHS[d.getMonth()] ?? "";
     return `${String(d.getDate())} ${month}${year} ${hm}`;
 }
-function times(text, ft, fmt, now) {
-    return pass(text, ISO, (all, y, mo, d, h, mi, s, zone) => {
-        if (!all || !y || !mo || !d || !h || !mi)
-            return "";
-        const iso = `${y}-${mo}-${d}T${h}:${mi}:${s || "00"}${zone ? (zone === "Z" ? "Z" : zone.replace(/^([+-]\d{2})(\d{2})$/, "$1:$2")) : ""}`;
-        const ms = Date.parse(iso);
-        if (Number.isNaN(ms) || Number(mo) > 12 || Number(d) > 31)
-            return all;
-        const abs = local(ms, now);
-        const rel = ago(ms, now);
-        const head = fmt === "relative" ? rel : abs;
-        const label = (ft.glyph ? `${GLYPH.clock} ` : "") +
-            mark("time", head, ft.colour) +
-            (fmt === "both" ? ` ${mark("dim", `(${rel})`, ft.colour)}` : "");
-        return label;
-    });
+function formatTimeToken(all, y, mo, d, h, mi, s, zone, ft, fmt, now) {
+    if (!all || !y || !mo || !d || !h || !mi)
+        return "";
+    const iso = `${y}-${mo}-${d}T${h}:${mi}:${s ?? "00"}${zone ? (zone === "Z" ? "Z" : zone.replace(/^([+-]\d{2})(\d{2})$/, "$1:$2")) : ""}`;
+    const ms = Date.parse(iso);
+    if (Number.isNaN(ms) || Number(mo) > 12 || Number(d) > 31)
+        return all;
+    const abs = local(ms, now);
+    const rel = ago(ms, now);
+    const head = fmt === "relative" ? rel : abs;
+    const label = (ft.glyph ? `${GLYPH.clock} ` : "") +
+        mark("time", head, ft.colour) +
+        (fmt === "both" ? ` ${mark("dim", `(${rel})`, ft.colour)}` : "");
+    return label;
 }
+export function rewriteTimes(text, ft, fmt, now) {
+    return pass(text, ISO, (all, y, mo, d, h, mi, s, zone) => formatTimeToken(all, y, mo, d, h, mi, s, zone, ft, fmt, now));
+}
+export const times = rewriteTimes;
 const OK = /^(?:pass(?:ed|ing)?|ok|success(?:ful)?|succeeded|green|✓|✔|✅|✔️)$/i;
 const BAD = /^(?:fail(?:ed|ing|ure)?|errou?red|error|broken|red|✗|✘|❌)$/i;
 const SKIP = /^(?:skip(?:ped)?|pending|⊘|⏭|⏭️)$/i;
@@ -554,10 +577,12 @@ function badge(word, ft) {
             : word;
     return mark(s, text, ft.colour);
 }
-export const summary = (n, ft) => ["ok", "bad", "skip"]
-    .filter((k) => Boolean(n[k]))
-    .map((k) => mark(k, `${String(n[k] ?? 0)} ${SYMBOL[k] ?? ""}`, ft.colour))
-    .join(" · ");
+export function summary(n, ft) {
+    return ["ok", "bad", "skip"]
+        .filter((k) => Boolean(n[k]))
+        .map((k) => mark(k, `${String(n[k] ?? 0)} ${SYMBOL[k] ?? ""}`, ft.colour))
+        .join(" · ");
+}
 const ITEM = /^(\s*(?:[-*+]|\d+[.)])\s+)(.*)$/;
 const TAIL = new RegExp(`^(.*?\\S)(\\s*(?::|—|–|\\s-|→|->|=|\\.\\.\\.|…)\\s*|\\s+\\()(\\*{0,2})(${STATUS_WORD})(\\*{0,2})(\\)?)(\\s*\\.?)$`, "iu");
 const HEAD = new RegExp(`^(\\*{0,2})(✓|✔️?|✅|✗|✘|❌|⊘|⏭️?|PASS(?:ED)?|FAIL(?:ED)?|OK|SKIP(?:PED)?|ERROR)(\\*{0,2})(:?\\s+)(\\S.*)$`, "u");
@@ -575,7 +600,37 @@ function statusText(s, ft, count) {
     }
     return null;
 }
-function status(text, ft) {
+function transformTableStatusLine(line, ft, count) {
+    return line.replace(/(?<=\|)([^|]*)(?=\|)/g, (cell) => {
+        const w = cell.trim().replace(/^\*\*(.*)\*\*$/, "$1");
+        const s = statusOf(w);
+        if (!s)
+            return cell;
+        count(s);
+        return cell.replace(w, badge(w, ft));
+    });
+}
+function transformListStatusLine(line, ft, count) {
+    const execRes = ITEM.exec(line);
+    if (execRes?.[1] !== undefined && execRes[2] !== undefined) {
+        const lead = execRes[1];
+        const body = execRes[2];
+        const t = statusText(body, ft, count);
+        return t ? lead + t : line;
+    }
+    return line;
+}
+function transformNamedStatusLine(line, ft) {
+    const m = NAMED.exec(line);
+    return m?.[1] &&
+        m[2] &&
+        m[3] !== undefined &&
+        statusOf(m[2]) &&
+        !line.includes("`")
+        ? `${m[1]}${badge(m[2], ft)}${m[3]}`
+        : line;
+}
+export function rewriteStatuses(text, ft) {
     const out = [];
     let n = null;
     const close = () => {
@@ -603,38 +658,19 @@ function status(text, ft) {
                 n[s] = (n[s] ?? 0) + 1;
         };
         if (k === "table") {
-            out.push(line.replace(/(?<=\|)([^|]*)(?=\|)/g, (cell) => {
-                const w = cell.trim().replace(/^\*\*(.*)\*\*$/, "$1");
-                const s = statusOf(w);
-                if (!s)
-                    return cell;
-                count(s);
-                return cell.replace(w, badge(w, ft));
-            }));
+            out.push(transformTableStatusLine(line, ft, count));
             continue;
         }
         if (k === "list") {
-            const execRes = ITEM.exec(line);
-            if (execRes?.[1] !== undefined && execRes[2] !== undefined) {
-                const lead = execRes[1];
-                const body = execRes[2];
-                const t = statusText(body, ft, count);
-                out.push(t ? lead + t : line);
-                continue;
-            }
+            out.push(transformListStatusLine(line, ft, count));
+            continue;
         }
-        const m = NAMED.exec(line);
-        out.push(m?.[1] &&
-            m[2] &&
-            m[3] !== undefined &&
-            statusOf(m[2]) &&
-            !line.includes("`")
-            ? `${m[1]}${badge(m[2], ft)}${m[3]}`
-            : line);
+        out.push(transformNamedStatusLine(line, ft));
     }
     close();
     return out.join("\n");
 }
+export const status = rewriteStatuses;
 export const STATE_TTL_MS = 5 * 60_000;
 export const MISS_TTL_MS = 30_000;
 export function createFacts({ stat = async () => {
@@ -693,11 +729,17 @@ export function createFacts({ stat = async () => {
         },
     };
 }
+export function isRecord(value) {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+}
 export async function fetchState(run, r, { repo, sigil, n }) {
     const json = async (argv) => {
         try {
             const out = await run(argv);
-            return out ? JSON.parse(out) : null;
+            if (!out)
+                return null;
+            const parsed = JSON.parse(out);
+            return isRecord(parsed) ? parsed : null;
         }
         catch {
             return null;
@@ -711,9 +753,9 @@ export async function fetchState(run, r, { repo, sigil, n }) {
             r.host ?? "github.com",
             `repos/${repo ?? r.path ?? ""}/issues/${String(n)}`,
         ]);
-        if (!j?.state)
+        if (!j || typeof j.state !== "string")
             return null;
-        if (!j.pull_request)
+        if (!isRecord(j.pull_request))
             return {
                 kind: "issue",
                 state: j.state !== "closed"
@@ -743,7 +785,7 @@ export async function fetchState(run, r, { repo, sigil, n }) {
             r.host ?? "gitlab.com",
             `projects/${encodeURIComponent(repo ?? r.path ?? "")}/${mr ? "merge_requests" : "issues"}/${String(n)}`,
         ]);
-        if (!j?.state)
+        if (!j || typeof j.state !== "string")
             return null;
         const state = j.state === "merged"
             ? "merged"
@@ -768,7 +810,7 @@ export async function fetchState(run, r, { repo, sigil, n }) {
             "--output",
             "json",
         ]);
-        if (!j?.status)
+        if (!j || typeof j.status !== "string")
             return null;
         return {
             kind: "pr",
@@ -793,8 +835,10 @@ export async function fetchState(run, r, { repo, sigil, n }) {
         "--output",
         "json",
     ]);
-    const fields = j?.fields;
-    const s = fields?.["System.State"];
+    const fields = isRecord(j?.fields) ? j.fields : undefined;
+    const s = typeof fields?.["System.State"] === "string"
+        ? fields["System.State"]
+        : undefined;
     return s
         ? {
             kind: "workitem",
@@ -810,18 +854,18 @@ export function rewrite(text, o, ctx, facts) {
     const f = o.f;
     let t = text;
     if (f.replySecrets)
-        t = secrets(t, f.replySecrets);
+        t = rewriteSecrets(t, f.replySecrets);
     if (f.replyUrls)
-        t = urls(t, f.replyUrls, ctx.repo);
+        t = rewriteUrls(t, f.replyUrls, ctx.repo);
     if (f.replyRefs)
-        t = refs(t, f.replyRefs, ctx.repo, facts, f.replyState);
+        t = rewriteWorkItems(t, f.replyRefs, ctx.repo, facts, f.replyState);
     if (f.replyPaths || f.replyFileLinks)
-        t = paths(t, o, facts, ctx);
+        t = rewritePaths(t, o, facts, ctx);
     if (f.replyCommits)
-        t = commits(t, f.replyCommits, ctx.repo, facts);
+        t = rewriteCommits(t, f.replyCommits, ctx.repo, facts);
     if (f.replyTimes)
-        t = times(t, f.replyTimes, o.timeFormat, ctx.now ?? Date.now());
+        t = rewriteTimes(t, f.replyTimes, o.timeFormat, ctx.now ?? Date.now());
     if (f.replyStatus)
-        t = status(t, f.replyStatus);
+        t = rewriteStatuses(t, f.replyStatus);
     return t;
 }

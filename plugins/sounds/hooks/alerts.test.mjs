@@ -1,6 +1,36 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { alerts, ciNotice, clock, turnNotice, turnSound } from "./alerts.mjs";
+import { alerts, ciNotice, clock, detectContextAlert, generateLimitAlerts, turnNotice, turnSound, } from "./alerts.mjs";
+void test("detectContextAlert: separates context threshold check and alert generation", () => {
+    assert.deepEqual(detectContextAlert(75, 0), {
+        alert: null,
+        level: 0,
+    });
+    assert.deepEqual(detectContextAlert(85, 0), {
+        alert: { key: "soundContext", text: "Context 85%: compact soon" },
+        level: 80,
+    });
+    assert.deepEqual(detectContextAlert(85, 80), {
+        alert: null,
+        level: 80,
+    });
+    assert.deepEqual(detectContextAlert(95, 80), {
+        alert: { key: "soundContext", text: "Context 95%: compact now" },
+        level: 90,
+    });
+});
+void test("generateLimitAlerts: generates rate limit alerts above previous thresholds", () => {
+    const result = generateLimitAlerts({ five_hour: 85, seven_day: 100 }, { five_hour: 0, seven_day: 90 });
+    assert.deepEqual(result.alerts, [
+        { key: "soundLimit5h", text: "5h window 85% used" },
+        { key: "soundLimit7d", text: "7d window reached" },
+    ]);
+    assert.deepEqual(result.levels, {
+        five_hour: 80,
+        seven_day: 100,
+        spend_limit: 0,
+    });
+});
 void test("alerts: each level is announced once, per context and per limit, and re-arms after it is left", () => {
     const first = alerts(82, { five_hour: 10 });
     assert.deepEqual(first.alerts, [

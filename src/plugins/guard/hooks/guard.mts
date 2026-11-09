@@ -96,12 +96,13 @@ import {
   harnessName,
   recordAttrs,
 } from "./telemetry.mjs";
-import type {
-  HandleDeps,
-  HookInput,
-  HookOutputPayload,
-  PermissionDecision,
-  PluginVersionMap,
+import {
+  type HandleDeps,
+  type HookInput,
+  type HookOutputPayload,
+  type PermissionDecision,
+  type PluginVersionMap,
+  isRecord,
 } from "./types.mjs";
 
 interface TaskEntry {
@@ -109,10 +110,6 @@ interface TaskEntry {
   command?: string;
   id?: string;
   label?: string;
-}
-
-interface TasksJson {
-  tasks?: readonly TaskEntry[];
 }
 
 const quoteArg = (a: string): string =>
@@ -136,6 +133,28 @@ export interface TaskInput {
   workspaceFolder?: string;
 }
 
+function asTaskEntry(value: unknown): TaskEntry | undefined {
+  if (!isRecord(value)) return undefined;
+  return {
+    args: Array.isArray(value.args) ? value.args : undefined,
+    command: typeof value.command === "string" ? value.command : undefined,
+    id: typeof value.id === "string" ? value.id : undefined,
+    label: typeof value.label === "string" ? value.label : undefined,
+  };
+}
+
+export function asTaskInput(value: unknown): TaskInput {
+  if (!isRecord(value)) return {};
+  return {
+    id: typeof value.id === "string" ? value.id : undefined,
+    task: asTaskEntry(value.task),
+    workspaceFolder:
+      typeof value.workspaceFolder === "string"
+        ? value.workspaceFolder
+        : undefined,
+  };
+}
+
 // The command a task tool runs, or null when it cannot be read.
 export function taskCommand(
   tool: string,
@@ -149,11 +168,15 @@ export function taskCommand(
     const cleaned = text
       .replace(/^\s*\/\/.*$|\/\*[\s\S]*?\*\//gm, "")
       .replace(/,(\s*[}\]])/g, "$1");
-    const json = JSON.parse(cleaned) as TasksJson;
+    const json: unknown = JSON.parse(cleaned);
+    const tasks =
+      isRecord(json) && Array.isArray(json.tasks)
+        ? (json.tasks as TaskEntry[])
+        : undefined;
     const id = t.id ?? "";
     const label = id.indexOf(": ") > 0 ? id.slice(id.indexOf(": ") + 2) : id;
     return taskLine(
-      json.tasks?.find((x) => x.label === label || x.label === id),
+      tasks?.find((x) => isRecord(x) && (x.label === label || x.label === id)),
     );
   } catch {
     return null;
@@ -626,17 +649,15 @@ export function protectFacts(cwd?: string): ProtectFactsResult {
 
 const slashes = (p: string): string => p.replace(/\\/g, "/");
 
-interface ShellToolInput {
-  command?: unknown;
-}
-
 async function onShell(
   input: HookInput,
   state: StoredSessionState,
   deps: HandleDeps,
   ctx: RunContext,
 ): Promise<HandleResult> {
-  const rawCommand = (input.tool_input as ShellToolInput | undefined)?.command;
+  const rawCommand = isRecord(input.tool_input)
+    ? input.tool_input.command
+    : undefined;
   const command = typeof rawCommand === "string" ? rawCommand : "";
   if (!command) return {};
   const set = unattendedSet(command);
@@ -757,8 +778,7 @@ async function onShell(
       );
     }
 
-    const permissionMode = (input as { permission_mode?: string })
-      .permission_mode;
+    const permissionMode = input.permission_mode;
     const held =
       permissionMode === "auto"
         ? ["read", "edit"].filter((r) => !state.reminded.includes(r))
@@ -809,7 +829,7 @@ async function onShell(
           cmd_class: cmdClass(d.rule, command),
           tool: input.tool_name ?? "",
           session_id: input.session_id,
-          tool_use_id: (input as { tool_use_id?: string }).tool_use_id,
+          tool_use_id: input.tool_use_id,
           cmd_hash: commandHash(command),
           ...(d.rule === "host" ? hostAttrs(host) : {}),
         },
@@ -840,7 +860,7 @@ async function onShell(
           ...sampled,
           tool: input.tool_name ?? "",
           session_id: input.session_id,
-          tool_use_id: (input as { tool_use_id?: string }).tool_use_id,
+          tool_use_id: input.tool_use_id,
           cmd_hash: commandHash(command),
         },
         input.cwd,
@@ -856,7 +876,7 @@ async function onShell(
           cmd_class: cmdClass(d.rule, command),
           tool: input.tool_name ?? "",
           session_id: input.session_id,
-          tool_use_id: (input as { tool_use_id?: string }).tool_use_id,
+          tool_use_id: input.tool_use_id,
         },
         input.cwd,
       );
@@ -962,7 +982,7 @@ async function onShell(
           cmd_class: "guard-error",
           tool: input.tool_name ?? "",
           session_id: input.session_id,
-          tool_use_id: (input as { tool_use_id?: string }).tool_use_id,
+          tool_use_id: input.tool_use_id,
           cmd_hash: commandHash(command),
         },
         input.cwd,
@@ -978,23 +998,13 @@ async function onShell(
   }
 }
 
-interface EditToolInput {
-  Path?: unknown;
-  filePath?: unknown;
-  file_path?: unknown;
-  path?: unknown;
-}
-
 // The files an edit tool call writes, moves or deletes: editedPaths, the `Path` spelling, and the `*** Delete File:`
 // and `*** Move to:` lines of an apply_patch text (the whole tool_input, `command` or `input`).
 // Each with its lexical reading (`resolve`: `d/../x` is `x`) and its raw one (made absolute, nothing normalised: the
 // kernel follows `d` before the `..`).
 function touchedFiles(input: HookInput): { lex: string; raw: string }[] {
   const t = input.tool_input;
-  const obj =
-    t && typeof t === "object"
-      ? (t as EditToolInput & Record<string, unknown>)
-      : {};
+  const obj = isRecord(t) ? t : {};
   const text =
     typeof t === "string"
       ? t
@@ -1137,7 +1147,7 @@ function onEdit(
           cmd_class: "protected-path",
           tool: input.tool_name ?? "",
           session_id: input.session_id,
-          tool_use_id: (input as { tool_use_id?: string }).tool_use_id,
+          tool_use_id: input.tool_use_id,
         },
         input.cwd,
       );
@@ -1173,7 +1183,7 @@ function onEdit(
       }
     }
   }
-  const t = (input.tool_input as EditToolInput | undefined) ?? {};
+  const t = isRecord(input.tool_input) ? input.tool_input : {};
   const reminded = new Set(state.reminded);
   const filePath = t.file_path ?? t.path ?? t.filePath ?? t.Path;
   const d = evaluateEdit({
@@ -1192,21 +1202,11 @@ function onEdit(
       cmd_class: "hint",
       tool: input.tool_name ?? "",
       session_id: input.session_id,
-      tool_use_id: (input as { tool_use_id?: string }).tool_use_id,
+      tool_use_id: input.tool_use_id,
     },
     input.cwd,
   );
   return note(d.context ?? "");
-}
-
-interface SpawnToolInput {
-  Model?: unknown;
-  TypeName?: unknown;
-  agentName?: unknown;
-  agent_type?: unknown;
-  effort?: unknown;
-  model?: unknown;
-  subagent_type?: unknown;
 }
 
 function onSpawn(
@@ -1214,7 +1214,7 @@ function onSpawn(
   state: StoredSessionState,
   deps: HandleDeps,
 ): HandleResult {
-  const t = (input.tool_input as SpawnToolInput | undefined) ?? {};
+  const t = isRecord(input.tool_input) ? input.tool_input : {};
   const reminded = new Set(state.reminded);
   const typeVal = t.subagent_type ?? t.agent_type ?? t.agentName ?? t.TypeName;
   const modelVal = t.model ?? t.Model;
@@ -1236,7 +1236,7 @@ function onSpawn(
       cmd_class: "routing",
       tool: input.tool_name ?? "",
       session_id: input.session_id,
-      tool_use_id: (input as { tool_use_id?: string }).tool_use_id,
+      tool_use_id: input.tool_use_id,
     },
     input.cwd,
   );
@@ -1316,7 +1316,172 @@ export interface ExtendedHookInput extends HookInput {
   permission_mode?: string;
   toolCall?: ToolCallShape;
   transcriptPath?: string;
+  transcript_path?: string;
   workspacePaths?: readonly string[];
+}
+
+export function handleSessionEnd(store: SessionStoreInstance): HandleResult {
+  store.sweep();
+  return {};
+}
+
+export function handleSessionStart(
+  input: ExtendedHookInput,
+  deps: HandleDeps,
+  session: string | undefined,
+  state: StoredSessionState,
+): HandleResult {
+  if (!state.announced) {
+    try {
+      const { self, installed } = installedVersions(deps.pluginRoot, input.cwd);
+      if (self.versioned && self.version) installed[self.name] = self.version;
+      const start = runContext(deps.env ?? {}, {
+        dataDir: deps.dataDir,
+        sessionId: session,
+        cache: deps.registrationCache,
+        vet: deps.runVet,
+      });
+      const registered = start.state === "registered" ? start : null;
+      const attrs = Object.fromEntries(
+        Object.entries(installed).map(([p, v]) => [
+          `plugin_version_${p.replace(/[^a-z0-9]/g, "_")}`,
+          v,
+        ]),
+      );
+      fire(
+        deps,
+        "guard.session",
+        {
+          session_id: input.session_id,
+          source: input.source,
+          ...attrs,
+          ...sessionAttrs(registered),
+        },
+        input.cwd,
+      );
+      state.announced = true;
+    } catch {
+      // a missing record changes nothing
+    }
+  }
+  return {};
+}
+
+export function handleUserPromptSubmit(
+  input: ExtendedHookInput,
+  state: StoredSessionState,
+): HandleResult {
+  const m = /^\s*(?:\/(?:skill:)?|\$)([\w:-]+)/.exec(input.prompt ?? "");
+  if (m?.[1]) state.loaded.push(m[1]);
+  return {};
+}
+
+export async function handlePreToolUse(
+  input: ExtendedHookInput,
+  deps: HandleDeps,
+  session: string | undefined,
+  state: StoredSessionState,
+): Promise<HandleResult> {
+  const tool = (input.tool_name ?? "").toLowerCase();
+  const t = isRecord(input.tool_input) ? input.tool_input : {};
+
+  if (isReadTool(tool)) {
+    const readPath =
+      typeof t.file_path === "string"
+        ? t.file_path
+        : typeof t.path === "string"
+          ? t.path
+          : typeof t.filePath === "string"
+            ? t.filePath
+            : typeof t.Path === "string"
+              ? t.Path
+              : "";
+    state.loaded.push(...skillsRead([readPath]));
+  } else if (isShellTool(tool)) {
+    state.loaded.push(
+      ...skillsRead(readerArgs(typeof t.command === "string" ? t.command : "")),
+    );
+  }
+
+  const ctx = runContext(deps.env ?? {}, {
+    dataDir: deps.dataDir,
+    sessionId: session,
+    cache: deps.registrationCache,
+    vet: deps.runVet,
+  });
+
+  let out: HandleResult = {};
+
+  if (ctx.state === "deny") {
+    // A run whose registration failed, or that set only legacy variables: every tool call guard sees is denied.
+    if (ctx.rule === "run-unregistered")
+      recordUnregistered(
+        deps.env ?? {},
+        deps.dataDir ?? pluginDataDir(deps.env ?? process.env),
+        session,
+      );
+    const cmd =
+      isShellTool(tool) && typeof t.command === "string" ? t.command : null;
+    appendDecision(deps.env, {
+      decision: "deny",
+      rule: ctx.rule,
+      ...(cmd === null ? {} : { cmd_hash: commandHash(cmd) }),
+    });
+    fire(
+      deps,
+      "guard.decision",
+      {
+        rule: ctx.rule,
+        action: "deny",
+        cmd_class: ctx.rule,
+        tool: input.tool_name ?? "",
+        session_id: input.session_id,
+        tool_use_id: input.tool_use_id,
+      },
+      input.cwd,
+    );
+    out = preToolUse("deny", denyReason(ctx, "tool"), deps.harness);
+  } else if (
+    tool === "skill" &&
+    (typeof t.skill === "string" || typeof t.name === "string")
+  ) {
+    state.loaded.push(
+      typeof t.skill === "string"
+        ? t.skill
+        : typeof t.name === "string"
+          ? t.name
+          : "",
+    );
+  } else if (isShellTool(tool)) {
+    out = await onShell(input, state, deps, ctx);
+  } else if (isEditTool(tool)) {
+    out = onEdit(input, state, deps, ctx);
+  } else if (rules.routing.tools.includes(tool)) {
+    out = onSpawn(input, state, deps);
+  } else if (isTaskTool(tool)) {
+    const taskInput = asTaskInput(input.tool_input);
+    const command = taskCommand(tool, taskInput, input.cwd);
+    if (command) {
+      out = await onShell(
+        { ...input, tool_input: { command } },
+        state,
+        deps,
+        ctx,
+      );
+    } else if (tool === "run_task") {
+      out = note(
+        `The guard could not read the command of task "${taskInput.id ?? ""}" in .vscode/tasks.json, so it did not check it. If it deletes, force-pushes or reads secrets, confirm with the user first.`,
+      );
+    }
+  }
+
+  try {
+    out = onStale(input, state, deps, out);
+  } catch {
+    // the note is a nicety: a decision already made stands
+  }
+
+  return out;
 }
 
 export async function handle(
@@ -1355,156 +1520,18 @@ export async function handle(
 
   const loadedBefore = [...state.loaded];
   const event = input.hook_event_name;
-  let out: HandleResult = {};
 
   if (event === "SessionEnd") {
-    store.sweep();
-    return out;
+    return handleSessionEnd(store);
   }
 
+  let out: HandleResult = {};
   if (event === "SessionStart") {
-    if (!state.announced) {
-      try {
-        const { self, installed } = installedVersions(
-          deps.pluginRoot,
-          input.cwd,
-        );
-        if (self.versioned && self.version) installed[self.name] = self.version;
-        const start = runContext(deps.env ?? {}, {
-          dataDir: deps.dataDir,
-          sessionId: session,
-          cache: deps.registrationCache,
-          vet: deps.runVet,
-        });
-        const registered = start.state === "registered" ? start : null;
-        const attrs = Object.fromEntries(
-          Object.entries(installed).map(([p, v]) => [
-            `plugin_version_${p.replace(/[^a-z0-9]/g, "_")}`,
-            v,
-          ]),
-        );
-        fire(
-          deps,
-          "guard.session",
-          {
-            session_id: input.session_id,
-            source: input.source,
-            ...attrs,
-            ...sessionAttrs(registered),
-          },
-          input.cwd,
-        );
-        state.announced = true;
-      } catch {
-        // a missing record changes nothing
-      }
-    }
+    out = handleSessionStart(input, deps, session, state);
   } else if (event === "UserPromptSubmit") {
-    const m = /^\s*(?:\/(?:skill:)?|\$)([\w:-]+)/.exec(input.prompt ?? "");
-    if (m?.[1]) state.loaded.push(m[1]);
+    out = handleUserPromptSubmit(input, state);
   } else if (event === "PreToolUse") {
-    const tool = (input.tool_name ?? "").toLowerCase();
-    const t =
-      (input.tool_input as
-        | (EditToolInput & {
-            command?: unknown;
-            name?: unknown;
-            skill?: unknown;
-          })
-        | undefined) ?? {};
-
-    if (isReadTool(tool)) {
-      const readPath =
-        typeof t.file_path === "string"
-          ? t.file_path
-          : typeof t.path === "string"
-            ? t.path
-            : typeof t.filePath === "string"
-              ? t.filePath
-              : "";
-      state.loaded.push(...skillsRead([readPath]));
-    } else if (isShellTool(tool)) {
-      state.loaded.push(
-        ...skillsRead(
-          readerArgs(typeof t.command === "string" ? t.command : ""),
-        ),
-      );
-    }
-
-    const ctx = runContext(deps.env ?? {}, {
-      dataDir: deps.dataDir,
-      sessionId: session,
-      cache: deps.registrationCache,
-      vet: deps.runVet,
-    });
-
-    if (ctx.state === "deny") {
-      // A run whose registration failed, or that set only legacy variables: every tool call guard sees is denied.
-      if (ctx.rule === "run-unregistered")
-        recordUnregistered(
-          deps.env ?? {},
-          deps.dataDir ?? pluginDataDir(deps.env ?? process.env),
-          session,
-        );
-      const cmd =
-        isShellTool(tool) && typeof t.command === "string" ? t.command : null;
-      appendDecision(deps.env, {
-        decision: "deny",
-        rule: ctx.rule,
-        ...(cmd === null ? {} : { cmd_hash: commandHash(cmd) }),
-      });
-      fire(
-        deps,
-        "guard.decision",
-        {
-          rule: ctx.rule,
-          action: "deny",
-          cmd_class: ctx.rule,
-          tool: input.tool_name ?? "",
-          session_id: input.session_id,
-          tool_use_id: (input as { tool_use_id?: string }).tool_use_id,
-        },
-        input.cwd,
-      );
-      out = preToolUse("deny", denyReason(ctx, "tool"), deps.harness);
-    } else if (
-      tool === "skill" &&
-      (typeof t.skill === "string" || typeof t.name === "string")
-    ) {
-      state.loaded.push(
-        typeof t.skill === "string"
-          ? t.skill
-          : typeof t.name === "string"
-            ? t.name
-            : "",
-      );
-    } else if (isShellTool(tool)) {
-      out = await onShell(input, state, deps, ctx);
-    } else if (isEditTool(tool)) {
-      out = onEdit(input, state, deps, ctx);
-    } else if (rules.routing.tools.includes(tool)) {
-      out = onSpawn(input, state, deps);
-    } else if (isTaskTool(tool)) {
-      const command = taskCommand(tool, t as TaskInput, input.cwd);
-      if (command) {
-        out = await onShell(
-          { ...input, tool_input: { command } },
-          state,
-          deps,
-          ctx,
-        );
-      } else if (tool === "run_task") {
-        out = note(
-          `The guard could not read the command of task "${(t as TaskInput).id ?? ""}" in .vscode/tasks.json, so it did not check it. If it deletes, force-pushes or reads secrets, confirm with the user first.`,
-        );
-      }
-    }
-
-    try {
-      out = onStale(input, state, deps, out);
-    } catch {
-      // the note is a nicety: a decision already made stands
-    }
+    out = await handlePreToolUse(input, deps, session, state);
   }
 
   state.loaded = state.loaded.map(bareSkill);
@@ -1549,10 +1576,15 @@ export function codexReviewer(transcript: string): string | undefined {
     .pop();
   if (!ctx) return undefined;
   try {
-    const payload = (
-      JSON.parse(ctx) as { payload?: { approvals_reviewer?: string } }
-    ).payload;
-    return payload?.approvals_reviewer;
+    const parsed: unknown = JSON.parse(ctx);
+    if (
+      isRecord(parsed) &&
+      isRecord(parsed.payload) &&
+      typeof parsed.payload.approvals_reviewer === "string"
+    ) {
+      return parsed.payload.approvals_reviewer;
+    }
+    return undefined;
   } catch {
     return undefined;
   }
@@ -1679,10 +1711,8 @@ async function main(): Promise<void> {
     readTool: !noAsk,
     nativeAsk: noAsk
       ? (command, rule) =>
-          codexAsks(
-            process.env,
-            (input as { transcript_path?: string }).transcript_path,
-          )?.(command, rule) ?? false
+          codexAsks(process.env, input.transcript_path)?.(command, rule) ??
+          false
       : undefined,
     emit: (event, attrs, cwd) =>
       new Promise((r) => setImmediate(r)).then(() =>
@@ -1694,22 +1724,28 @@ async function main(): Promise<void> {
     let agOut: AntigravityOut = { decision: "allow" };
     if (out.stdout) {
       try {
-        const parsed = JSON.parse(out.stdout) as {
-          decision?: string;
-          hookSpecificOutput?: {
-            permissionDecision?: string;
-            permissionDecisionReason?: string;
-          };
-          reason?: string;
-        };
-        const decision =
-          parsed.decision ?? parsed.hookSpecificOutput?.permissionDecision;
-        const reason =
-          parsed.reason ?? parsed.hookSpecificOutput?.permissionDecisionReason;
-        if (decision === "deny" || decision === "ask") {
-          agOut = { decision, ...(reason ? { reason } : {}) };
-        } else if (decision === "allow") {
-          agOut = { decision: "allow", ...(reason ? { reason } : {}) };
+        const parsed: unknown = JSON.parse(out.stdout);
+        if (isRecord(parsed)) {
+          const hso = isRecord(parsed.hookSpecificOutput)
+            ? parsed.hookSpecificOutput
+            : undefined;
+          const decision =
+            (typeof parsed.decision === "string"
+              ? parsed.decision
+              : undefined) ??
+            (typeof hso?.permissionDecision === "string"
+              ? hso.permissionDecision
+              : undefined);
+          const reason =
+            (typeof parsed.reason === "string" ? parsed.reason : undefined) ??
+            (typeof hso?.permissionDecisionReason === "string"
+              ? hso.permissionDecisionReason
+              : undefined);
+          if (decision === "deny" || decision === "ask") {
+            agOut = { decision, ...(reason ? { reason } : {}) };
+          } else if (decision === "allow") {
+            agOut = { decision: "allow", ...(reason ? { reason } : {}) };
+          }
         }
       } catch {
         agOut = { decision: "allow" };

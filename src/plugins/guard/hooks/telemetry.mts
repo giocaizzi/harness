@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 
 import { emit, otelEnabled, repoSlug, traceContext } from "../core/otel.mjs";
 import { canonicalHarnessName, detectHarnessName } from "./harnesses.mjs";
+import { isRecord } from "./types.mjs";
 
 export { repoSlug };
 
@@ -24,10 +25,6 @@ export function harnessName(
 
 let version: string | null | undefined;
 
-interface PluginManifest {
-  version?: string;
-}
-
 // The installed guard's version, from its own plugin.json; read once per process.
 export function guardVersion(): string | null {
   if (version !== undefined) return version;
@@ -41,7 +38,11 @@ export function guardVersion(): string | null {
       ),
       "utf8",
     );
-    version = (JSON.parse(raw) as PluginManifest).version ?? null;
+    const parsed: unknown = JSON.parse(raw);
+    version =
+      isRecord(parsed) && typeof parsed.version === "string"
+        ? parsed.version
+        : null;
   } catch {
     version = null;
   }
@@ -385,31 +386,46 @@ export async function emitAntigravityUsage(
   for (const line of lines) {
     if (!line.trim()) continue;
     try {
-      const step = JSON.parse(line) as AntigravityTranscriptStep;
-      const idx = step.step_index;
-      if (typeof idx === "number" && idx > (lastStep ?? -1)) {
-        if (idx > maxStep) maxStep = idx;
-        if (step.type === "PLANNER_RESPONSE") {
-          const inTok = nonNegativeFiniteNumber(step.input_tokens);
-          const outTok = nonNegativeFiniteNumber(step.output_tokens);
-          const cacheReadTok = nonNegativeFiniteNumber(step.cache_read_tokens);
-          const model = presentString(modelName);
-          promises.push(
-            emitRecord(
-              "api_request",
-              usageAttributes({
-                harness: "antigravity",
-                cwd,
-                sessionId: conversationId,
-                model,
-                provider: "google",
-                inputTokens: inTok,
-                outputTokens: outTok,
-                cacheReadTokens: cacheReadTok,
-                env,
-              }),
-            ).catch(() => undefined),
-          );
+      const step: unknown = JSON.parse(line);
+      if (isRecord(step)) {
+        const idx =
+          typeof step.step_index === "number" ? step.step_index : undefined;
+        if (typeof idx === "number" && idx > (lastStep ?? -1)) {
+          if (idx > maxStep) maxStep = idx;
+          if (step.type === "PLANNER_RESPONSE") {
+            const inTok = nonNegativeFiniteNumber(
+              typeof step.input_tokens === "number"
+                ? step.input_tokens
+                : undefined,
+            );
+            const outTok = nonNegativeFiniteNumber(
+              typeof step.output_tokens === "number"
+                ? step.output_tokens
+                : undefined,
+            );
+            const cacheReadTok = nonNegativeFiniteNumber(
+              typeof step.cache_read_tokens === "number"
+                ? step.cache_read_tokens
+                : undefined,
+            );
+            const model = presentString(modelName);
+            promises.push(
+              emitRecord(
+                "api_request",
+                usageAttributes({
+                  harness: "antigravity",
+                  cwd,
+                  sessionId: conversationId,
+                  model,
+                  provider: "google",
+                  inputTokens: inTok,
+                  outputTokens: outTok,
+                  cacheReadTokens: cacheReadTok,
+                  env,
+                }),
+              ).catch(() => undefined),
+            );
+          }
         }
       }
     } catch {
