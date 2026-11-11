@@ -138,6 +138,13 @@ jobs:
         run: |
           node --test --test-reporter=tap tests/land-scripts-ps1.test.mjs | tee tap.txt
           if ! grep -qx '# tests 75' tap.txt || ! grep -qx '# pass 75' tap.txt; then echo "::error::expected 75 land-many.ps1, resync-after-squash.ps1 and verify-merge-only.ps1 tests to pass"; exit 1; fi
+      # The repo sweep on Windows paths: node and git only, so it runs without a POSIX shell.
+      - shell: bash
+        env:
+          GUARD_OTEL: "off"
+        run: |
+          node --test --test-reporter=tap tests/repo-sweep.test.mjs | tee tap.txt
+          if ! grep -qx '# tests 17' tap.txt || ! grep -qx '# pass 17' tap.txt; then echo "::error::expected 17 repo-sweep tests to pass"; exit 1; fi
       # Guard's result check and the stop hook's result gate: Windows path forms, BOM and CRLF, the hook's output per harness.
       - shell: bash
         env:
