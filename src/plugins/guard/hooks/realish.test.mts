@@ -151,3 +151,40 @@ void test(
     assert.match(d.reason ?? "", /a\.txt:\d+ \(generic-api-key\)/);
   },
 );
+
+void test(
+  "realish: `git push --all` scans the branches it sends, not a local stash it never sends",
+  {
+    skip: !haveGitleaks,
+    todo: "xfail: pushJob maps --all/--branches to the `--all` revision (refs/stash, other remotes); `--branches` is what they push",
+  },
+  async () => {
+    const root = mkdtempSync(join(tmpdir(), "scan-all-"));
+    const origin = join(root, "origin.git");
+    const clone = join(root, "clone");
+    sh(root, "git", "init", "-q", "--bare", origin);
+    sh(root, "git", "clone", "-q", origin, clone);
+    for (const kv of ["user.email=a@b.c", "user.name=n"])
+      sh(clone, "git", "config", ...kv.split("="));
+    writeFileSync(join(clone, "a.txt"), "clean\n");
+    sh(clone, "git", "add", ".");
+    sh(clone, "git", "commit", "-qm", "chore: clean");
+    sh(clone, "git", "push", "-q", "-u", "origin", "HEAD");
+    // the key lives only in a local stash: `git push --all` sends refs/heads/*, never refs/stash
+    writeFileSync(join(clone, "app.env"), planted);
+    sh(clone, "git", "stash", "push", "-q", "-u");
+    for (const command of [
+      `git -C ${clone} push --all origin`,
+      `git -C ${clone} push --branches origin`,
+    ]) {
+      const d = evaluateCommand({
+        command,
+        state: { reminded: new Set() },
+        host: { load1: 1, freeGb: 100 },
+        pushScan: await pushScanFacts(command, rules, realRun, {}),
+        rules,
+      });
+      assert.notEqual(d.action, "deny", `${command}: ${d.reason ?? ""}`);
+    }
+  },
+);

@@ -352,7 +352,8 @@ describe("--auto", { concurrency: true }, () => {
   });
 });
 
-// Review findings (PR #420, round 1): each case states the safe behaviour the sweep must keep.
+// Review findings (PR #420, rounds 1 and 2): each case states the safe behaviour the sweep must keep; a `todo` one is
+// x-failing until the sweep is fixed.
 describe("review findings", () => {
   const DAY = 86400;
   let fx;
@@ -377,10 +378,16 @@ describe("review findings", () => {
     secretStash = fx.git("rev-parse", "stash@{0}");
     // 2. An ignored local secret in a clean, idle, pushed worktree (draft-idle is removed by --apply).
     mkdirSync(join(fx.clone, ".git", "info"), { recursive: true });
-    writeFileSync(join(fx.clone, ".git", "info", "exclude"), ".env\n");
+    writeFileSync(join(fx.clone, ".git", "info", "exclude"), ".env\ncerts/\n");
     const env = join(fx.trees.idle, ".env");
     writeFileSync(env, "TOKEN=local-only\n");
     utimesSync(env, fx.now - 3 * DAY, fx.now - 3 * DAY);
+    // 5. (round 2) The same in an ignored directory: `git status --ignored` names only `certs/`, not the key in it
+    //    (ro-wt is removed by --apply).
+    const certs = join(fx.trees.readonly, "certs");
+    mkdirSync(certs);
+    writeFileSync(join(certs, "server.key"), "local-only\n");
+    for (const p of [join(certs, "server.key"), certs]) utimesSync(p, fx.now - 3 * DAY, fx.now - 3 * DAY);
     // 3. A branch name reused after its PR closed: new commits on origin that no PR ever had.
     gitAt(8 * DAY, "checkout", "-q", "-b", "reuse", fx.tips["closed-8d"]);
     writeFileSync(join(fx.clone, "reuse.txt"), "work after the PR closed\n");
@@ -415,6 +422,14 @@ describe("review findings", () => {
     "a worktree holding an ignored local file (.env) is not removed",
     () => {
       assert.ok(existsSync(join(fx.trees.idle, ".env")), "the ignored .env was deleted with the worktree");
+    },
+  );
+
+  test(
+    "a worktree holding a secret inside an ignored directory (certs/server.key) is not removed",
+    { todo: "xfail: worktreeState reads `git status --porcelain --ignored`, which lists an ignored dir as `certs/` only" },
+    () => {
+      assert.ok(existsSync(join(fx.trees.readonly, "certs", "server.key")), "the ignored key was deleted with the worktree");
     },
   );
 
