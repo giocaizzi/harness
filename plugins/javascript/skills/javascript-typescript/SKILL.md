@@ -11,7 +11,7 @@ Baseline: the [Google TypeScript Style Guide](https://google.github.io/styleguid
 
 - **TypeScript 7** (the native compiler: `tsc` from `typescript@7`) type-checks and emits. typescript-eslint cannot load TypeScript 7 until its API ships (7.1), so TypeScript 6 stays installed under the `typescript` name for linters and TypeScript 7 under an alias: `"typescript": "npm:@typescript/typescript6@^6.0.2"`, `"@typescript/native": "npm:typescript@^7.0.2"`. `tsc` runs 7; drop the alias once typescript-eslint supports 7.
 - **Node**: apps run on the Active LTS (26) pinned in `.node-version`; libraries declare `engines.node` as the oldest supported LTS (`>=22.18` until Node 22 leaves support on 2027-04-30). ESM only (`"type": "module"`): CommonJS consumers can `require()` it.
-- **pnpm**, pinned by `packageManager` (`pnpm@12.x.y`); pnpm switches itself to that version. Node 25+ no longer ships Corepack, so nothing relies on it. Keep pnpm's default `minimumReleaseAge` (one day).
+- **pnpm**, pinned by `packageManager` (`pnpm@12.x.y`); pnpm switches itself to that version. Node 25+ no longer ships Corepack, so nothing relies on it. Keep pnpm's default `minimumReleaseAge` (one day). Each worktree's `node_modules` is links into pnpm's per-user store, so keep the store on the same filesystem as the worktrees; Playwright browsers stay in their per-user cache, never `PLAYWRIGHT_BROWSERS_PATH=0` (it installs them into `node_modules` per worktree): `host-hygiene`, Shared stores.
 
 ## Tooling
 

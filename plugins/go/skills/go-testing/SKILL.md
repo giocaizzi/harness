@@ -44,7 +44,7 @@ Baseline: the test sections of the [Google Go Style Guide](https://google.github
 - **Golden files** for large or structured output: `testdata/<TestName>.golden`, a `-update` flag that rewrites them, scrubbed of ids and times before comparing. Review golden diffs like code.
 - **Fuzz** every parser and decoder of outside input (config, protocol frames, CLI args, paths): `FuzzX(f *testing.F)` with seeds from real cases, asserting properties (no panic, round-trip, no path escape). Failing inputs land in `testdata/fuzz/` and are committed as regression cases.
 - **Benchmarks** with `for b.Loop() { ... }`, never `b.N`; compare with `benchstat`, never by eye.
-- **Integration tests** (network, real services, Docker) carry `//go:build integration` and run via `make test-integration`. `testing.Short()` skips slow but hermetic tests in a `check-fast` target when the full suite takes minutes; CI runs everything.
+- **Integration tests** (network, real services, Docker) carry `//go:build integration` and run via `make test-integration`. `testing.Short()` skips slow but hermetic tests in a `check-fast` target when the full suite takes minutes; CI runs everything. Binaries and assets a suite downloads (envtest, browsers, fixtures) come from per-user shared stores, never a dir in the worktree (`host-hygiene`, Shared stores).
 
 Read [references/PATTERNS.md](./references/PATTERNS.md) for table test with fake, test compacting, xfail subtest, golden helper, fake, synctest, fuzz, benchmark, httptest and process test, all run on Go 1.27.2.
 
