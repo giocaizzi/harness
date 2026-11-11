@@ -1,10 +1,10 @@
 // Status lines for both CLIs (`statusLine.command`), one script: `node statusline.mjs claude` for Claude Code's two-line
-// prompt (user, git, GCP, path, model, context, rate-limit windows, cost), `node statusline.mjs subagent` for Claude
+// prompt (session, model and effort, context, rate-limit windows, cost; path, git), `node statusline.mjs subagent` for Claude
 // Code's agent-panel rows (`subagentStatusLine.command`), no argument for Copilot CLI's token-weather line and its running subagents. Each CLI pipes its session status as JSON on stdin. Copilot's token totals are cumulative and include cache
 // reads and writes, so its hit rate is the session's, not the last turn's. No TTL: Copilot has none.
 import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
-import { homedir, hostname, tmpdir, userInfo } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { ICON, battery, forecast, glyph, tokens } from "./weather.mjs";
@@ -66,30 +66,6 @@ export function remaining(resetsAt, now) {
             ? `${String(h)}h${String(m)}m`
             : `${String(m)}m`;
 }
-export function gcpProject(env = process.env, home = homedir(), platform = process.platform) {
-    if (env.CLOUDSDK_CORE_PROJECT)
-        return env.CLOUDSDK_CORE_PROJECT;
-    const dir = env.CLOUDSDK_CONFIG ??
-        (platform === "win32"
-            ? join(env.APPDATA ?? "", "gcloud")
-            : join(home, ".config", "gcloud"));
-    try {
-        const readActive = () => {
-            try {
-                const val = readFileSync(join(dir, "active_config"), "utf8").trim();
-                return val ? val : "default";
-            }
-            catch {
-                return "default";
-            }
-        };
-        const name = env.CLOUDSDK_ACTIVE_CONFIG_NAME ?? readActive();
-        return /^\[core\][^\[]*?^project\s*=\s*(\S+)/ms.exec(readFileSync(join(dir, "configurations", `config_${name}`), "utf8"))?.[1];
-    }
-    catch {
-        return undefined;
-    }
-}
 export function gitState(cwd) {
     try {
         const out = execFileSync("git", ["-C", cwd, "status", "--porcelain=v2", "--branch", "-uno"], { encoding: "utf8", timeout: 1500, stdio: ["ignore", "pipe", "ignore"] });
@@ -113,21 +89,16 @@ export function claudeStatusline(status, facts) {
             : cwd
         : "~";
     const part = (icon, value, color) => `${paint(C.grey, "[")}${paint(color, `${icon} ${value}`)}${paint(C.grey, "]")}`;
-    const line1 = [
-        part(ICON.user ?? "", `${facts.user ?? ""}@${facts.host ?? ""}`, C.white),
-    ];
-    if (facts.git?.branch)
-        line1.push(part(ICON.branch ?? "", `${facts.git.branch}${facts.git.dirty ? " *" : ""}`, C.red));
-    if (facts.gcp)
-        line1.push(part(ICON.cloud ?? "", facts.gcp, C.yellow));
+    const line1 = [];
     if (status.session_name)
         line1.push(part(ICON.session ?? "", status.session_name, C.blue));
-    const line2 = [part(ICON.path ?? "", path, C.pink)];
-    if (status.model?.display_name)
-        line2.push(part(ICON.model ?? "", status.model.display_name, C.white));
+    if (status.model?.display_name) {
+        const effort = status.effort?.level;
+        line1.push(part(ICON.model ?? "", `${status.model.display_name}${effort ? ` · ${effort}` : ""}`, C.white));
+    }
     const ctx = status.context_window?.used_percentage;
     if (ctx != null)
-        line2.push(part(glyph(ctx), `${String(Math.trunc(ctx))}%`, tone(ctx)));
+        line1.push(part(glyph(ctx), `${String(Math.trunc(ctx))}%`, tone(ctx)));
     const windows = [
         ["5h", status.rate_limits?.five_hour],
         ["7d", status.rate_limits?.seven_day],
@@ -136,11 +107,14 @@ export function claudeStatusline(status, facts) {
         if (w?.used_percentage == null)
             continue;
         const pct = Math.trunc(w.used_percentage);
-        line2.push(part(battery(pct), `${label} ${String(pct)}%${w.resets_at ? ` ${remaining(w.resets_at, facts.now)}` : ""}`, tone(pct)));
+        line1.push(part(battery(pct), `${label} ${String(pct)}%${w.resets_at ? ` ${remaining(w.resets_at, facts.now)}` : ""}`, tone(pct)));
     }
+    const line2 = [part(ICON.path ?? "", path, C.pink)];
+    if (facts.git?.branch)
+        line2.push(part(ICON.branch ?? "", `${facts.git.branch}${facts.git.dirty ? " *" : ""}`, C.red));
     const usd = status.cost?.total_cost_usd;
     if (usd != null)
-        line2.push(part(ICON.cost ?? "", usd.toFixed(2), C.grey));
+        line1.push(part(ICON.cost ?? "", usd.toFixed(2), C.grey));
     return `${paint(C.blue, "┌")}${line1.join(" ")}\n${paint(C.blue, "└")}${line2.join(" ")}\n`;
 }
 export function modelName(id) {
@@ -270,10 +244,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
                 writeFileSync(effortFile(status.session_id), status.effort.level);
             }
             process.stdout.write(claudeStatusline(status, {
-                user: userInfo().username,
-                host: hostname().split(".")[0],
                 git: cwd ? gitState(cwd) : undefined,
-                gcp: gcpProject(),
                 now: Math.floor(Date.now() / 1000),
                 home,
             }));

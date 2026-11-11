@@ -18,6 +18,7 @@ import {
   when,
   forecast,
   glyph,
+  ICON,
   sparkCells,
   sparkRange,
   TTL_MS,
@@ -189,21 +190,33 @@ void test("Claude status line: two lines of `[icon value]` parts", async () => {
     cost: { total_cost_usd: 1.8449 },
   };
   const facts = {
-    user: "me",
-    host: "mac",
     git: { branch: "main", dirty: true },
-    gcp: "proj",
     now: 1000,
     home: "/Users/me",
   };
+  const [s, m, p, b, co] = [
+    ICON.session ?? "",
+    ICON.model ?? "",
+    ICON.path ?? "",
+    ICON.branch ?? "",
+    ICON.cost ?? "",
+  ];
+  const usage = `[${glyph(41.7)} 41%] [${battery(62)} 5h 62% 2h15m] [${battery(5)} 7d 5% 3d4h] [${co} 1.84]`;
   assert.equal(
-    plain(claudeStatusline(status, facts)),
-    "┌[ me@mac] [ main *] [ proj] [ work]\n└[ ~/code/app] [ Sonnet 5.5] [ 41%] [ 5h 62% 2h15m] [ 7d 5% 3d4h] [ 1.84]\n",
+    plain(claudeStatusline({ ...status, effort: { level: "high" } }, facts)),
+    `┌[${s} work] [${m} Sonnet 5.5 · high] ${usage}\n└[${p} ~/code/app] [${b} main *]\n`,
   );
+  const bare = { ...status, session_name: undefined };
   assert.equal(
-    plain(claudeStatusline({}, { user: "me", host: "mac", now: 0 })),
-    "┌[ me@mac]\n└[ ~]\n",
+    plain(
+      claudeStatusline(bare, {
+        ...facts,
+        git: { branch: "dev", dirty: false },
+      }),
+    ),
+    `┌[${m} Sonnet 5.5] ${usage}\n└[${p} ~/code/app] [${b} dev]\n`,
   );
+  assert.equal(plain(claudeStatusline({}, { now: 0 })), `┌\n└[${p} ~]\n`);
 });
 
 void test("subagentRows adds model and effort to each agent-panel row", async () => {
@@ -396,33 +409,6 @@ void test("copilotAgents: running subagents from the session events, with model 
       [],
     );
   assert.deepEqual(copilotAgents("", undefined, now), []);
-});
-
-void test("gcpProject reads the active gcloud configuration", async () => {
-  const { gcpProject } = await import("./statusline.mjs");
-  const { mkdtempSync, mkdirSync, writeFileSync } = await import("node:fs");
-  const { tmpdir } = await import("node:os");
-  const { join } = await import("node:path");
-  const dir = mkdtempSync(join(tmpdir(), "gcloud-"));
-  mkdirSync(join(dir, "configurations"));
-  writeFileSync(join(dir, "active_config"), "work\n");
-  writeFileSync(
-    join(dir, "configurations", "config_work"),
-    "[compute]\nregion = x\n\n[core]\naccount = a@b.c\nproject = my-proj\n",
-  );
-  assert.equal(gcpProject({ CLOUDSDK_CONFIG: dir }, "/h", "linux"), "my-proj");
-  assert.equal(
-    gcpProject(
-      { CLOUDSDK_CONFIG: dir, CLOUDSDK_CORE_PROJECT: "env-proj" },
-      "/h",
-      "linux",
-    ),
-    "env-proj",
-  );
-  assert.equal(
-    gcpProject({ CLOUDSDK_CONFIG: join(dir, "none") }, "/h", "linux"),
-    undefined,
-  );
 });
 
 void test("spinner activity: an icon and a verb per tool, nothing for the rest", () => {

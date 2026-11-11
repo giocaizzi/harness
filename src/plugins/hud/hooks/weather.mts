@@ -29,9 +29,7 @@ const BLOCKS = "▁▂▃▄▅▆▇█";
 // Ghostty then draws the icon at full size instead of squeezing it into one cell.
 // One icon per part, the same in the status line and the band: every part is drawn `[icon value]`.
 export const ICON: Record<string, string> = {
-  user: "\uf007", // nf-fa-user
   branch: "\ue725", // nf-dev-git_branch
-  cloud: "\uf0c2", // nf-fa-cloud (the GCP project)
   session: "\uf02b", // nf-fa-tag
   path: "\uf07c", // nf-fa-folder_open
   model: "\uf2db", // nf-fa-microchip
