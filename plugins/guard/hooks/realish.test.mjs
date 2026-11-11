@@ -45,8 +45,23 @@ void test("readingsOf: the lexical win32 readings are added on win32 only (the p
 });
 // The real gitleaks against a real clone: the ranges reach it as the engine builds them, and only unpushed commits count.
 const haveGitleaks = spawnSync("gitleaks", ["version"]).status === 0;
+// Hermetic git: the developer's global config (a core.hooksPath pre-push hook that runs gitleaks) must not
+// veto the test's own push, which plants a key on purpose. An empty file stands in for /dev/null (Windows lacks it).
+const emptyConfig = join(mkdtempSync(join(tmpdir(), "scan-cfg-")), "gitconfig");
+writeFileSync(emptyConfig, "");
+const hermeticEnv = () => {
+    const clean = {};
+    for (const [k, v] of Object.entries(process.env))
+        if (!k.startsWith("GIT_CONFIG_"))
+            clean[k] = v;
+    return { ...clean, GIT_CONFIG_GLOBAL: emptyConfig, GIT_CONFIG_NOSYSTEM: "1" };
+};
 const sh = (cwd, ...argv) => {
-    const r = spawnSync(argv[0] ?? "", argv.slice(1), { cwd, encoding: "utf8" });
+    const r = spawnSync(argv[0] ?? "", argv.slice(1), {
+        cwd,
+        encoding: "utf8",
+        env: hermeticEnv(),
+    });
     assert.equal(r.status, 0, `${argv.join(" ")}: ${r.stderr}`);
     return r.stdout;
 };
@@ -55,6 +70,7 @@ const realRun = (argv, cwd, ms) => {
         cwd,
         encoding: "utf8",
         timeout: ms,
+        env: hermeticEnv(),
     });
     return r.status === 0 ? r.stdout : null;
 };
@@ -115,7 +131,7 @@ void test("realish: the real gitleaks denies a key that only a merge commit's co
     writeFileSync(join(clone, "a.txt"), "main\n");
     sh(clone, "git", "commit", "-qam", "chore: main");
     // the merge conflicts; its resolution is the only place the key lives
-    spawnSync("git", ["merge", "side"], { cwd: clone });
+    spawnSync("git", ["merge", "side"], { cwd: clone, env: hermeticEnv() });
     writeFileSync(join(clone, "a.txt"), `resolved${planted}\n`);
     sh(clone, "git", "add", ".");
     sh(clone, "git", "commit", "-qm", "chore: merge side");
