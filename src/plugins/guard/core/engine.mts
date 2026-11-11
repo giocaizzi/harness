@@ -801,7 +801,12 @@ export async function worktreeFact(
     git("rev-list", "--count", "HEAD", "--not", "--remotes"),
     git("ls-files", "--others", "--ignored", "--exclude-standard", "-z"),
   ]);
-  if (all == null || ahead == null || ignored == null || !/^\d+\s*$/.test(ahead))
+  if (
+    all == null ||
+    ahead == null ||
+    ignored == null ||
+    !/^\d+\s*$/.test(ahead)
+  )
     return { safe: false, why: "git check failed" };
   // Ignored files are normally regenerable, but a local secret (`.env`, `*.key`) exists nowhere else.
   // `status --ignored` folds an ignored directory into one line, so the files are listed one by one; a list over
@@ -1444,7 +1449,8 @@ function parseFindings(text: string): ScanFinding[] | null {
     if (!Array.isArray(parsed)) return null;
     return parsed.map((row: LeakRow) => ({
       commit: typeof row.Commit === "string" ? row.Commit.slice(0, 7) : "?",
-      file: typeof row.File === "string" ? row.File.replace(/^[ab]\//, "") : "?",
+      file:
+        typeof row.File === "string" ? row.File.replace(/^[ab]\//, "") : "?",
       line: typeof row.StartLine === "number" ? row.StartLine : 0,
       rule: typeof row.RuleID === "string" ? row.RuleID : "?",
     }));
