@@ -26,7 +26,7 @@ describe("resolveStores defaults", () => {
     assert.equal(p.npm, join(HOME, ".npm"));
     assert.equal(p.pnpm, join(HOME, "Library/pnpm/store"));
     assert.equal(p.playwright, join(HOME, "Library/Caches/ms-playwright"));
-    assert.equal(p.uv, join(HOME, "Library/Caches/uv"));
+    assert.equal(p.uv, join(HOME, ".cache/uv"));
     assert.equal(p.cargo, join(HOME, ".cargo/registry"));
     assert.equal(p.sccache, join(HOME, "Library/Caches/Mozilla.sccache"));
     assert.equal(p.docker, undefined);

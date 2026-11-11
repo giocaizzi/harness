@@ -70,4 +70,4 @@ Google rules the template cannot enforce, so a reviewer checks them: no `Get` pr
 - `go mod tidy -diff` (in `lint`) fails on an untidy module without touching files; `make fmt` tidies.
 - Since 1.27, `go vet` flags `fmt.Errorf("%w", p)` when `p` is `*E` and `E` (not `*E`) implements `error`: give the `Error` method one receiver kind and use it everywhere.
 - `encoding/json` in 1.27 is backed by v2 even in v1 code; error texts changed. Never match on JSON error strings.
-- `setup-envtest use --bin-dir <a dir in the worktree>` puts hundreds of MB of read-only binaries in every worktree and makes `git worktree remove` fail partway: drop `--bin-dir` so setup-envtest's per-user store keeps one copy per Kubernetes version (and keep `GOMODCACHE` outside the worktree too); details in `host-hygiene`, Shared stores.
+- `setup-envtest use --bin-dir <a dir in the worktree>` puts hundreds of MB of read-only binaries in every worktree: drop `--bin-dir` (`host-hygiene`, Shared stores).

@@ -137,8 +137,8 @@ export function resolveStores(i: StoreInput): Store[] {
     id: "playwright",
     name: "Playwright browsers",
     path: pw && pw !== "0" ? pw : join(cache, "ms-playwright"),
-    trim: "npx playwright uninstall --all",
-    note: "browsers are re-downloaded on the next install",
+    trim: "npx playwright uninstall",
+    note: "in a project: its browsers; --all removes every installation's",
   });
 
   stores.push({
@@ -147,7 +147,10 @@ export function resolveStores(i: StoreInput): Store[] {
     path: pick(
       env.UV_CACHE_DIR,
       () => probe("uv", ["cache", "dir"]),
-      win ? join(localAppData(i), "uv", "cache") : join(cache, "uv"),
+      // uv uses the XDG layout on macOS too, not ~/Library/Caches.
+      win
+        ? join(localAppData(i), "uv", "cache")
+        : join(set(env.XDG_CACHE_HOME) ?? join(home, ".cache"), "uv"),
     ),
     trim: "uv cache prune",
     note: "waits for running uv commands",
@@ -230,10 +233,16 @@ export function freeSpace(path: string, env: NodeJS.ProcessEnv): FreeSpace {
     floor >= 0
       ? floor
       : 20;
-  const s = statfsSync(path);
+  let bytes = Number.NaN;
+  try {
+    const s = statfsSync(path);
+    bytes = s.bavail * s.bsize;
+  } catch {
+    // reported as unknown
+  }
   return {
     path,
-    bytes: s.bavail * s.bsize,
+    bytes,
     floorBytes: floorGb * 1024 ** 3,
   };
 }
@@ -292,7 +301,7 @@ export function renderStores(report: StoresReport): string[] {
   const { free } = report;
   const floor = Math.round(free.floorBytes / 1024 ** 3);
   const lines = [
-    `free: ${gb(free.bytes)} GB on ${free.path} (floor ${String(floor)} GB)${
+    `free: ${Number.isNaN(free.bytes) ? "unknown" : `${gb(free.bytes)} GB`} on ${free.path} (floor ${String(floor)} GB)${
       free.bytes < free.floorBytes ? ": below the floor" : ""
     }`,
   ];
