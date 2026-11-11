@@ -42,4 +42,4 @@ Only for cleanup of something outside the cluster. Add on first reconcile; on de
 | envtest | real API server and etcd, no kubelet | every PR | reconcile against the API, CRD schema, owner references, finalizers |
 | End-to-end | kind cluster, built image, chart | merge queue or nightly | install, upgrade from the previous release, RBAC as shipped |
 
-envtest has no controller-manager: assert owner references instead of garbage collection, and use a unique namespace per test (namespaces never finish deleting). Make targets: `test`, `test-envtest`, `test-e2e`.
+envtest has no controller-manager: assert owner references instead of garbage collection, and use a unique namespace per test (namespaces never finish deleting). Make targets: `test`, `test-envtest`, `test-e2e`. `test-envtest` reads its binaries from setup-envtest's per-user store (no `--bin-dir` into the repo; `use -i <version> -p path` once the version is fetched): `host-hygiene`, Shared stores.
