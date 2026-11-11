@@ -383,6 +383,19 @@ export const GuardPlugin = (
         });
         if (!reason) {
           blocked.delete(sessionId);
+          // warn only: a toast for the user, never a re-prompt
+          const reminder = guard.lifecycle({ cwd: directory, sessionId });
+          if (reminder) {
+            await Promise.resolve()
+              .then(() =>
+                client.tui.showToast({
+                  body: { message: reminder, variant: "warning" },
+                }),
+              )
+              .catch(() => {
+                // toast failed
+              });
+          }
           return;
         }
         blocked.add(sessionId);

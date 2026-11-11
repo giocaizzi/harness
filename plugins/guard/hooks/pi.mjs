@@ -152,7 +152,22 @@ export default function guardExtension(pi, deps) {
             agentId,
         });
         blocked = Boolean(reason);
-        if (reason)
+        if (reason) {
             await pi.sendUserMessage(reason);
+        }
+        else if (!agentId) {
+            // warn only: a notification for the user, never a re-prompt
+            try {
+                const reminder = guard.lifecycle({
+                    cwd: ctx.cwd,
+                    sessionId: sessionOf(ctx),
+                });
+                if (reminder)
+                    ctx.ui.notify(reminder, "warning");
+            }
+            catch {
+                // a missed reminder changes nothing
+            }
+        }
     });
 }

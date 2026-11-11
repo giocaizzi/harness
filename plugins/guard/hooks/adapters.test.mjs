@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, test } from "node:test";
 import { createGuard } from "./bridge.mjs";
+import { takeAgentNotes } from "./lifecycle.mjs";
 import { GuardPlugin } from "./opencode.mjs";
 import guardExtension from "./pi.mjs";
 import { guardVersion } from "./telemetry.mjs";
@@ -1953,5 +1954,113 @@ void test("command harnesses: a failed registration or the legacy-only tripwire 
         });
         assert.equal(third.status, 0, third.stderr);
         assert.equal(third.stdout.trim(), "", c.name);
+    }
+});
+// The branch lifecycle reminder: a toast (opencode) or a notification (pi) on idle and settle, never a re-prompt.
+const lifecycleRepo = () => {
+    const root = dir();
+    const g = (cwd, ...args) => execFileSync("git", args, { cwd, stdio: "ignore" });
+    g(root, "init", "-q", "--bare", "-b", "main", "origin.git");
+    g(root, "clone", "-q", "origin.git", "work");
+    const work = join(root, "work");
+    g(work, "config", "user.email", "a@example.com");
+    g(work, "config", "user.name", "a");
+    g(work, "config", "commit.gpgsign", "false");
+    g(work, "commit", "-q", "--allow-empty", "-m", "init");
+    g(work, "push", "-q", "origin", "HEAD:main");
+    g(work, "switch", "-q", "-c", "feat/x");
+    g(work, "commit", "-q", "--allow-empty", "-m", "work");
+    return work;
+};
+const withLifecycle = async (fn) => {
+    const saved = process.env.GUARD_LIFECYCLE;
+    process.env.GUARD_LIFECYCLE = "on";
+    try {
+        await fn();
+    }
+    finally {
+        if (saved === undefined)
+            delete process.env.GUARD_LIFECYCLE;
+        else
+            process.env.GUARD_LIFECYCLE = saved;
+    }
+};
+const REMINDER = /^`feat\/x` has 1 commit\(s\) origin does not have: push them/;
+void test("opencode: an idle session with unpushed work gets a toast once, never a prompt, and a queued note", async () => {
+    await withLifecycle(async () => {
+        const toasts = [];
+        const prompts = [];
+        const client = {
+            session: {
+                get: async () => {
+                    await Promise.resolve();
+                    return null;
+                },
+                prompt: async (p) => {
+                    await Promise.resolve();
+                    prompts.push(p);
+                },
+            },
+            tui: {
+                showToast: async (t) => {
+                    await Promise.resolve();
+                    toasts.push(t);
+                },
+            },
+        };
+        const d = deps();
+        const hooks = await GuardPlugin({ client, directory: lifecycleRepo() }, d);
+        const idleOnce = () => hooks.event({
+            event: { type: "session.idle", properties: { sessionID: "oc-life" } },
+        });
+        await idleOnce();
+        await idleOnce();
+        assert.equal(toasts.length, 1);
+        assert.match(toasts[0]?.body.message ?? "", REMINDER);
+        assert.equal(toasts[0]?.body.variant, "warning");
+        assert.equal(prompts.length, 0);
+        assert.match(takeAgentNotes(d.dataDir ?? "", "oc-life")[0] ?? "", REMINDER);
+    });
+});
+void test("pi: a settled agent with unpushed work gets a notification once, never a message, and a queued note", async () => {
+    await withLifecycle(async () => {
+        const { handlers, sent, api } = fakePi();
+        const d = deps();
+        guardExtension(api, d);
+        const notes = [];
+        const ctx = {
+            cwd: lifecycleRepo(),
+            sessionManager: { getSessionId: () => "pi-life" },
+            ui: {
+                confirm: async () => {
+                    await Promise.resolve();
+                    return true;
+                },
+                notify: (message, level) => {
+                    notes.push({ message, level });
+                },
+            },
+        };
+        await handlers.agent_settled?.({ aborted: false }, ctx);
+        await handlers.agent_settled?.({ aborted: false }, ctx);
+        assert.equal(notes.length, 1);
+        assert.match(notes[0]?.message ?? "", REMINDER);
+        assert.equal(notes[0]?.level, "warning");
+        assert.equal(sent.length, 0);
+        assert.match(takeAgentNotes(d.dataDir ?? "", "pi-life")[0] ?? "", REMINDER);
+    });
+});
+void test("createGuard: lifecycle is silent with GUARD_LIFECYCLE=off", () => {
+    const prev = process.env.GUARD_LIFECYCLE;
+    process.env.GUARD_LIFECYCLE = "off";
+    try {
+        const guard = createGuard({ harness: "pi", deps: deps() });
+        assert.equal(guard.lifecycle({ cwd: lifecycleRepo(), sessionId: "off" }), null);
+    }
+    finally {
+        if (prev === undefined)
+            delete process.env.GUARD_LIFECYCLE;
+        else
+            process.env.GUARD_LIFECYCLE = prev;
     }
 });

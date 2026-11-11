@@ -10,7 +10,7 @@ import { crashResult, handle, hostFacts, pythonManager, run, } from "./guard.mjs
 import { canonicalHarnessName } from "./harnesses.mjs";
 import { lintFile } from "./lint.mjs";
 import { createRegistrationCache } from "./registration.mjs";
-import { gateFailClosed, stopCheck } from "./stop.mjs";
+import { gateFailClosed, stopCheck, stopReminder } from "./stop.mjs";
 import { recordAttrs, usageAttributes } from "./telemetry.mjs";
 // Neither harness gives plugins a data dir; the same fallback as VS Code.
 export const DATA_DIR = fallbackDataDir();
@@ -145,6 +145,8 @@ export function createGuard({ harness, noAsk = false, dataDir = DATA_DIR, deps =
                     agent_id: agentId,
                 }, d.spawnSync, {
                     gate: gateOpts(),
+                    // the host shows the reminder itself (`lifecycle`), never inside a stop answer
+                    reminder: false,
                     report: (attrs) => {
                         void d.emit?.("guard.stop", { ...attrs, cmd_class: "stop" }, cwd);
                     },
@@ -155,6 +157,14 @@ export function createGuard({ harness, noAsk = false, dataDir = DATA_DIR, deps =
                 // stopCheck reads process.env: a registered run's result gate, or a failed registration, keeps the stop blocked
                 return gateFailClosed(process.env, { cwd, session_id: sessionId, agent_id: agentId }, "internal error", gateOpts());
             }
+        },
+        lifecycle({ cwd, sessionId, }) {
+            return stopReminder({ cwd, session_id: sessionId }, {
+                dataDir: d.dataDir,
+                onReminder: (attrs) => {
+                    void d.emit?.("guard.reminder", { ...attrs, tool: "" }, cwd);
+                },
+            });
         },
         // One model response: { sessionId, model, provider, tokens: { input, output, cacheRead, cacheWrite, reasoning }, costUsd }.
         // Named like Claude Code's api_request, so one query covers every harness. Never throws.

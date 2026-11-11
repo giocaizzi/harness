@@ -21,6 +21,7 @@ import { prepareChecker, runChecker } from "./checker.mjs";
 import { pluginDataDir, readDataFile, readDataFileStrict } from "./data.mjs";
 import { sessionStore } from "./guard.mjs";
 import { detectHarnessName } from "./harnesses.mjs";
+import { lifecycleReminder, queueAgentNote } from "./lifecycle.mjs";
 import { STOP_DEADLINE_MS, readStdin } from "./stdin.mjs";
 import { denyReason, legacySet, recordUnregistered, runContext, } from "./run.mjs";
 import { emitAntigravityUsage, failedTarget, harnessName, recordAttrs, resolveAntigravityTranscriptPath, scrub, } from "./telemetry.mjs";
@@ -682,6 +683,52 @@ async function makeCheck(input, run = defaultSyncRunner, opts = {}) {
         return null;
     return executeMakeCheck(target, cwd, fp, run, opts);
 }
+// The branch lifecycle reminder to show, once per session per branch and head, or null. It also queues the same text
+// as a note for the agent's next turn. Warn only and fail open: any error is no reminder.
+export function stopReminder(input, opts = {}) {
+    try {
+        const cwd = input.cwd ?? process.cwd();
+        const found = (opts.lookup ?? lifecycleReminder)(cwd, process.env, opts.agentType ? { agentType: opts.agentType } : {});
+        if (!found)
+            return null;
+        const dataDir = opts.dataDir ?? pluginDataDir();
+        const mark = `lifecycle:${found.key}`;
+        const store = sessionStore(dataDir, input.session_id);
+        const state = store.load();
+        if (state.reminded.includes(mark))
+            return null;
+        state.reminded.push(mark);
+        store.save(state);
+        opts.onReminder?.({
+            rule: "branch-lifecycle",
+            cmd_class: "hint",
+            session_id: input.session_id,
+        });
+        if (input.session_id) {
+            queueAgentNote(dataDir, input.session_id, found.message);
+        }
+        return found.message;
+    }
+    catch {
+        return null;
+    }
+}
+// The answer with the reminder as its systemMessage (after an existing one); never touches the decision.
+function withReminder(answer, input, opts) {
+    if (opts.reminder === false || answer?.decision === "block")
+        return answer;
+    if (isSubagentStop(plainInput(input)))
+        return answer;
+    const message = stopReminder(input, opts.reminder ?? {});
+    if (!message)
+        return answer;
+    return {
+        ...answer,
+        systemMessage: answer?.systemMessage
+            ? `${answer.systemMessage}\n${message}`
+            : message,
+    };
+}
 export async function stopCheck(input, run = defaultSyncRunner, opts = {}) {
     const gate = await resultGate(input, run, process.env, opts.report, opts.gate);
     try {
@@ -699,7 +746,7 @@ export async function stopCheck(input, run = defaultSyncRunner, opts = {}) {
         check = null;
     }
     if (!gate)
-        return check;
+        return withReminder(check, input, opts);
     const reason = check?.decision === "block" ? `${gate}\n\n${check.reason ?? ""}` : gate;
     return {
         ...(check?.systemMessage ? { systemMessage: check.systemMessage } : {}),
@@ -713,6 +760,7 @@ export async function run() {
         .find((a) => a.startsWith("--harness="))
         ?.slice(10);
     const activeHarness = flagHarness ?? detectHarnessName();
+    const reminderOnly = process.argv.includes("--reminder-only");
     let input = {};
     const isAntigravity = () => activeHarness === "antigravity" || input.terminationReason !== undefined;
     // Stdout carries one JSON object, written at most once, in the shape each harness reads.
@@ -727,7 +775,11 @@ export async function run() {
                 : {}));
         }
         else if (activeHarness === "codex" && out.decision) {
-            process.stdout.write(JSON.stringify({ decision: out.decision, reason: out.reason }));
+            process.stdout.write(JSON.stringify({
+                decision: out.decision,
+                reason: out.reason,
+                systemMessage: out.systemMessage,
+            }));
         }
         else {
             process.stdout.write(JSON.stringify(out));
@@ -767,7 +819,11 @@ export async function run() {
         });
         if (!read.ok)
             throw new StdinReadError(read.why);
-        input = plainInput(JSON.parse(read.text || "{}"));
+        const payload = JSON.parse(read.text || "{}");
+        input = plainInput(payload);
+        const agentType = isRecord(payload) && typeof payload.agent_type === "string"
+            ? payload.agent_type
+            : undefined;
         if (input.terminationReason !== undefined && !input.hook_event_name) {
             input.hook_event_name = "Stop";
         }
@@ -779,13 +835,29 @@ export async function run() {
             input.cwd = firstWorkspace;
         }
         const events = [];
-        const out = await stopCheck(input, defaultSyncRunner, {
-            report: (attrs) => events.push(attrs),
-            onGate: (reason) => {
-                gateState.done = true;
-                gateState.reason = reason;
-            },
-        });
+        const reminders = [];
+        const onReminder = (attrs) => {
+            reminders.push(attrs);
+        };
+        let out;
+        if (reminderOnly) {
+            // SubagentStop: no gate and no make check, only the reminder (for a driver or escalate subagent)
+            // (a payload without agent_type cannot be told from a worker's: no reminder)
+            const message = agentType
+                ? stopReminder(input, { agentType, onReminder })
+                : null;
+            out = message ? { systemMessage: message } : null;
+        }
+        else {
+            out = await stopCheck(input, defaultSyncRunner, {
+                report: (attrs) => events.push(attrs),
+                onGate: (reason) => {
+                    gateState.done = true;
+                    gateState.reason = reason;
+                },
+                reminder: { onReminder },
+            });
+        }
         // written before the usage and telemetry steps, so a failure there cannot lose a block or deny a passed result
         writeOut(out);
         answered = true;
@@ -812,6 +884,9 @@ export async function run() {
             // telemetry only
         }
         try {
+            for (const attrs of reminders) {
+                await emit(process.env, "guard.reminder", recordAttrs({ ...attrs, tool: "" }, input.cwd ?? process.cwd(), harnessName()));
+            }
             for (const event of events) {
                 await emit(process.env, "guard.stop", recordAttrs({ ...event, cmd_class: "stop", session_id: input.session_id }, input.cwd ?? process.cwd(), harnessName()));
             }
