@@ -1,6 +1,6 @@
 ---
 name: host-hygiene
-description: Keeping a shared dev machine healthy when several agents run at once - disk floor, load cap, heavy-command semaphore, device leases, service registry, stale-worktree, branch and plugin-cache sweep, memory hygiene, plan-quota awareness. Use before builds, emulators or simulators, full test suites, long-running services or parallel agents, or when the host is slow.
+description: Keeping a shared dev machine healthy when several agents run at once - disk floor, load cap, heavy-command semaphore, device leases, service registry, repo sweep (worktrees, branches, stashes left behind) and plugin-cache sweep, memory hygiene, plan-quota awareness. Use before builds, emulators or simulators, full test suites, long-running services or parallel agents, when the host is slow, or when a repo has piled up worktrees, branches or stashes.
 ---
 
 # Host hygiene
@@ -15,8 +15,7 @@ In this skill's `scripts/`, `.sh` on macOS/Linux and `.ps1` on Windows. Env, def
 - `lease.sh <class> [--device <id>] -- <cmd...>`: heavy slot, then the one lease for a device class (simulator, emulator); shuts down a device it booted.
 - `register-service.sh <name> -- <cmd...>`: run a database, dev server or watcher registered under its owner, unregistered on exit; `--list` shows them.
 - `node memory-lint.mjs [--repo <path>] [<dir>...]`: report-only lint of Claude Code auto-memory (all projects by default).
-- `sweep-stale.sh [--apply]`: list (default) or remove worktrees idle for 24 h, unused by any process and clean. It also lists dirs under `.claude/worktrees/` that git no longer registers, with their size and the command the owner runs to reclaim them; it never removes those. Pass `SWEEP_WORKTREES_ROOT` when the repo's `AGENTS.md` puts worktrees elsewhere.
-- `sweep-stale.sh --branches [--apply]`: list (default) or delete remote branches with no open PR and local branches whose upstream is gone. Delete only when the user asks.
+- `node repo-sweep.mjs [--apply] [--json]`: applies `github-workflow`'s Branch lifecycle to the current repo's worktrees, local and remote branches and stashes; dry run by default. What it deletes, archives or only lists, the log and how to restore: its header. The guard runs it with `--auto` once a day at session start.
 - `sweep-stale.sh --plugins [--marketplace <name>] [--after-reload] [--apply]`: list (default) or remove Claude Code plugin versions (`${CLAUDE_CONFIG_DIR:-~/.claude}/plugins/cache/<marketplace>/<plugin>/<version>`) that are not installed and that nothing may still run; every marketplace by default, only `<name>` with `--marketplace` (the exact name of a dir under `cache/`, case included; pass it when the user limits the sweep to one, so other marketplaces' versions stay); a version stays while a Claude Code process started before that plugin's last update, a symlinked version loses only its link, a linked marketplace or plugin dir is never entered, and a process list it cannot read removes nothing. The other harnesses keep no old versions: Codex replaces a plugin's cache dir on update, Copilot CLI keeps one unversioned copy, opencode and pi install from a checkout or package.
 
 ## Rules
@@ -31,7 +30,7 @@ In this skill's `scripts/`, `.sh` on macOS/Linux and `.ps1` on Windows. Env, def
 - **Release only what you hold.** Never delete a lock, lease or registry entry whose pid is not yours.
 - **Stop things precisely:** wait on a pid or a file. Never `pgrep -f` or `pkill` a pattern.
 - **Register long-running services;** stop yours before you finish.
-- **Worktrees and branches:** one worktree per task, removed when its PR merges; branches left without a PR are swept with `--branches`. Never install into another task's tree.
+- **Worktrees and branches** follow `github-workflow`'s Branch lifecycle; never install into another task's tree.
 - **Quota.** Before fanning out, check plan usage (Claude Code: `cd /tmp && claude -p "/usage"`; Copilot CLI: `/usage`; Codex: `/status`; opencode: `opencode stats`; pi: none, so check the provider's console) and back off near the limit. Stagger resumes after a reset.
 - **Mind the Stop hook budget.** The `guard` plugin runs `make check` when an agent stops, only if the repo changed since the last green run, and defers it after 300 s (`GUARD_STOP_TIMEOUT_MS`; `GUARD_STOP_CHECK=off` disables it). A repo whose `check` runs longer than that never gets verified by the hook: make `check` fast (parallel tests) and run the long gate yourself through `heavy.sh`.
 - **Memory is context the next session trusts.** One fact per file, replace instead of append, no status or one-off authorizations, conventions in skills; unattended runs never write it. Rules, per-harness differences and the report-only audit: [references/memory-hygiene.md](references/memory-hygiene.md).
@@ -44,6 +43,8 @@ Why each rule exists, and the incidents behind it: [references/lessons.md](refer
 - A subagent or teammate isn't woken when a backgrounded job exits: run `heavy.sh` in the foreground with `HOST_LOCK_TIMEOUT_SECONDS` under the tool timeout, and on a timeout check `--status` before re-running.
 - A running Claude Code session runs the plugin version it loaded, spawning hooks from that folder without holding it open, until the user types `/reload-plugins`; a reload does not restart the process, so the sweep cannot see it. Only once the user has reloaded every open session, run `--plugins --after-reload --apply`; never sweep plugins on a schedule.
 - Build tools that write read-only files into the worktree (the Go module cache, envtest binaries) make `git worktree remove` fail halfway and leave an unregistered dir that only the owner can delete: keep `GOMODCACHE` and envtest assets outside the worktree.
+- A Claude Code `isolation: worktree` agent starts on a branch the harness made; switching to a new branch leaves that one behind. Rename it instead (`worker`).
+- `git branch -d` refuses a squash-merged branch; use `-D` and let the guard check origin has the tip.
 
 ## When the repo has no host tooling
 
