@@ -1,6 +1,6 @@
 {
   "name": "python",
-  "version": "1.9.1",
+  "version": "1.9.2",
   "description": "Python development and testing, FastAPI and SQLAlchemy",
   "author": {
     "name": "giocaizzi",
