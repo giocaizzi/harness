@@ -87,7 +87,7 @@ describe("dry run", () => {
     assert.ok(lines.includes("would delete branch pushed-synced: on origin (origin/pushed-synced)"));
     assert.ok(lines.some((l) => l.startsWith("would archive branch never-pushed-8d:")));
     assert.ok(lines.some((l) => l.startsWith("list origin branch landed-p2-added:")));
-    assert.match(lines.at(-1), /^sweep: would remove \d+ local branches, 2 worktrees; would archive 4; would delete 4 stale remote branches; would expire 1 archive; \d+ listed$/);
+    assert.match(lines.at(-1), /^sweep: would remove \d+ local branches, 2 worktrees; would archive 4; would delete 2 stale remote branches; would expire 1 archive; \d+ listed$/);
   });
 
   test("lists unregistered dirs under every root with size and the commands, and never removes them", () => {
@@ -102,6 +102,13 @@ describe("dry run", () => {
       assert.ok(existsSync(orphan));
     }
     assert.match(sweep(fx).out, /^unregistered .*orphan \(.*\): the owner runs /m);
+  });
+
+  test("remote scope: a branch with no PR that landed by content is deleted only with --remote-scope all", () => {
+    const all = verdicts(report(fx, ["--remote-scope", "all"]), "remote-branch");
+    assert.equal(all["landed-p2"], "delete");
+    assert.equal(all["landed-p1"], fx.p1 ? "delete" : "list");
+    assert.equal(all["landed-p2-added"], "list");
   });
 
   test("remote scope: other authors' closed PRs are acted on only with --remote-scope all", () => {
@@ -148,7 +155,7 @@ describe("--apply", () => {
 
     assert.deepEqual(branches(fx), ["dirty-wt", "draft-fresh", "fresh", "main", "never-pushed-2d", "never-pushed-leak", "pushed-unpushed"]);
     const wanted = originHeads(fx).filter((n) => ["closed-8d", "merged-still-there", "landed-p1", "landed-p2"].includes(n));
-    assert.deepEqual(wanted, fx.expected.remote["landed-p1"] === "delete" ? [] : ["landed-p1"]);
+    assert.deepEqual(wanted, ["landed-p1", "landed-p2"], "no PR on the default scope: listed, kept on origin");
     assert.ok(!existsSync(fx.trees.idle) && !existsSync(fx.trees.readonly), "worktrees removed, read-only files included");
     assert.ok(existsSync(fx.trees.dirty) && existsSync(fx.trees.fresh));
     assert.deepEqual(originArchives(fx), [
@@ -172,7 +179,7 @@ describe("--apply", () => {
     const last = JSON.parse(readFileSync(join(fx.clone, ".git", "sweep", "last.json"), "utf8"));
     assert.equal(last.summary, rep.summary);
     assert.equal(last.log, rep.log);
-    assert.match(last.summary, /removed 5 local branches, 2 worktrees; archived 3; deleted 4 stale remote branches; expired 1 archive/);
+    assert.match(last.summary, /removed 5 local branches, 2 worktrees; archived 3; deleted 2 stale remote branches; expired 1 archive/);
   });
 
   test("a scan finding keeps the branch local and listed with the reason", () => {
@@ -345,8 +352,8 @@ describe("--auto", { concurrency: true }, () => {
   });
 });
 
-// Review findings (PR #420, round 1): each case states the safe behaviour and is marked todo until the sweep is fixed.
-describe("review findings (xfail)", () => {
+// Review findings (PR #420, round 1): each case states the safe behaviour the sweep must keep.
+describe("review findings", () => {
   const DAY = 86400;
   let fx;
   let planned;
@@ -393,7 +400,6 @@ describe("review findings (xfail)", () => {
 
   test(
     "a stash whose secret is only in its unstaged changes is never pushed to an archive ref",
-    { todo: "xfail: scanOnce runs gitleaks git over the stash commit, which skips merge-commit diffs (real gitleaks 8.30 too)" },
     () => {
       const item = applied.items.find((i) => i.kind === "stash" && i.oid === secretStash);
       assert.ok(item, "the stash was classified");
@@ -407,7 +413,6 @@ describe("review findings (xfail)", () => {
 
   test(
     "a worktree holding an ignored local file (.env) is not removed",
-    { todo: "xfail: worktreeState checks `git status --porcelain` only; `git worktree remove` deletes ignored files" },
     () => {
       assert.ok(existsSync(join(fx.trees.idle, ".env")), "the ignored .env was deleted with the worktree");
     },
@@ -415,7 +420,6 @@ describe("review findings (xfail)", () => {
 
   test(
     "a remote branch whose tip is not the closed PR's head is not deleted as stale",
-    { todo: "xfail: classifyRemote never compares the closed PR's headRefOid with the remote tip" },
     () => {
       const item = planned.items.find((i) => i.kind === "remote-branch" && i.name === "closed-8d");
       assert.notEqual(item.verdict, "delete", item.reason);
@@ -429,7 +433,6 @@ describe("review findings (xfail)", () => {
 
   test(
     "on the default remote scope, a branch with no PR of the user is never deleted on origin",
-    { todo: "xfail: the content-proof delete (P1/P2/P3) has no author or scope filter (owner decision Q1)" },
     () => {
       const item = planned.items.find((i) => i.kind === "remote-branch" && i.name === "staging");
       assert.notEqual(item.verdict, "delete", item.reason);

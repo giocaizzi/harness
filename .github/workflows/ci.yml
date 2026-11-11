@@ -144,7 +144,7 @@ jobs:
           GUARD_OTEL: "off"
         run: |
           node --test --test-reporter=tap tests/repo-sweep.test.mjs | tee tap.txt
-          if ! grep -qx '# tests 21' tap.txt || ! grep -qx '# pass 17' tap.txt || ! grep -qx '# todo 4' tap.txt; then echo "::error::expected 17 repo-sweep tests to pass and 4 x-failing (todo)"; exit 1; fi
+          if ! grep -qx '# tests 22' tap.txt || ! grep -qx '# pass 22' tap.txt; then echo "::error::expected 22 repo-sweep tests to pass"; exit 1; fi
       # Guard's result check and the stop hook's result gate: Windows path forms, BOM and CRLF, the hook's output per harness.
       - shell: bash
         env:
