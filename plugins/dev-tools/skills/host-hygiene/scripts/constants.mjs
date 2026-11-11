@@ -21,3 +21,5 @@ export const AUTO_INTERVAL = DAY;
 export const LOCK_STALE = 3600;
 /** Gives up on a walk over a huge tree after this many entries. */
 export const WALK_CAP = 200000;
+/** `--stores` stops sizing a store after this many entries and reports it as capped. */
+export const STORE_WALK_CAP = 2_000_000;

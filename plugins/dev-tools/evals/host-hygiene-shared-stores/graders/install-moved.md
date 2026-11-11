@@ -1,0 +1,5 @@
+---
+type: llm
+---
+
+Pass when the final Makefile (read the diff or the answer) meets all of these: (a) it no longer puts tool binaries or envtest assets under the worktree: no `$(CURDIR)/bin` or LOCALBIN inside the repo for tools, and no `--bin-dir` pointing inside the repo; (b) envtest assets live in setup-envtest's default per-user store (`--bin-dir` dropped) or another per-user location outside the repo; (c) the linter is built or installed once per user, keyed by tool version and Go version (for example `go tool` or `go run pkg@version` cached in the Go build cache, or a per-user cache dir with both versions in the path), so a new worktree reuses it; (d) if the Makefile writes into a shared directory itself, the write is atomic (a temp file then rename, or a lock), so concurrent agents never run a half-written binary; (e) the location is overridable (an environment variable or make variable) and nothing in the change deletes shared stores. Fail when tools are still installed inside the worktree, or when the answer only explains without changing the Makefile.

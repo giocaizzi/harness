@@ -61,12 +61,13 @@ Device command examples (set them in the repo's runbook or env, not in the scrip
 - Remove a stale worktree only when every signal agrees: no file modified in 24 h, no process with an open file or cwd inside, no uncommitted changes. Never the main checkout or your own.
 - `find -mmin -1440` is portable; `find -newermt` parses dates differently on BSD and GNU.
 - `lsof` exits 1 both for "nothing found" and on harmless warnings: judge by the output past the header line, not the exit status.
-- Never install dependencies into another task's worktree. When a fresh worktree has the same lockfile as an existing one, symlinking its dependency dir is faster and costs no disk.
+- Never install dependencies into another task's worktree. A dependency dir symlinked from another worktree is shared mutable state: one task's install changes the other's. Let the package manager's per-user store do the sharing instead (pnpm and uv link from it), so a fresh worktree's install is fast and costs little disk.
 
 ## Caches
 
 - A shared host's Go build cache reached about 99 GB and filled the disk. Builds without `-trimpath` key each package built from a local directory by its absolute path, so every worktree compiled and stored the same sources again; race, cover, `CGO_ENABLED=0` and cross-`GOOS` variants multiplied that, and Go's own trim (entries unused for 5 days) was too slow for that many active worktrees. The fixes: `GOFLAGS=-trimpath` everywhere, the variant matrix in CI, and a size check with `go clean -cache` above a cap.
 - `go clean -cache` goes through the heavy semaphore so it queues with the builds it would slow down. It deletes the entry subdirectories but keeps the cache root, which may carry permissions set on purpose, and a build that loses an entry rebuilds it, so it costs only rebuild time. Below the disk floor `heavy.sh` refuses, so run it directly.
+- Go work in parallel worktrees was slow because make targets installed tools into each one: Kubernetes envtest binaries (about 480 MB, refetched per worktree and fragile on download timeouts) and a linter compiled from source into `./bin` (about 60 MB, rebuilt after every Go bump). The shared-stores rule keeps tools and downloads in per-user, version-keyed stores, so a worktree holds only source and cheap build output.
 
 ## Agents
 

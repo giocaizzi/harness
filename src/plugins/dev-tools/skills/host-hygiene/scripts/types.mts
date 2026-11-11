@@ -21,6 +21,7 @@ export interface SweepConfig {
   apply: boolean;
   auto: boolean;
   json: boolean;
+  stores: boolean;
   repo: string;
   remoteScope: RemoteScope;
   now: number;
@@ -93,4 +94,41 @@ export interface Report {
   counts: Counts;
   summary: string;
   log: string;
+}
+
+export type Probe = (cmd: string, args: string[]) => string | undefined;
+
+export interface StoreInput {
+  env: NodeJS.ProcessEnv;
+  platform: NodeJS.Platform;
+  home: string;
+  probe: Probe;
+}
+
+/** One per-user shared store: where it lives and how to trim it. */
+export interface Store {
+  id: string;
+  name: string;
+  path: string | undefined;
+  trim: string;
+  note: string;
+}
+
+export interface StoreSize {
+  exists: boolean;
+  bytes: number;
+  capped: boolean;
+}
+
+export interface StoreReport extends Store, StoreSize {}
+
+export interface FreeSpace {
+  path: string;
+  bytes: number;
+  floorBytes: number;
+}
+
+export interface StoresReport {
+  free: FreeSpace;
+  stores: StoreReport[];
 }

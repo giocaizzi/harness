@@ -29,6 +29,7 @@ Category: code scaffolding and templates. One image per deployable, built once a
 - `COPY . .` before the install step invalidates the dependency cache on every source edit.
 - `COPY` as root leaves files root-owned: use `COPY --chown=10001:10001`.
 - The build context is sent in full before the first instruction: a missing `.dockerignore` makes every build slow and can bake in `.env`.
+- Compose names a project after its directory, so each worktree gets its own containers, networks and volumes: `docker compose down --volumes` before its worktree goes. BuildKit's cache is the builder's and already shared, so never export a build cache into the worktree (`--cache-to type=local,dest=./...`): `host-hygiene`, Shared stores.
 - Cache mounts and secret mounts need BuildKit; not every builder (older daemons, some CI or cloud builders) supports them. Check before relying on them.
 - A value used in `RUN --mount=type=secret` is absent from the image; the same value in `ENV` or `ARG` is not.
 
