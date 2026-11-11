@@ -204,7 +204,8 @@ describe("--apply", () => {
   });
 });
 
-describe("safety", () => {
+// Each case builds its own fixture, so they run in parallel.
+describe("safety", { concurrency: true }, () => {
   test("compare-and-delete keeps a local branch and a remote branch that moved mid-run", () => {
     const fx = buildLifecycleRepo();
     try {
@@ -277,7 +278,7 @@ describe("safety", () => {
   });
 });
 
-describe("--auto", () => {
+describe("--auto", { concurrency: true }, () => {
   test("runs once a day under a lock, prints one summary line and records state", () => {
     const fx = buildLifecycleRepo();
     try {
@@ -342,4 +343,96 @@ describe("--auto", () => {
       removeTree(dir);
     }
   });
+});
+
+// Review findings (PR #420, round 1): each case states the safe behaviour and is marked todo until the sweep is fixed.
+describe("review findings (xfail)", () => {
+  const DAY = 86400;
+  let fx;
+  let planned;
+  let applied;
+  let secretStash;
+  let reusedTip;
+  before(() => {
+    fx = buildLifecycleRepo();
+    const dated = (seconds) => {
+      const date = `${String(fx.now - seconds)} +0000`;
+      return { ...fx.env, GIT_AUTHOR_DATE: date, GIT_COMMITTER_DATE: date };
+    };
+    const gitAt = (seconds, ...args) => {
+      const r = spawnSync("git", args, { cwd: fx.clone, env: dated(seconds), encoding: "utf8" });
+      assert.equal(r.status, 0, r.stderr);
+    };
+    // 1. A 9-day-old stash whose secret sits in an unstaged change (the usual stash): only the stash's merge commit
+    //    holds it, and `git log -p` (so gitleaks git, and the stub that mirrors it) shows no diff for a merge commit.
+    writeFileSync(join(fx.clone, "f.txt"), `${readFileSync(join(fx.clone, "f.txt"), "utf8")}${fx.env.STUB_MARKER}\n`);
+    gitAt(9 * DAY, "stash", "push", "-q", "-m", "secret-in-worktree");
+    secretStash = fx.git("rev-parse", "stash@{0}");
+    // 2. An ignored local secret in a clean, idle, pushed worktree (draft-idle is removed by --apply).
+    mkdirSync(join(fx.clone, ".git", "info"), { recursive: true });
+    writeFileSync(join(fx.clone, ".git", "info", "exclude"), ".env\n");
+    const env = join(fx.trees.idle, ".env");
+    writeFileSync(env, "TOKEN=local-only\n");
+    utimesSync(env, fx.now - 3 * DAY, fx.now - 3 * DAY);
+    // 3. A branch name reused after its PR closed: new commits on origin that no PR ever had.
+    gitAt(8 * DAY, "checkout", "-q", "-b", "reuse", fx.tips["closed-8d"]);
+    writeFileSync(join(fx.clone, "reuse.txt"), "work after the PR closed\n");
+    gitAt(8 * DAY, "add", "-A");
+    gitAt(8 * DAY, "commit", "-q", "-m", "new work on a reused name");
+    reusedTip = fx.git("rev-parse", "HEAD");
+    gitAt(0, "push", "-q", "origin", "reuse:closed-8d");
+    gitAt(0, "checkout", "-q", "main");
+    gitAt(0, "branch", "-q", "-D", "reuse");
+    // 4. A long-lived branch nobody opened a PR from (an environment branch behind main), on the default scope.
+    gitAt(0, "push", "-q", "origin", `${fx.base}:refs/heads/staging`);
+    gitAt(0, "fetch", "-q", "--prune", "origin");
+    planned = report(fx);
+    applied = report(fx, ["--apply"]);
+  });
+  after(() => fx.cleanup());
+
+  test(
+    "a stash whose secret is only in its unstaged changes is never pushed to an archive ref",
+    { todo: "xfail: scanOnce runs gitleaks git over the stash commit, which skips merge-commit diffs (real gitleaks 8.30 too)" },
+    () => {
+      const item = applied.items.find((i) => i.kind === "stash" && i.oid === secretStash);
+      assert.ok(item, "the stash was classified");
+      assert.notEqual(item.done, true, "the stash was archived to origin with the secret in it");
+      const leaked = spawnSync("git", ["-C", fx.origin, "grep", "-q", fx.env.STUB_MARKER, secretStash], {
+        encoding: "utf8",
+      });
+      assert.notEqual(leaked.status, 0, "origin now holds the secret");
+    },
+  );
+
+  test(
+    "a worktree holding an ignored local file (.env) is not removed",
+    { todo: "xfail: worktreeState checks `git status --porcelain` only; `git worktree remove` deletes ignored files" },
+    () => {
+      assert.ok(existsSync(join(fx.trees.idle, ".env")), "the ignored .env was deleted with the worktree");
+    },
+  );
+
+  test(
+    "a remote branch whose tip is not the closed PR's head is not deleted as stale",
+    { todo: "xfail: classifyRemote never compares the closed PR's headRefOid with the remote tip" },
+    () => {
+      const item = planned.items.find((i) => i.kind === "remote-branch" && i.name === "closed-8d");
+      assert.notEqual(item.verdict, "delete", item.reason);
+      assert.equal(
+        fx.gitIn(fx.origin, "rev-parse", "-q", "--verify", "refs/heads/closed-8d"),
+        reusedTip,
+        "the commits after the PR closed are gone from origin",
+      );
+    },
+  );
+
+  test(
+    "on the default remote scope, a branch with no PR of the user is never deleted on origin",
+    { todo: "xfail: the content-proof delete (P1/P2/P3) has no author or scope filter (owner decision Q1)" },
+    () => {
+      const item = planned.items.find((i) => i.kind === "remote-branch" && i.name === "staging");
+      assert.notEqual(item.verdict, "delete", item.reason);
+    },
+  );
 });

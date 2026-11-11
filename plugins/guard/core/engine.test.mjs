@@ -3631,6 +3631,18 @@ void test("push scan: --no-verify always asks, even on a lease push to a feature
         assert.match(defined(d.reason), /skips the pre-push secret scan/);
     }
 });
+void test("push scan: a finding denies even when a risky rule on the same push only asks", {
+    todo: "xfail: evaluateCommand returns the risky ask before evaluatePushScan, so approving the ask pushes the secret",
+}, async () => {
+    for (const c of [
+        "git push --no-verify origin feat/x",
+        "git push --force origin feat/x",
+    ]) {
+        const d = await verdict(c, { leaks: [leak] });
+        assert.equal(d.action, "deny", c);
+        assert.equal(d.rule, "push-scan", c);
+    }
+});
 const fakeBatch = (world = {}, calls = []) => (argv) => {
     calls.push(argv);
     const line = argv.join(" ");
