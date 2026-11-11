@@ -302,7 +302,7 @@ export function renderStores(report: StoresReport): string[] {
       s.exists
         ? `${s.name} ${size(s.bytes, s.capped)} ${where}: trim with ${s.trim} (${s.note})`
         : s.path === undefined
-          ? `${s.name} absent (${where}): trim with ${s.trim} (${s.note})`
+          ? `${s.name} (${where}): trim with ${s.trim} (${s.note})`
           : `${s.name} absent (${where})`,
     );
   }

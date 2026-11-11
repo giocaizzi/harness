@@ -238,7 +238,7 @@ export function renderStores(report) {
         lines.push(s.exists
             ? `${s.name} ${size(s.bytes, s.capped)} ${where}: trim with ${s.trim} (${s.note})`
             : s.path === undefined
-                ? `${s.name} absent (${where}): trim with ${s.trim} (${s.note})`
+                ? `${s.name} (${where}): trim with ${s.trim} (${s.note})`
                 : `${s.name} absent (${where})`);
     }
     return lines;
