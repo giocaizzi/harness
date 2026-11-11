@@ -427,7 +427,6 @@ describe("review findings", () => {
 
   test(
     "a worktree holding a secret inside an ignored directory (certs/server.key) is not removed",
-    { todo: "xfail: worktreeState reads `git status --porcelain --ignored`, which lists an ignored dir as `certs/` only" },
     () => {
       assert.ok(existsSync(join(fx.trees.readonly, "certs", "server.key")), "the ignored key was deleted with the worktree");
     },

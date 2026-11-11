@@ -704,23 +704,44 @@ interface WorktreeState {
 // The guard's NEVER_REGEN pattern (plugins/guard/core/engine.mts), copied: an ignored path with such a segment
 // is a local secret that origin does not hold.
 const SECRET_SEGMENT = /^\.env|secret|\.key$/i;
+const MAX_IGNORED_FILES = 20000;
 
 function worktreeState(ctx: Ctx, path: string): WorktreeState {
   if (!existsSync(path)) return { verdict: "ok", reason: "" };
-  const status = git({ dir: path }, "status", "--porcelain", "--ignored");
+  const status = git({ dir: path }, "status", "--porcelain");
   if (status.code !== 0)
     return { verdict: "list", reason: "git status failed in its worktree" };
-  const lines = status.out.split("\n").filter((l) => l.trim() !== "");
-  if (lines.some((l) => !l.startsWith("!! "))) {
+  if (status.out.trim() !== "") {
     return { verdict: "list", reason: "its worktree has uncommitted changes" };
   }
-  const secrets = lines
-    .map((l) => l.slice(3).replace(/^"|"$/g, ""))
-    .filter((p) => p.split("/").some((seg) => SECRET_SEGMENT.test(seg)));
+  // `status --ignored` folds an ignored directory into one line, so list the ignored files one by one.
+  const ignored = git(
+    { dir: path },
+    "ls-files",
+    "--others",
+    "--ignored",
+    "--exclude-standard",
+    "-z",
+  );
+  if (ignored.code !== 0)
+    return { verdict: "list", reason: "git ls-files failed in its worktree" };
+  const secrets: string[] = [];
+  let seen = 0;
+  for (const p of ignored.out.split("\0")) {
+    if (p === "") continue;
+    if (++seen > MAX_IGNORED_FILES) {
+      return {
+        verdict: "keep",
+        reason: "too many ignored files to check for secrets",
+      };
+    }
+    if (p.split("/").some((seg) => SECRET_SEGMENT.test(seg))) secrets.push(p);
+    if (secrets.length >= 3) break;
+  }
   if (secrets.length > 0) {
     return {
       verdict: "list",
-      reason: `ignored secrets: ${secrets.slice(0, 3).join(", ")}`,
+      reason: `ignored secrets: ${secrets.join(", ")}`,
     };
   }
   if (modifiedSince(path, ctx.cfg.now - ctx.cfg.minAgeSeconds)) {
