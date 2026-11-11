@@ -730,6 +730,8 @@ const fakeGit = (trees) => (argv) => {
             : `/r/.git/worktrees/x\n/r/.git\n${t.prefix ?? ""}\n`;
     if (argv[3] === "status")
         return t.status ?? "";
+    if (argv[3] === "ls-files")
+        return "";
     if (argv[3] === "rev-list")
         return t.fail ? null : `${String(t.ahead ?? 0)}\n`;
 };
@@ -784,6 +786,8 @@ const fakeSquash = (trees) => (argv, cwd) => {
         return `/r/.git/worktrees/x\n/r/.git\n\n${String(argv[2])}\n`;
     if (argv[3] === "status")
         return t.status ?? "";
+    if (argv[3] === "ls-files")
+        return "";
     if (argv[3] === "rev-list")
         return "2\n";
     if (argv[3] === "branch")
@@ -1990,13 +1994,26 @@ void test("shell edits judged where they write: cd, variables and sed -i operand
 });
 void test("a worktree with an ignored local secret is not safe to force-remove; ignored build output is (G21)", async () => {
     const { worktreeFact } = await import("./engine.mjs");
-    const run = (status) => fakeGit({ w: { status } });
-    assert.deepEqual(await worktreeFact("w", run("!! .env\n!! node_modules/\n")), { safe: false, why: "ignored secrets: .env" });
-    assert.deepEqual(await worktreeFact("w", run("!! certs/server.key\n")), {
+    const run = (ignored) => (argv) => {
+        if (argv[3] === "rev-parse")
+            return "/r/.git/worktrees/x\n/r/.git\n\n";
+        if (argv[3] === "status")
+            return "";
+        if (argv[3] === "rev-list")
+            return "0\n";
+        if (argv[3] === "ls-files")
+            return ignored.map((f) => `${f}\0`).join("");
+        return null;
+    };
+    assert.deepEqual(await worktreeFact("w", run([".env", "node_modules/a/index.js"])), { safe: false, why: "ignored secrets: .env" });
+    // `git status --ignored` folds an ignored directory into one line; the file inside is still found
+    assert.deepEqual(await worktreeFact("w", run(["certs/server.key"])), {
         safe: false,
         why: "ignored secrets: certs/server.key",
     });
-    assert.deepEqual(await worktreeFact("w", run("!! node_modules/\n!! dist/\n")), { safe: true, why: "" });
+    assert.deepEqual(await worktreeFact("w", run(["node_modules/a/index.js", "dist/b.js"])), { safe: true, why: "" });
+    const many = Array.from({ length: 20001 }, (_, i) => `dist/${String(i)}.js`);
+    assert.equal((await worktreeFact("w", run(many)))?.safe, false);
 });
 void test("temp paths: only the per-user macOS temp dir, never the tmux, X11 or ssh sockets (G18)", async () => {
     const { isTempPath } = await import("./engine.mjs");
@@ -3654,12 +3671,12 @@ void test("push scan: a finding denies even when a risky rule on the same push o
     assert.equal(clean.action, "ask");
     assert.equal(clean.rule, "no-verify");
 });
-void test("push scan: --all, --branches and --mirror scan every local ref, --tags every tag, beside named refspecs", async () => {
+void test("push scan: --all and --branches scan local branches, --mirror every local ref, --tags every tag, beside named refspecs", async () => {
     const cases = [
-        ["git push --all origin", ["--all --not --remotes=origin"]],
-        ["git push --branches fork", ["--all --not --remotes=fork"]],
+        ["git push --all origin", ["--branches --not --remotes=origin"]],
+        ["git push --branches fork", ["--branches --not --remotes=fork"]],
         ["git push --mirror origin", ["--all --not --remotes=origin"]],
-        ["git push origin --all", ["--all --not --remotes=origin"]],
+        ["git push origin --all", ["--branches --not --remotes=origin"]],
         ["git push --tags origin", ["--tags --not --remotes=origin"]],
         [
             "git push --tags origin feat/x",

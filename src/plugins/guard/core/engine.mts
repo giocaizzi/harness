@@ -796,19 +796,29 @@ export async function worktreeFact(
   if (rp == null) return undefined;
   const [gitDir, commonDir, prefix = "", top] = rp.split(/\r?\n/);
   if (!gitDir || gitDir === commonDir || prefix !== "") return undefined;
-  const [all, ahead] = await Promise.all([
-    git("status", "--porcelain", "--ignored"),
+  const [all, ahead, ignored] = await Promise.all([
+    git("status", "--porcelain"),
     git("rev-list", "--count", "HEAD", "--not", "--remotes"),
+    git("ls-files", "--others", "--ignored", "--exclude-standard", "-z"),
   ]);
-  if (all == null || ahead == null || !/^\d+\s*$/.test(ahead))
+  if (all == null || ahead == null || ignored == null || !/^\d+\s*$/.test(ahead))
     return { safe: false, why: "git check failed" };
   // Ignored files are normally regenerable, but a local secret (`.env`, `*.key`) exists nowhere else.
-  const lines = all.split(/\r?\n/).filter(Boolean);
-  const status = lines.filter((l) => !l.startsWith("!!")).join("\n");
-  const secrets = lines
-    .filter((l) => l.startsWith("!!"))
-    .map((l) => l.slice(3).replace(/\/$/, ""))
-    .filter((f) => f.split("/").some((seg) => NEVER_REGEN.test(seg)));
+  // `status --ignored` folds an ignored directory into one line, so the files are listed one by one; a list over
+  // the cap is not proven free of secrets.
+  const status = all
+    .split(/\r?\n/)
+    .filter((l) => l && !l.startsWith("!!"))
+    .join("\n");
+  const files = ignored.split("\0").filter(Boolean);
+  if (files.length > 20000)
+    return { safe: false, why: "too many ignored files to check for secrets" };
+  const secrets: string[] = [];
+  for (const f of files) {
+    if (!f.split("/").some((seg) => NEVER_REGEN.test(seg))) continue;
+    secrets.push(f);
+    if (secrets.length >= 3) break;
+  }
   if (secrets.length)
     return {
       safe: false,
@@ -1434,7 +1444,7 @@ function parseFindings(text: string): ScanFinding[] | null {
     if (!Array.isArray(parsed)) return null;
     return parsed.map((row: LeakRow) => ({
       commit: typeof row.Commit === "string" ? row.Commit.slice(0, 7) : "?",
-      file: typeof row.File === "string" ? row.File : "?",
+      file: typeof row.File === "string" ? row.File.replace(/^[ab]\//, "") : "?",
       line: typeof row.StartLine === "number" ? row.StartLine : 0,
       rule: typeof row.RuleID === "string" ? row.RuleID : "?",
     }));
@@ -1444,10 +1454,11 @@ function parseFindings(text: string): ScanFinding[] | null {
 }
 
 // What one push-like segment sends: the remote and the refspec sources it names (none: the current branch). A push
-// that only deletes sends no commit, so it is null. `all` is `--all`, `--branches` or `--mirror` (every local ref),
-// `tags` is `--tags`: each sends refs no refspec names.
+// that only deletes sends no commit, so it is null. `branches` is `--all` or `--branches` (every local branch), `all` is
+// `--mirror` (every local ref), `tags` is `--tags`: each sends refs no refspec names.
 interface PushJob {
   all: boolean;
+  branches: boolean;
   remote: string;
   sources: string[];
   tags: boolean;
@@ -1455,16 +1466,24 @@ interface PushJob {
 function pushJob(seg: string): PushJob | null {
   const rest = /\bgit\s+push\b(.*)$/i.exec(seg)?.[1];
   if (rest === undefined)
-    return { all: false, remote: "origin", sources: [], tags: false };
+    return {
+      all: false,
+      branches: false,
+      remote: "origin",
+      sources: [],
+      tags: false,
+    };
   const opts = rest.split(/\s+/);
   const deleting = opts.some((o) => o === "--delete" || o === "-d");
-  const all = opts.some((o) => /^--(?:all|branches|mirror)$/.test(o));
+  const all = opts.includes("--mirror");
+  const branches = opts.some((o) => o === "--all" || o === "--branches");
   const tags = opts.includes("--tags");
   const [where, ...specs] = plainArgs(rest);
   const pushed = specs.filter((sp) => !deleting && !sp.startsWith(":"));
   if (specs.length && !pushed.length) return null;
   return {
     all,
+    branches,
     remote: where && /^[\w.-]+$/.test(where) ? where : "origin",
     sources: pushed
       .map((sp) => sp.replace(/^\+/, "").split(":")[0] ?? "")
@@ -1543,9 +1562,10 @@ async function scanRepo(
   )?.trim();
   // `--all` and `--tags` name every local branch or tag, so those ranges are every unpushed commit of them; a push
   // naming only tags sends no branch commit.
-  const ranges = jobs.flatMap(({ all, remote, sources, tags }) => {
+  const ranges = jobs.flatMap(({ all, branches, remote, sources, tags }) => {
     const found = sources.map((s) => [s, "--not", `--remotes=${remote}`]);
     if (all) found.push(["--all", "--not", `--remotes=${remote}`]);
+    if (branches) found.push(["--branches", "--not", `--remotes=${remote}`]);
     if (tags) found.push(["--tags", "--not", `--remotes=${remote}`]);
     if (found.length) return found;
     return [
