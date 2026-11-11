@@ -1,0 +1,10 @@
+schema_version: "1.0"
+name: host-hygiene-shared-stores
+description: "A Makefile that installs tools into the worktree is changed to install them into a per-user, version-keyed shared store."
+tags: [behavior]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  prompt: "Every new git worktree of this repo spends minutes in `make lint` and `make test-envtest` before doing anything, and each worktree's bin/ is hundreds of MB. Several agents work here in parallel worktrees. Fix the Makefile."
+  max_turns: 20
+  allowed_tools: [Read, Glob, Grep, Skill, Edit, Write]
