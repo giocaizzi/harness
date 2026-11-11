@@ -15,8 +15,11 @@
 //            (dependabot/*, renovate/*, release-please--*, SWEEP_KEEP globs), anything whose tip is
 //            younger than 24 h, the head or base of an open PR.
 //   delete   local branch on origin (its worktree, if any, is clean, not in use and idle 24 h: the
-//            worktree is removed first, an open draft PR's included); remote branch whose PR merged, whose
-//            PR closed unmerged 7 idle days ago, or that has no PR and landed by content; archive refs
+//            worktree is removed first, an open draft PR's included, unless it holds ignored secrets: .env*,
+//            *secret*, *.key; other ignored files, build output, do not block); remote branch whose PR
+//            merged, whose PR closed unmerged 7 idle days ago with the remote tip still the PR's head (a
+//            reused name is listed), or, with --remote-scope all only, that has no PR and landed by content;
+//            a local copy never counts a remote branch deleted in the same run as "on origin"; archive refs
 //            older than SWEEP_ARCHIVE_DAYS; stashes after archiving. Every delete is compare-and-delete:
 //            a tip that moved since classification is kept and logged as `moved`.
 //   archive  local branch not on origin, no open PR, idle 7 days, clean worktree; stash 7 days old.
@@ -26,12 +29,13 @@
 //            when the visibility is unknown); a finding, a failed scan or a missing gitleaks keeps the
 //            item local and lists it.
 //   list     what needs a person: dirty or in-use worktrees, unpushed work, remote branches pushed
-//            without a PR that nothing proves landed, unregistered dirs under the worktree roots (with
+//            without a PR (that nothing proves landed, or any on the default scope), unregistered dirs under the worktree roots (with
 //            size and the commands that reclaim them; never removed by the sweep).
 //
 // Remote branches are touched on GitHub only (PR data from gh); elsewhere the sweep does locals and
 // archives. Only PRs authored by the logged-in gh user are acted on unless --remote-scope all. A remote
-// branch with no PR is deleted only when its content landed on the default branch D: P1 merging it into
+// branch with no PR is never deleted on the default `mine` scope (it may be a teammate's); with
+// --remote-scope all it is deleted only when its content landed on the default branch D: P1 merging it into
 // D changes nothing (git 2.38+), P2 every file it changed is identical on D or was deleted on D after
 // the merge base (a file it added that never landed is no proof), P3 it is inside a merged PR head
 // based on D.
@@ -307,7 +311,7 @@ function scanOnce(ctx, oid, config) {
         "--no-banner",
         "--redact",
         "--log-opts",
-        `${oid} --not --remotes=origin`,
+        `--diff-merges=remerge ${oid} --not --remotes=origin`,
         ...(config === undefined ? [] : ["--config", config]),
     ];
     const bin = ctx.cfg.gitleaks;
@@ -386,6 +390,7 @@ function openContext(cfg) {
         prs: undefined,
         user: undefined,
         mergedHeads: [],
+        doomed: new Set(),
         archives: [],
         gitVersion: [Number(version?.[1] ?? 0), Number(version?.[2] ?? 0)],
         log: [],
@@ -470,7 +475,9 @@ function loadArchives(ctx) {
 }
 /** Where origin holds this tip, if anywhere. */
 function heldByOrigin(ctx, oid) {
-    const remote = gitText(ctx, "for-each-ref", "--count=1", "--contains", oid, "--format=%(refname:lstrip=3)", "refs/remotes/origin");
+    const remote = (gitText(ctx, "for-each-ref", "--contains", oid, "--format=%(refname:lstrip=3)", "refs/remotes/origin") ?? "")
+        .split("\n")
+        .find((name) => name !== "" && !ctx.doomed.has(name));
     if (remote)
         return { ref: `refs/heads/${remote}`, via: `origin/${remote}` };
     for (const head of ctx.mergedHeads) {
@@ -544,14 +551,27 @@ function inScope(ctx, pr) {
     return (ctx.cfg.remoteScope === "all" ||
         pr.author.toLowerCase() === ctx.user?.toLowerCase());
 }
+// The guard's NEVER_REGEN pattern (plugins/guard/core/engine.mts), copied: an ignored path with such a segment
+// is a local secret that origin does not hold.
+const SECRET_SEGMENT = /^\.env|secret|\.key$/i;
 function worktreeState(ctx, path) {
     if (!existsSync(path))
         return { verdict: "ok", reason: "" };
-    const status = git({ dir: path }, "status", "--porcelain");
+    const status = git({ dir: path }, "status", "--porcelain", "--ignored");
     if (status.code !== 0)
         return { verdict: "list", reason: "git status failed in its worktree" };
-    if (status.out.trim() !== "") {
+    const lines = status.out.split("\n").filter((l) => l.trim() !== "");
+    if (lines.some((l) => !l.startsWith("!! "))) {
         return { verdict: "list", reason: "its worktree has uncommitted changes" };
+    }
+    const secrets = lines
+        .map((l) => l.slice(3).replace(/^"|"$/g, ""))
+        .filter((p) => p.split("/").some((seg) => SECRET_SEGMENT.test(seg)));
+    if (secrets.length > 0) {
+        return {
+            verdict: "list",
+            reason: `ignored secrets: ${secrets.slice(0, 3).join(", ")}`,
+        };
     }
     if (modifiedSince(path, ctx.cfg.now - ctx.cfg.minAgeSeconds)) {
         return {
@@ -681,14 +701,21 @@ function classifyRemote(ctx, items) {
             else if (!inScope(ctx, closed)) {
                 say("keep", `PR #${String(closed.number)} is by ${closed.author}: --remote-scope all`, { pr: closed.number });
             }
+            else if (b.oid !== closed.headRefOid &&
+                !(hasCommit(ctx, closed.headRefOid) &&
+                    isAncestor(ctx, b.oid, closed.headRefOid))) {
+                say("list", `reused branch name: tip differs from closed PR #${String(closed.number)}`, { pr: closed.number });
+            }
             else {
                 say("delete", `PR #${String(closed.number)} closed unmerged, idle ${daysAgo(idle)}`, { pr: closed.number });
             }
             continue;
         }
         const proof = landedByContent(ctx, b.oid);
-        if (proof !== undefined)
+        if (proof !== undefined && ctx.cfg.remoteScope === "all")
             say("delete", `no PR; ${proof}`);
+        else if (proof !== undefined)
+            say("list", `no PR; ${proof}; deleted only with --remote-scope all (its author is not checked)`);
         else
             say("list", "pushed without a PR, not proven landed");
     }
@@ -1079,8 +1106,15 @@ function sweep(ctx) {
         fetchMergedHeads(ctx, Math.min(...lonely.map((b) => b.date)));
     }
     const items = [];
+    // Remote decisions first: a local copy is "on origin" only through a remote branch this run keeps.
+    const remoteItems = [];
+    classifyRemote(ctx, remoteItems);
+    for (const i of remoteItems) {
+        if (i.verdict === "delete")
+            ctx.doomed.add(i.name);
+    }
     classifyLocal(ctx, items);
-    classifyRemote(ctx, items);
+    items.push(...remoteItems);
     if (!ctx.offline)
         classifyArchives(ctx, items);
     classifyStashes(ctx, items);

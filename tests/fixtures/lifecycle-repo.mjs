@@ -264,6 +264,7 @@ export function buildLifecycleRepo() {
     base,
     trees: { idle: wt("draft-idle"), readonly: wt("ro-wt"), dirty: wt("dirty-wt"), fresh: wt("draft-fresh") },
     orphans,
+    p1,
     // The environment every sweep run in a test starts from.
     env: {
       ...env,
@@ -303,8 +304,8 @@ export function buildLifecycleRepo() {
         "closed-3d": "keep",
         "closed-other": "keep",
         "merged-still-there": "delete",
-        "landed-p1": p1 ? "delete" : "list",
-        "landed-p2": "delete",
+        "landed-p1": "list",
+        "landed-p2": "list",
         "landed-p2-added": "list",
         "dependabot/npm/x": "keep",
         fresh: "keep",
