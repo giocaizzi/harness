@@ -134,13 +134,15 @@ void test("lifecycleReminder: detached HEAD, no origin and a plain directory say
   assert.equal(lifecycleReminder(tmp(), NO_ENV, deps(NO_PR)), null);
 });
 
-void test("lifecycleReminder: GUARD_LIFECYCLE=off silences it", () => {
+void test("lifecycleReminder: GUARD_LIFECYCLE=off, 0 or false silences it", () => {
   const work = repo();
   commit(work);
-  assert.equal(
-    lifecycleReminder(work, { GUARD_LIFECYCLE: "off" }, deps(NO_PR)),
-    null,
-  );
+  for (const value of ["off", "0", "false", "OFF"])
+    assert.equal(
+      lifecycleReminder(work, { GUARD_LIFECYCLE: value }, deps(NO_PR)),
+      null,
+      value,
+    );
 });
 
 for (const [type, want] of [
@@ -282,7 +284,12 @@ void test("startSessionSweep: spawns the sweep when the stamp is missing or over
 
 void test("startSessionSweep: skips a fresh stamp, GUARD_LIFECYCLE=off, a registered run and a linked worktree", () => {
   assert.deepEqual(sweep({ stampAgeMs: 2 * HOUR }).calls, []);
-  assert.deepEqual(sweep({ env: { GUARD_LIFECYCLE: "off" } }).calls, []);
+  for (const value of ["off", "0", "false"])
+    assert.deepEqual(
+      sweep({ env: { GUARD_LIFECYCLE: value } }).calls,
+      [],
+      value,
+    );
   assert.deepEqual(sweep({ registered: true }).calls, []);
   assert.deepEqual(sweep({ linked: true }).calls, []);
 });

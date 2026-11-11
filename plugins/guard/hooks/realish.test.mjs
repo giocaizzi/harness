@@ -96,3 +96,37 @@ void test("realish: the real gitleaks denies a planted key in an unpushed commit
     sh(clone, "git", "push", "-q", "-u", "origin", "feat/new");
     assert.equal((await verdict(push)).action, "allow", "pushed commits pass");
 });
+void test("realish: the real gitleaks denies a key that only a merge commit's conflict resolution carries", { skip: !haveGitleaks }, async () => {
+    const root = mkdtempSync(join(tmpdir(), "scan-merge-"));
+    const origin = join(root, "origin.git");
+    const clone = join(root, "clone");
+    sh(root, "git", "init", "-q", "--bare", origin);
+    sh(root, "git", "clone", "-q", origin, clone);
+    for (const kv of ["user.email=a@b.c", "user.name=n"])
+        sh(clone, "git", "config", ...kv.split("="));
+    writeFileSync(join(clone, "a.txt"), "base\n");
+    sh(clone, "git", "add", ".");
+    sh(clone, "git", "commit", "-qm", "chore: base");
+    sh(clone, "git", "push", "-q", "-u", "origin", "HEAD");
+    sh(clone, "git", "checkout", "-q", "-b", "side");
+    writeFileSync(join(clone, "a.txt"), "side\n");
+    sh(clone, "git", "commit", "-qam", "chore: side");
+    sh(clone, "git", "checkout", "-q", "-");
+    writeFileSync(join(clone, "a.txt"), "main\n");
+    sh(clone, "git", "commit", "-qam", "chore: main");
+    // the merge conflicts; its resolution is the only place the key lives
+    spawnSync("git", ["merge", "side"], { cwd: clone });
+    writeFileSync(join(clone, "a.txt"), `resolved${planted}\n`);
+    sh(clone, "git", "add", ".");
+    sh(clone, "git", "commit", "-qm", "chore: merge side");
+    const command = `git -C ${clone} push`;
+    const d = evaluateCommand({
+        command,
+        state: { reminded: new Set() },
+        host: { load1: 1, freeGb: 100 },
+        pushScan: await pushScanFacts(command, rules, realRun, {}),
+        rules,
+    });
+    assert.equal(d.action, "deny");
+    assert.match(d.reason ?? "", /a\.txt:\d+ \(generic-api-key\)/);
+});

@@ -78,6 +78,7 @@ import { contractProbe } from "./contract.mjs";
 import { appendDataFile, pluginDataDir, readDataFile } from "./data.mjs";
 import { editedPaths } from "./lint.mjs";
 import {
+  OFF,
   sweepNotice,
   startSessionSweep,
   takeAgentNotes,
@@ -627,9 +628,10 @@ const lifecycleOf = (deps: GuardDeps): LifecycleHooks => ({
   ...deps.lifecycle,
 });
 
-const FACTS_MS = 20_000;
-const SCAN_MS = 25_000;
-const OFF = /^(0|false|off)$/i;
+// One deadline per command for every fact it gathers, kept under the 30 s PreToolUse timeout in hooks.json: the push
+// scan runs first with up to SCAN_MS, and the other lookups get what is left.
+const TOTAL_MS = 24_000;
+const SCAN_MS = 15_000;
 // An off switch the hook's env sets, else the process's (a test run exports GUARD_PUSH_SCAN and GUARD_LIFECYCLE off).
 const flag = (
   deps: { env?: Record<string, string | undefined> },
@@ -758,14 +760,27 @@ async function onShell(
         ms,
       );
 
+    const total = deps.factsMs ?? TOTAL_MS;
+    const deadline = Date.now() + total;
+    const left = () => Math.max(0, deadline - Date.now());
+
+    // Every push is scanned for secrets first; a scan that cannot finish in its budget asks (unavailable).
+    if (
+      !OFF.test(flag(deps, "GUARD_PUSH_SCAN")) &&
+      rules.pushScan &&
+      new RegExp(rules.pushScan.match, "i").test(command)
+    ) {
+      facts.pushScan = await within(
+        pushScanFacts(command, rules, inCwd, facts.env),
+        Math.min(SCAN_MS, total),
+        { "": { findings: [], private: [], status: "unavailable" } },
+      );
+    }
+
     // A bare lease push is no risky match by itself: its facts are gathered for it, and none (timeout) asks. Started
     // with the risky lookups so both share one budget, keeping the hook under its timeout.
     const pushing = command.includes("--force-w")
-      ? within(
-          pushFacts(command, rules, inCwd, facts.env),
-          deps.factsMs ?? FACTS_MS,
-          null,
-        )
+      ? within(pushFacts(command, rules, inCwd, facts.env), left(), null)
       : null;
 
     if (isRisky(command, rules)) {
@@ -777,7 +792,7 @@ async function onShell(
           refFacts(command, rules, inCwd, facts.env),
           remoteDeleteFacts(command, rules, inCwd, facts.env),
         ]),
-        deps.factsMs ?? FACTS_MS,
+        left(),
         null,
       );
       if (gathered) {
@@ -795,26 +810,13 @@ async function onShell(
 
     if (pushing) facts.pushes = (await pushing) ?? {};
 
-    // Every push is scanned for secrets first; a scan that cannot finish in its budget asks (unavailable).
-    if (
-      !OFF.test(flag(deps, "GUARD_PUSH_SCAN")) &&
-      rules.pushScan &&
-      new RegExp(rules.pushScan.match, "i").test(command)
-    ) {
-      facts.pushScan = await within(
-        pushScanFacts(command, rules, inCwd, facts.env),
-        deps.factsMs ?? SCAN_MS,
-        { "": { findings: [], private: [], status: "unavailable" } },
-      );
-    }
-
     // A new PR that overlaps another open PR of the author: reads fail open.
     if (rules.prBatch && new RegExp(rules.prBatch.match, "i").test(command)) {
       facts.prBatch = await within(
         prBatchFacts(command, rules, inCwd, facts.env, (path, cwd) =>
           readText(resolve(input.cwd ?? ".", cwd ?? ".", path)),
         ),
-        deps.factsMs ?? FACTS_MS,
+        left(),
         {},
       );
     }
@@ -824,14 +826,14 @@ async function onShell(
       !state.reminded.includes("stack") &&
       stackTargets(command, rules, facts.env).length
     ) {
-      const budget = deps.factsMs ?? STACK_MS;
-      const deadline = Date.now() + budget;
+      const budget = Math.min(deps.factsMs ?? STACK_MS, left());
+      const stackDeadline = Date.now() + budget;
       const stackRun = (
         argv: readonly string[],
         cwd?: string | null,
       ): Promise<string | null> => {
-        const left = deadline - Date.now();
-        return left <= 0 ? Promise.resolve(null) : inCwd(argv, cwd, left);
+        const rest = stackDeadline - Date.now();
+        return rest <= 0 ? Promise.resolve(null) : inCwd(argv, cwd, rest);
       };
       facts.stack = await within(
         stackFacts(command, rules, stackRun, facts.env),
@@ -851,7 +853,7 @@ async function onShell(
             (argv) => (deps.run ?? run)(argv, input.cwd),
             facts.env,
           ),
-          deps.factsMs ?? FACTS_MS,
+          left(),
           null,
         )) ?? {};
     }

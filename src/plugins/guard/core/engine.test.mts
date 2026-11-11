@@ -4444,10 +4444,15 @@ const leak = {
   Secret: "AKIAIOSFODNN7EXAMPLE",
   Match: "key = AKIAIOSFODNN7EXAMPLE",
 };
+// The range of every gitleaks run; each carries `--diff-merges=remerge`, which shows a merge commit's own changes.
 const scanned = (calls: string[][]) =>
   calls
     .filter((c) => c[0] === "gitleaks")
-    .map((c) => c[c.indexOf("--log-opts") + 1]);
+    .map((c) => {
+      const opts = c[c.indexOf("--log-opts") + 1] ?? "";
+      assert.ok(opts.startsWith("--diff-merges=remerge "), opts);
+      return opts.slice("--diff-merges=remerge ".length);
+    });
 const verdict = async (
   command: string,
   world: ScanWorld = {},
@@ -4602,22 +4607,48 @@ void test("push scan: --no-verify always asks, even on a lease push to a feature
   }
 });
 
-void test(
-  "push scan: a finding denies even when a risky rule on the same push only asks",
-  {
-    todo: "xfail: evaluateCommand returns the risky ask before evaluatePushScan, so approving the ask pushes the secret",
-  },
-  async () => {
-    for (const c of [
-      "git push --no-verify origin feat/x",
-      "git push --force origin feat/x",
-    ]) {
-      const d = await verdict(c, { leaks: [leak] });
-      assert.equal(d.action, "deny", c);
-      assert.equal(d.rule, "push-scan", c);
-    }
-  },
-);
+void test("push scan: a finding denies even when a risky rule on the same push only asks", async () => {
+  for (const c of [
+    "git push --no-verify origin feat/x",
+    "git push --force origin feat/x",
+  ]) {
+    const d = await verdict(c, { leaks: [leak] });
+    assert.equal(d.action, "deny", c);
+    assert.equal(d.rule, "push-scan", c);
+    assert.match(
+      defined(d.reason),
+      /Secret scan found 1 finding.*app\.env:3/,
+      c,
+    );
+    assert.doesNotMatch(defined(d.reason), /AKIA/, c);
+  }
+  // a clean scan leaves the risky ask as it was
+  const clean = await verdict("git push --no-verify origin feat/x", {
+    leaks: [],
+  });
+  assert.equal(clean.action, "ask");
+  assert.equal(clean.rule, "no-verify");
+});
+
+void test("push scan: --all, --branches and --mirror scan every local ref, --tags every tag, beside named refspecs", async () => {
+  const cases: [string, string[]][] = [
+    ["git push --all origin", ["--all --not --remotes=origin"]],
+    ["git push --branches fork", ["--all --not --remotes=fork"]],
+    ["git push --mirror origin", ["--all --not --remotes=origin"]],
+    ["git push origin --all", ["--all --not --remotes=origin"]],
+    ["git push --tags origin", ["--tags --not --remotes=origin"]],
+    [
+      "git push --tags origin feat/x",
+      ["feat/x --not --remotes=origin", "--tags --not --remotes=origin"],
+    ],
+  ];
+  for (const [command, ranges] of cases) {
+    const calls: string[][] = [];
+    const d = await verdict(command, { leaks: [leak] }, {}, calls);
+    assert.deepEqual(scanned(calls), ranges, command);
+    assert.equal(d.action, "deny", command);
+  }
+});
 
 // ---- pr-batch
 
