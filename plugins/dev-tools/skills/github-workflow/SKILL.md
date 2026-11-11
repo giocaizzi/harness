@@ -41,6 +41,8 @@ origin at once, and a local copy goes as soon as origin has it.
   "push to the default branch" in place of the draft PR. A single agent commits there; parallel agents each
   get a worktree and merge back.
 - The sweep applies these rules at session start; run it by hand with `host-hygiene`'s `repo-sweep`.
+- **Stale PRs and issues** are closed by each repo's stale workflow (`actions/stale`, from the repo template and the standard): a PR goes stale after 30 idle days and closes 14 days later; an issue goes stale after 90 idle days and closes 30 days later; any activity resets the clock. Exempt: labels `keep`, `security`, `release-please`; pinned items; issues with a milestone; bot PRs (Dependabot, release-please). Drafts age like other PRs. A PR closed as stale makes its branch stale under the rules above (deleted 7 idle days after closing).
+- **Keep GitHub current in your own session:** close an issue whose fix merged without a closing keyword (comment with the PR link, then close); keep the PR's title, body, labels and linked issues true to the work as it changes; mark the draft ready when the work is finished (rule 5's check first). Never let your own PR or issue go stale.
 
 ## Landing a change
 

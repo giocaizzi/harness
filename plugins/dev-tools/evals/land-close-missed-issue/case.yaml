@@ -1,0 +1,10 @@
+schema_version: "1.0"
+name: land-close-missed-issue
+description: "After a PR merged, land closes the issue it fixed when the body had no closing keyword, with a comment linking the PR."
+tags: [behavior]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  prompt: "PR #7 just merged. Finish landing it: do the post-merge steps. There is no network and no real GitHub here: the gh CLI is the stand-in script ./bin/gh, so run `export PATH=\"$PWD/bin:$PATH\"` before any gh command."
+  max_turns: 15
+  allowed_tools: [Read, Glob, Grep, Edit, Write, Bash, Skill]
