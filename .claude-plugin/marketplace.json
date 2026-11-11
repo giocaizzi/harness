@@ -13,7 +13,7 @@
       "name": "python",
       "source": "./plugins/python",
       "description": "Python development and testing, FastAPI and SQLAlchemy",
-      "version": "1.9.1",
+      "version": "1.9.2",
       "keywords": [
         "python",
         "development",
