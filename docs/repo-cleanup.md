@@ -10,11 +10,12 @@ At session start, in a main checkout, at most once a day, the `guard` plugin spa
 
 | Item | Result |
 |---|---|
-| Local branch origin already holds (pushed, inside a merged PR's head, or archived), clean worktree idle 24 h | Worktree and branch removed. |
+| Local branch origin already holds (pushed, inside a merged PR's head, or archived), clean worktree idle 24 h | Worktree and branch removed. Ignored files go with the worktree (build output, caches), except that an ignored file that looks like a secret (`.env*`, `*secret*`, `*.key`, also inside an ignored directory) keeps the worktree and lists it. |
 | Local branch never pushed, no PR, idle 7 days, clean | Scanned with gitleaks, pushed to `refs/archive/<branch>/<yyyymmdd>-<sha12>`, then removed. A scan hit keeps it local and listed. |
 | Stash older than 7 days | Archived like a branch (`refs/archive/stash/...`), then dropped. |
 | Remote branch of a merged PR, still there | Deleted. |
-| Remote branch of a PR closed unmerged, idle 7 days | Deleted; its commits stay at `refs/pull/<n>/head`. Only PRs authored by the logged-in gh user, unless `--remote-scope all` or `SWEEP_REMOTE_SCOPE=all`. |
+| Remote branch of a PR closed unmerged, idle 7 days, tip equal to (or inside) the closed PR's head | Deleted; its commits stay at `refs/pull/<n>/head`. Only PRs authored by the logged-in gh user, unless `--remote-scope all` or `SWEEP_REMOTE_SCOPE=all`. A branch name reused after the PR closed (the tip differs) is listed, not deleted. |
+| Remote branch with no PR | Listed. With `--remote-scope all`, deleted when its content is proven landed on the default branch. |
 | Archive ref older than 90 days (`SWEEP_ARCHIVE_DAYS`) | Deleted. |
 | Anything else (younger than 24 h, dirty, in use, checked out in the main checkout or the current worktree, open PR head or base on origin, bot branch, default branch) | Kept, and listed with the reason when it is not on origin. |
 
@@ -40,7 +41,7 @@ Opt out of the session sweep and the stop reminder with `GUARD_LIFECYCLE=off` in
 
 ## Restore
 
-Nothing is deleted locally that origin does not have, so every restore is a fetch.
+Every deleted branch, archive and stash is on origin first, so its restore is a fetch. Ignored files removed with a worktree (build output, caches) are not kept anywhere: regenerate them.
 
 1. Find the entry in `<git-common-dir>/sweep/log.jsonl`: each line is `{time, kind, name, oid, reason, restore}`.
 2. Run its `restore` command: `git fetch origin <ref>` then `git branch <name> <oid>`.
