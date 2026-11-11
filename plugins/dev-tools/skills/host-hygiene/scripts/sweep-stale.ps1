@@ -1,6 +1,9 @@
-# sweep-stale.ps1 [--branches | --plugins [--marketplace <name>] [--after-reload]] [--apply]   list (default) or remove stale git worktrees of the current repo
+# sweep-stale.ps1 --plugins [--marketplace <name>] [--after-reload] [--apply]   list (default) or remove stale Claude Code plugin cache versions
 #
-# --plugins sweeps the Claude Code plugin cache instead: version dirs under
+# The git sweep (worktrees, branches, stashes) moved to repo-sweep.mjs; any call without --plugins prints a
+# pointer to it and exits 2.
+#
+# --plugins sweeps the Claude Code plugin cache: version dirs under
 # $env:CLAUDE_CONFIG_DIR (default ~/.claude)/plugins/cache/<marketplace>/<plugin>/<version> that are
 # not the installPath of any entry in plugins/installed_plugins.json (any scope) and that nothing may
 # still run. A running session loaded its plugins at start and spawns hooks from that path later
@@ -15,22 +18,7 @@
 # must equal a cache dir's name exactly (case included): it is matched against the listing, never resolved as a
 # path, so neither a case-insensitive filesystem nor Win32's trailing dot and space trimming can hand back a dir
 # under a spelling the installed check misses (or the cache itself).
-#
-# --branches sweeps branches instead: remote branches with no open PR (branches of closed or
-# never-opened PRs; GitHub only deletes on merge) and local branches whose upstream is gone.
-# It fetches --prune first. Open PRs come from `gh`, or from SWEEP_OPEN_BRANCHES (one name per
-# line) when set. --apply deletes them (`git push origin --delete`, `git branch -D`); the default
-# branch, the checked-out branches of every worktree and branches that are a base of an open PR
-# are never touched.
-#
-# A worktree is stale only when ALL hold: no file modified in the last 24 h, no process with a
-# file or its cwd under it, no uncommitted changes. The main checkout and the current worktree
-# are never touched. Removal is `git worktree remove` (never --force); branches stay.
-# It also lists dirs under the worktrees root (the main checkout's .claude/worktrees, or
-# SWEEP_WORKTREES_ROOT when the repo's AGENTS.md puts worktrees elsewhere) that git no longer
-# registers, typically a remove that failed on read-only build files, with their size and the
-# command that reclaims them. It never runs that command, even with --apply.
-# Busy check: on Windows, renaming the worktree fails while any process has a file or its cwd
+# Busy check: on Windows, renaming a version dir fails while any process has a file or its cwd
 # in it, so the sweep renames it and back; elsewhere it asks lsof.
 $ErrorActionPreference = 'Continue' # native stderr must not throw (Windows PowerShell 5.1)
 $marketplace = $null
@@ -41,44 +29,14 @@ $flags = @(for ($i = 0; $i -lt $args.Count; $i++) {
     if ($marketplace -match '^[. ]*$|^-|[\\/]') { '--bad-marketplace' }
 })
 $apply = $flags -contains '--apply'
-$branches = $flags -contains '--branches'
 $plugins = $flags -contains '--plugins'
 $afterReload = $flags -contains '--after-reload'
-$unknown = @($flags | Where-Object { $_ -notin '--apply', '--branches', '--plugins', '--after-reload' })
-if ($unknown.Count -or ($branches -and $plugins) -or (($afterReload -or $null -ne $marketplace) -and -not $plugins)) { [Console]::Error.WriteLine('usage: sweep-stale.ps1 [--branches | --plugins [--marketplace <name>] [--after-reload]] [--apply]'); exit 2 }
-if ($branches) {
-    git fetch -q --prune origin
-    if ($LASTEXITCODE) { [Console]::Error.WriteLine('sweep: fetch failed; nothing changed'); exit 1 }
-    $default = (git symbolic-ref -q --short refs/remotes/origin/HEAD 2>$null) -replace '^origin/', ''
-    if (-not $default) { $default = 'main' }
-    if ($null -ne $env:SWEEP_OPEN_BRANCHES) { $open = @($env:SWEEP_OPEN_BRANCHES -split "`r?`n") }
-    else {
-        $open = @(gh pr list --state open --limit 1000 --json headRefName,baseRefName --jq '.[] | .headRefName, .baseRefName')
-        if ($LASTEXITCODE) { [Console]::Error.WriteLine('sweep: gh pr list failed; nothing changed'); exit 1 }
-    }
-    # Branches checked out in any worktree are in use.
-    $held = @(git worktree list --porcelain | Where-Object { $_ -like 'branch refs/heads/*' } | ForEach-Object { $_.Substring(18) })
-    foreach ($b in @(git for-each-ref '--format=%(refname:lstrip=3)' refs/remotes/origin)) {
-        if ($b -in 'HEAD', $default -or $b -in $open) { continue }
-        if ($apply) {
-            git push -q origin --delete $b
-            if (-not $LASTEXITCODE) { "deleted origin/$b" }
-        } else { "would delete origin/${b}: no open PR" }
-    }
-    foreach ($line in @(git for-each-ref '--format=%(refname:short) %(upstream:track)' refs/heads)) {
-        if ($line -notmatch ' \[gone\]$') { continue }
-        $b = $line -replace ' \[gone\]$', ''
-        if ($b -in $held) { "keep ${b}: checked out in a worktree"; continue }
-        if ($apply) {
-            git branch -q -D $b
-            if (-not $LASTEXITCODE) { "deleted $b" }
-        } else { "would delete ${b}: upstream gone" }
-    }
-    exit 0
-}
+if (-not $plugins) { [Console]::Error.WriteLine('sweep-stale: the git sweep moved to repo-sweep.mjs (node repo-sweep.mjs [--apply])'); exit 2 }
+$unknown = @($flags | Where-Object { $_ -notin '--apply', '--plugins', '--after-reload' })
+if ($unknown.Count) { [Console]::Error.WriteLine('usage: sweep-stale.ps1 --plugins [--marketplace <name>] [--after-reload] [--apply]'); exit 2 }
 $onWindows = $IsWindows -or $PSVersionTable.PSEdition -eq 'Desktop'
 if (-not $onWindows -and -not (Get-Command lsof -ErrorAction SilentlyContinue)) {
-    [Console]::Error.WriteLine('sweep: lsof not found; cannot tell busy worktrees, nothing removed'); exit 1
+    [Console]::Error.WriteLine('sweep: lsof not found; cannot tell busy versions, nothing removed'); exit 1
 }
 function Get-FullPath([string]$Path) { [IO.Path]::GetFullPath($Path).TrimEnd('\', '/') }
 
@@ -192,40 +150,3 @@ if ($plugins) {
     }
     exit 0
 }
-
-$here = Get-FullPath (git rev-parse --show-toplevel)
-if ($LASTEXITCODE) { exit 1 }
-$since = (Get-Date).AddHours(-24)
-$trees = @(git worktree list --porcelain | Where-Object { $_ -like 'worktree *' } | ForEach-Object { $_.Substring(9) } | Select-Object -Skip 1)
-foreach ($wt in $trees) {
-    if (-not (Test-Path -LiteralPath $wt)) { "keep ${wt}: missing (git worktree prune clears it)"; continue }
-    if ((Get-FullPath $wt) -eq $here) { "keep ${wt}: current worktree"; continue }
-    $recent = @(Get-Item -LiteralPath $wt -Force) + @(Get-ChildItem -LiteralPath $wt -Recurse -Force -ErrorAction SilentlyContinue) |
-        Where-Object { $_.LastWriteTime -gt $since } | Select-Object -First 1
-    if ($recent) { "keep ${wt}: modified in the last 24 h"; continue }
-    if (Test-Busy $wt) { "keep ${wt}: in use by a process"; continue }
-    $dirty = git -C $wt status --porcelain 2>$null
-    if ($LASTEXITCODE) { "keep ${wt}: git status failed"; continue }
-    if ($dirty) { "keep ${wt}: uncommitted changes"; continue }
-    if ($apply) {
-        git worktree remove $wt
-        if (-not $LASTEXITCODE) { "removed $wt" }
-    } else { "would remove $wt" }
-}
-if ($apply) { git worktree prune }
-
-$all = @(git worktree list --porcelain | Where-Object { $_ -like 'worktree *' } | ForEach-Object { $_.Substring(9) })
-$root = if ($env:SWEEP_WORKTREES_ROOT) { $env:SWEEP_WORKTREES_ROOT } else { Join-Path $all[0] '.claude/worktrees' }
-if (Test-Path -LiteralPath $root) {
-    $registered = @($all | Where-Object { Test-Path -LiteralPath $_ } | ForEach-Object { Get-FullPath ((Resolve-Path -LiteralPath $_).ProviderPath) })
-    foreach ($d in @(Get-ChildItem -LiteralPath $root -Directory -Force)) {
-        $real = Get-FullPath $d.FullName
-        if ($registered -contains $real) { continue }
-        if (Test-Busy $real) { "keep ${real}: unregistered but in use by a process"; continue }
-        $bytes = (Get-ChildItem -LiteralPath $real -Recurse -Force -File -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum
-        $size = '{0:N1} MB' -f ($bytes / 1MB)
-        $command = if ($onWindows) { "Remove-Item -LiteralPath '$real' -Recurse -Force" } else { "chmod -R u+w '$real' && rm -rf '$real'" }
-        "unregistered $real (${size}): the owner runs $command"
-    }
-}
-exit 0
