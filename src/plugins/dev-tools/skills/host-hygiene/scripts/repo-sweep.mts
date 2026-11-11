@@ -1,11 +1,17 @@
 #!/usr/bin/env node
 // repo-sweep.mjs [--apply] [--auto] [--json] [--repo <dir>] [--remote-scope mine|all]
+// repo-sweep.mjs --stores [--json]
 //
 // Applies the branch lifecycle (github-workflow skill) to one repo's worktrees, local and remote
 // branches and stashes. Origin holds the work; a local copy goes once origin has it. Dry run by
 // default: it prints what each item becomes; --apply does it; --auto is --apply for the session-start
 // hook (no-op unless 24 h passed since the last run, one summary line, exits 0 on every failure).
 // Usage errors exit 2. Needs node 22+ and git; gh (GitHub) and gitleaks are optional.
+//
+// --stores is the low-disk report: free space against HOST_DISK_FLOOR_GB (20), then each per-user shared
+// store (Go, npm, pnpm, uv, Cargo, Playwright, ... caches) with its path, size and the command that trims
+// it, largest first. It needs no git repo and never deletes anything; with --apply, --auto or
+// --remote-scope it is a usage error.
 //
 // "On origin" means the tip is reachable from a remote-tracking ref (after `git fetch --prune`), from
 // the head of a merged PR (refs/pull/<n>/head), or from a refs/archive/* ref on origin.
@@ -68,6 +74,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
+import { homedir } from "node:os";
 import { basename, delimiter, dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
@@ -77,6 +84,7 @@ import {
   LOCK_STALE,
   WALK_CAP,
 } from "./constants.mjs";
+import { buildStoresReport, makeProbe, renderStores } from "./stores.mjs";
 import type {
   Counts,
   Item,
@@ -88,7 +96,7 @@ import type {
 } from "./types.mjs";
 
 const USAGE =
-  "usage: repo-sweep.mjs [--apply] [--auto] [--json] [--repo <dir>] [--remote-scope mine|all]";
+  "usage: repo-sweep.mjs [--apply] [--auto] [--json] [--repo <dir>] [--remote-scope mine|all] | --stores [--json]";
 
 // ---------------------------------------------------------------- process helpers
 
@@ -177,21 +185,32 @@ export function loadConfig(
   let apply = false;
   let auto = false;
   let json = false;
+  let stores = false;
+  let mutating = false;
   let repo = process.cwd();
   let scope = env.SWEEP_REMOTE_SCOPE ?? "mine";
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
-    if (arg === "--apply") apply = true;
-    else if (arg === "--auto") auto = true;
+    if (arg === "--apply") {
+      apply = true;
+      mutating = true;
+    } else if (arg === "--auto") {
+      auto = true;
+      mutating = true;
+    } else if (arg === "--stores") stores = true;
     else if (arg === "--json") json = true;
     else if (arg === "--repo" || arg === "--remote-scope") {
       const value = argv[++i];
       if (value === undefined || value.startsWith("-")) return USAGE;
       if (arg === "--repo") repo = value;
-      else scope = value;
+      else {
+        scope = value;
+        mutating = true;
+      }
     } else return USAGE;
   }
   if (scope !== "mine" && scope !== "all") return USAGE;
+  if (stores && mutating) return USAGE;
   const remoteScope: RemoteScope = scope;
   const now = Number(env.SWEEP_NOW);
   const keepGlobs = [
@@ -205,6 +224,7 @@ export function loadConfig(
     apply: apply || auto,
     auto,
     json,
+    stores,
     repo,
     remoteScope,
     now: Number.isFinite(now) && env.SWEEP_NOW ? now : Date.now() / 1000,
@@ -1449,6 +1469,20 @@ export function main(argv: string[], env: NodeJS.ProcessEnv): number {
     if (!cfg.auto) console.error(`sweep: ${message}`);
     return cfg.auto ? 0 : 1;
   };
+  if (cfg.stores) {
+    const report = buildStoresReport(
+      env,
+      process.platform,
+      homedir(),
+      makeProbe(process.platform),
+    );
+    console.log(
+      cfg.json
+        ? JSON.stringify(report, null, 2)
+        : renderStores(report).join("\n"),
+    );
+    return 0;
+  }
   try {
     const ctx = openContext(cfg);
     if (typeof ctx === "string") return failure(ctx);
