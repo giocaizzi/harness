@@ -9,13 +9,13 @@ General development tooling — git, GitHub/GitLab/Azure DevOps, conventional co
 | `conventional-commits` | Conventional Commits 1.0.0 — type, scope, breaking change, and bump semantics. |
 | `semver` | Semantic Versioning 2.0.0 — choosing major, minor, and patch from compatibility impact. |
 | `release-please` | Automated versioning, changelog, and tagging from Conventional Commits. |
-| `github-workflow` | Stacked PRs, auto-merge, merge queues, and rulesets with required CI checks. |
+| `github-workflow` | The branch lifecycle (push every commit, draft PR first), stacked PRs, auto-merge, merge queues, and rulesets with required CI checks. |
 | `repo-standard` | Repo baseline checklist and its mapping onto GitHub, GitLab and Azure DevOps. |
-| `ship` | Commit as Conventional Commits, push and open a PR (`/ship`). |
+| `ship` | Commit as Conventional Commits, push every commit and open a draft PR on the first push (`/ship`). |
 | `land` | Watch CI, merge via auto-merge or queue, sync, clean up and verify where it lands (`/land`, also for "verify"). |
 | `pr-fix` | Fix unresolved review comments and failing CI on a PR (`/pr-fix`). |
 | `wt` | Start a task in its own worktree from an issue or slug (`/wt`). |
-| `host-hygiene` | Shared-host rules and scripts: disk floor, load cap, heavy-command semaphore, device leases, service registry, stale-worktree sweep, quota-aware agent fan-out. |
+| `host-hygiene` | Shared-host rules and scripts: disk floor, load cap, heavy-command semaphore, device leases, service registry, repo sweep of leftover worktrees, branches and stashes, quota-aware agent fan-out. |
 | `unattended-runs` | Overnight, autopilot and headless runs: `GUARD_UNATTENDED`, what guard denies, worktree and quota prep, what to leave for a human. |
 | `standup` | Plain-language status: a 3-line story, a numbered "Needs you" list you approve with `all`, then done and in flight; `detail` adds refs, `explain <topic>` explains one part of the work (`/standup`). |
 | `docs-sync` | Update docs and runbooks the diff made stale (`/docs-sync`). |
@@ -27,7 +27,7 @@ General development tooling — git, GitHub/GitLab/Azure DevOps, conventional co
 | Agent | Description |
 |---|---|
 | `scout` | Read-only search and summarization on a cheap model; reports findings with evidence. |
-| `worker` | Routine-tier engineer for edits whose every decision is made (a written plan, a rename, a rollout, one unit of a driver's split), in its own worktree; stops on any unsettled choice. |
+| `worker` | Routine-tier engineer for edits whose every decision is made (a written plan, a rename, a rollout, one unit of a driver's split), in its own worktree on a local branch it never pushes; stops on any unsettled choice. |
 | `driver` | Driver-tier engineer a hub hands judgement work to: investigates, plans and splits it, fans the edits out to parallel `worker`s and integrates them in its own worktree. |
 | `reviewer` | Routine-tier reviewer of a change it did not write, raised to the driver tier at `high` effort on the spawn for a sensitive review; maintains and refactors tests, adds x-failing tests to prove issues, and posts a verdict with severities. Never edits production code. |
 | `escalate` | Strongest-tier engineer for work a `driver` failed twice on; returns the user's decisions as open questions. |
