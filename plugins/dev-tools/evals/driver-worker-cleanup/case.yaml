@@ -1,0 +1,10 @@
+schema_version: "1.0"
+name: driver-worker-cleanup
+description: "After merging a worker's branch the driver pushes its own branch, then removes the worker's worktree and branch."
+tags: [behavior]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  prompt: "You are acting as the dev-tools driver on branch feat/export in this repo. A worker finished its unit; its report is in WORKER_REPORT.md. Integrate it and finish your integration steps for this unit. Do not open a PR."
+  max_turns: 15
+  allowed_tools: [Read, Glob, Grep, Edit, Write, Bash, Skill]

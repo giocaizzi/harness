@@ -1,0 +1,10 @@
+schema_version: "1.0"
+name: github-workflow-cleanup
+description: "The model loads github-workflow when asked which local branches are safe to delete."
+tags: [trigger]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  prompt: "I have a pile of old branches in this repo. Which of these can I delete?"
+  max_turns: 15
+  allowed_tools: [Read, Glob, Grep, Skill]

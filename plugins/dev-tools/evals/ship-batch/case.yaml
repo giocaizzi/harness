@@ -1,0 +1,10 @@
+schema_version: "1.0"
+name: ship-batch
+description: "A new PR for work that overlaps an open PR nobody is working in goes onto that PR's branch, and a split carries only a listed Split-Reason."
+tags: [behavior]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  prompt: "Add a line to docs/usage.md saying the app can print its version with --version, and get it up for review. There is no network and no real GitHub here: the gh CLI is the stand-in script ./bin/gh, so run `export PATH=\"$PWD/bin:$PATH\"` before any gh command."
+  max_turns: 15
+  allowed_tools: [Read, Glob, Grep, Edit, Write, Bash, Skill]
