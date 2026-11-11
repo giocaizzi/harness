@@ -27,7 +27,7 @@ export const rules: GuardRules = {
       id: "worktree",
       match: "\\bgit\\s+worktree\\s+add\\b",
       skills: ["wt", "host-hygiene"],
-      why: "worktrees are one per task and removed on merge",
+      why: "worktrees are one per task and removed once origin holds the branch",
     },
     {
       id: "release",
@@ -216,6 +216,39 @@ export const rules: GuardRules = {
     match: "\\bgh\\s+pr\\s+(create|merge)\\b",
     why: "this branch builds on your open PR #<n> (`<below>`) but this PR targets `<default>`, so it carries #<n>'s commits. Build dependent work as a stack: `gh stack init`/`add`/`submit` where the repo has stacked PRs enabled (one small buildable PR per layer, the bottom layer on `<default>`, merged bottom-up with `gh stack merge`), otherwise base this PR on `<below>` and follow github-workflow, Stacks without `gh stack`.",
   },
+  // A push, or a command that may push, is scanned for secrets first (pushScanFacts); a finding denies, a scan that
+  // cannot run asks. A push that only deletes is not scanned.
+  pushScan: {
+    id: "push-scan",
+    match:
+      "\\bgit\\s+push\\b|\\bgh\\s+(?:pr\\s+create|stack\\s+submit)\\b|\\bglab\\s+mr\\s+create\\b|\\baz\\s+repos\\s+pr\\s+create\\b",
+  },
+  // Fewest PRs across agents: a new PR sharing a file with another open PR of the author is denied unless it says why
+  // (`Split-Reason: <value>` in the body or body file, or `SPLIT_REASON=<value>` before the command).
+  prBatch: {
+    id: "pr-batch",
+    match:
+      "\\bgh\\s+(?:pr\\s+create|stack\\s+submit)\\b|\\bglab\\s+mr\\s+create\\b|\\baz\\s+repos\\s+pr\\s+create\\b",
+    reasons: [
+      "separate-release",
+      "sensitive-change",
+      "forced-stack",
+      "other-owner",
+    ],
+    ignore: [
+      "**/package-lock.json",
+      "**/pnpm-lock.yaml",
+      "**/yarn.lock",
+      "**/uv.lock",
+      "**/poetry.lock",
+      "**/Cargo.lock",
+      "**/go.sum",
+      "**/Gemfile.lock",
+      "**/composer.lock",
+      "**/CHANGELOG.md",
+      "**/.claude-plugin/*.json",
+    ],
+  },
   deny: [
     {
       id: "pip",
@@ -341,12 +374,12 @@ export const rules: GuardRules = {
     },
     {
       // Case-sensitive: `-d` refuses an unmerged branch, `-D` (or `-d` with `-f`) deletes it anyway. A branch whose
-      // commits are all on a remote ref or in a merged PR passes (branch facts).
+      // tip origin holds (a remote ref, a merged PR of any name, an archive ref) passes (branch facts).
       id: "branch-delete",
       case: true,
       match:
         "\\bgit\\s+branch\\b(?:[^;&|\\n]*\\s(?:-[a-zA-Z]*D[a-zA-Z]*|-[a-z]*(?:df|fd)[a-z]*)\\b|(?=[^;&|\\n]*\\s(?:--delete|-d)\\b)(?=[^;&|\\n]*\\s(?:--force|-f)\\b))",
-      why: "deletes a branch git has not seen merged",
+      why: "deletes a branch whose tip origin does not hold",
       prefixes: [["git", "branch", "-D"]],
     },
     {
@@ -365,16 +398,25 @@ export const rules: GuardRules = {
       ],
     },
     {
-      // Deleting a feature branch on the remote passes; main and master do not.
+      // Any remote branch delete asks, unless the remote delete fact passes it: a stale branch (landed through a merged
+      // PR, or closed unmerged and idle 7 days). main, master, an open PR's head or base, `refs/archive/*`,
+      // `--mirror` and `--prune` always ask.
       id: "push-delete",
       say: "Deletes branches on the remote",
       match:
-        "\\bgit\\s+push\\b[^;&|\\n]*\\s(?:--mirror|--prune)\\b|\\bgit\\s+push\\b(?=[^;&|\\n]*\\s(?:--delete|-d)\\b)[^;&|\\n]*\\s(?:refs/heads/)?(?:main|master)(?=[\\s;&|)]|$)|\\bgit\\s+push\\b[^;&|\\n]*\\s:(?:refs/heads/)?(?:main|master)(?=[\\s;&|)]|$)",
-      why: "deletes remote branches",
+        "\\bgit\\s+push\\b[^;&|\\n]*\\s(?:--mirror|--prune)\\b|\\bgit\\s+push\\b(?=[^;&|\\n]*\\s(?:--delete|-d)\\b)|\\bgit\\s+push\\b[^;&|\\n]*\\s:\\S",
+      why: "deletes a remote branch that is not stale (an open PR, or closed under 7 idle days)",
       prefixes: [
         ["git", "push", "--mirror"],
         ["git", "push", "--prune"],
       ],
+    },
+    {
+      id: "no-verify",
+      say: "Pushes without the pre-push secret scan",
+      match: "\\bgit\\s+push\\b[^;&|\\n]*\\s--no-verify\\b",
+      why: "skips the pre-push secret scan",
+      prefixes: [["git", "push", "--no-verify"]],
     },
     {
       id: "git-rm",

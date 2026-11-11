@@ -17,12 +17,16 @@ import {
   opencodeAsks,
   protectedPathHit,
   protectedWrite,
+  prBatchFacts,
   pureRead,
   pushFacts,
+  pushScanFacts,
   refFacts,
+  remoteDeleteFacts,
   regenerableName,
   regenFacts,
   removalTargets,
+  resetPushScanCache,
   shellEdit,
   tagFacts,
   throttleMode,
@@ -37,7 +41,6 @@ import type {
   RunFacts,
   GitFixture,
   ProtectConfig,
-  RefFixtures,
 } from "./types.mjs";
 function defined<T>(value: T | undefined | null): T {
   if (value === undefined || value === null)
@@ -162,6 +165,7 @@ void test("nativeAsk: only a plain command starting with a risky prefix is left 
     tuple("git stash drop", "stash"),
     tuple("git branch -D x", "branch-delete"),
     tuple("git push --mirror", "push-delete"),
+    tuple("git push --no-verify", "no-verify"),
     tuple("git rm -rf x", "git-rm"),
   ])
     assert.equal(nativeAsk(defined(c), defined(rule), rules), true, c);
@@ -425,7 +429,6 @@ void test("a lease push passes without facts only when an allow-list holds; ever
     "git push --force-with-lease origin HEAD",
     "git push -u --force-with-lease origin feat/x",
     "git push --set-upstream --force-with-lease origin HEAD",
-    "git push --no-verify --force-with-lease origin feat/x",
     "git push --force-with-lease=feat/x origin feat/x",
     "git push --force-with-lease=feat/x:abc123 origin feat/x",
     "git push origin HEAD:feat/x --force-with-lease",
@@ -1004,18 +1007,40 @@ const fakeSquash =
   (argv: string[], cwd: string | undefined) => {
     const t = trees[(argv[0] === "gh" ? cwd : argv[2]) ?? ""];
     if (!t) return null;
-    if (argv[0] === "gh") return t.pr == null ? null : `${t.pr}\n`;
+    if (argv[0] === "gh") {
+      if (argv.includes("--search")) return t.any ? "abc\n" : "";
+      return t.pr == null ? null : `${t.pr}\n`;
+    }
+    if (argv[3] === "ls-remote")
+      return t.archived ? `${ARCHIVE_OID}\trefs/archive/x\n` : "";
     if (argv[3] === "rev-parse")
       return `/r/.git/worktrees/x\n/r/.git\n\n${String(argv[2])}\n`;
     if (argv[3] === "status") return t.status ?? "";
     if (argv[3] === "rev-list") return "2\n";
     if (argv[3] === "branch") return "fix/x\n";
-    if (argv[3] === "merge-base") return t.inPr === false ? null : "";
+    if (argv[3] === "merge-base")
+      return argv[6] === ARCHIVE_OID
+        ? t.archived
+          ? ""
+          : null
+        : t.inPr === false
+          ? null
+          : "";
   };
 
 void test("worktrees: squash-merged (merged PR, remote branch deleted) and clean is allowed", async () => {
-  const run = fakeSquash({ a: { pr: "abc" } });
-  for (const c of ["rm -rf a", "git worktree remove --force a"])
+  // `a`: a merged PR of its own name; `other`: a merged PR of another name; `kept`: an archive ref holds the tip
+  const run = fakeSquash({
+    a: { pr: "abc" },
+    other: { pr: "", any: true },
+    kept: { pr: "", archived: true },
+  });
+  for (const c of [
+    "rm -rf a",
+    "git worktree remove --force a",
+    "git worktree remove --force other",
+    "rm -rf kept",
+  ])
     assert.equal(
       decide(c, { worktrees: await worktreeFacts(c, {}, rules, run) }).action,
       "allow",
@@ -2123,6 +2148,11 @@ void test("git commands that destroy uncommitted or unpushed work ask", () => {
     tuple("git push -d origin master", "push-delete"),
     tuple("git push origin :main", "push-delete"),
     tuple("git push origin :refs/heads/master", "push-delete"),
+    tuple("git push origin --delete feat/x", "push-delete"), // no stale fact
+    tuple("git push origin :feat/x", "push-delete"),
+    tuple("git push origin --delete refs/heads/feat/x", "push-delete"),
+    tuple("git push --no-verify origin feat/x", "no-verify"),
+    tuple("git push --no-verify --force-with-lease origin feat/x", "no-verify"),
     tuple("git rm -rf src", "git-rm"),
     tuple("git rm --force a.txt", "git-rm"),
   ])
@@ -2142,8 +2172,6 @@ void test("git commands that destroy uncommitted or unpushed work ask", () => {
     "git stash",
     "git stash pop",
     "git stash list",
-    "git push origin --delete fix/main",
-    "git push origin --delete feat/x",
     "git push origin main",
     "git push -u origin feat/x",
     "git rm -r --cached x",
@@ -2154,15 +2182,40 @@ void test("git commands that destroy uncommitted or unpushed work ask", () => {
     assert.equal(outcome(c), "allow", c);
 });
 
+const ARCHIVE_OID = "a".repeat(40);
 // Fake git + gh for branch deletes: `ahead` commits on no remote ref, `pr` the merged PR head, `inPr` the tip in it.
 const fakeBranches =
   (branches: Record<string, GitFixture | undefined>) => (argv: string[]) => {
-    const b = branches[(argv[0] === "gh" ? argv[4] : argv[5]) ?? ""];
-    if (argv[0] === "gh") return b?.pr == null ? null : `${b.pr}\n`;
-    if (argv[3] === "rev-parse") return "/r\n";
+    const search = argv.indexOf("--search");
+    // the fake tip of a branch is its name, so a search by tip finds the branch
+    const key =
+      search >= 0 ? argv[search + 1] : argv[0] === "gh" ? argv[4] : argv[5];
+    const b = branches[key ?? ""];
+    if (argv[0] === "gh") {
+      if (search >= 0) return b?.any ? "abc\n" : "";
+      return b?.pr == null ? null : `${b.pr}\n`;
+    }
+    if (argv[3] === "rev-parse")
+      return argv.includes("--verify")
+        ? `${(argv[5] ?? "").replace(/\^\{commit\}$/, "")}\n`
+        : "/r\n";
+    if (argv[3] === "symbolic-ref") return "origin/main\n";
+    if (argv[3] === "cat-file") return "";
+    // origin lists one archive ref; only a branch flagged `archived` sits inside it
+    if (argv[3] === "ls-remote")
+      return Object.values(branches).some((x) => x?.archived)
+        ? `${ARCHIVE_OID}\trefs/archive/x\n`
+        : "";
     if (!b) return null;
     if (argv[3] === "rev-list") return `${String(b.ahead ?? 0)}\n`;
-    if (argv[3] === "merge-base") return b.inPr === false ? null : "";
+    if (argv[3] === "merge-base")
+      return argv[6] === ARCHIVE_OID
+        ? b.archived
+          ? ""
+          : null
+        : b.inPr === false
+          ? null
+          : "";
   };
 
 void test("git branch -D asks unless the branch is pushed or in a merged PR", async () => {
@@ -2171,6 +2224,8 @@ void test("git branch -D asks unless the branch is pushed or in a merged PR", as
     squashed: { ahead: 2, pr: "abc" },
     local: { ahead: 1, pr: "" },
     after: { ahead: 3, pr: "abc", inPr: false },
+    renamed: { ahead: 2, pr: "", any: true },
+    archived: { ahead: 1, pr: "", archived: true },
   });
   const decideWith = async (c: string) =>
     decide(c, { branches: await branchFacts(c, rules, run) });
@@ -2179,6 +2234,10 @@ void test("git branch -D asks unless the branch is pushed or in a merged PR", as
     "git branch -D squashed pushed",
     "git -C /r branch --delete --force squashed",
     "git branch -df pushed",
+    // a merged PR of another name holds the tip (a worker branch the driver merged into its own)
+    "git branch -D renamed",
+    // the tip sits under an archive ref on origin
+    "git branch -D archived",
   ])
     assert.equal((await decideWith(c)).action, "allow", c);
   assert.match(
@@ -2652,60 +2711,125 @@ void test("cd is followed up to the first branch, subshell or ||, and $PWD is th
     assert.notEqual(decide(c, { env }).action, "allow", c);
 });
 
-// Fake gh for branch ref deletes: `pr` the merged PR head of a branch, `tip` the ref's current sha.
+// Fake gh and git for remote branch deletes (`gh api` and `git push --delete`): per branch name, its PRs as the lookup
+// returns them, whether an open PR is based on it, and the remote tip.
+interface RefFixture {
+  base?: boolean;
+  prs?: {
+    state: string;
+    headRefOid: string;
+    closedAt?: string;
+    pushed?: string;
+  }[];
+  tip?: string;
+}
+const DAY_MS = 86_400_000;
+const daysAgo = (n: number) => new Date(Date.now() - n * DAY_MS).toISOString();
 const fakeRefs =
-  (refs: RefFixtures, calls: [string[], string | undefined][] = []) =>
+  (
+    refs: Record<string, RefFixture | undefined>,
+    calls: [string[], string | undefined][] = [],
+    fail = false,
+  ) =>
   (argv: string[], cwd?: string) => {
     calls.push([argv, cwd]);
+    if (argv[0] === "git") {
+      if (argv.includes("ls-remote")) {
+        const tip = refs[argv.at(-1)?.replace("refs/heads/", "") ?? ""]?.tip;
+        return tip ? `${tip}\trefs/heads/x\n` : null;
+      }
+      return null;
+    }
     if (argv[0] !== "gh") return null;
     if (argv[1] === "pr") {
-      const found = refs[argv[argv.indexOf("--head") + 1] ?? ""];
-      return typeof found === "object"
-        ? (found.pr ?? (refs.fail ? null : ""))
-        : refs.fail
-          ? null
-          : "";
+      if (fail) return null;
+      const head = argv.indexOf("--head");
+      if (head >= 0)
+        return JSON.stringify(refs[argv[head + 1] ?? ""]?.prs ?? []);
+      const based = refs[argv[argv.indexOf("--base") + 1] ?? ""]?.base;
+      return based ? "9\n" : "";
     }
     const name = /git\/ref\/heads\/(.+)$/.exec(argv[2] ?? "")?.[1];
-    const found = refs[name ?? ""];
-    return typeof found === "object" && found.tip != null
-      ? `${found.tip}\n`
-      : null;
+    const tip = refs[name ?? ""]?.tip;
+    return tip != null ? `${tip}\n` : null;
   };
 
-void test("gh api DELETE of a branch ref passes when the ref is the head of a merged PR; anything else asks (G23)", async () => {
+const merged = (oid: string) => ({ state: "MERGED", headRefOid: oid });
+const closed = (oid: string, days: number, pushedDays = days) => ({
+  state: "CLOSED",
+  headRefOid: oid,
+  closedAt: daysAgo(days),
+  pushed: daysAgo(pushedDays),
+});
+
+void test("a remote branch delete passes only when the branch is stale; anything else asks (G23)", async () => {
   const run = fakeRefs({
-    "feat/x": { pr: "abc\n", tip: "abc" },
-    after: { pr: "abc\n", tip: "def" },
-    open: { pr: "", tip: "abc" },
-    gone: { pr: "abc\n" },
+    "feat/x": { prs: [merged("abc")], tip: "abc" },
+    after: { prs: [merged("abc")], tip: "def" },
+    open: { prs: [{ state: "OPEN", headRefOid: "abc" }], tip: "abc" },
+    lower: { prs: [merged("abc")], tip: "abc", base: true },
+    idle: { prs: [closed("abc", 8)], tip: "abc" },
+    recent: { prs: [closed("abc", 3)], tip: "abc" },
+    pushedLate: { prs: [closed("abc", 8, 2)], tip: "abc" },
+    moved: { prs: [closed("abc", 8)], tip: "def" },
+    nopr: { prs: [], tip: "abc" },
+    gone: { prs: [merged("abc")] },
   });
-  const decideWith = async (c: string) =>
+  const apiWith = async (c: string) =>
     decide(c, { refs: await refFacts(c, rules, run) });
+  const pushWith = async (c: string) =>
+    decide(c, { remoteDeletes: await remoteDeleteFacts(c, rules, run) });
   for (const c of [
     "gh api -X DELETE repos/o/r/git/refs/heads/feat/x",
     "gh api --method DELETE /repos/o/r/git/refs/heads/feat/x",
     'gh api -X=DELETE "repos/o/r/git/refs/heads/feat/x" --silent',
     "gh api repos/o/r/git/refs/heads/feat/x -X DELETE",
     "gh api -X DELETE repos/{owner}/{repo}/git/refs/heads/feat/x",
+    "gh api -X DELETE repos/o/r/git/refs/heads/idle",
+    'gh api -X DELETE -H "Accept: application/vnd.github+json" repos/o/r/git/refs/heads/feat/x',
+    "gh api --silent -XDELETE -- repos/o/r/git/refs/heads/feat/x",
   ])
-    assert.equal((await decideWith(c)).action, "allow", c);
-  assert.match(
-    defined(
-      (await decideWith("gh api -X DELETE repos/o/r/git/refs/heads/after"))
-        .reason,
-    ),
-    /Ref after: its tip is not the head of the merged PR/,
-  );
-  assert.match(
-    defined(
-      (await decideWith("gh api -X DELETE repos/o/r/git/refs/heads/open"))
-        .reason,
-    ),
-    /Ref open: no merged PR/,
-  );
+    assert.equal((await apiWith(c)).action, "allow", c);
   for (const c of [
-    "gh api -X DELETE repos/o/r/git/refs/heads/gone",
+    "git push origin --delete feat/x",
+    "git push origin :feat/x",
+    "git push origin --delete refs/heads/feat/x",
+    "git push -d origin feat/x idle",
+    "git -C /r push origin --delete idle",
+  ])
+    assert.equal((await pushWith(c)).action, "allow", c);
+  for (const [name, why] of [
+    ["after", /not stale/],
+    ["open", /head of open PR #undefined|head of open PR/],
+    ["lower", /base of open PR #9/],
+    ["recent", /not stale \(open PR, or closed under 7 idle days\)/],
+    ["pushedLate", /not stale/],
+    ["moved", /not stale/],
+    ["nopr", /not stale/],
+    ["gone", /gh check failed/],
+  ] as const) {
+    const push = await pushWith(`git push origin --delete ${name}`);
+    assert.equal(push.action, "ask", name);
+    assert.match(defined(push.reason), why, name);
+    assert.equal(
+      (await apiWith(`gh api -X DELETE repos/o/r/git/refs/heads/${name}`))
+        .action,
+      "ask",
+      name,
+    );
+  }
+  for (const c of [
+    "git push origin --delete main",
+    "git push origin --delete master",
+    "git push origin :main",
+    "git push origin --delete refs/archive/feat/x/20260101-abc",
+    "git push origin --delete refs/tags/v1",
+    "git push origin --delete feat/x main",
+    "git push --mirror",
+    "git push --prune origin",
+    "git push origin --delete $B",
+    "git push --delete",
+    "ssh h 'git push origin --delete feat/x'",
     "gh api -X DELETE repos/o/r/git/refs/heads/main",
     "gh api -X DELETE repos/o/r/git/refs/heads/master",
     "gh api -X DELETE repos/o/r/git/refs/tags/v1.0.0",
@@ -2722,19 +2846,23 @@ void test("gh api DELETE of a branch ref passes when the ref is the head of a me
     "GH_HOST=ghe.corp gh api -X DELETE repos/o/r/git/refs/heads/feat/x",
     "gh api --hostname ghe.corp -X DELETE repos/o/r/git/refs/heads/feat/x",
     "gh api --hostname=ghe.corp -X DELETE repos/o/r/git/refs/heads/feat/x",
-  ])
-    assert.equal((await decideWith(c)).action, "ask", c);
-  for (const c of [
-    'gh api -X DELETE -H "Accept: application/vnd.github+json" repos/o/r/git/refs/heads/feat/x',
-    "gh api --silent -XDELETE -- repos/o/r/git/refs/heads/feat/x",
-  ])
-    assert.equal((await decideWith(c)).action, "allow", c);
+  ]) {
+    const d = decide(c, {
+      refs: await refFacts(c, rules, run),
+      remoteDeletes: await remoteDeleteFacts(c, rules, run),
+    });
+    assert.equal(d.action, "ask", c);
+  }
+  const archive = await pushWith(
+    "git push origin --delete refs/archive/feat/x/20260101-abc",
+  );
+  assert.match(defined(archive.reason), /an archive ref/);
   assert.equal(
-    decide("gh api -X DELETE repos/o/r/git/refs/heads/feat/x", {
-      refs: await refFacts(
-        "gh api -X DELETE repos/o/r/git/refs/heads/feat/x",
+    decide("git push origin --delete feat/x", {
+      remoteDeletes: await remoteDeleteFacts(
+        "git push origin --delete feat/x",
         rules,
-        fakeRefs({ fail: true }),
+        fakeRefs({}, [], true),
       ),
     }).action,
     "ask",
@@ -2748,6 +2876,7 @@ void test("gh api DELETE of a branch ref passes when the ref is the head of a me
   assert.deepEqual(
     calls.map(([argv, cwd]) => [defined(argv).slice(0, 3).join(" "), cwd]),
     [
+      ["gh pr list", "/r"],
       ["gh pr list", "/r"],
       ["gh api repos/{owner}/{repo}/git/ref/heads/feat/x", "/r"],
     ],
@@ -4266,4 +4395,465 @@ void test("protectedPathHit: an edit tool's repo-relative path against the floor
     true,
     "a throw fails closed",
   );
+});
+
+// ---- Push scan
+
+const SHIP_SKILLS = new Set([
+  "github-workflow",
+  "repo-standard",
+  "ship",
+  "land",
+]);
+
+interface ScanWorld {
+  // The leak rows gitleaks prints for the first pass and for the private-config pass.
+  config?: object[];
+  gitleaks?: "missing";
+  leaks?: object[];
+  // Commits per range (default 1); the key is the range as passed to rev-list.
+  ahead?: Record<string, number>;
+  upstream?: boolean;
+  visibility?: string | null;
+}
+const fakeScan =
+  (world: ScanWorld = {}, calls: string[][] = []) =>
+  (argv: string[]) => {
+    calls.push(argv);
+    const line = argv.join(" ");
+    if (argv[0] === "gitleaks") {
+      if (world.gitleaks === "missing") return null;
+      return JSON.stringify(
+        argv.includes("--config") ? (world.config ?? []) : (world.leaks ?? []),
+      );
+    }
+    if (argv.includes("@{u}") && argv.includes("--abbrev-ref"))
+      return world.upstream === false ? null : "origin/feat/x\n";
+    if (argv.includes("rev-list"))
+      return `${String(world.ahead?.[argv.slice(3).join(" ")] ?? 1)}\n`;
+    if (line === "git rev-parse --show-toplevel") return "/r\n";
+    if (argv[0] === "gh")
+      return world.visibility === undefined ? "PUBLIC\n" : world.visibility;
+    return null;
+  };
+const leak = {
+  RuleID: "aws-access-token",
+  File: "app.env",
+  StartLine: 3,
+  Commit: "1234567890abcdef",
+  Secret: "AKIAIOSFODNN7EXAMPLE",
+  Match: "key = AKIAIOSFODNN7EXAMPLE",
+};
+const scanned = (calls: string[][]) =>
+  calls
+    .filter((c) => c[0] === "gitleaks")
+    .map((c) => c[c.indexOf("--log-opts") + 1]);
+const verdict = async (
+  command: string,
+  world: ScanWorld = {},
+  env: Record<string, string> = {},
+  calls: string[][] = [],
+) =>
+  decide(command, {
+    loadedSkills: SHIP_SKILLS,
+    pushScan: await pushScanFacts(command, rules, fakeScan(world, calls), env),
+  });
+
+void test("push scan: the range is @{u}..HEAD with an upstream, the unpushed commits of a new branch, or a named source", async () => {
+  const cases: [string, ScanWorld, string][] = [
+    ["git push", {}, "@{u}..HEAD"],
+    ["git push origin", {}, "@{u}..HEAD"],
+    ["git push origin HEAD", {}, "@{u}..HEAD"],
+    [
+      "git push -u origin feat/new",
+      { upstream: false },
+      "feat/new --not --remotes=origin",
+    ],
+    ["git push -u origin", { upstream: false }, "HEAD --not --remotes=origin"],
+    ["git push fork feat/y:feat/z", {}, "feat/y --not --remotes=fork"],
+    ["gh pr create --fill", { upstream: false }, "HEAD --not --remotes=origin"],
+    ["gh stack submit", {}, "@{u}..HEAD"],
+    ["glab mr create --fill", {}, "@{u}..HEAD"],
+    ['az repos pr create --title "feat: x"', {}, "@{u}..HEAD"],
+  ];
+  for (const [command, world, range] of cases) {
+    const calls: string[][] = [];
+    const d = await verdict(command, { ...world, leaks: [] }, {}, calls);
+    assert.deepEqual(scanned(calls), [range], command);
+    assert.notEqual(d.action, "deny", command);
+  }
+});
+
+void test("push scan: an empty range (everything already pushed) passes without running gitleaks", async () => {
+  const calls: string[][] = [];
+  // a key that only an already-pushed commit holds is outside the range, so gitleaks never sees it
+  const d = await verdict(
+    "git push origin feat/x",
+    {
+      ahead: { "feat/x --not --remotes=origin": 0 },
+      leaks: [leak],
+    },
+    {},
+    calls,
+  );
+  assert.equal(d.action, "allow");
+  assert.deepEqual(scanned(calls), []);
+});
+
+void test("push scan: a finding denies naming commit, file, line and rule, never the secret", async () => {
+  const d = await verdict("git push", { leaks: [leak] });
+  assert.equal(d.action, "deny");
+  assert.equal(d.rule, "push-scan");
+  assert.match(
+    defined(d.reason),
+    /Secret scan found 1 finding in commits about to be pushed: 1234567 app\.env:3 \(aws-access-token\)/,
+  );
+  assert.match(defined(d.reason), /rotate it if ever shared/);
+  assert.match(defined(d.reason), /Never bypass the scan/);
+  assert.doesNotMatch(defined(d.reason), /AKIA|EXAMPLE/);
+  assert.deepEqual(d.attrs, { findings: 1, private_findings: 0 });
+  const many = await verdict("git push", {
+    leaks: Array.from({ length: 7 }, (_, i) => ({ ...leak, StartLine: i + 1 })),
+  });
+  assert.match(defined(many.reason), /found 7 findings/);
+  assert.match(defined(many.reason), /\+2 more/);
+  assert.equal(defined(many.reason).match(/app\.env:/g)?.length, 5);
+});
+
+void test("push scan: gitleaks missing or unreadable asks; a delete-only push is not scanned", async () => {
+  const runs = [
+    fakeScan({ gitleaks: "missing" }),
+    (argv: string[]) =>
+      argv[0] === "gitleaks" ? "not json" : fakeScan()(argv),
+  ];
+  for (const run of runs) {
+    const d = decide("git push", {
+      pushScan: await pushScanFacts("git push", rules, run, {}),
+    });
+    assert.equal(d.action, "ask");
+    assert.equal(d.rule, "push-scan");
+    assert.match(
+      defined(d.reason),
+      /Secret scan could not run: install gitleaks or run the push yourself/,
+    );
+  }
+  const calls: string[][] = [];
+  const facts = await pushScanFacts(
+    "git push origin --delete feat/x && git push origin :feat/y",
+    rules,
+    fakeScan({}, calls),
+    {},
+  );
+  assert.deepEqual(facts, {});
+  assert.deepEqual(calls, []);
+  const dir = await pushScanFacts('git -C "$X" push', rules, fakeScan(), {});
+  assert.equal(decide('git -C "$X" push', { pushScan: dir }).action, "ask");
+});
+
+void test("push scan: the private-name pass runs only on a public repo (unknown counts as public) with the config set", async () => {
+  const env = { GITLEAKS_PRIVATE_CONFIG: "/home/u/private.toml" };
+  const named = { ...leak, RuleID: "private-org-acme-secret" };
+  const world = { leaks: [], config: [named] };
+  resetPushScanCache();
+  const pub = await verdict("git push", world, env);
+  assert.equal(pub.action, "deny");
+  assert.match(
+    defined(pub.reason),
+    /Private-name scan: 1234567 app\.env:3 \(private-name\) names something that must not reach a public repo; describe it in its own terms/,
+  );
+  assert.doesNotMatch(defined(pub.reason), /acme-secret/);
+  resetPushScanCache();
+  for (const visibility of ["PRIVATE\n", "INTERNAL\n"]) {
+    const calls: string[][] = [];
+    const d = await verdict("git push", { ...world, visibility }, env, calls);
+    assert.equal(d.action, "allow", visibility);
+    assert.ok(!calls.some((c) => c.includes("--config")), visibility);
+    resetPushScanCache();
+  }
+  const unknown = await verdict(
+    "git push",
+    { ...world, visibility: null },
+    env,
+  );
+  assert.equal(unknown.action, "deny", "unknown visibility is public");
+  resetPushScanCache();
+  const noConfig = await verdict("git push", world, {});
+  assert.equal(noConfig.action, "allow", "no config, no second pass");
+  // the visibility is read once per repo
+  resetPushScanCache();
+  const calls: string[][] = [];
+  const run = fakeScan({ ...world, config: [] }, calls);
+  await pushScanFacts("git push", rules, run, env);
+  await pushScanFacts("git push", rules, run, env);
+  assert.equal(calls.filter((c) => c[0] === "gh").length, 1);
+  resetPushScanCache();
+});
+
+void test("push scan: --no-verify always asks, even on a lease push to a feature branch", () => {
+  for (const c of [
+    "git push --no-verify origin feat/x",
+    "git push --no-verify --force-with-lease origin feat/x",
+    "git push origin feat/x --no-verify",
+  ]) {
+    const d = decide(c);
+    assert.equal(d.action, "ask", c);
+    assert.equal(d.rule, "no-verify", c);
+    assert.match(defined(d.reason), /skips the pre-push secret scan/);
+  }
+});
+
+// ---- pr-batch
+
+interface BatchWorld {
+  branch?: string;
+  changed?: string;
+  fail?: boolean;
+  prs?: object[];
+  trees?: string;
+}
+const fakeBatch =
+  (world: BatchWorld = {}, calls: string[][] = []) =>
+  (argv: string[]) => {
+    calls.push(argv);
+    const line = argv.join(" ");
+    if (line === "git branch --show-current")
+      return `${world.branch ?? "feat/new"}\n`;
+    if (line === "git symbolic-ref --short refs/remotes/origin/HEAD")
+      return "origin/main\n";
+    if (line === "git rev-parse --show-toplevel") return "/r\n";
+    if (argv[1] === "merge-base") return "base\n";
+    if (argv[1] === "diff") return world.changed ?? "src/a.ts\n";
+    if (argv[1] === "worktree")
+      return world.trees ?? "worktree /r\nbranch refs/heads/feat/new\n";
+    if (argv[0] === "gh")
+      return world.fail ? null : JSON.stringify(world.prs ?? []);
+    return null;
+  };
+const pr = (number: number, head: string, ...paths: string[]) => ({
+  number,
+  headRefName: head,
+  files: paths.map((path) => ({ path })),
+});
+const batch = async (
+  command: string,
+  world: BatchWorld = {},
+  read: (path: string) => string | null = () => null,
+  calls: string[][] = [],
+) =>
+  decide(command, {
+    loadedSkills: SHIP_SKILLS,
+    prBatch: await prBatchFacts(
+      command,
+      rules,
+      fakeBatch(world, calls),
+      {},
+      read,
+    ),
+  });
+
+void test("pr-batch: a file shared with another open PR of yours denies, listing the four split reasons", async () => {
+  const d = await batch("gh pr create --fill", {
+    prs: [pr(7, "feat/old", "src/a.ts", "docs/x.md")],
+    changed: "src/a.ts\nsrc/b.ts\n",
+  });
+  assert.equal(d.action, "deny");
+  assert.equal(d.rule, "pr-batch");
+  assert.match(
+    defined(d.reason),
+    /PR #7 already touches src\/a\.ts and no running session owns its branch `feat\/old`: commit to that branch instead/,
+  );
+  assert.match(
+    defined(d.reason),
+    /separate-release, sensitive-change, forced-stack, other-owner/,
+  );
+  assert.deepEqual(d.attrs, { reason: "none" });
+  for (const c of [
+    "gh stack submit",
+    "glab mr create --fill",
+    'az repos pr create --title "feat: x"',
+  ])
+    assert.equal(
+      (
+        await batch(c, {
+          prs: [pr(7, "feat/old", "src/a.ts")],
+          changed: "src/a.ts\n",
+        })
+      ).action,
+      "deny",
+      c,
+    );
+});
+
+void test("pr-batch: lockfiles, CHANGELOG and plugin manifests never count; no overlap, bot branches, the own branch and read errors pass", async () => {
+  const shared = [
+    "package-lock.json",
+    "plugins/p/CHANGELOG.md",
+    "plugins/p/.claude-plugin/plugin.json",
+    "uv.lock",
+  ];
+  assert.equal(
+    (
+      await batch("gh pr create", {
+        prs: [pr(7, "feat/old", ...shared)],
+        changed: `${shared.join("\n")}\n`,
+      })
+    ).action,
+    "allow",
+  );
+  assert.equal(
+    (await batch("gh pr create", { prs: [pr(7, "feat/old", "src/z.ts")] }))
+      .action,
+    "allow",
+    "no shared file",
+  );
+  assert.equal(
+    (
+      await batch("gh pr create", {
+        prs: [pr(7, "dependabot/npm/x", "src/a.ts")],
+      })
+    ).action,
+    "allow",
+  );
+  assert.equal(
+    (await batch("gh pr create", { prs: [pr(7, "feat/new", "src/a.ts")] }))
+      .action,
+    "allow",
+    "its own branch",
+  );
+  assert.equal(
+    (
+      await batch("gh pr create", {
+        branch: "release-please--branches--main",
+        prs: [pr(7, "feat/old", "src/a.ts")],
+      })
+    ).action,
+    "allow",
+  );
+  assert.equal(
+    (await batch("gh pr create", { fail: true })).action,
+    "allow",
+    "gh failure fails open",
+  );
+  assert.equal(
+    (await prBatchFacts("gh pr create", rules, () => null, {}))[""]?.overlaps
+      .length,
+    0,
+  );
+});
+
+void test("pr-batch: a PR whose branch another worktree holds gets a hint, not a deny", async () => {
+  const d = await batch("gh pr create", {
+    prs: [pr(7, "feat/old", "src/a.ts")],
+    trees:
+      "worktree /r\nbranch refs/heads/feat/new\n\nworktree /other/wt\nbranch refs/heads/feat/old\n",
+  });
+  assert.equal(d.action, "allow");
+  assert.match(
+    defined(d.context),
+    /PR #7 \(`feat\/old`, checked out in `\/other\/wt`\) touches src\/a\.ts: coordinate with that session/,
+  );
+});
+
+void test("pr-batch: each Split-Reason value passes and is logged; free text, other, empty and a misspelling deny", async () => {
+  for (const reason of [
+    "separate-release",
+    "sensitive-change",
+    "forced-stack",
+    "other-owner",
+  ]) {
+    const calls: string[][] = [];
+    const ok = await batch(
+      `gh pr create --body "Fix.\n\nSplit-Reason: ${reason}"`,
+      { prs: [pr(7, "feat/old", "src/a.ts")] },
+      () => null,
+      calls,
+    );
+    assert.equal(ok.action, "allow", reason);
+    assert.equal(ok.prBatch, reason);
+    assert.deepEqual(calls, [], "a given reason needs no lookups");
+  }
+  const world = { prs: [pr(7, "feat/old", "src/a.ts")] };
+  assert.equal(
+    (
+      await batch(
+        'gh pr create --body "x\nSplit-Reason:  Separate-Release \n"',
+        world,
+      )
+    ).prBatch,
+    "separate-release",
+  );
+  for (const body of [
+    "Split-Reason: I need two PRs here",
+    "Split-Reason: other",
+    "Split-Reason:",
+    "Split-Reason: separate-relase",
+    "Split-Reason: forced-stack, other-owner",
+  ]) {
+    const d = await batch(`gh pr create --body "x\n${body}"`, world);
+    assert.equal(d.action, "deny", body);
+    assert.equal(
+      d.reason,
+      "Split-Reason must be one of: separate-release, sensitive-change, forced-stack, other-owner",
+      body,
+    );
+    assert.deepEqual(d.attrs, { reason: "invalid" });
+  }
+});
+
+void test("pr-batch: the reason can come from the body file or a SPLIT_REASON prefix (gh stack submit too)", async () => {
+  const world = { prs: [pr(7, "feat/old", "src/a.ts")] };
+  const file = await batch(
+    "gh pr create --body-file /tmp/body.md",
+    world,
+    (p) =>
+      p === "/tmp/body.md" ? "Summary\n\nSplit-Reason: forced-stack\n" : null,
+  );
+  assert.equal(file.prBatch, "forced-stack");
+  const bad = await batch(
+    "gh pr create -F /tmp/body.md",
+    world,
+    () => "Split-Reason: nope\n",
+  );
+  assert.equal(bad.action, "deny");
+  const unreadable = await batch(
+    "gh pr create --body-file /tmp/none.md",
+    world,
+  );
+  assert.equal(
+    unreadable.action,
+    "deny",
+    "an unreadable file carries no reason",
+  );
+  const env = await batch("SPLIT_REASON=other-owner gh stack submit", world);
+  assert.equal(env.action, "allow");
+  assert.equal(env.prBatch, "other-owner");
+  for (const c of [
+    "SPLIT_REASON=whatever gh stack submit",
+    "SPLIT_REASON= gh stack submit",
+    'SPLIT_REASON="" gh stack submit',
+  ])
+    assert.equal((await batch(c, world)).action, "deny", c);
+  assert.equal(
+    (await batch('SPLIT_REASON="Forced-Stack" gh stack submit', world)).prBatch,
+    "forced-stack",
+  );
+});
+
+void test("pr-batch and push scan data: reasons and ignore globs are rules data; other commands are not matched", async () => {
+  assert.deepEqual(rules.prBatch?.reasons, [
+    "separate-release",
+    "sensitive-change",
+    "forced-stack",
+    "other-owner",
+  ]);
+  assert.ok(rules.prBatch.ignore.includes("**/package-lock.json"));
+  assert.deepEqual(
+    await prBatchFacts("gh pr view 3", rules, fakeBatch(), {}),
+    {},
+  );
+  assert.deepEqual(
+    await pushScanFacts("git status", rules, fakeScan(), {}),
+    {},
+  );
+  assert.equal(cmdClass("push-scan", "git push"), "git-history");
 });

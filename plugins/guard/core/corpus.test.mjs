@@ -3,6 +3,7 @@
 // the PR that fixes a bug drops its id from OPEN. Every new false ask or missed command found in telemetry or
 // transcripts becomes a row here.
 // Row: [command, expected ('allow' | 'allow:<hint>' | 'ask:<rule>' | 'deny:<rule>'), bug id, source, options?]
+// options: { leak: true } gitleaks finds a planted key in the commits a push sends; { squashed: true } the branch or worktree is a squash-merged worker's; { pr: 'open' | 'closed-3d' } the remote branch's PR state.
 // options: { python: 'uv' } the repo's Python manager; { hints: true } the read and edit hints not yet shown;
 // { read: false } the command must not get the plain-read allow (`pureRead`), so the harness's own prompt decides.
 // { run: 'registered' | 'configured' | 'unsure' | 'protected' } a registered unattended run: example labels and protected paths, other label names (for 'configured'), a registration that requires labels but names none, or one protecting only a label.
@@ -11,7 +12,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import { branchFacts, evaluateCommand, pureRead, pushFacts, refFacts, regenFacts, worktreeFacts, } from "./engine.mjs";
+import { branchFacts, evaluateCommand, pureRead, pushFacts, pushScanFacts, refFacts, regenFacts, remoteDeleteFacts, worktreeFacts, } from "./engine.mjs";
 import { rules } from "./rules.mjs";
 const OPEN = new Set([]);
 const parsedCorpus = JSON.parse(readFileSync(new URL("./corpus.json", import.meta.url), "utf8"));
@@ -41,8 +42,70 @@ const run = (argv) => {
     if (argv.includes("--show-toplevel") && !argv.includes("--git-dir"))
         return "/Users/me/repo\n";
     // gh: a merged PR whose head is the branch's current tip
+    if (argv[0] === "gh" && argv.includes("--state") && argv.includes("all"))
+        return '[{"number":1,"state":"MERGED","headRefOid":"abc123"}]';
+    if (argv[0] === "gh" && argv.includes("--base") && argv.includes("open"))
+        return "";
     if (argv[0] === "gh")
         return "abc123\n";
+    if (argv.includes("ls-remote"))
+        return "abc123\trefs/heads/x\n";
+    return null;
+};
+const DAY = 86_400_000;
+// A squash-merged worker branch: two commits on no remote ref, no PR of its own name, a merged PR into main holds the
+// tip. Its worktree is clean.
+const squashedRun = (argv) => {
+    if (argv.includes("rev-list"))
+        return "2\n";
+    if (argv.includes("--git-dir"))
+        return "/Users/me/repo/.git/worktrees/w\n/Users/me/repo/.git\n\n/Users/me/repo/w\n";
+    if (argv.includes("status"))
+        return "";
+    if (argv.includes("--show-current"))
+        return "worker/u1\n";
+    if (argv.includes("--verify"))
+        return "abc123\n";
+    if (argv.includes("--show-toplevel"))
+        return "/Users/me/repo\n";
+    if (argv.includes("symbolic-ref"))
+        return "origin/main\n";
+    if (argv.includes("cat-file") || argv.includes("merge-base"))
+        return "";
+    if (argv[0] === "gh" && argv.includes("--search"))
+        return "abc123\n";
+    if (argv[0] === "gh")
+        return "";
+    return null;
+};
+// A branch with a PR: open, or closed three days ago with its last push then.
+const prRun = (state) => (argv) => {
+    if (argv[0] === "gh" && argv.includes("--head") && argv.includes("all")) {
+        const at = new Date(Date.now() - 3 * DAY).toISOString();
+        return JSON.stringify([
+            state === "open"
+                ? { number: 4, state: "OPEN", headRefOid: "abc123" }
+                : {
+                    number: 4,
+                    state: "CLOSED",
+                    headRefOid: "abc123",
+                    closedAt: at,
+                    pushed: at,
+                },
+        ]);
+    }
+    return run(argv);
+};
+// A push whose new commits the scan reads: one commit ahead of the upstream, and gitleaks finds a planted key or not.
+const pushScanRun = (leak) => (argv) => {
+    if (argv.includes("@{u}"))
+        return "origin/feat/x\n";
+    if (argv.includes("rev-list"))
+        return "1\n";
+    if (argv[0] === "gitleaks")
+        return leak
+            ? '[{"RuleID":"aws-access-token","File":"app.env","StartLine":3,"Commit":"1234567890abcdef"}]'
+            : "[]";
     return null;
 };
 const PROTECT = {
@@ -73,20 +136,23 @@ const RUN = {
     protected: { labels: { protected: ["acme-parked"] }, protect: PROTECT },
     unsure: { unsure: true },
 };
-const decide = async (command, { branch = "feat/x", python = null, hints = false, run: runOption = null, stack = null, } = {}) => {
+const decide = async (command, { branch = "feat/x", python = null, hints = false, run: runOption = null, stack = null, leak, squashed, pr, } = {}) => {
+    const base = squashed ? squashedRun : pr ? prRun(pr) : run;
     // The current branch the fake git reports for a bare lease push (`branch`, a feature branch unless a row says so).
     const pushRun = (argv) => argv.includes("--abbrev-ref") && argv.includes("HEAD")
         ? branch === null
             ? null
             : `${branch}\n`
-        : run(argv);
-    const [worktrees, branches, regenerable, refs, pushes] = await Promise.all([
-        worktreeFacts(command, env, rules, run),
-        branchFacts(command, rules, run, env),
-        regenFacts(command, env, rules, run),
-        refFacts(command, rules, run, env),
+        : base(argv);
+    const [worktrees, branches, regenerable, refs, pushes, remoteDeletes] = await Promise.all([
+        worktreeFacts(command, env, rules, base),
+        branchFacts(command, rules, base, env),
+        regenFacts(command, env, rules, base),
+        refFacts(command, rules, base, env),
         pushFacts(command, rules, pushRun, env),
+        remoteDeleteFacts(command, rules, base, env),
     ]);
+    const pushScan = await pushScanFacts(command, rules, pushScanRun(leak === true), env);
     const state = { reminded: new Set(hints ? [] : ["read", "edit"]) };
     const d = evaluateCommand({
         command,
@@ -98,6 +164,8 @@ const decide = async (command, { branch = "feat/x", python = null, hints = false
         pushes,
         regenerable,
         refs,
+        remoteDeletes,
+        pushScan,
         python,
         stack,
         run: runOption ? RUN[runOption] : null,
@@ -146,6 +214,11 @@ function isOptions(value) {
             typeof value.python === "string") &&
         (value.hints === undefined || typeof value.hints === "boolean") &&
         (value.read === undefined || typeof value.read === "boolean") &&
+        (value.leak === undefined || typeof value.leak === "boolean") &&
+        (value.squashed === undefined || typeof value.squashed === "boolean") &&
+        (value.pr === undefined ||
+            value.pr === "open" ||
+            value.pr === "closed-3d") &&
         (value.run === undefined ||
             value.run === null ||
             value.run === "registered" ||

@@ -357,7 +357,11 @@ void test("a branch ref deleted through gh api passes once a merged PR holds its
     const run = async (argv, cwd) => {
         await Promise.resolve();
         calls.push([argv[1] ?? "", cwd]);
-        return argv[0] === "gh" ? "abc\n" : null;
+        if (argv[0] !== "gh")
+            return null;
+        if (argv.includes("--head"))
+            return '[{"number":1,"state":"MERGED","headRefOid":"abc"}]';
+        return argv.includes("--base") ? "" : "abc\n";
     };
     const h = setup({ run });
     assert.equal(decision(await h({
@@ -365,6 +369,7 @@ void test("a branch ref deleted through gh api passes once a merged PR holds its
         cwd: "/r",
     })), undefined);
     assert.deepEqual(calls, [
+        ["pr", resolve("/r/sub")],
         ["pr", resolve("/r/sub")],
         ["api", resolve("/r/sub")],
     ]);
@@ -2033,4 +2038,210 @@ void test("through the real hook: the legacy-only tripwire and a run id without 
     });
     assert.equal(probe.status, 0);
     assert.match(probe.stdout, /"enforced":true/);
+});
+// ---- Branch lifecycle wiring: the session-start sweep, the sweep notice and the queued agent notes
+const lifecycleSetup = (lifecycle, deps = {}, events = []) => setup({
+    pluginRoot: mkdtempSync(join(tmpdir(), "guard-root-")),
+    env: { GUARD_LIFECYCLE: "on", GUARD_PUSH_SCAN: "off" },
+    lifecycle,
+    emit: (e, a) => {
+        events.push([e, a]);
+    },
+    ...deps,
+});
+const start = (cwd = "/r") => ({
+    hook_event_name: "SessionStart",
+    source: "startup",
+    cwd,
+});
+void test("SessionStart: the repo sweep starts once per session; GUARD_LIFECYCLE=off and a missing plugin root skip it; a throw is swallowed", async () => {
+    const spawned = [];
+    const lifecycle = {
+        startSessionSweep: (o) => {
+            spawned.push({ cwd: o.cwd, registered: o.registered });
+        },
+    };
+    const h = lifecycleSetup(lifecycle);
+    await h(start());
+    await h(start());
+    assert.deepEqual(spawned, [{ cwd: "/r", registered: false }]);
+    spawned.length = 0;
+    await lifecycleSetup(lifecycle, {
+        env: { GUARD_LIFECYCLE: "off" },
+    })(start());
+    await lifecycleSetup(lifecycle, { pluginRoot: "" })(start());
+    assert.deepEqual(spawned, []);
+    const file = writeManifest(DEFAULT_REG);
+    await lifecycleSetup(lifecycle, {
+        runVet: RO,
+        env: {
+            GUARD_LIFECYCLE: "on",
+            GUARD_RUN_ID: "r1",
+            GUARD_RUN_TICKET: "acme/app#7",
+            GUARD_RUN_MANIFEST: file,
+        },
+    })(start());
+    assert.deepEqual(spawned, [{ cwd: "/r", registered: true }]);
+    const out = await lifecycleSetup({
+        startSessionSweep: () => {
+            throw new Error("spawn failed");
+        },
+    })(start());
+    assert.deepEqual(out, {});
+});
+void test("the sweep notice and queued agent notes reach the first tool call without a decision, each once, and are logged", async () => {
+    const queued = ["`feat/x` has 2 commits origin does not have: push them."];
+    const events = [];
+    const h = lifecycleSetup({
+        sweepNotice: () => "sweep: removed 12 local branches",
+        takeAgentNotes: () => queued.splice(0),
+    }, {}, events);
+    // a call that gets a decision delivers nothing and spends nothing
+    const asked = await h(pre("Bash", "git reset --hard"));
+    assert.equal(decision(asked)?.permissionDecision, "ask");
+    assert.doesNotMatch(asked.stdout ?? "", /sweep:/);
+    const first = await h(pre("Bash", "ls"));
+    const ctx = decision(first)?.additionalContext ?? "";
+    assert.match(ctx, /sweep: removed 12 local branches/);
+    assert.match(ctx, /ention it once; do not sweep further unless the user asks/);
+    assert.match(ctx, /`feat\/x` has 2 commits origin does not have/);
+    assert.equal(JSON.parse(first.stdout ?? "{}").systemMessage, "sweep: removed 12 local branches", "the user sees the sweep summary");
+    assert.equal(decision(await h(pre("Bash", "ls"))), undefined);
+    assert.deepEqual(events
+        .filter(([e]) => e === "guard.reminder")
+        .map(([, a]) => a.rule)
+        .sort(), ["branch-lifecycle", "repo-sweep"]);
+    // a note queued later is delivered on the next call
+    queued.push("later note");
+    assert.match(decision(await h(pre("Bash", "ls")))?.additionalContext ?? "", /later note/);
+});
+void test("GUARD_LIFECYCLE=off delivers neither the sweep notice nor queued notes; no notice means no message", async () => {
+    const seen = [];
+    const fakes = {
+        sweepNotice: () => {
+            seen.push("notice");
+            return "sweep: x";
+        },
+        takeAgentNotes: () => {
+            seen.push("notes");
+            return ["note"];
+        },
+    };
+    const off = lifecycleSetup(fakes, { env: { GUARD_LIFECYCLE: "off" } });
+    assert.equal(decision(await off(pre("Bash", "ls"))), undefined);
+    assert.deepEqual(seen, []);
+    const quiet = lifecycleSetup({
+        sweepNotice: () => null,
+        takeAgentNotes: () => [],
+    });
+    assert.equal(decision(await quiet(pre("Bash", "ls"))), undefined);
+});
+// ---- Push scan and pr-batch at the hook
+const scanRun = (leaks, calls = []) => async (argv) => {
+    await Promise.resolve();
+    calls.push(argv.join(" "));
+    if (argv[0] === "gitleaks")
+        return JSON.stringify(leaks);
+    if (argv.includes("@{u}"))
+        return "origin/feat/x\n";
+    if (argv.includes("rev-list"))
+        return "1\n";
+    return null;
+};
+void test("push scan at the hook: a finding denies, a scan that cannot finish asks, GUARD_PUSH_SCAN=off skips it", async () => {
+    const leak = {
+        RuleID: "aws-access-token",
+        File: "app.env",
+        StartLine: 3,
+        Commit: "1234567890abcdef",
+        Secret: "AKIAIOSFODNN7EXAMPLE",
+    };
+    const events = [];
+    const denied = await setup({
+        env: { GUARD_PUSH_SCAN: "on" },
+        run: scanRun([leak]),
+        emit: (e, a) => {
+            events.push([e, a]);
+        },
+    })(pre("Bash", "git push"));
+    const d = decision(denied);
+    assert.equal(d?.permissionDecision, "deny");
+    assert.match(d.permissionDecisionReason ?? "", /1234567 app\.env:3/);
+    assert.doesNotMatch(denied.stdout ?? "", /AKIA/);
+    const record = events.find(([e]) => e === "guard.decision")?.[1];
+    assert.equal(record?.rule, "push-scan");
+    assert.equal(record.findings, 1);
+    assert.doesNotMatch(JSON.stringify(events), /app\.env|AKIA/);
+    const clean = await setup({
+        env: { GUARD_PUSH_SCAN: "on" },
+        run: scanRun([]),
+    })(pre("Bash", "git push"));
+    assert.equal(decision(clean), undefined);
+    const slow = await setup({
+        env: { GUARD_PUSH_SCAN: "on" },
+        factsMs: 30,
+        run: async () => {
+            await new Promise((r) => setTimeout(r, 200));
+            return null;
+        },
+    })(pre("Bash", "git push"));
+    assert.equal(decision(slow)?.permissionDecision, "ask");
+    assert.match(decision(slow)?.permissionDecisionReason ?? "", /Secret scan could not run/);
+    const calls = [];
+    const off = await setup({
+        env: { GUARD_PUSH_SCAN: "off" },
+        run: scanRun([leak], calls),
+    })(pre("Bash", "git push"));
+    assert.equal(decision(off), undefined);
+    assert.ok(!calls.some((c) => c.startsWith("gitleaks")));
+});
+void test("pr-batch at the hook: a deny logs reason=none, an accepted split logs its reason every time", async () => {
+    const run = async (argv) => {
+        await Promise.resolve();
+        const line = argv.join(" ");
+        if (line === "git branch --show-current")
+            return "feat/new\n";
+        if (line === "git symbolic-ref --short refs/remotes/origin/HEAD")
+            return "origin/main\n";
+        if (line === "git rev-parse --show-toplevel")
+            return "/r\n";
+        if (argv[1] === "merge-base")
+            return "base\n";
+        if (argv[1] === "diff")
+            return "src/a.ts\n";
+        if (argv[1] === "worktree")
+            return "worktree /r\nbranch refs/heads/feat/new\n";
+        if (argv[0] === "gh")
+            return JSON.stringify([
+                { number: 7, headRefName: "feat/old", files: [{ path: "src/a.ts" }] },
+            ]);
+        return null;
+    };
+    const events = [];
+    const h = setup({
+        env: { GUARD_PUSH_SCAN: "off" },
+        run,
+        random: () => 0.99,
+        emit: (e, a) => {
+            events.push([e, a]);
+        },
+    });
+    await h({ hook_event_name: "UserPromptSubmit", prompt: "/ship" });
+    const denied = decision(await h(pre("Bash", "gh pr create --fill")));
+    assert.equal(denied?.permissionDecision, "deny");
+    assert.match(denied.permissionDecisionReason ?? "", /PR #7 already touches/);
+    const splitCommand = (reason) => `gh pr create --body "x\nSplit-Reason: ${reason}"`;
+    assert.equal(decision(await h(pre("Bash", splitCommand("other-owner")))), undefined);
+    assert.equal(decision(await h(pre("Bash", splitCommand("other-owner")))), undefined);
+    const invalid = decision(await h(pre("Bash", splitCommand("because"))));
+    assert.equal(invalid?.permissionDecision, "deny");
+    const logged = events
+        .filter(([e, a]) => e === "guard.decision" && a.rule === "pr-batch")
+        .map(([, a]) => [a.action, a.reason]);
+    assert.deepEqual(logged, [
+        ["deny", "none"],
+        ["allow", "other-owner"],
+        ["allow", "other-owner"],
+        ["deny", "invalid"],
+    ]);
 });

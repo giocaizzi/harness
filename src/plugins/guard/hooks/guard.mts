@@ -5,7 +5,9 @@
 
 import { execFile } from "node:child_process";
 import {
+  accessSync,
   closeSync,
+  constants,
   existsSync,
   fstatSync,
   lstatSync,
@@ -41,10 +43,13 @@ import {
   nativeAsk,
   previewCommand,
   protectedPathHit,
+  prBatchFacts,
   pureRead,
   pushFacts,
+  pushScanFacts,
   refFacts,
   regenFacts,
+  remoteDeleteFacts,
   stackFacts,
   stackTargets,
   tagFacts,
@@ -62,7 +67,9 @@ import type {
   GuardEnv,
   GuardRules,
   HostFacts,
+  PrBatchFact,
   PushFact,
+  PushScanFact,
   SafeFact,
   StackFact,
   TagFact,
@@ -70,6 +77,11 @@ import type {
 import { contractProbe } from "./contract.mjs";
 import { appendDataFile, pluginDataDir, readDataFile } from "./data.mjs";
 import { editedPaths } from "./lint.mjs";
+import {
+  sweepNotice,
+  startSessionSweep,
+  takeAgentNotes,
+} from "./lifecycle.mjs";
 import type { RunContext } from "./run.mjs";
 import {
   denyReason,
@@ -601,7 +613,28 @@ const within = <T,>(promise: Promise<T>, ms: number, fallback: T): Promise<T> =>
     );
   });
 
+// The lifecycle functions (hooks/lifecycle.mjs) a test replaces with fakes through `deps.lifecycle`.
+export interface LifecycleHooks {
+  startSessionSweep: typeof startSessionSweep;
+  sweepNotice: typeof sweepNotice;
+  takeAgentNotes: typeof takeAgentNotes;
+}
+export type GuardDeps = HandleDeps & { lifecycle?: Partial<LifecycleHooks> };
+const lifecycleOf = (deps: GuardDeps): LifecycleHooks => ({
+  startSessionSweep,
+  sweepNotice,
+  takeAgentNotes,
+  ...deps.lifecycle,
+});
+
 const FACTS_MS = 20_000;
+const SCAN_MS = 25_000;
+const OFF = /^(0|false|off)$/i;
+// An off switch the hook's env sets, else the process's (a test run exports GUARD_PUSH_SCAN and GUARD_LIFECYCLE off).
+const flag = (
+  deps: { env?: Record<string, string | undefined> },
+  name: string,
+) => deps.env?.[name] ?? process.env[name] ?? "";
 const ALLOW_SAMPLE = 10;
 const PREVIEW_MS = 3_000;
 const STACK_MS = 5_000;
@@ -649,6 +682,22 @@ export function protectFacts(cwd?: string): ProtectFactsResult {
 
 const slashes = (p: string): string => p.replace(/\\/g, "/");
 
+const isReadableFile = (path: string): boolean => {
+  try {
+    accessSync(path, constants.R_OK);
+    return statSync(path).isFile();
+  } catch {
+    return false;
+  }
+};
+const readText = (path: string): string | null => {
+  try {
+    return readFileSync(path, "utf8");
+  } catch {
+    return null;
+  }
+};
+
 async function onShell(
   input: HookInput,
   state: StoredSessionState,
@@ -678,13 +727,19 @@ async function onShell(
       HOME: deps.env?.HOME ?? deps.env?.USERPROFILE,
     };
     envObj.dirs = existingDirs(command, envObj, input.cwd);
+    const privateConfig = deps.env?.GITLEAKS_PRIVATE_CONFIG;
+    if (privateConfig && isReadableFile(privateConfig))
+      envObj.GITLEAKS_PRIVATE_CONFIG = privateConfig;
 
     interface ShellFacts {
       branches?: Record<string, SafeFact | undefined>;
       env: GuardEnv;
       python?: string | null;
+      prBatch?: Record<string, PrBatchFact | undefined>;
+      pushScan?: Record<string, PushScanFact | undefined>;
       pushes?: Record<string, PushFact | undefined>;
       refs?: Record<string, SafeFact | undefined>;
+      remoteDeletes?: Record<string, SafeFact | undefined>;
       regenerable?: Record<string, boolean | undefined>;
       stack?: StackFact | null;
       tags?: Record<string, TagFact | undefined>;
@@ -720,19 +775,49 @@ async function onShell(
           branchFacts(command, rules, inCwd, facts.env),
           regenFacts(command, facts.env, rules, inCwd),
           refFacts(command, rules, inCwd, facts.env),
+          remoteDeleteFacts(command, rules, inCwd, facts.env),
         ]),
         deps.factsMs ?? FACTS_MS,
         null,
       );
       if (gathered) {
-        [facts.worktrees, facts.branches, facts.regenerable, facts.refs] =
-          gathered;
+        [
+          facts.worktrees,
+          facts.branches,
+          facts.regenerable,
+          facts.refs,
+          facts.remoteDeletes,
+        ] = gathered;
       } else {
         unfinished = true;
       }
     }
 
     if (pushing) facts.pushes = (await pushing) ?? {};
+
+    // Every push is scanned for secrets first; a scan that cannot finish in its budget asks (unavailable).
+    if (
+      !OFF.test(flag(deps, "GUARD_PUSH_SCAN")) &&
+      rules.pushScan &&
+      new RegExp(rules.pushScan.match, "i").test(command)
+    ) {
+      facts.pushScan = await within(
+        pushScanFacts(command, rules, inCwd, facts.env),
+        deps.factsMs ?? SCAN_MS,
+        { "": { findings: [], private: [], status: "unavailable" } },
+      );
+    }
+
+    // A new PR that overlaps another open PR of the author: reads fail open.
+    if (rules.prBatch && new RegExp(rules.prBatch.match, "i").test(command)) {
+      facts.prBatch = await within(
+        prBatchFacts(command, rules, inCwd, facts.env, (path, cwd) =>
+          readText(resolve(input.cwd ?? ".", cwd ?? ".", path)),
+        ),
+        deps.factsMs ?? FACTS_MS,
+        {},
+      );
+    }
 
     if (
       !/^(0|false|off)$/i.test(deps.env?.GUARD_STACK_HINT ?? "") &&
@@ -832,6 +917,7 @@ async function onShell(
           tool_use_id: input.tool_use_id,
           cmd_hash: commandHash(command),
           ...(d.rule === "host" ? hostAttrs(host) : {}),
+          ...d.attrs,
         },
         input.cwd,
       );
@@ -866,6 +952,24 @@ async function onShell(
         input.cwd,
       );
     };
+
+    if (d.prBatch) {
+      fire(
+        deps,
+        "guard.decision",
+        {
+          rule: "pr-batch",
+          action: "allow",
+          reason: d.prBatch,
+          cmd_class: "hint",
+          tool: input.tool_name ?? "",
+          session_id: input.session_id,
+          tool_use_id: input.tool_use_id,
+          cmd_hash: commandHash(command),
+        },
+        input.cwd,
+      );
+    }
 
     if (d.remind) {
       fire(
@@ -1246,8 +1350,9 @@ function onSpawn(
 function onStale(
   input: HookInput,
   state: StoredSessionState,
-  deps: HandleDeps,
+  deps: GuardDeps,
   out: HandleResult,
+  session?: string,
 ): HandleResult {
   const decided =
     out.stdout &&
@@ -1265,27 +1370,61 @@ function onStale(
     harness: deps.harness,
   });
   state.plugins = s.loaded;
-  if (!s.context || decided || deps.harness === "antigravity") return out;
-  state.reminded.push(...s.remind.map((r) => `stale:${r}`));
-  fire(
-    deps,
-    "guard.reminder",
-    {
-      rule: "stale-plugins",
-      cmd_class: "hint",
-      tool: input.tool_name ?? "",
-      session_id: input.session_id,
-      tool_use_id: (input as { tool_use_id?: string }).tool_use_id,
-    },
-    input.cwd,
-  );
+  if (decided || deps.harness === "antigravity") return out;
+  const contexts: string[] = [];
+  const notices: string[] = [];
+  const remind = (rule: string): void => {
+    fire(
+      deps,
+      "guard.reminder",
+      {
+        rule,
+        cmd_class: "hint",
+        tool: input.tool_name ?? "",
+        session_id: input.session_id,
+        tool_use_id: (input as { tool_use_id?: string }).tool_use_id,
+      },
+      input.cwd,
+    );
+  };
+  if (s.context) {
+    state.reminded.push(...s.remind.map((r) => `stale:${r}`));
+    remind("stale-plugins");
+    contexts.push(s.context);
+    if (s.notice) notices.push(s.notice);
+  }
+  // Branch lifecycle: the previous sweep's summary once per session, and the notes other hooks queued for the agent.
+  if (!OFF.test(flag(deps, "GUARD_LIFECYCLE"))) {
+    if (!state.reminded.includes("repo-sweep")) {
+      state.reminded.push("repo-sweep");
+      const notice = lifecycleOf(deps).sweepNotice(
+        state.startCwd ?? ".",
+        deps.env ?? {},
+      );
+      if (notice) {
+        remind("repo-sweep");
+        contexts.push(
+          `${notice}\nMention it once; do not sweep further unless the user asks.`,
+        );
+        notices.push(notice);
+      }
+    }
+    if (session) {
+      const dataDir = deps.dataDir ?? pluginDataDir(deps.env ?? process.env);
+      for (const text of lifecycleOf(deps).takeAgentNotes(dataDir, session)) {
+        remind("branch-lifecycle");
+        contexts.push(text);
+      }
+    }
+  }
+  if (!contexts.length) return out;
   const context = out.stdout
     ? (JSON.parse(out.stdout) as HookOutputPayload).hookSpecificOutput
         ?.additionalContext
     : null;
   return note(
-    context ? `${context}\n${s.context}` : s.context,
-    s.notice ?? undefined,
+    context ? `${context}\n${contexts.join("\n")}` : contexts.join("\n"),
+    notices.length ? notices.join("\n") : undefined,
   );
 }
 
@@ -1327,7 +1466,7 @@ export function handleSessionEnd(store: SessionStoreInstance): HandleResult {
 
 export function handleSessionStart(
   input: ExtendedHookInput,
-  deps: HandleDeps,
+  deps: GuardDeps,
   session: string | undefined,
   state: StoredSessionState,
 ): HandleResult {
@@ -1360,6 +1499,23 @@ export function handleSessionStart(
         input.cwd,
       );
       state.announced = true;
+      // The daily repo sweep (github-workflow, Branch lifecycle): detached, never throws, off with GUARD_LIFECYCLE=off.
+      if (
+        !OFF.test(flag(deps, "GUARD_LIFECYCLE")) &&
+        deps.pluginRoot &&
+        typeof input.cwd === "string"
+      ) {
+        try {
+          lifecycleOf(deps).startSessionSweep({
+            cwd: input.cwd,
+            env: deps.env ?? {},
+            pluginRoot: deps.pluginRoot,
+            registered: registered !== null,
+          });
+        } catch {
+          // the sweep is a nicety
+        }
+      }
     } catch {
       // a missing record changes nothing
     }
@@ -1476,7 +1632,7 @@ export async function handlePreToolUse(
   }
 
   try {
-    out = onStale(input, state, deps, out);
+    out = onStale(input, state, deps, out, session);
   } catch {
     // the note is a nicety: a decision already made stands
   }
