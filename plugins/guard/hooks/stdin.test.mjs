@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { takeAgentNotes } from "./lifecycle.mjs";
 import { readStdin } from "./stdin.mjs";
 import { crashAnswer, gateFailClosed, stopCheck } from "./stop.mjs";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -300,4 +301,180 @@ void test("stopCheck: the gate's answer is reported before the make check starts
     finally {
         Object.assign(process.env, saved);
     }
+});
+// The branch lifecycle reminder in the stop answer.
+const noMake = () => ({ status: 1, stdout: "", stderr: "" });
+async function cleanEnv(fn) {
+    const saved = { ...process.env };
+    for (const k of Object.keys(process.env)) {
+        if (k.startsWith("FACTORY_") || k.startsWith("GUARD_")) {
+            Reflect.deleteProperty(process.env, k);
+        }
+    }
+    try {
+        return await fn();
+    }
+    finally {
+        Object.assign(process.env, saved);
+    }
+}
+const found = {
+    key: "feat/x@abc",
+    message: "`feat/x` has 1 commit(s) origin does not have: push them.",
+};
+void test("stopCheck: the lifecycle reminder is the systemMessage, once per session and branch head, and queues a note", async () => {
+    await cleanEnv(async () => {
+        const dataDir = mkdtempSync(join(tmpdir(), "guard-stop-"));
+        const shown = [];
+        const reminder = {
+            dataDir,
+            lookup: () => found,
+            onReminder: (a) => shown.push(a),
+        };
+        const input = { cwd: tmpdir(), session_id: "s-remind" };
+        const first = await stopCheck(input, noMake, { reminder });
+        assert.deepEqual(first, { systemMessage: found.message });
+        assert.equal(shown.length, 1);
+        assert.equal(shown[0]?.rule, "branch-lifecycle");
+        assert.deepEqual(takeAgentNotes(dataDir, "s-remind"), [found.message]);
+        // the same branch head again, and the same session: nothing
+        assert.equal(await stopCheck(input, noMake, { reminder }), null);
+        assert.equal(shown.length, 1);
+        // a new head is a new reminder
+        const moved = {
+            ...reminder,
+            lookup: () => ({ ...found, key: "feat/x@def" }),
+        };
+        assert.notEqual(await stopCheck(input, noMake, { reminder: moved }), null);
+        // another session is reminded again
+        const other = await stopCheck({ ...input, session_id: "s-other" }, noMake, {
+            reminder,
+        });
+        assert.equal(other?.systemMessage, found.message);
+    });
+});
+void test("stopCheck: the reminder follows an existing systemMessage and never blocks", async () => {
+    await cleanEnv(async () => {
+        const dataDir = mkdtempSync(join(tmpdir(), "guard-stop-"));
+        const hasTarget = (cmd, args) => cmd === "make" && args[0] === "-n"
+            ? {
+                status: 0,
+                stdout: "",
+                stderr: "",
+            }
+            : noMake(cmd, args);
+        const out = await stopCheck({ cwd: tmpdir() }, hasTarget, {
+            reminder: { dataDir, lookup: () => found },
+            strain: () => "load 99",
+        });
+        assert.match(out?.systemMessage ?? "", /^make check-fast deferred \(host strained: load 99\)[^\n]*\n`feat\/x`/);
+        assert.equal(out?.decision, undefined);
+    });
+});
+void test("stopCheck: a failing make check is returned as the block it is, without the reminder", async () => {
+    await cleanEnv(async () => {
+        const dataDir = mkdtempSync(join(tmpdir(), "guard-stop-"));
+        const hasTarget = (cmd, args) => cmd === "make" && args[0] === "-n"
+            ? {
+                status: 0,
+                stdout: "",
+                stderr: "",
+            }
+            : noMake(cmd, args);
+        const out = await stopCheck({ cwd: tmpdir() }, hasTarget, {
+            exec: () => Promise.resolve({
+                status: 1,
+                stdout: "boom",
+                stderr: "",
+                timedOut: false,
+            }),
+            strain: () => null,
+            reminder: { dataDir, lookup: () => found },
+        });
+        assert.equal(out?.decision, "block");
+        assert.equal(out.systemMessage, undefined);
+    });
+});
+void test("stopCheck: a failing lookup, reminder false and a subagent stop leave the answer unchanged", async () => {
+    await cleanEnv(async () => {
+        const dataDir = mkdtempSync(join(tmpdir(), "guard-stop-"));
+        const boom = {
+            dataDir,
+            lookup: () => {
+                throw new Error("git exploded");
+            },
+        };
+        assert.equal(await stopCheck({ cwd: tmpdir() }, noMake, { reminder: boom }), null);
+        assert.equal(await stopCheck({ cwd: tmpdir() }, noMake, { reminder: false }), null);
+        assert.equal(await stopCheck({ cwd: tmpdir(), agent_id: "a1" }, noMake, {
+            reminder: { dataDir, lookup: () => found },
+        }), null);
+    });
+});
+const STOP_SCRIPT = fileURLToPath(new URL("./stop.mjs", import.meta.url));
+function runStopScript(args, payload, env) {
+    const r = spawnSync(process.execPath, [STOP_SCRIPT, ...args], {
+        input: JSON.stringify(payload),
+        encoding: "utf8",
+        env: {
+            ...process.env,
+            GUARD_OTEL: "off",
+            GUARD_STOP_CHECK: "off",
+            GUARD_LIFECYCLE: "on",
+            ...env,
+        },
+    });
+    assert.equal(r.status, 0, r.stderr);
+    return r.stdout ? JSON.parse(r.stdout) : {};
+}
+// A clone on a feature branch with one commit origin does not have.
+function unpushedRepo() {
+    const root = mkdtempSync(join(tmpdir(), "guard-stop-repo-"));
+    const g = (cwd, ...a) => {
+        const r = spawnSync("git", a, { cwd, encoding: "utf8" });
+        assert.equal(r.status, 0, r.stderr);
+    };
+    g(root, "init", "--bare", "-b", "main", "origin.git");
+    g(root, "clone", "origin.git", "work");
+    const work = join(root, "work");
+    g(work, "config", "user.email", "a@example.com");
+    g(work, "config", "user.name", "a");
+    g(work, "config", "commit.gpgsign", "false");
+    g(work, "commit", "--allow-empty", "-m", "init");
+    g(work, "push", "origin", "HEAD:main");
+    g(work, "switch", "-c", "feat/x");
+    g(work, "commit", "--allow-empty", "-m", "work");
+    return work;
+}
+void test("stop.mjs --reminder-only: a driver subagent gets the reminder, a worker or an unlabelled one does not, and no gate runs", () => {
+    const cwd = unpushedRepo();
+    const data = mkdtempSync(join(tmpdir(), "guard-stop-data-"));
+    const env = { CLAUDE_PLUGIN_DATA: data };
+    const base = { hook_event_name: "SubagentStop", cwd, agent_id: "a1" };
+    const only = (extra, more = {}) => runStopScript(["--reminder-only"], { ...base, ...extra }, { ...env, ...more });
+    assert.deepEqual(only({ agent_type: "worker", session_id: "r1" }), {});
+    assert.deepEqual(only({ session_id: "r1" }), {});
+    const driver = only({ agent_type: "dev-tools:driver", session_id: "r1" });
+    assert.match(String(driver.systemMessage), /^`feat\/x` has 1 commit\(s\) origin does not have: push them/);
+    assert.equal(driver.decision, undefined);
+    assert.equal(driver.hookSpecificOutput, undefined);
+    assert.equal(takeAgentNotes(data, "r1").length, 1);
+    // once per session and head
+    assert.deepEqual(only({ agent_type: "driver", session_id: "r1" }), {});
+    // switched off
+    assert.deepEqual(only({ agent_type: "driver", session_id: "r2" }, { GUARD_LIFECYCLE: "off" }), {});
+});
+void test("stop.mjs: Stop carries the reminder as systemMessage for Claude Code and Codex, and only a note for Antigravity", () => {
+    const cwd = unpushedRepo();
+    const data = mkdtempSync(join(tmpdir(), "guard-stop-data-"));
+    const env = { CLAUDE_PLUGIN_DATA: data };
+    const stop = (args, session_id) => runStopScript(args, { hook_event_name: "Stop", cwd, session_id }, env);
+    const claude = stop([], "c1");
+    assert.match(String(claude.systemMessage), /^`feat\/x` has 1 commit/);
+    assert.equal(claude.decision, undefined);
+    assert.deepEqual(Object.keys(stop(["--harness=codex"], "c2")), [
+        "systemMessage",
+    ]);
+    assert.deepEqual(stop(["--harness=antigravity"], "c3"), {});
+    assert.equal(takeAgentNotes(data, "c3").length, 1);
 });
