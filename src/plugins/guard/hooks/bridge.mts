@@ -19,7 +19,7 @@ import { canonicalHarnessName } from "./harnesses.mjs";
 import { type SpawnSyncFn, lintFile } from "./lint.mjs";
 import { createRegistrationCache } from "./registration.mjs";
 import type { RegistrationCache } from "./registration.mjs";
-import { gateFailClosed, stopCheck } from "./stop.mjs";
+import { gateFailClosed, stopCheck, stopReminder } from "./stop.mjs";
 import { recordAttrs, usageAttributes } from "./telemetry.mjs";
 import type {
   GuardAskResultParams,
@@ -50,6 +50,13 @@ const launchDetached = (argv: readonly string[]): number | undefined => {
   return child.pid;
 };
 
+// The bridge plus the lifecycle reminder, for the hosts that show it as a toast instead of a re-prompt.
+export interface LifecycleGuard extends GuardBridge {
+  // The branch lifecycle reminder for this session's cwd, once per branch and head, or null. Warn only: the host
+  // shows it to the user and never sends it as a prompt. Also queues it as a note for the agent's next turn.
+  lifecycle(params: { cwd?: string; sessionId?: string }): string | null;
+}
+
 export interface CreateGuardOptions {
   dataDir?: string;
   deps?: GuardDeps;
@@ -64,7 +71,7 @@ export function createGuard({
   noAsk = false,
   dataDir = DATA_DIR,
   deps = {},
-}: CreateGuardOptions): GuardBridge {
+}: CreateGuardOptions): LifecycleGuard {
   const env = deps.env ?? process.env;
   const report =
     deps.report ??
@@ -285,6 +292,8 @@ export function createGuard({
             : never,
           {
             gate: gateOpts(),
+            // the host shows the reminder itself (`lifecycle`), never inside a stop answer
+            reminder: false,
             report: (attrs) => {
               void d.emit?.("guard.stop", { ...attrs, cmd_class: "stop" }, cwd);
             },
@@ -300,6 +309,24 @@ export function createGuard({
           gateOpts(),
         );
       }
+    },
+
+    lifecycle({
+      cwd,
+      sessionId,
+    }: {
+      cwd?: string;
+      sessionId?: string;
+    }): string | null {
+      return stopReminder(
+        { cwd, session_id: sessionId },
+        {
+          dataDir: d.dataDir,
+          onReminder: (attrs) => {
+            void d.emit?.("guard.reminder", { ...attrs, tool: "" }, cwd);
+          },
+        },
+      );
     },
 
     // One model response: { sessionId, model, provider, tokens: { input, output, cacheRead, cacheWrite, reasoning }, costUsd }.
