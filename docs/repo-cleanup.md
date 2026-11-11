@@ -16,7 +16,7 @@ At session start, in a main checkout, at most once a day, the `guard` plugin spa
 | Remote branch of a merged PR, still there | Deleted. |
 | Remote branch of a PR closed unmerged, idle 7 days | Deleted; its commits stay at `refs/pull/<n>/head`. Only PRs authored by the logged-in gh user, unless `--remote-scope all` or `SWEEP_REMOTE_SCOPE=all`. |
 | Archive ref older than 90 days (`SWEEP_ARCHIVE_DAYS`) | Deleted. |
-| Anything else (younger than 24 h, dirty, in use, checked out, open PR head or base, bot branch, default branch) | Kept, and listed with the reason when it is not on origin. |
+| Anything else (younger than 24 h, dirty, in use, checked out in the main checkout or the current worktree, open PR head or base on origin, bot branch, default branch) | Kept, and listed with the reason when it is not on origin. |
 
 Every delete compares the tip it saw with the tip it removes, so a branch that moved in between is kept and logged `moved`. The next session shows the summary once (`sweep: removed 12 local branches, 3 worktrees; archived 2; ...; log <path>`). Without dev-tools installed the guard only counts and nudges when a repo has over 10 worktrees, 50 local branches or 3 stashes.
 

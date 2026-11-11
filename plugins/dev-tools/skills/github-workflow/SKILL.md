@@ -31,8 +31,10 @@ origin at once, and a local copy goes as soon as origin has it.
   worktree is clean; no waiting. The guard lets those deletes through and asks for the rest.
 - **Remote branches** go only when stale: landed on the default branch (proved by content, since a squash merge
   breaks ancestry) or closed unmerged and idle 7 days. Never close or delete an open PR to tidy up.
-- **Never deleted:** the default branch, a branch checked out in a worktree, the head or base of an open PR,
-  bot branches, a dirty or in-use worktree, and nothing younger than 24 h is removed by the sweep.
+- **Never deleted:** the default branch, the branch checked out in the main checkout or your current worktree,
+  the remote head or base of an open PR, bot branches, a dirty or in-use worktree, and nothing younger than 24 h is
+  removed by the sweep. A clean linked worktree whose branch origin holds goes after 24 idle hours, open draft
+  PR included: recreate it from origin when you need it again.
 - **No stash:** park work as a commit and push it. A stash older than 7 days is archived like a branch, then dropped.
 - **Every push is scanned** for secrets first (gitleaks over the commits origin does not have yet), by the guard and by a
   pre-push hook; a finding stops the push. Never bypass it (`--no-verify`): a pushed secret stays reachable through
