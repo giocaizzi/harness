@@ -96,7 +96,9 @@ function repoDirs(run: Runner, cwd: string): RepoDirs | null {
   return { common, main: gitDir === common };
 }
 
-const off = (env: EnvMap): boolean => env.GUARD_LIFECYCLE === "off";
+// The values every guard off switch reads as off (GUARD_LIFECYCLE, GUARD_PUSH_SCAN, ...).
+export const OFF = /^(0|false|off)$/i;
+const off = (env: EnvMap): boolean => OFF.test(env.GUARD_LIFECYCLE ?? "");
 
 function resolveScript(pluginRoot: string, cwd: string): string | null {
   const versioned = SEMVER.test(basename(pluginRoot));

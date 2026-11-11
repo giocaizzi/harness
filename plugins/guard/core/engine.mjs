@@ -1087,24 +1087,25 @@ function parseFindings(text) {
         return null;
     }
 }
-// What one push-like segment sends: the remote and the refspec sources it names (none: the current branch). A push
-// that only deletes sends no commit, so it is null.
 function pushJob(seg) {
     const rest = /\bgit\s+push\b(.*)$/i.exec(seg)?.[1];
     if (rest === undefined)
-        return { remote: "origin", sources: [] };
-    const deleting = rest
-        .split(/\s+/)
-        .some((o) => o === "--delete" || o === "-d");
+        return { all: false, remote: "origin", sources: [], tags: false };
+    const opts = rest.split(/\s+/);
+    const deleting = opts.some((o) => o === "--delete" || o === "-d");
+    const all = opts.some((o) => /^--(?:all|branches|mirror)$/.test(o));
+    const tags = opts.includes("--tags");
     const [where, ...specs] = plainArgs(rest);
     const pushed = specs.filter((sp) => !deleting && !sp.startsWith(":"));
     if (specs.length && !pushed.length)
         return null;
     return {
+        all,
         remote: where && /^[\w.-]+$/.test(where) ? where : "origin",
         sources: pushed
             .map((sp) => sp.replace(/^\+/, "").split(":")[0] ?? "")
             .filter((src) => src && src !== "HEAD"),
+        tags,
     };
 }
 // Scan facts for every command of a command that pushes or may push (`rules.pushScan`), in the repo at its directory:
@@ -1158,9 +1159,20 @@ async function scanRepo(dir, jobs, privateConfig, run) {
         "--symbolic-full-name",
         "@{u}",
     ]))?.trim();
-    const ranges = jobs.flatMap(({ remote, sources }) => sources.length
-        ? sources.map((s) => [s, "--not", `--remotes=${remote}`])
-        : [upstream ? ["@{u}..HEAD"] : ["HEAD", "--not", `--remotes=${remote}`]]);
+    // `--all` and `--tags` name every local branch or tag, so those ranges are every unpushed commit of them; a push
+    // naming only tags sends no branch commit.
+    const ranges = jobs.flatMap(({ all, remote, sources, tags }) => {
+        const found = sources.map((s) => [s, "--not", `--remotes=${remote}`]);
+        if (all)
+            found.push(["--all", "--not", `--remotes=${remote}`]);
+        if (tags)
+            found.push(["--tags", "--not", `--remotes=${remote}`]);
+        if (found.length)
+            return found;
+        return [
+            upstream ? ["@{u}..HEAD"] : ["HEAD", "--not", `--remotes=${remote}`],
+        ];
+    });
     const leaks = (range, config) => sh([
         "gitleaks",
         "git",
@@ -1169,7 +1181,8 @@ async function scanRepo(dir, jobs, privateConfig, run) {
         "--exit-code",
         "0",
         "--log-opts",
-        range.join(" "),
+        // remerge shows a merge commit's own changes (a conflict resolution), which a plain log prints no diff for
+        `--diff-merges=remerge ${range.join(" ")}`,
         "--report-format",
         "json",
         "--report-path",
@@ -3243,10 +3256,13 @@ export function evaluateCommand({ command, loadedSkills = new Set(), state, host
     if (denied && (!denied.when || denied.when === python))
         return { action: "deny", rule: denied.id, reason: denied.why };
     const note = denied && !state.reminded.has(denied.id) ? denied.id : null;
+    // A secret in the push is a deny that no risky ask on the same command may hide: approving that ask would send it.
+    const scanDecision = evaluatePushScan(command, rules, pushScan);
+    if (scanDecision?.action === "deny")
+        return scanDecision;
     const riskyDecision = evaluateRiskyCommand(command, rules, env, worktrees, regenerable, branches, refs, pushes, remoteDeletes);
     if (riskyDecision)
         return riskyDecision;
-    const scanDecision = evaluatePushScan(command, rules, pushScan);
     if (scanDecision)
         return scanDecision;
     const batch = evaluatePrBatch(rules, prBatch);

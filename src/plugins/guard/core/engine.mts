@@ -1444,21 +1444,32 @@ function parseFindings(text: string): ScanFinding[] | null {
 }
 
 // What one push-like segment sends: the remote and the refspec sources it names (none: the current branch). A push
-// that only deletes sends no commit, so it is null.
-function pushJob(seg: string): { remote: string; sources: string[] } | null {
+// that only deletes sends no commit, so it is null. `all` is `--all`, `--branches` or `--mirror` (every local ref),
+// `tags` is `--tags`: each sends refs no refspec names.
+interface PushJob {
+  all: boolean;
+  remote: string;
+  sources: string[];
+  tags: boolean;
+}
+function pushJob(seg: string): PushJob | null {
   const rest = /\bgit\s+push\b(.*)$/i.exec(seg)?.[1];
-  if (rest === undefined) return { remote: "origin", sources: [] };
-  const deleting = rest
-    .split(/\s+/)
-    .some((o) => o === "--delete" || o === "-d");
+  if (rest === undefined)
+    return { all: false, remote: "origin", sources: [], tags: false };
+  const opts = rest.split(/\s+/);
+  const deleting = opts.some((o) => o === "--delete" || o === "-d");
+  const all = opts.some((o) => /^--(?:all|branches|mirror)$/.test(o));
+  const tags = opts.includes("--tags");
   const [where, ...specs] = plainArgs(rest);
   const pushed = specs.filter((sp) => !deleting && !sp.startsWith(":"));
   if (specs.length && !pushed.length) return null;
   return {
+    all,
     remote: where && /^[\w.-]+$/.test(where) ? where : "origin",
     sources: pushed
       .map((sp) => sp.replace(/^\+/, "").split(":")[0] ?? "")
       .filter((src) => src && src !== "HEAD"),
+    tags,
   };
 }
 
@@ -1476,10 +1487,7 @@ export async function pushScanFacts(
 ): Promise<Record<string, PushScanFact | undefined>> {
   const re = rules.pushScan && new RegExp(rules.pushScan.match, "i");
   if (!re) return {};
-  const jobs = new Map<
-    string,
-    { remote: string; sources: string[] }[] | "unreadable"
-  >();
+  const jobs = new Map<string, PushJob[] | "unreadable">();
   for (const { seg, dir, remote } of segments(command, env)) {
     if (remote || !re.test(seg)) continue;
     const job = pushJob(seg);
@@ -1511,7 +1519,7 @@ export async function pushScanFacts(
 
 async function scanRepo(
   dir: string,
-  jobs: { remote: string; sources: string[] }[],
+  jobs: PushJob[],
   privateConfig: string,
   run: RunnerFn,
 ): Promise<PushScanFact> {
@@ -1533,11 +1541,17 @@ async function scanRepo(
       "@{u}",
     ])
   )?.trim();
-  const ranges = jobs.flatMap(({ remote, sources }) =>
-    sources.length
-      ? sources.map((s) => [s, "--not", `--remotes=${remote}`])
-      : [upstream ? ["@{u}..HEAD"] : ["HEAD", "--not", `--remotes=${remote}`]],
-  );
+  // `--all` and `--tags` name every local branch or tag, so those ranges are every unpushed commit of them; a push
+  // naming only tags sends no branch commit.
+  const ranges = jobs.flatMap(({ all, remote, sources, tags }) => {
+    const found = sources.map((s) => [s, "--not", `--remotes=${remote}`]);
+    if (all) found.push(["--all", "--not", `--remotes=${remote}`]);
+    if (tags) found.push(["--tags", "--not", `--remotes=${remote}`]);
+    if (found.length) return found;
+    return [
+      upstream ? ["@{u}..HEAD"] : ["HEAD", "--not", `--remotes=${remote}`],
+    ];
+  });
   const leaks = (range: string[], config?: string) =>
     sh(
       [
@@ -1548,7 +1562,8 @@ async function scanRepo(
         "--exit-code",
         "0",
         "--log-opts",
-        range.join(" "),
+        // remerge shows a merge commit's own changes (a conflict resolution), which a plain log prints no diff for
+        `--diff-merges=remerge ${range.join(" ")}`,
         "--report-format",
         "json",
         "--report-path",
@@ -4002,6 +4017,10 @@ export function evaluateCommand({
     return { action: "deny", rule: denied.id, reason: denied.why };
   const note = denied && !state.reminded.has(denied.id) ? denied.id : null;
 
+  // A secret in the push is a deny that no risky ask on the same command may hide: approving that ask would send it.
+  const scanDecision = evaluatePushScan(command, rules, pushScan);
+  if (scanDecision?.action === "deny") return scanDecision;
+
   const riskyDecision = evaluateRiskyCommand(
     command,
     rules,
@@ -4015,7 +4034,6 @@ export function evaluateCommand({
   );
   if (riskyDecision) return riskyDecision;
 
-  const scanDecision = evaluatePushScan(command, rules, pushScan);
   if (scanDecision) return scanDecision;
 
   const batch = evaluatePrBatch(rules, prBatch);

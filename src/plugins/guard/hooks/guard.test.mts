@@ -3222,6 +3222,73 @@ void test("push scan at the hook: a finding denies, a scan that cannot finish as
   assert.ok(!calls.some((c) => c.startsWith("gitleaks")));
 });
 
+void test("push scan at the hook: 0 and false switch it off like off", async () => {
+  const leaks = [
+    { RuleID: "r", File: "f", StartLine: 1, Commit: "abcdef0123" },
+  ];
+  for (const value of ["0", "false", "off"]) {
+    const calls: string[] = [];
+    const d = await setup({
+      env: { GUARD_PUSH_SCAN: value },
+      run: scanRun(leaks, calls),
+    })(pre("Bash", "git push"));
+    assert.equal(decision(d), undefined, value);
+    assert.ok(!calls.some((c) => c.startsWith("gitleaks")), value);
+  }
+});
+
+void test("one deadline covers the scan and the pr-batch lookups of a command; a scan out of time asks", async () => {
+  const slow = async (): Promise<string | null> => {
+    await new Promise((r) => setTimeout(r, 400));
+    return null;
+  };
+  for (const command of ["gh pr create --fill", "git push"]) {
+    const t0 = Date.now();
+    const d = await setup({
+      env: { GUARD_PUSH_SCAN: "on" },
+      factsMs: 80,
+      run: slow,
+    })(pre("Bash", command));
+    assert.ok(
+      Date.now() - t0 < 250,
+      `${command}: ${String(Date.now() - t0)} ms`,
+    );
+    assert.equal(decision(d)?.permissionDecision, "ask", command);
+    assert.match(
+      decision(d)?.permissionDecisionReason ?? "",
+      /Secret scan could not run/,
+      command,
+    );
+  }
+});
+
+void test("the pr-batch lookups get only the time the scan left; out of time fails open", async () => {
+  let lookedUp = false;
+  const run = async (argv: readonly string[]): Promise<string | null> => {
+    if (argv[0] === "gitleaks") {
+      await new Promise((r) => setTimeout(r, 60));
+      return "[]";
+    }
+    if (argv.includes("@{u}")) return "origin/feat/x\n";
+    if (argv.includes("rev-list")) return "1\n";
+    if (argv[0] === "gh") {
+      lookedUp = true;
+      await new Promise((r) => setTimeout(r, 300));
+    }
+    return null;
+  };
+  const t0 = Date.now();
+  const d = await setup({
+    env: { GUARD_PUSH_SCAN: "on" },
+    factsMs: 120,
+    run,
+  })(pre("Bash", "gh pr create --fill"));
+  assert.ok(Date.now() - t0 < 250, `${String(Date.now() - t0)} ms`);
+  assert.ok(lookedUp, "the lookup ran");
+  // only the missing skill speaks: neither the clean scan nor the lookup out of time asks or denies on its own
+  assert.match(decision(d)?.permissionDecisionReason ?? "", /requires a skill/);
+});
+
 void test("pr-batch at the hook: a deny logs reason=none, an accepted split logs its reason every time", async () => {
   const run = async (argv: readonly string[]): Promise<string | null> => {
     await Promise.resolve();
