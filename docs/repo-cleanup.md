@@ -39,6 +39,12 @@ Other directories to inspect: the sweep looks at `<main>/.claude/worktrees`, eac
 
 Opt out of the session sweep and the stop reminder with `GUARD_LIFECYCLE=off` in the launching environment (also set by `make test`, and needed when probing a harness from a checkout).
 
+## Shared stores (low disk)
+
+When the disk runs low, `node <dev-tools>/skills/host-hygiene/scripts/repo-sweep.mjs --stores` (add `--json` for a machine-readable report) prints the free space against the floor (`HOST_DISK_FLOOR_GB`, default 20), then each per-user shared store (Go, npm, pnpm, uv, Cargo, Playwright and other caches) with its path, size and the command that trims it, largest first. It needs no git repo, deletes nothing, and is a usage error with `--apply`, `--auto` or `--remote-scope`.
+
+Trim a store with its own command, as printed (for example `go clean -cache` or `uv cache prune`), never with `rm -rf`. The rule and the per-ecosystem table live in the host-hygiene skill's [shared-stores reference](https://github.com/giocaizzi/harness/blob/main/plugins/dev-tools/skills/host-hygiene/references/shared-stores.md). Worktrees are never deleted to free space: the branch lifecycle above decides those.
+
 ## Restore
 
 Every deleted branch, archive and stash is on origin first, so its restore is a fetch. Ignored files removed with a worktree (build output, caches) are not kept anywhere: regenerate them.
