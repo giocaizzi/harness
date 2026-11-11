@@ -200,7 +200,7 @@
   ["git push --force-with-lease -- origin feat/x", "ask:force", "G17", "allow-list: not a feature push", {"branch": "feat/x"}],
   ["git push -u --force-with-lease origin feat/x", "allow", "G17", "allow-list control", {"branch": "feat/x"}],
   ["git push --set-upstream --force-with-lease origin HEAD", "allow", "G17", "allow-list control", {"branch": "feat/x"}],
-  ["git push --no-verify --force-with-lease origin feat/x", "allow", "G17", "allow-list control", {"branch": "feat/x"}],
+  ["git push --no-verify --force-with-lease origin feat/x", "ask:no-verify", "G17", "control (no-verify always asks)", {"branch": "feat/x"}],
   ["git push --force-with-lease=feat/x origin feat/x", "allow", "G17", "allow-list control", {"branch": "feat/x"}],
   ["git push --force-with-lease=feat/x:abc123 origin feat/x", "allow", "G17", "allow-list control", {"branch": "feat/x"}],
   ["git -C /r push --force-with-lease origin feat/x", "allow", "G17", "allow-list control", {"branch": "feat/x"}],
@@ -634,5 +634,11 @@
   ["grep -rn terraform .", "allow", "CTRL", "control: infra remind"],
   ["helm list", "allow", "CTRL", "control: infra remind"],
   ["terraform apply", "ask:terraform", "CTRL", "control: infra remind"],
-  ["kubectl delete pod x", "ask:k8s", "CTRL", "control: infra remind"]
+  ["kubectl delete pod x", "ask:k8s", "CTRL", "control: infra remind"],
+  ["git branch -D worker/u1", "allow", "G24", "control (squash-merged worker branch)", {"squashed": true}],
+  ["git worktree remove --force /Users/me/repo/w", "allow", "G24", "control (clean squash-merged worktree)", {"squashed": true}],
+  ["git push origin --delete feat/open-pr", "ask:push-delete", "G24", "control (open PR head)", {"pr": "open"}],
+  ["git push origin --delete feat/closed-pr", "ask:push-delete", "G24", "control (closed three days ago)", {"pr": "closed-3d"}],
+  ["git push origin feat/x", "deny:push-scan", "G24", "control (planted test key)", {"leak": true}],
+  ["git push -u origin feat/x", "allow", "G24", "control (clean push)"]
 ]

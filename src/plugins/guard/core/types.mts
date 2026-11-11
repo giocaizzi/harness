@@ -254,11 +254,28 @@ export interface UsageRules {
   warnPercent: number;
 }
 
+// `push-scan`: a push (or a command that may push) whose new commits are scanned for secrets before it runs.
+export interface PushScanRule {
+  id: string;
+  match: string;
+}
+
+// `pr-batch`: a new PR whose files overlap another open PR of the same author is denied, unless the body, the body
+// file or a SPLIT_REASON prefix gives one of `reasons`. `ignore`: file globs nearly every PR touches.
+export interface PrBatchRule {
+  id: string;
+  ignore: string[];
+  match: string;
+  reasons: string[];
+}
+
 export interface GuardRules {
   deny?: DenyRule[];
   files?: FileRule[];
   heavy: HeavyRule[];
   host: HostRules;
+  prBatch?: PrBatchRule;
+  pushScan?: PushScanRule;
   risky: RiskyRule[];
   routing: RoutingRules;
   run: RunRules;
@@ -271,11 +288,44 @@ export interface GuardRules {
 export type RunnerFn = (
   argv: string[],
   cwd?: string,
+  ms?: number,
 ) => Promise<string | null | undefined> | string | null | undefined;
 
 export interface SafeFact {
   safe: boolean;
   why: string;
+}
+
+// A secret-scan finding: the commit, file and line only, never the (redacted) secret.
+export interface ScanFinding {
+  commit: string;
+  file: string;
+  line: number;
+  rule: string;
+}
+
+// What the push scan found for the commits a command would push, in the repo at one directory.
+// `unavailable`: gitleaks missing, crashed, over its budget or unreadable. `private`: findings of the private-name pass.
+export interface PushScanFact {
+  findings: ScanFinding[];
+  private: ScanFinding[];
+  status: "clean" | "findings" | "unavailable";
+}
+
+// Another open PR of the author that shares files with the new one; `worktree` is where its head branch is checked
+// out when that is another local worktree (a running session owns it).
+export interface PrOverlap {
+  files: string[];
+  head: string;
+  number: number;
+  worktree?: string;
+}
+
+// `reason`: the Split-Reason the command carries: none, a listed value, or an invalid (other, empty) one.
+export interface PrBatchFact {
+  overlaps: PrOverlap[];
+  reason:
+    { kind: "none" } | { kind: "invalid" } | { kind: "valid"; value: string };
 }
 
 export interface TagFact {
@@ -292,6 +342,18 @@ export interface BranchTarget {
   dir: string;
   name: string;
 }
+
+export interface RemoteDeleteTarget {
+  dir: string;
+  name: string;
+  // The branch's repo for `gh api`, else null/absent (gh fills it from `dir`).
+  repo?: string | null;
+  // The git remote a `git push --delete` names; absent for the `gh api` form, whose tip comes from the API.
+  remote?: string;
+}
+
+// Reads a text file (a PR's --body-file) relative to `cwd`; null when unreadable.
+export type ReadText = (path: string, cwd?: string) => string | null;
 
 export interface RefTarget {
   dir: string;
@@ -367,6 +429,9 @@ export interface PushFact {
 export interface CommandEvaluationInput {
   branches?: Record<string, SafeFact | undefined>;
   command: string;
+  prBatch?: Record<string, PrBatchFact | undefined>;
+  pushScan?: Record<string, PushScanFact | undefined>;
+  remoteDeletes?: Record<string, SafeFact | undefined>;
   env?: GuardEnv;
   host?: HostFacts;
   loadedSkills?: Iterable<string>;
@@ -385,12 +450,16 @@ export interface CommandEvaluationInput {
 
 export interface CommandDecision {
   action: "allow" | "ask" | "deny";
+  // Telemetry attributes the hook adds to the decision event (counts and reasons, never text of a finding).
+  attrs?: Record<string, string | number>;
   command?: string;
   context?: string;
   reason?: string;
   remind?: boolean;
   rule?: string;
   split?: boolean;
+  // The Split-Reason an accepted PR split carried: the hook logs the allow every time.
+  prBatch?: string;
 }
 
 export interface EditEvaluationInput {
@@ -490,6 +559,8 @@ export interface PrBranches {
 }
 
 export interface GitFixture {
+  any?: boolean;
+  archived?: boolean;
   main?: boolean;
   prefix?: string;
   status?: string;
@@ -518,6 +589,9 @@ export interface CorpusOptions {
   run?: "registered" | "configured" | "unsure" | "protected" | null;
   stack?: StackFact | null;
   read?: boolean;
+  leak?: boolean;
+  squashed?: boolean;
+  pr?: "open" | "closed-3d";
 }
 export type CorpusRow = [
   command: string,

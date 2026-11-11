@@ -65,7 +65,8 @@ Optional: pre-commit (mirrors `make lint`, never replaces CI), `CODEOWNERS`.
 |---|---|---|---|
 | CLI | `gh` | `glab` | `az repos`, `az pipelines` (`azure-devops` extension) |
 | Change request | pull request (PR) | merge request (MR) | pull request (PR) |
-| Open | `gh pr create --title T --body B` | `glab mr create --title T --description B --squash-before-merge --remove-source-branch` | `az repos pr create --title T --description B` (`-t` is the target branch, not the title) |
+| Open (draft first) | `gh pr create --draft --title T --body B` | `glab mr create --draft --title T --description B --squash-before-merge --remove-source-branch` | `az repos pr create --draft true --title T --description B` (`-t` is the target branch, not the title) |
+| Ready | `gh pr ready <n>` | `glab mr update <n> --ready` | `az repos pr update --id N --draft false` |
 | Watch CI | `gh pr checks --watch` | `glab ci status --live`, logs `glab ci trace <job>` | `az repos pr policy list --id N`, `az pipelines runs list --branch <branch>` |
 | Review threads | `gh api graphql` (`reviewThreads`) | `glab mr view --unresolved` | `az devops invoke --area git --resource pullRequestThreads` |
 | Merge gating | ruleset on the default branch (see `github-workflow`) | protected branch (no direct push) + **Pipelines must succeed** + approval rules | branch policies: build validation, reviewers, comment resolution |

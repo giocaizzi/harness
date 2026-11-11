@@ -3,12 +3,12 @@
 // and reads `hookSpecificOutput.permissionDecision`. A hook is a fresh process, so per-session facts
 // (loaded skills, rules already reminded) live in a JSON file under $CLAUDE_PLUGIN_DATA.
 import { execFile } from "node:child_process";
-import { closeSync, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, readlinkSync, rmSync, statSync, } from "node:fs";
+import { accessSync, closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, readlinkSync, rmSync, statSync, } from "node:fs";
 import { statfs } from "node:fs/promises";
 import { cpus, homedir, loadavg, platform } from "node:os";
 import { dirname, isAbsolute, join, parse, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { analysis, branchFacts, cdDirs, cmdClass, codexRules, deniedBy, deniedDir, evaluateCommand, evaluateEdit, evaluateRouting, hostJudged, isHeavy, isRisky, nativeAsk, previewCommand, protectedPathHit, pureRead, pushFacts, refFacts, regenFacts, stackFacts, stackTargets, tagFacts, tagTargets, unattendedSet, withPreview, worktreeFacts, } from "../core/engine.mjs";
+import { analysis, branchFacts, cdDirs, cmdClass, codexRules, deniedBy, deniedDir, evaluateCommand, evaluateEdit, evaluateRouting, hostJudged, isHeavy, isRisky, nativeAsk, previewCommand, protectedPathHit, prBatchFacts, pureRead, pushFacts, pushScanFacts, refFacts, regenFacts, remoteDeleteFacts, stackFacts, stackTargets, tagFacts, tagTargets, unattendedSet, withPreview, worktreeFacts, } from "../core/engine.mjs";
 import { cpuPercentFrom, hostCaps } from "../core/host.mjs";
 import { emit } from "../core/otel.mjs";
 import { sessionAttrs } from "../core/registration.mjs";
@@ -17,6 +17,7 @@ import { commandWords, units } from "../core/shell.mjs";
 import { contractProbe } from "./contract.mjs";
 import { appendDataFile, pluginDataDir, readDataFile } from "./data.mjs";
 import { editedPaths } from "./lint.mjs";
+import { OFF, sweepNotice, startSessionSweep, takeAgentNotes, } from "./lifecycle.mjs";
 import { denyReason, legacySet, recordUnregistered, runContext, runFacts, } from "./run.mjs";
 import { isEditTool, isReadTool, isShellTool, isTaskTool, } from "./harnesses.mjs";
 import { installedVersions, staleCheck } from "./stale.mjs";
@@ -394,7 +395,18 @@ const within = (promise, ms, fallback) => new Promise((res) => {
         res(fallback);
     });
 });
-const FACTS_MS = 20_000;
+const lifecycleOf = (deps) => ({
+    startSessionSweep,
+    sweepNotice,
+    takeAgentNotes,
+    ...deps.lifecycle,
+});
+// One deadline per command for every fact it gathers, kept under the 30 s PreToolUse timeout in hooks.json: the push
+// scan runs first with up to SCAN_MS, and the other lookups get what is left.
+const TOTAL_MS = 24_000;
+const SCAN_MS = 15_000;
+// An off switch the hook's env sets, else the process's (a test run exports GUARD_PUSH_SCAN and GUARD_LIFECYCLE off).
+const flag = (deps, name) => deps.env?.[name] ?? process.env[name] ?? "";
 const ALLOW_SAMPLE = 10;
 const PREVIEW_MS = 3_000;
 const STACK_MS = 5_000;
@@ -432,6 +444,23 @@ export function protectFacts(cwd) {
     return { root: slash(root), cwd: slash(at) };
 }
 const slashes = (p) => p.replace(/\\/g, "/");
+const isReadableFile = (path) => {
+    try {
+        accessSync(path, constants.R_OK);
+        return statSync(path).isFile();
+    }
+    catch {
+        return false;
+    }
+};
+const readText = (path) => {
+    try {
+        return readFileSync(path, "utf8");
+    }
+    catch {
+        return null;
+    }
+};
 async function onShell(input, state, deps, ctx) {
     const rawCommand = isRecord(input.tool_input)
         ? input.tool_input.command
@@ -455,12 +484,24 @@ async function onShell(input, state, deps, ctx) {
             HOME: deps.env?.HOME ?? deps.env?.USERPROFILE,
         };
         envObj.dirs = existingDirs(command, envObj, input.cwd);
+        const privateConfig = deps.env?.GITLEAKS_PRIVATE_CONFIG;
+        if (privateConfig && isReadableFile(privateConfig))
+            envObj.GITLEAKS_PRIVATE_CONFIG = privateConfig;
         const facts = { env: envObj };
         const inCwd = (argv, cwd, ms) => (deps.run ?? run)(argv, cwd == null ? input.cwd : resolve(input.cwd ?? ".", cwd), ms);
+        const total = deps.factsMs ?? TOTAL_MS;
+        const deadline = Date.now() + total;
+        const left = () => Math.max(0, deadline - Date.now());
+        // Every push is scanned for secrets first; a scan that cannot finish in its budget asks (unavailable).
+        if (!OFF.test(flag(deps, "GUARD_PUSH_SCAN")) &&
+            rules.pushScan &&
+            new RegExp(rules.pushScan.match, "i").test(command)) {
+            facts.pushScan = await within(pushScanFacts(command, rules, inCwd, facts.env), Math.min(SCAN_MS, total), { "": { findings: [], private: [], status: "unavailable" } });
+        }
         // A bare lease push is no risky match by itself: its facts are gathered for it, and none (timeout) asks. Started
         // with the risky lookups so both share one budget, keeping the hook under its timeout.
         const pushing = command.includes("--force-w")
-            ? within(pushFacts(command, rules, inCwd, facts.env), deps.factsMs ?? FACTS_MS, null)
+            ? within(pushFacts(command, rules, inCwd, facts.env), left(), null)
             : null;
         if (isRisky(command, rules)) {
             const gathered = await within(Promise.all([
@@ -468,10 +509,16 @@ async function onShell(input, state, deps, ctx) {
                 branchFacts(command, rules, inCwd, facts.env),
                 regenFacts(command, facts.env, rules, inCwd),
                 refFacts(command, rules, inCwd, facts.env),
-            ]), deps.factsMs ?? FACTS_MS, null);
+                remoteDeleteFacts(command, rules, inCwd, facts.env),
+            ]), left(), null);
             if (gathered) {
-                [facts.worktrees, facts.branches, facts.regenerable, facts.refs] =
-                    gathered;
+                [
+                    facts.worktrees,
+                    facts.branches,
+                    facts.regenerable,
+                    facts.refs,
+                    facts.remoteDeletes,
+                ] = gathered;
             }
             else {
                 unfinished = true;
@@ -479,20 +526,24 @@ async function onShell(input, state, deps, ctx) {
         }
         if (pushing)
             facts.pushes = (await pushing) ?? {};
+        // A new PR that overlaps another open PR of the author: reads fail open.
+        if (rules.prBatch && new RegExp(rules.prBatch.match, "i").test(command)) {
+            facts.prBatch = await within(prBatchFacts(command, rules, inCwd, facts.env, (path, cwd) => readText(resolve(input.cwd ?? ".", cwd ?? ".", path))), left(), {});
+        }
         if (!/^(0|false|off)$/i.test(deps.env?.GUARD_STACK_HINT ?? "") &&
             !state.reminded.includes("stack") &&
             stackTargets(command, rules, facts.env).length) {
-            const budget = deps.factsMs ?? STACK_MS;
-            const deadline = Date.now() + budget;
+            const budget = Math.min(deps.factsMs ?? STACK_MS, left());
+            const stackDeadline = Date.now() + budget;
             const stackRun = (argv, cwd) => {
-                const left = deadline - Date.now();
-                return left <= 0 ? Promise.resolve(null) : inCwd(argv, cwd, left);
+                const rest = stackDeadline - Date.now();
+                return rest <= 0 ? Promise.resolve(null) : inCwd(argv, cwd, rest);
             };
             facts.stack = await within(stackFacts(command, rules, stackRun, facts.env), budget, {});
         }
         if (tagTargets(command, rules, facts.env).some((t) => !t.name.startsWith("<"))) {
             facts.tags =
-                (await within(tagFacts(command, rules, (argv) => (deps.run ?? run)(argv, input.cwd), facts.env), deps.factsMs ?? FACTS_MS, null)) ?? {};
+                (await within(tagFacts(command, rules, (argv) => (deps.run ?? run)(argv, input.cwd), facts.env), left(), null)) ?? {};
         }
         if (deniedBy(command, rules)?.when) {
             const dir = deniedDir(command, rules, facts.env);
@@ -544,6 +595,7 @@ async function onShell(input, state, deps, ctx) {
                 tool_use_id: input.tool_use_id,
                 cmd_hash: commandHash(command),
                 ...(d.rule === "host" ? hostAttrs(host) : {}),
+                ...d.attrs,
             }, input.cwd);
         };
         const allowed = (via) => {
@@ -571,6 +623,18 @@ async function onShell(input, state, deps, ctx) {
                 cmd_hash: commandHash(command),
             }, input.cwd);
         };
+        if (d.prBatch) {
+            fire(deps, "guard.decision", {
+                rule: "pr-batch",
+                action: "allow",
+                reason: d.prBatch,
+                cmd_class: "hint",
+                tool: input.tool_name ?? "",
+                session_id: input.session_id,
+                tool_use_id: input.tool_use_id,
+                cmd_hash: commandHash(command),
+            }, input.cwd);
+        }
         if (d.remind) {
             fire(deps, "guard.reminder", {
                 rule: d.rule,
@@ -854,7 +918,7 @@ function onSpawn(input, state, deps) {
     }, input.cwd);
     return note(d.context ?? "");
 }
-function onStale(input, state, deps, out) {
+function onStale(input, state, deps, out, session) {
     const decided = out.stdout &&
         JSON.parse(out.stdout).hookSpecificOutput
             ?.permissionDecision;
@@ -870,21 +934,52 @@ function onStale(input, state, deps, out) {
         harness: deps.harness,
     });
     state.plugins = s.loaded;
-    if (!s.context || decided || deps.harness === "antigravity")
+    if (decided || deps.harness === "antigravity")
         return out;
-    state.reminded.push(...s.remind.map((r) => `stale:${r}`));
-    fire(deps, "guard.reminder", {
-        rule: "stale-plugins",
-        cmd_class: "hint",
-        tool: input.tool_name ?? "",
-        session_id: input.session_id,
-        tool_use_id: input.tool_use_id,
-    }, input.cwd);
+    const contexts = [];
+    const notices = [];
+    const remind = (rule) => {
+        fire(deps, "guard.reminder", {
+            rule,
+            cmd_class: "hint",
+            tool: input.tool_name ?? "",
+            session_id: input.session_id,
+            tool_use_id: input.tool_use_id,
+        }, input.cwd);
+    };
+    if (s.context) {
+        state.reminded.push(...s.remind.map((r) => `stale:${r}`));
+        remind("stale-plugins");
+        contexts.push(s.context);
+        if (s.notice)
+            notices.push(s.notice);
+    }
+    // Branch lifecycle: the previous sweep's summary once per session, and the notes other hooks queued for the agent.
+    if (!OFF.test(flag(deps, "GUARD_LIFECYCLE"))) {
+        if (!state.reminded.includes("repo-sweep")) {
+            state.reminded.push("repo-sweep");
+            const notice = lifecycleOf(deps).sweepNotice(state.startCwd ?? ".", deps.env ?? {});
+            if (notice) {
+                remind("repo-sweep");
+                contexts.push(`${notice}\nMention it once; do not sweep further unless the user asks.`);
+                notices.push(notice);
+            }
+        }
+        if (session) {
+            const dataDir = deps.dataDir ?? pluginDataDir(deps.env ?? process.env);
+            for (const text of lifecycleOf(deps).takeAgentNotes(dataDir, session)) {
+                remind("branch-lifecycle");
+                contexts.push(text);
+            }
+        }
+    }
+    if (!contexts.length)
+        return out;
     const context = out.stdout
         ? JSON.parse(out.stdout).hookSpecificOutput
             ?.additionalContext
         : null;
-    return note(context ? `${context}\n${s.context}` : s.context, s.notice ?? undefined);
+    return note(context ? `${context}\n${contexts.join("\n")}` : contexts.join("\n"), notices.length ? notices.join("\n") : undefined);
 }
 export function inWorkTree(cwd, env = {}, plat = process.platform) {
     if (typeof cwd !== "string" || !cwd)
@@ -926,6 +1021,22 @@ export function handleSessionStart(input, deps, session, state) {
                 ...sessionAttrs(registered),
             }, input.cwd);
             state.announced = true;
+            // The daily repo sweep (github-workflow, Branch lifecycle): detached, never throws, off with GUARD_LIFECYCLE=off.
+            if (!OFF.test(flag(deps, "GUARD_LIFECYCLE")) &&
+                deps.pluginRoot &&
+                typeof input.cwd === "string") {
+                try {
+                    lifecycleOf(deps).startSessionSweep({
+                        cwd: input.cwd,
+                        env: deps.env ?? {},
+                        pluginRoot: deps.pluginRoot,
+                        registered: registered !== null,
+                    });
+                }
+                catch {
+                    // the sweep is a nicety
+                }
+            }
         }
         catch {
             // a missing record changes nothing
@@ -1012,7 +1123,7 @@ export async function handlePreToolUse(input, deps, session, state) {
         }
     }
     try {
-        out = onStale(input, state, deps, out);
+        out = onStale(input, state, deps, out, session);
     }
     catch {
         // the note is a nicety: a decision already made stands

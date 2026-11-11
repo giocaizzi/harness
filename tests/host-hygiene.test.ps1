@@ -174,64 +174,11 @@ try { Enter-HostSlot job; Set-Content $env:TEST_GOT (Get-Date).ToString('o') } f
     $w | Wait-Process
     Test-Equal -Name 'entry removed on exit' -Got @(Get-ChildItem (Join-Path $L 'host-services')).Count -Want 0
 
-    # sweep-stale.ps1
-    $repo = Join-Path $tmp 'repo'
-    git init -q $repo
-    git -C $repo -c user.name=t -c user.email=t@t commit -q --allow-empty -m init
-    foreach ($n in 'old', 'recent', 'dirty', 'busy') { git -C $repo worktree add -q (Join-Path $tmp "wt-$n") -b $n 2>$null }
-    Set-Content (Join-Path $tmp 'wt-dirty/new') x
-    foreach ($n in 'old', 'dirty', 'busy') {
-        $d = Join-Path $tmp "wt-$n"
-        @(Get-Item $d -Force) + @(Get-ChildItem $d -Recurse -Force) | ForEach-Object { $_.LastWriteTime = [datetime]'2020-01-01' }
+    # sweep-stale.ps1: the git modes moved to repo-sweep.mjs
+    foreach ($a in @(), @('--apply'), @('--branches')) {
+        $err = @(& $shell -NoProfile -File $sweep @a 2>&1)
+        Test-Equal -Name "sweep-stale.ps1 '$($a -join ' ')' points to repo-sweep.mjs and exits 2" -Got "$LASTEXITCODE $($err -join '')" -Want '2 sweep-stale: the git sweep moved to repo-sweep.mjs (node repo-sweep.mjs [--apply])'
     }
-    $busy = Invoke-Shell 'Start-Sleep 20' (Join-Path $tmp 'wt-busy')
-    Start-Sleep 2
-    Push-Location $repo
-    $out = @(& $shell -NoProfile -File $sweep)
-    Test-Equal -Name 'sweep dry run removes only the old, clean, idle worktree' -Got ((($out | Where-Object { $_ -like 'would remove*' }) -join ';') -replace '\\', '/') -Want ("would remove $(Join-Path $tmp 'wt-old')" -replace '\\', '/')
-    Test-Equal -Name 'sweep keeps recent, dirty and busy' -Got @($out | Where-Object { $_ -match 'wt-recent: modified|wt-dirty: uncommitted|wt-busy: in use' }).Count -Want 3
-    & $shell -NoProfile -File $sweep --apply | Out-Null
-    Test-Equal -Name '--apply removes it' -Got "$(Test-Path (Join-Path $tmp 'wt-old')) $(@(git worktree list).Count)" -Want 'False 4'
-    Pop-Location
-    Push-Location (Join-Path $tmp 'wt-recent')
-    Test-Equal -Name 'sweep never touches the current worktree' -Got @(& $shell -NoProfile -File $sweep | Where-Object { $_ -match 'wt-recent: current' }).Count -Want 1
-    Pop-Location
-    Stop-Process -Id $busy.Id -ErrorAction SilentlyContinue
-    $live = Join-Path $repo '.claude/worktrees/live'
-    git -C $repo worktree add -q $live -b live 2>$null
-    $orphan = Join-Path $repo '.claude/worktrees/orphan'
-    New-Item -ItemType Directory -Force (Join-Path $orphan 'pkg/mod') | Out-Null
-    Set-Content (Join-Path $orphan 'pkg/mod/f') x
-    (Get-Item (Join-Path $orphan 'pkg/mod/f')).IsReadOnly = $true
-    Push-Location $repo
-    $out = @(& $shell -NoProfile -File $sweep --apply)
-    Pop-Location
-    $orphanReal = [IO.Path]::GetFullPath((Resolve-Path $orphan).ProviderPath)
-    $prefix = 'unregistered ' + $orphanReal + ' ('
-    $listed = @($out | Where-Object { $_.StartsWith($prefix) -and $_.Contains('the owner runs') }).Count
-    $liveListed = @($out | Where-Object { $_ -like 'unregistered *worktrees*live*' }).Count
-    Test-Equal -Name 'sweep lists an unregistered worktree dir with the owner''s command and leaves it' -Got "$listed$liveListed$(Test-Path (Join-Path $orphan 'pkg/mod/f'))" -Want '10True'
-    (Get-Item (Join-Path $orphan 'pkg/mod/f')).IsReadOnly = $false
-
-    # sweep-stale.ps1 --branches
-    $origin = Join-Path $tmp 'origin.git'
-    $br = Join-Path $tmp 'brrepo'
-    git init -q --bare -b main $origin
-    git init -q -b main $br
-    git -C $br -c user.name=t -c user.email=t@t commit -q --allow-empty -m init
-    git -C $br remote add origin $origin
-    git -C $br push -q origin main
-    foreach ($n in 'orphan', 'open', 'gone') { git -C $br branch $n; git -C $br push -q -u origin $n 2>$null }
-    git -C $origin branch -q -D gone
-    $env:SWEEP_OPEN_BRANCHES = 'open'
-    Push-Location $br
-    $out = @(& $shell -NoProfile -File $sweep --branches)
-    Test-Equal -Name 'branch sweep reports orphan remote and gone local only' -Got (($out | Sort-Object) -join ';') -Want 'would delete gone: upstream gone;would delete origin/orphan: no open PR'
-    Test-Equal -Name 'branch dry run deletes nothing' -Got @(git -C $origin branch).Count -Want 3
-    & $shell -NoProfile -File $sweep --branches --apply | Out-Null
-    Test-Equal -Name 'branch --apply deletes them, keeps open and default' -Got ((@(git -C $origin branch) + @(git -C $br branch) | ForEach-Object { $_.Trim('* ') } | Sort-Object) -join ' ') -Want 'main main open open'
-    Pop-Location
-    Remove-Item Env:SWEEP_OPEN_BRANCHES
 
     # sweep-stale.ps1 --plugins
     $cfg = Join-Path $tmp 'claude'

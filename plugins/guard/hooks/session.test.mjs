@@ -822,6 +822,7 @@ const runStopHook = (payload, extraArgs, env, nodeArgs = []) => {
         env: {
             ...clean,
             GUARD_STOP_CHECK: "off",
+            GUARD_LIFECYCLE: "off",
             GUARD_OTEL: "off",
             GUARD_RUN_EVENTS_FILE: "",
             FACTORY_EVENTS_FILE: "",

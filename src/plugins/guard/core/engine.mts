@@ -25,7 +25,12 @@ import type {
   ProtectConfig,
   ProtectHit,
   ProtectedLimits,
+  PrBatchFact,
+  PrOverlap,
   PushFact,
+  PushScanFact,
+  ReadText,
+  RemoteDeleteTarget,
   RefTarget,
   RelativeSegments,
   RemovalEntry,
@@ -34,6 +39,7 @@ import type {
   RunFacts,
   RunnerFn,
   SafeFact,
+  ScanFinding,
   ScannedCommand,
   Segment,
   SessionState,
@@ -790,19 +796,34 @@ export async function worktreeFact(
   if (rp == null) return undefined;
   const [gitDir, commonDir, prefix = "", top] = rp.split(/\r?\n/);
   if (!gitDir || gitDir === commonDir || prefix !== "") return undefined;
-  const [all, ahead] = await Promise.all([
-    git("status", "--porcelain", "--ignored"),
+  const [all, ahead, ignored] = await Promise.all([
+    git("status", "--porcelain"),
     git("rev-list", "--count", "HEAD", "--not", "--remotes"),
+    git("ls-files", "--others", "--ignored", "--exclude-standard", "-z"),
   ]);
-  if (all == null || ahead == null || !/^\d+\s*$/.test(ahead))
+  if (
+    all == null ||
+    ahead == null ||
+    ignored == null ||
+    !/^\d+\s*$/.test(ahead)
+  )
     return { safe: false, why: "git check failed" };
   // Ignored files are normally regenerable, but a local secret (`.env`, `*.key`) exists nowhere else.
-  const lines = all.split(/\r?\n/).filter(Boolean);
-  const status = lines.filter((l) => !l.startsWith("!!")).join("\n");
-  const secrets = lines
-    .filter((l) => l.startsWith("!!"))
-    .map((l) => l.slice(3).replace(/\/$/, ""))
-    .filter((f) => f.split("/").some((seg) => NEVER_REGEN.test(seg)));
+  // `status --ignored` folds an ignored directory into one line, so the files are listed one by one; a list over
+  // the cap is not proven free of secrets.
+  const status = all
+    .split(/\r?\n/)
+    .filter((l) => l && !l.startsWith("!!"))
+    .join("\n");
+  const files = ignored.split("\0").filter(Boolean);
+  if (files.length > 20000)
+    return { safe: false, why: "too many ignored files to check for secrets" };
+  const secrets: string[] = [];
+  for (const f of files) {
+    if (!f.split("/").some((seg) => NEVER_REGEN.test(seg))) continue;
+    secrets.push(f);
+    if (secrets.length >= 3) break;
+  }
   if (secrets.length)
     return {
       safe: false,
@@ -810,14 +831,14 @@ export async function worktreeFact(
     };
   const n = Number(ahead);
   if (n && !status.trim()) {
-    const merged = await mergedPrHead(
+    const held = await originHolds(
       git,
       sh,
       top ?? path,
       (await git("branch", "--show-current"))?.trim(),
     );
-    if (merged === true) return { safe: true, why: "" };
-    return { safe: false, why: `${unpushed(n)} (${merged})` };
+    if (held === true) return { safe: true, why: "" };
+    return { safe: false, why: `${unpushed(n)} (${held})` };
   }
   const why = [n && unpushed(n), status.trim() && "dirty tree"].filter(Boolean);
   return { safe: !why.length, why: why.join(", ") };
@@ -825,8 +846,45 @@ export async function worktreeFact(
 const unpushed = (n: number) =>
   `${String(n)} unpushed commit${n > 1 ? "s" : ""}`;
 
-// True when `rev` is contained in the head of a merged PR of `branch` (gh, run in the repo at `cwd`), else why not.
-// Any gh failure (missing, unauthenticated, offline, timeout) is a reason, so the delete asks.
+// Origin holds the tip of `rev` when it sits in the head of a merged PR (of `branch` first, then of any name, found by
+// searching the tip's sha) or under an archive ref. True, or why not. Any gh failure (missing, unauthenticated, offline,
+// timeout) is a reason, so the delete asks.
+async function originHolds(
+  git: GitRun,
+  sh: ShellRun,
+  cwd: string,
+  branch: string | undefined,
+  rev = "HEAD",
+) {
+  const merged = await mergedPrHead(git, sh, cwd, branch, rev);
+  if (merged === true) return true;
+  if (merged === "git check failed") return merged;
+  const tip = (await git("rev-parse", "--verify", `${rev}^{commit}`))?.trim();
+  if (!tip) return "git check failed";
+  return (await archiveHolds(git, tip)) || merged;
+}
+
+// True when the commit `tip` is an ancestor of `oid`; an `oid` not in this clone is fetched first.
+async function isAncestor(git: GitRun, tip: string, oid: string) {
+  if ((await git("cat-file", "-e", `${oid}^{commit}`)) == null)
+    await git("fetch", "--quiet", "origin", oid);
+  return (await git("merge-base", "--is-ancestor", tip, oid)) != null;
+}
+
+// True when the tip is inside an archive ref of origin (`refs/archive/*`, where the sweep keeps unpushed work).
+async function archiveHolds(git: GitRun, tip: string) {
+  const listed = await git("ls-remote", "origin", "refs/archive/*");
+  const oids = (listed ?? "")
+    .split(/\r?\n/)
+    .map((l) => l.split(/\s+/)[0] ?? "")
+    .filter((o) => /^[0-9a-f]{40,64}$/.test(o))
+    .slice(0, 20);
+  for (const oid of oids) if (await isAncestor(git, tip, oid)) return true;
+  return false;
+}
+
+// True when `rev` is contained in the head of a merged PR (gh, run in the repo at `cwd`), else why not. The PR of the
+// same name is tried first; otherwise any merged PR into the default branch that holds the tip's sha.
 async function mergedPrHead(
   git: GitRun,
   sh: ShellRun,
@@ -834,31 +892,64 @@ async function mergedPrHead(
   branch: string | undefined,
   rev = "HEAD",
 ) {
-  if (!branch) return "no branch";
-  const oid = await sh(
+  const label = rev === "HEAD" ? "HEAD" : "tip";
+  const tip = (await git("rev-parse", "--verify", `${rev}^{commit}`))?.trim();
+  if (!tip) return "git check failed";
+  let named = false;
+  if (branch) {
+    const oid = await sh(
+      [
+        "gh",
+        "pr",
+        "list",
+        "--head",
+        branch,
+        "--state",
+        "merged",
+        "--json",
+        "headRefOid",
+        "--limit",
+        "1",
+        "--jq",
+        ".[0].headRefOid // empty",
+      ],
+      cwd,
+    );
+    if (oid == null) return "gh check failed";
+    named = oid.trim() !== "";
+    if (named && (await isAncestor(git, tip, oid.trim()))) return true;
+  }
+  const head = (
+    await git("symbolic-ref", "--short", "refs/remotes/origin/HEAD")
+  )?.trim();
+  const stripped = head?.replace(/^origin\//, "");
+  const def = stripped === undefined || stripped === "" ? "main" : stripped;
+  const found = await sh(
     [
       "gh",
       "pr",
       "list",
-      "--head",
-      branch,
       "--state",
       "merged",
+      "--base",
+      def,
+      "--search",
+      tip,
       "--json",
-      "headRefOid",
+      "number,headRefOid",
       "--limit",
-      "1",
+      "5",
       "--jq",
-      ".[0].headRefOid // empty",
+      ".[].headRefOid",
     ],
     cwd,
   );
-  if (oid == null) return "gh check failed";
-  if (!oid.trim()) return "no merged PR";
-  return (
-    (await git("merge-base", "--is-ancestor", rev, oid.trim())) != null ||
-    `${rev === "HEAD" ? "HEAD" : "tip"} not in the merged PR`
-  );
+  if (found == null) return "gh check failed";
+  const oids = found.split(/\s+/).filter(Boolean);
+  for (const oid of oids) if (await isAncestor(git, tip, oid)) return true;
+  return named || oids.length
+    ? `${label} not in the merged PR`
+    : "no merged PR";
 }
 
 const PLAIN_PATH = /^[\w./\\@+=:,-]+$/;
@@ -900,12 +991,12 @@ export async function branchFact(
   const n = Number(ahead);
   if (!n) return { safe: true, why: "" };
   const top = (await git("rev-parse", "--show-toplevel"))?.trim();
-  const merged = top
-    ? await mergedPrHead(git, sh, top, name, name)
+  const held = top
+    ? await originHolds(git, sh, top, name, name)
     : "git check failed";
-  return merged === true
+  return held === true
     ? { safe: true, why: "" }
-    : { safe: false, why: `${unpushed(n)} (${merged})` };
+    : { safe: false, why: `${unpushed(n)} (${held})` };
 }
 const branchKey = ({ dir, name }: BranchTarget) => `${dir}|${name}`;
 
@@ -1114,52 +1205,137 @@ export function refTargets(
 const refKey = ({ dir, repo, name }: RefTarget) =>
   `${dir}|${repo ?? ""}|${name}`;
 
-// Facts for one branch ref a `gh api` DELETE removes on GitHub: safe when the ref's tip is the head of a merged PR of
-// that branch, so the merge holds every commit the ref has. The default branch never is.
-export async function refFact(
-  { dir, repo, name }: RefTarget,
+// Remote branches go only when stale (github-workflow, Branch lifecycle): landed through a merged PR, or closed
+// unmerged and idle STALE_DAYS. An open PR's head or base, the default branch and an archive ref never are.
+const STALE_DAYS = 7;
+const DAY_MS = 86_400_000;
+const PR_FIELDS =
+  "[.[]|{number,state,headRefOid,closedAt,pushed:(.commits|last|.committedDate)}]";
+interface BranchPr {
+  closedAt?: string | null;
+  headRefOid?: string;
+  number?: number;
+  pushed?: string | null;
+  state?: string;
+}
+function parsePrs(text: string): BranchPr[] | null {
+  try {
+    const parsed: unknown = JSON.parse(text);
+    return Array.isArray(parsed)
+      ? parsed.filter((p): p is BranchPr => typeof p === "object" && p !== null)
+      : null;
+  } catch {
+    return null;
+  }
+}
+const idleDays = (iso: string | null | undefined, now: number) => {
+  const t = iso ? Date.parse(iso) : NaN;
+  return Number.isNaN(t) ? 0 : (now - t) / DAY_MS;
+};
+
+// Facts for one remote branch a command deletes: `gh api -X DELETE …/git/refs/heads/<b>` (the tip comes from the
+// API) and `git push <remote> --delete <b>` (from `git ls-remote`) share this one function. Safe when a merged PR's
+// head holds the remote tip, or a PR for it closed unmerged with its last push and closing both STALE_DAYS old.
+export async function remoteDeleteFact(
+  { dir, repo, name, remote }: RemoteDeleteTarget,
   run: RunnerFn,
+  now: () => number = Date.now,
 ): Promise<SafeFact> {
+  if (name.startsWith("refs/archive/"))
+    return { safe: false, why: "an archive ref" };
   if (!/^[\w./@+-]+$/.test(name) || name.startsWith("-"))
     return { safe: false, why: "branch name not plain" };
+  if (name.startsWith("refs/")) return { safe: false, why: "not a branch ref" };
   if (/^(?:main|master)$/.test(name))
     return { safe: false, why: "the default branch" };
   const sh = (argv: string[]) =>
     Promise.resolve()
       .then(() => run(argv, dir || undefined))
       .catch(() => null);
-  const [oid, tip] = await Promise.all([
+  const gh = repo ? ["-R", repo] : [];
+  const [prText, base, tipText] = await Promise.all([
     sh([
       "gh",
       "pr",
       "list",
-      ...(repo ? ["-R", repo] : []),
+      ...gh,
       "--head",
       name,
       "--state",
-      "merged",
+      "all",
       "--json",
-      "headRefOid",
+      "number,state,headRefOid,closedAt,commits",
       "--limit",
-      "1",
+      "20",
       "--jq",
-      ".[0].headRefOid // empty",
+      PR_FIELDS,
     ]),
     sh([
       "gh",
-      "api",
-      `repos/${repo ?? "{owner}/{repo}"}/git/ref/heads/${name}`,
+      "pr",
+      "list",
+      ...gh,
+      "--base",
+      name,
+      "--state",
+      "open",
+      "--json",
+      "number",
+      "--limit",
+      "1",
       "--jq",
-      ".object.sha",
+      ".[0].number // empty",
     ]),
+    remote === undefined
+      ? sh([
+          "gh",
+          "api",
+          `repos/${repo ?? "{owner}/{repo}"}/git/ref/heads/${name}`,
+          "--jq",
+          ".object.sha",
+        ])
+      : sh(["git", "ls-remote", remote, `refs/heads/${name}`]).then(
+          (out) => out?.trim().split(/\s+/)[0] ?? null,
+        ),
   ]);
-  if (oid == null || tip == null)
+  if (prText == null || base == null || tipText == null)
     return { safe: false, why: "gh check failed" };
-  if (!oid.trim()) return { safe: false, why: "no merged PR" };
-  return oid.trim() === tip.trim()
-    ? { safe: true, why: "" }
-    : { safe: false, why: "its tip is not the head of the merged PR" };
+  const prs = parsePrs(prText);
+  if (!prs) return { safe: false, why: "gh check failed" };
+  const open = prs.find((p) => p.state === "OPEN");
+  if (open)
+    return { safe: false, why: `head of open PR #${String(open.number)}` };
+  if (base.trim())
+    return { safe: false, why: `base of open PR #${base.trim()}` };
+  const tip = tipText.trim();
+  if (!tip) return { safe: false, why: "no such branch on the remote" };
+  for (const p of prs) {
+    if (!p.headRefOid) continue;
+    if (p.state === "MERGED") {
+      const git = (...args: string[]) => sh(["git", "-C", dir || ".", ...args]);
+      if (p.headRefOid === tip || (await isAncestor(git, tip, p.headRefOid)))
+        return { safe: true, why: "" };
+    } else if (
+      p.state === "CLOSED" &&
+      p.headRefOid === tip &&
+      p.pushed &&
+      idleDays(p.closedAt, now()) >= STALE_DAYS &&
+      idleDays(p.pushed, now()) >= STALE_DAYS
+    )
+      return { safe: true, why: "" };
+  }
+  return {
+    safe: false,
+    why: "not stale (open PR, or closed under 7 idle days)",
+  };
 }
+
+// The branch ref a `gh api` DELETE removes (see remoteDeleteFact).
+export const refFact = (
+  { dir, repo, name }: RefTarget,
+  run: RunnerFn,
+  now?: () => number,
+): Promise<SafeFact> => remoteDeleteFact({ dir, repo, name }, run, now);
 
 // Ref facts for every branch ref a command deletes through `gh api`, in parallel: { [dir|repo|name]: { safe, why } }.
 export async function refFacts(
@@ -1183,6 +1359,544 @@ export async function refFacts(
       facts[i],
     ]),
   );
+}
+
+// Remote branches every `git push <remote> --delete <b>` (or `:<b>` refspec) deletes: { dir, remote, name }, `name`
+// without `refs/heads/`. `--mirror`, `--prune`, a push with no remote operand, another host's or a container's push
+// has no name, so it never rides on a safe one.
+const remoteDeleteKey = ({ dir, remote, name }: RemoteDeleteTarget) =>
+  `${dir}|${remote ?? ""}|${name}`;
+export function remoteDeleteTargets(
+  command: string,
+  rules: GuardRules,
+  env: GuardEnv = {},
+): RemoteDeleteTarget[] {
+  const re = riskyRe(rules.risky.find((r) => r.id === "push-delete"));
+  return segments(command, env)
+    .filter(({ seg }) => re.test(seg))
+    .flatMap(({ seg, dir, remote }) => {
+      const rest = /\bpush\b(.*)$/i.exec(seg)?.[1] ?? "";
+      const opts = rest.split(/\s+/).filter((t) => t.startsWith("-"));
+      const [where, ...specs] = plainArgs(rest);
+      const none = [
+        { dir: remote ? REMOTE_DIR : dir, remote: "", name: NO_TARGET },
+      ];
+      if (
+        remote ||
+        !where ||
+        opts.some((o) => o === "--mirror" || o === "--prune")
+      )
+        return none;
+      const deleting = opts.some((o) => o === "--delete" || o === "-d");
+      const names = specs
+        .filter((sp) => deleting || sp.startsWith(":"))
+        .map((sp) =>
+          (deleting ? sp : sp.slice(1)).replace(/^refs\/heads\//, ""),
+        );
+      return names.length
+        ? names.map((name) => ({ dir, remote: where, name }))
+        : none;
+    });
+}
+
+// Remote delete facts for every `git push --delete` of a command, in parallel: { [dir|remote|name]: { safe, why } }.
+export async function remoteDeleteFacts(
+  command: string,
+  rules: GuardRules,
+  run: RunnerFn,
+  env: GuardEnv = {},
+): Promise<Record<string, SafeFact | undefined>> {
+  const targets = [
+    ...new Map(
+      remoteDeleteTargets(command, rules, env).map(
+        (t): [string, RemoteDeleteTarget] => [remoteDeleteKey(t), t],
+      ),
+    ).values(),
+  ].filter(
+    (t) =>
+      t.name !== NO_TARGET &&
+      PLAIN_PATH.test(t.dir || ".") &&
+      /^[\w.-]+$/.test(t.remote ?? ""),
+  );
+  const facts = await Promise.all(targets.map((t) => remoteDeleteFact(t, run)));
+  return Object.fromEntries(
+    targets.map((t, i): [string, SafeFact | undefined] => [
+      remoteDeleteKey(t),
+      facts[i],
+    ]),
+  );
+}
+
+// ---- Push scan: gitleaks over the commits a push would add (github-workflow, Branch lifecycle).
+
+const SCAN_MS = 20_000;
+const PLAIN_REV = /^[\w./@+^~{}-]+$/;
+// A repo's visibility is read once per process, by repo root.
+const publicRepos = new Map<string, boolean>();
+export function resetPushScanCache(): void {
+  publicRepos.clear();
+}
+
+interface LeakRow {
+  Commit?: unknown;
+  File?: unknown;
+  RuleID?: unknown;
+  StartLine?: unknown;
+}
+function parseFindings(text: string): ScanFinding[] | null {
+  try {
+    const parsed: unknown = JSON.parse(text);
+    if (!Array.isArray(parsed)) return null;
+    return parsed.map((row: LeakRow) => ({
+      commit: typeof row.Commit === "string" ? row.Commit.slice(0, 7) : "?",
+      file:
+        typeof row.File === "string" ? row.File.replace(/^[ab]\//, "") : "?",
+      line: typeof row.StartLine === "number" ? row.StartLine : 0,
+      rule: typeof row.RuleID === "string" ? row.RuleID : "?",
+    }));
+  } catch {
+    return null;
+  }
+}
+
+// What one push-like segment sends: the remote and the refspec sources it names (none: the current branch). A push
+// that only deletes sends no commit, so it is null. `branches` is `--all` or `--branches` (every local branch), `all` is
+// `--mirror` (every local ref), `tags` is `--tags`: each sends refs no refspec names.
+interface PushJob {
+  all: boolean;
+  branches: boolean;
+  remote: string;
+  sources: string[];
+  tags: boolean;
+}
+function pushJob(seg: string): PushJob | null {
+  const rest = /\bgit\s+push\b(.*)$/i.exec(seg)?.[1];
+  if (rest === undefined)
+    return {
+      all: false,
+      branches: false,
+      remote: "origin",
+      sources: [],
+      tags: false,
+    };
+  const opts = rest.split(/\s+/);
+  const deleting = opts.some((o) => o === "--delete" || o === "-d");
+  const all = opts.includes("--mirror");
+  const branches = opts.some((o) => o === "--all" || o === "--branches");
+  const tags = opts.includes("--tags");
+  const [where, ...specs] = plainArgs(rest);
+  const pushed = specs.filter((sp) => !deleting && !sp.startsWith(":"));
+  if (specs.length && !pushed.length) return null;
+  return {
+    all,
+    branches,
+    remote: where && /^[\w.-]+$/.test(where) ? where : "origin",
+    sources: pushed
+      .map((sp) => sp.replace(/^\+/, "").split(":")[0] ?? "")
+      .filter((src) => src && src !== "HEAD"),
+    tags,
+  };
+}
+
+// Scan facts for every command of a command that pushes or may push (`rules.pushScan`), in the repo at its directory:
+// { [dir]: { status, findings, private } }. Per pushed ref the range is `@{u}..HEAD` when an upstream exists, else the
+// commits no remote-tracking ref of the remote has, or the named source the same way; an empty range passes without
+// running gitleaks. gitleaks missing, crashed, over its budget or unreadable is `unavailable`. On a public repo (an
+// unknown visibility counts as public) with `GITLEAKS_PRIVATE_CONFIG` in `env` (a readable file the adapter checked)
+// a second pass runs with that config; a private finding keeps no rule name, which could name the private thing.
+export async function pushScanFacts(
+  command: string,
+  rules: GuardRules,
+  run: RunnerFn,
+  env: GuardEnv = {},
+): Promise<Record<string, PushScanFact | undefined>> {
+  const re = rules.pushScan && new RegExp(rules.pushScan.match, "i");
+  if (!re) return {};
+  const jobs = new Map<string, PushJob[] | "unreadable">();
+  for (const { seg, dir, remote } of segments(command, env)) {
+    if (remote || !re.test(seg)) continue;
+    const job = pushJob(seg);
+    if (!job) continue;
+    const prior = jobs.get(dir);
+    jobs.set(
+      dir,
+      !PLAIN_PATH.test(dir || ".") ||
+        job.sources.some((s) => !PLAIN_REV.test(s) || s.startsWith("-")) ||
+        prior === "unreadable"
+        ? "unreadable"
+        : [...(prior ?? []), job],
+    );
+  }
+  const privateConfig =
+    typeof env.GITLEAKS_PRIVATE_CONFIG === "string"
+      ? env.GITLEAKS_PRIVATE_CONFIG
+      : "";
+  const entries = await Promise.all(
+    [...jobs].map(async ([dir, list]): Promise<[string, PushScanFact]> => [
+      dir,
+      list === "unreadable"
+        ? { findings: [], private: [], status: "unavailable" }
+        : await scanRepo(dir, list, privateConfig, run),
+    ]),
+  );
+  return Object.fromEntries(entries);
+}
+
+async function scanRepo(
+  dir: string,
+  jobs: PushJob[],
+  privateConfig: string,
+  run: RunnerFn,
+): Promise<PushScanFact> {
+  const sh = (argv: string[], ms?: number) =>
+    Promise.resolve()
+      .then(() => run(argv, dir || undefined, ms))
+      .catch(() => null);
+  const unavailable: PushScanFact = {
+    findings: [],
+    private: [],
+    status: "unavailable",
+  };
+  const upstream = (
+    await sh([
+      "git",
+      "rev-parse",
+      "--abbrev-ref",
+      "--symbolic-full-name",
+      "@{u}",
+    ])
+  )?.trim();
+  // `--all` and `--tags` name every local branch or tag, so those ranges are every unpushed commit of them; a push
+  // naming only tags sends no branch commit.
+  const ranges = jobs.flatMap(({ all, branches, remote, sources, tags }) => {
+    const found = sources.map((s) => [s, "--not", `--remotes=${remote}`]);
+    if (all) found.push(["--all", "--not", `--remotes=${remote}`]);
+    if (branches) found.push(["--branches", "--not", `--remotes=${remote}`]);
+    if (tags) found.push(["--tags", "--not", `--remotes=${remote}`]);
+    if (found.length) return found;
+    return [
+      upstream ? ["@{u}..HEAD"] : ["HEAD", "--not", `--remotes=${remote}`],
+    ];
+  });
+  const leaks = (range: string[], config?: string) =>
+    sh(
+      [
+        "gitleaks",
+        "git",
+        "--no-banner",
+        "--redact",
+        "--exit-code",
+        "0",
+        "--log-opts",
+        // remerge shows a merge commit's own changes (a conflict resolution), which a plain log prints no diff for
+        `--diff-merges=remerge ${range.join(" ")}`,
+        "--report-format",
+        "json",
+        "--report-path",
+        "-",
+        ...(config ? ["--config", config] : []),
+      ],
+      SCAN_MS,
+    ).then((out) => (out == null ? null : parseFindings(out)));
+  const found: ScanFinding[] = [];
+  const named: ScanFinding[] = [];
+  const scanned: string[][] = [];
+  for (const range of ranges) {
+    const count = await sh(["git", "rev-list", "--count", ...range]);
+    if (count == null || !/^\d+\s*$/.test(count)) return unavailable;
+    if (Number(count) === 0) continue;
+    scanned.push(range);
+    const rows = await leaks(range);
+    if (!rows) return unavailable;
+    found.push(...rows);
+  }
+  if (!found.length && scanned.length && privateConfig) {
+    const top = (await sh(["git", "rev-parse", "--show-toplevel"]))?.trim();
+    const key = top === undefined || top === "" ? dir : top;
+    let isPublic = publicRepos.get(key);
+    if (isPublic === undefined) {
+      const seen = (
+        await sh([
+          "gh",
+          "repo",
+          "view",
+          "--json",
+          "visibility",
+          "--jq",
+          ".visibility",
+        ])
+      )
+        ?.trim()
+        .toUpperCase();
+      isPublic = seen !== "PRIVATE" && seen !== "INTERNAL";
+      if (seen) publicRepos.set(key, isPublic);
+    }
+    if (isPublic)
+      for (const range of scanned) {
+        const rows = await leaks(range, privateConfig);
+        if (!rows) return unavailable;
+        named.push(...rows.map((r) => ({ ...r, rule: "private-name" })));
+      }
+  }
+  return {
+    findings: found,
+    private: named,
+    status: found.length || named.length ? "findings" : "clean",
+  };
+}
+
+const findingList = (fs: ScanFinding[]) =>
+  fs
+    .slice(0, 5)
+    .map((f) => `${f.commit} ${f.file}:${String(f.line)} (${f.rule})`)
+    .join(", ") + (fs.length > 5 ? `, +${String(fs.length - 5)} more` : "");
+
+// The decision for a command that pushes: a finding denies (the secret is never shown), a scan that could not run asks.
+function evaluatePushScan(
+  command: string,
+  rules: GuardRules,
+  scans: Record<string, PushScanFact | undefined>,
+): CommandDecision | null {
+  const facts = Object.values(scans).filter((f) => f !== undefined);
+  if (!rules.pushScan || !facts.length) return null;
+  const found = facts.flatMap((f) => f.findings);
+  const named = facts.flatMap((f) => f.private);
+  const attrs = { findings: found.length, private_findings: named.length };
+  if (found.length || named.length) {
+    const first = found.length
+      ? `Secret scan found ${String(found.length)} finding${found.length > 1 ? "s" : ""} in commits about to be pushed: ${findingList(found)}. Remove ${found.length > 1 ? "them" : "it"} from those commits (amend or rebase the unpushed commits), rotate ${found.length > 1 ? "them" : "it"} if ever shared, then push again. Never bypass the scan.`
+      : "";
+    const second = named.length
+      ? `Private-name scan: ${findingList(named)} ${named.length > 1 ? "name" : "names"} something that must not reach a public repo; describe it in its own terms (\`acme/app\`).`
+      : "";
+    return {
+      action: "deny",
+      rule: rules.pushScan.id,
+      reason: [first, second].filter(Boolean).join("\n"),
+      attrs,
+    };
+  }
+  if (facts.some((f) => f.status === "unavailable"))
+    return {
+      action: "ask",
+      rule: rules.pushScan.id,
+      command,
+      reason:
+        "Secret scan could not run: install gitleaks or run the push yourself.",
+      attrs,
+    };
+  return null;
+}
+
+// ---- pr-batch: the fewest PRs across agents.
+
+// A glob of the ignore list: `**/` is any leading directories (or none), `*` stays inside a path segment.
+const globRe = (glob: string) =>
+  new RegExp(
+    `^${glob
+      .split("**/")
+      .map((part) =>
+        part.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, "[^/]*"),
+      )
+      .join("(?:.*/)?")}$`,
+  );
+const BOT_BRANCH = /^(?:dependabot|renovate|release-please)[-/]/;
+
+const unquote = (v: string) => v.replace(/^(["'])(.*)\1$/, "$2");
+// The Split-Reason a PR command carries: SPLIT_REASON=<v> before the command, `Split-Reason: <v>` in --body or in the
+// --body-file file. Matched exact, case-insensitive, trimmed against the list; another or an empty value is invalid.
+function splitReason(
+  command: string,
+  seg: string,
+  dir: string,
+  reasons: string[],
+  read: ReadText,
+): PrBatchFact["reason"] {
+  const fromEnv = /(?:^|[\s;&|(])SPLIT_REASON=("[^"]*"|'[^']*'|\S*)/.exec(
+    seg,
+  )?.[1];
+  const fromBody = /Split-Reason:[ \t]*([^\n\r"'\\`]*)/i.exec(command)?.[1];
+  const file = /(?:--body-file|-F)(?:[ \t]+|=)("[^"]*"|'[^']*'|[^\s;&|]+)/.exec(
+    command,
+  )?.[1];
+  const fromFile =
+    file === undefined
+      ? undefined
+      : /^[ \t]*Split-Reason:[ \t]*(.*)$/im.exec(
+          read(unquote(file), dir || undefined) ?? "",
+        )?.[1];
+  const value =
+    fromEnv === undefined ? (fromBody ?? fromFile) : unquote(fromEnv);
+  if (value === undefined) return { kind: "none" };
+  const clean = value.trim().toLowerCase();
+  return reasons.includes(clean)
+    ? { kind: "valid", value: clean }
+    : { kind: "invalid" };
+}
+
+// Facts for every PR-creating command: its Split-Reason, and the other open PRs of the author that share a file with
+// it (not a lockfile, CHANGELOG or plugin manifest). Any read error, no forge, a bot branch or no overlap is no
+// overlap (fail open). A reason that is given makes the reads unnecessary.
+export async function prBatchFacts(
+  command: string,
+  rules: GuardRules,
+  run: RunnerFn,
+  env: GuardEnv = {},
+  read: ReadText = () => null,
+): Promise<Record<string, PrBatchFact | undefined>> {
+  const rule = rules.prBatch;
+  const re = rule && new RegExp(rule.match, "i");
+  if (!rule || !re) return {};
+  const out: Record<string, PrBatchFact | undefined> = {};
+  for (const { seg, dir, remote } of segments(command, env)) {
+    if (remote || !re.test(seg)) continue;
+    const reason = splitReason(command, seg, dir, rule.reasons, read);
+    out[dir] = {
+      reason,
+      overlaps:
+        reason.kind === "none" && PLAIN_PATH.test(dir || ".")
+          ? await openOverlaps(dir, rule.ignore, run)
+          : [],
+    };
+  }
+  return out;
+}
+
+async function openOverlaps(
+  dir: string,
+  ignore: string[],
+  run: RunnerFn,
+): Promise<PrOverlap[]> {
+  const sh = (argv: string[]) =>
+    Promise.resolve()
+      .then(() => run(argv, dir || undefined))
+      .catch(() => null);
+  const git = (...args: string[]) => sh(["git", ...args]);
+  try {
+    const [current, def, top] = await Promise.all([
+      git("branch", "--show-current"),
+      git("symbolic-ref", "--short", "refs/remotes/origin/HEAD"),
+      git("rev-parse", "--show-toplevel"),
+    ]);
+    const branch = current?.trim() ?? "";
+    if (!def?.trim() || BOT_BRANCH.test(branch)) return [];
+    const base = (await git("merge-base", def.trim(), "HEAD"))?.trim();
+    const changed = base
+      ? await git("diff", "--name-only", `${base}..HEAD`)
+      : null;
+    const [listed, trees] = await Promise.all([
+      sh([
+        "gh",
+        "pr",
+        "list",
+        "--author",
+        "@me",
+        "--state",
+        "open",
+        "--json",
+        "number,headRefName,files",
+        "--limit",
+        "50",
+      ]),
+      git("worktree", "list", "--porcelain"),
+    ]);
+    if (changed == null || listed == null) return [];
+    const skip = ignore.map(globRe);
+    const mine = new Set(
+      changed.split(/\r?\n/).filter((f) => f && !skip.some((g) => g.test(f))),
+    );
+    const parsed: unknown = JSON.parse(listed);
+    if (!Array.isArray(parsed)) return [];
+    const checkedOut = new Map<string, string>();
+    let path = "";
+    for (const line of (trees ?? "").split(/\r?\n/)) {
+      if (line.startsWith("worktree ")) path = line.slice(9);
+      else if (line.startsWith("branch refs/heads/"))
+        checkedOut.set(line.slice(18), path);
+    }
+    const overlaps: PrOverlap[] = [];
+    for (const pr of parsed as unknown[]) {
+      if (typeof pr !== "object" || pr === null) continue;
+      const { number, headRefName, files } = pr as Record<string, unknown>;
+      if (
+        typeof number !== "number" ||
+        typeof headRefName !== "string" ||
+        headRefName === branch ||
+        BOT_BRANCH.test(headRefName) ||
+        !Array.isArray(files)
+      )
+        continue;
+      const shared = (files as unknown[])
+        .map((f) =>
+          typeof f === "object" && f !== null
+            ? (f as Record<string, unknown>).path
+            : undefined,
+        )
+        .filter((f): f is string => typeof f === "string" && mine.has(f));
+      if (!shared.length) continue;
+      const where = checkedOut.get(headRefName);
+      overlaps.push({
+        files: shared,
+        head: headRefName,
+        number,
+        ...(where && where !== top?.trim() ? { worktree: where } : {}),
+      });
+    }
+    return overlaps;
+  } catch {
+    return [];
+  }
+}
+
+const PR_REASON_ERROR = (reasons: string[]) =>
+  `Split-Reason must be one of: ${reasons.join(", ")}`;
+
+// A new PR that shares files with another open PR of the author: denied unless it carries a listed Split-Reason. A PR
+// another running session holds (its branch is checked out in another worktree) only gets a hint.
+function evaluatePrBatch(
+  rules: GuardRules,
+  facts: Record<string, PrBatchFact | undefined>,
+): { decision?: CommandDecision; hint?: string; accepted?: string } {
+  const rule = rules.prBatch;
+  const all = Object.values(facts).filter((f) => f !== undefined);
+  if (!rule || !all.length) return {};
+  const list = (fs: string[]) => fs.slice(0, 5).join(", ");
+  const hints: string[] = [];
+  let accepted: string | undefined;
+  for (const fact of all) {
+    if (fact.reason.kind === "invalid")
+      return {
+        decision: {
+          action: "deny",
+          rule: rule.id,
+          reason: PR_REASON_ERROR(rule.reasons),
+          attrs: { reason: "invalid" },
+        },
+      };
+    if (fact.reason.kind === "valid") {
+      accepted = fact.reason.value;
+      continue;
+    }
+    for (const o of fact.overlaps) {
+      if (o.worktree)
+        hints.push(
+          `PR #${String(o.number)} (\`${o.head}\`, checked out in \`${o.worktree}\`) touches ${list(o.files)}: coordinate with that session (\`subagent-orchestration\`).`,
+        );
+      else
+        return {
+          decision: {
+            action: "deny",
+            rule: rule.id,
+            reason: `PR #${String(o.number)} already touches ${list(o.files)} and no running session owns its branch \`${o.head}\`: commit to that branch instead (one PR per coherent deliverable, \`github-workflow\` rule 1). Only if the split is one of ${rule.reasons.join(", ")}, add \`Split-Reason: <value>\` to the PR body (or \`SPLIT_REASON=<value>\` before \`gh stack submit\`) and retry.`,
+            attrs: { reason: "none" },
+          },
+        };
+    }
+  }
+  return {
+    ...(hints.length ? { hint: hints.join("\n") } : {}),
+    ...(accepted ? { accepted } : {}),
+  };
 }
 
 // The `gh pr create|merge` units of a command, for the stacked-PR hint: { verb, dir, base, pr, repo }. `base` is
@@ -1444,7 +2158,6 @@ const SAFE_PUSH_OPTS = new Set([
   "--quiet",
   "-v",
   "--verbose",
-  "--no-verify",
   "--verify",
   "--atomic",
   "--porcelain",
@@ -1844,6 +2557,20 @@ function safeRefDelete(
   return (
     targets.length > 0 &&
     targets.every((r) => refs[refKey(defined(r))]?.safe === true)
+  );
+}
+
+// A remote branch delete is exempt when every branch it names is stale (a merged PR holds it, or closed and idle).
+function safeRemoteDelete(
+  command: string,
+  rules: GuardRules,
+  facts: Record<string, SafeFact | undefined>,
+  env: GuardEnv,
+) {
+  const targets = remoteDeleteTargets(command, rules, env);
+  return (
+    targets.length > 0 &&
+    targets.every((t) => facts[remoteDeleteKey(t)]?.safe === true)
   );
 }
 
@@ -3077,6 +3804,7 @@ function evaluateRiskyCommand(
   branches: Record<string, SafeFact | undefined>,
   refs: Record<string, SafeFact | undefined>,
   pushes: Record<string, PushFact | undefined>,
+  remoteDeletes: Record<string, SafeFact | undefined>,
 ): CommandDecision | null {
   const exempt = new Set([
     ...(safeRemoval(command, rules, env, worktrees, regenerable)
@@ -3086,6 +3814,9 @@ function evaluateRiskyCommand(
       ? ["branch-delete"]
       : []),
     ...(safeRefDelete(command, rules, refs, env) ? ["gh-delete"] : []),
+    ...(safeRemoteDelete(command, rules, remoteDeletes, env)
+      ? ["push-delete"]
+      : []),
   ]);
   // A bare lease push is the `force` rule's when its branch is protected or unreadable (pushFacts).
   const leaseHit = leaseTargets(command, rules, env).some((d) =>
@@ -3111,6 +3842,12 @@ function evaluateRiskyCommand(
       .map(
         ([k, f]) =>
           `\nRef ${k.slice(k.lastIndexOf("|") + 1)}: ${defined(f).why}`,
+      ),
+    ...Object.entries(remoteDeletes)
+      .filter(([, f]) => !defined(f).safe)
+      .map(
+        ([k, f]) =>
+          `\nRemote branch ${k.slice(k.lastIndexOf("|") + 1)}: ${defined(f).why}`,
       ),
   ].join("");
   const step = riskyStep(command, risky);
@@ -3275,6 +4012,9 @@ export function evaluateCommand({
   pushes = {},
   regenerable = {},
   refs = {},
+  remoteDeletes = {},
+  pushScan = {},
+  prBatch = {},
   tags = {},
   stack = null,
   python = null,
@@ -3303,6 +4043,10 @@ export function evaluateCommand({
     return { action: "deny", rule: denied.id, reason: denied.why };
   const note = denied && !state.reminded.has(denied.id) ? denied.id : null;
 
+  // A secret in the push is a deny that no risky ask on the same command may hide: approving that ask would send it.
+  const scanDecision = evaluatePushScan(command, rules, pushScan);
+  if (scanDecision?.action === "deny") return scanDecision;
+
   const riskyDecision = evaluateRiskyCommand(
     command,
     rules,
@@ -3312,8 +4056,14 @@ export function evaluateCommand({
     branches,
     refs,
     pushes,
+    remoteDeletes,
   );
   if (riskyDecision) return riskyDecision;
+
+  if (scanDecision) return scanDecision;
+
+  const batch = evaluatePrBatch(rules, prBatch);
+  if (batch.decision) return batch.decision;
 
   const title = badTitle(command, rules);
   if (title !== null) {
@@ -3329,7 +4079,7 @@ export function evaluateCommand({
   const hostDecision = evaluateHostStrain(command, host, rules, state);
   if (hostDecision) return hostDecision;
 
-  return evaluateSkillAndToolAdvice({
+  const advice = evaluateSkillAndToolAdvice({
     command,
     env,
     loadedSkills,
@@ -3341,6 +4091,12 @@ export function evaluateCommand({
     state,
     tags,
   });
+  const context = [batch.hint, advice.context].filter(Boolean).join("\n");
+  return {
+    ...advice,
+    ...(context ? { context } : {}),
+    ...(batch.accepted ? { prBatch: batch.accepted } : {}),
+  };
 }
 
 // An edit (any harness's edit or write tool) to a path a `files` rule watches: a once-per-session skill hint.
@@ -3598,6 +4354,9 @@ const RULE_FAMILY: Record<string, string | undefined> = {
   "git-rm": "git-discard",
   "branch-delete": "git-history",
   "push-delete": "git-history",
+  "no-verify": "git-history",
+  "push-scan": "git-history",
+  "pr-batch": "hint",
   force: "git-history",
   rewrite: "git-history",
   docker: "infra",

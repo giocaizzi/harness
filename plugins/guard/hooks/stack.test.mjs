@@ -43,6 +43,8 @@ const fakeRun = () => {
     };
     return { run, calls };
 };
+// A PR create that names its split reason skips the pr-batch lookups, so these tests count only the stack hint's own.
+const SPLIT_CREATE = "SPLIT_REASON=other-owner gh pr create --fill";
 const tmp = () => mkdtempSync(join(tmpdir(), "stack-test-"));
 const stackCalls = (calls) => calls.filter((c) => /symbolic-ref|merge-base|gh pr list|gh pr view|gh repo view/.test(c));
 const decision = (out) => out.stdout
@@ -92,7 +94,7 @@ void test("GUARD_STACK_HINT off (also 0, false) gathers nothing and shows nothin
     for (const v of ["off", "0", "false"]) {
         const { h, calls } = setup({ GUARD_STACK_HINT: v });
         await h(load());
-        assert.equal(decision(await h(pre("gh pr create --fill"))), undefined, v);
+        assert.equal(decision(await h(pre(SPLIT_CREATE))), undefined, v);
         assert.deepEqual(stackCalls(calls), [], v);
     }
 });
@@ -102,9 +104,9 @@ void test("other commands and a spent hint cost no lookups", async () => {
     await h(pre("gh pr view 3"));
     await h(pre("git status"));
     assert.deepEqual(stackCalls(calls), []);
-    await h(pre("gh pr create --fill"));
+    await h(pre(SPLIT_CREATE));
     const n = calls.length;
-    await h(pre("gh pr create --fill"));
+    await h(pre(SPLIT_CREATE));
     assert.equal(calls.length, n);
 });
 void test("opencode and pi: the hint reaches the model through the tool output, once", async () => {
@@ -211,7 +213,7 @@ void test("the hint lookups share one deadline: no call starts after it, and eac
         factsMs: 100,
     });
     await h(load());
-    const out = await h(pre("gh pr create --fill"));
+    const out = await h(pre(SPLIT_CREATE));
     assert.equal(decision(out), undefined);
     assert.ok(seen.length >= 1);
     assert.ok(seen.every((ms) => typeof ms === "number" && ms > 0 && ms <= 100), String(seen));

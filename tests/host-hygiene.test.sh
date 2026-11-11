@@ -327,47 +327,12 @@ check "TERM stops the service and removes the entry" "$(kill -0 "$svc" 2>/dev/nu
 "$reg" job -- true
 check "entry removed on normal exit" "$(count "$L"/host-services/*)" 0
 
-# sweep-stale.sh
-repo=$tmp/repo
-git init -q "$repo" && git -C "$repo" -c user.name=t -c user.email=t@t commit -q --allow-empty -m init
-for n in old recent dirty busy; do git -C "$repo" worktree add -q "$tmp/wt-$n" -b "$n" 2>/dev/null; done
-touch "$tmp/wt-dirty/new"
-for n in old dirty busy; do find "$tmp/wt-$n" -exec touch -t 202001010000 {} +; done
-(cd "$tmp/wt-busy" && exec sleep 10) & busy=$!
-out=$(cd "$repo" && "$sweep")
-check "sweep dry run removes only the old, clean, idle worktree" \
-  "$(echo "$out" | grep -c '^would remove')$(echo "$out" | grep -c "would remove $tmp/wt-old")" 11
-check "sweep keeps recent, dirty and busy" \
-  "$(echo "$out" | grep -c -e 'wt-recent: modified' -e 'wt-dirty: uncommitted' -e 'wt-busy: in use')" 3
-check "dry run removes nothing" "$(git -C "$repo" worktree list | wc -l | tr -d ' ')" 5
-(cd "$repo" && "$sweep" --apply >/dev/null 2>&1)
-check "--apply removes it" "$([ -d "$tmp/wt-old" ] && echo kept)$(git -C "$repo" worktree list | wc -l | tr -d ' ')" 4
-check "sweep never touches the current worktree" "$(cd "$tmp/wt-recent" && "$sweep" | grep -c 'wt-recent: current')" 1
-{ kill "$busy"; wait "$busy"; } 2>/dev/null
-git -C "$repo" worktree add -q "$repo/.claude/worktrees/live" -b live 2>/dev/null
-mkdir -p "$repo/.claude/worktrees/orphan/pkg/mod" && echo x >"$repo/.claude/worktrees/orphan/pkg/mod/f"
-chmod 0444 "$repo/.claude/worktrees/orphan/pkg/mod/f" && chmod 0555 "$repo/.claude/worktrees/orphan/pkg/mod"
-out=$(cd "$repo" && "$sweep" --apply)
-check "sweep lists an unregistered worktree dir with the owner's command and leaves it" \
-  "$(echo "$out" | grep -c "^unregistered $repo/.claude/worktrees/orphan (.*): the owner runs chmod -R u+w '$repo/.claude/worktrees/orphan' && rm -rf '$repo/.claude/worktrees/orphan'$")$(echo "$out" | grep -c '^unregistered .*worktrees/live')$([ -f "$repo/.claude/worktrees/orphan/pkg/mod/f" ] && echo kept)" 10kept
-chmod -R u+w "$repo/.claude/worktrees/orphan"
-
-# sweep-stale.sh --branches
-git init -q --bare -b main "$tmp/origin.git"
-br=$tmp/brrepo
-git init -q -b main "$br" && git -C "$br" -c user.name=t -c user.email=t@t commit -q --allow-empty -m init
-git -C "$br" remote add origin "$tmp/origin.git" && git -C "$br" push -q origin main
-for n in orphan open gone; do git -C "$br" branch "$n"; git -C "$br" push -q -u origin "$n" 2>/dev/null; done
-git -C "$tmp/origin.git" branch -q -D gone
-export SWEEP_OPEN_BRANCHES=open
-out=$(cd "$br" && "$sweep" --branches)
-check "branch sweep reports orphan remote and gone local only" \
-  "$(echo "$out" | grep -c '^would delete')$(echo "$out" | grep -c -e 'would delete origin/orphan' -e 'would delete gone: upstream gone')" 22
-check "branch dry run deletes nothing" "$(git -C "$tmp/origin.git" branch | wc -l | tr -d ' ')" 3
-(cd "$br" && "$sweep" --branches --apply >/dev/null 2>&1)
-check "branch --apply deletes them, keeps open and default" \
-  "$(git -C "$tmp/origin.git" branch | tr -d ' *' | sort | tr '\n' ' ')$(git -C "$br" branch | tr -d ' *' | sort | tr '\n' ' ')" "main open main open "
-unset SWEEP_OPEN_BRANCHES
+# sweep-stale.sh: the git modes moved to repo-sweep.mjs
+for args in "" "--apply" "--branches"; do
+  # shellcheck disable=SC2086 # the empty case passes no argument
+  out=$("$sweep" $args 2>&1 >/dev/null); code=$?
+  check "sweep-stale.sh '$args' points to repo-sweep.mjs and exits 2" "$code $out" "2 sweep-stale: the git sweep moved to repo-sweep.mjs (node repo-sweep.mjs [--apply])"
+done
 
 # sweep-stale.sh --plugins
 cfg=$tmp/claude c=$tmp/claude/plugins/cache/mkt

@@ -487,6 +487,10 @@ export function report(data, known, range) {
             String(r.value),
         ])),
         "",
+        "## PR splits by reason",
+        "Every accepted split of a PR carries one of separate-release, sensitive-change, forced-stack or other-owner; none and invalid are denies.",
+        table(["reason", "count"], top(data.prSplits).map((r) => [r.labels.reason ?? "", String(r.value)])),
+        "",
         "## Guard asks answered",
         "How each ask ended (Claude Code dialog, pi confirm): a high timeout share means asks land while the user is away; a high allow share on one rule is a false positive.",
         table(["harness", "result", "count"], top(data.askResults).map((r) => [

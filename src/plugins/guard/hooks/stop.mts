@@ -44,6 +44,8 @@ import type { PrepareOptions, Prepared } from "./checker.mjs";
 import { pluginDataDir, readDataFile, readDataFileStrict } from "./data.mjs";
 import { sessionStore } from "./guard.mjs";
 import { detectHarnessName } from "./harnesses.mjs";
+import { lifecycleReminder, queueAgentNote } from "./lifecycle.mjs";
+import type { ReminderOptions } from "./lifecycle.mjs";
 import { STOP_DEADLINE_MS, readStdin } from "./stdin.mjs";
 import type { RegistrationCache } from "./registration.mjs";
 import type { RunContext } from "./run.mjs";
@@ -720,6 +722,8 @@ export interface StopCheckOptions {
   // Called with the gate's answer (null = the result passed) before the make check starts, so a crash during the check
   // cannot undo what the gate decided.
   onGate?: (reason: string | null) => void;
+  // The branch lifecycle reminder merged into the answer as a systemMessage; `false` leaves it to the caller.
+  reminder?: false | StopReminderOptions;
 }
 
 // What the gate decided so far, for a crash later in the stop.
@@ -913,6 +917,72 @@ async function makeCheck(
   return executeMakeCheck(target, cwd, fp, run, opts);
 }
 
+export interface StopReminderOptions {
+  // The subagent's type (SubagentStop); only driver and escalate are reminded.
+  agentType?: string;
+  dataDir?: string;
+  lookup?: (
+    cwd: string,
+    env: NodeJS.ProcessEnv,
+    opts: ReminderOptions,
+  ) => ReturnType<typeof lifecycleReminder>;
+  // Called with the telemetry attributes of a reminder that is shown.
+  onReminder?: (attrs: Record<string, unknown>) => void;
+}
+
+// The branch lifecycle reminder to show, once per session per branch and head, or null. It also queues the same text
+// as a note for the agent's next turn. Warn only and fail open: any error is no reminder.
+export function stopReminder(
+  input: HookInput,
+  opts: StopReminderOptions = {},
+): string | null {
+  try {
+    const cwd = input.cwd ?? process.cwd();
+    const found = (opts.lookup ?? lifecycleReminder)(
+      cwd,
+      process.env,
+      opts.agentType ? { agentType: opts.agentType } : {},
+    );
+    if (!found) return null;
+    const dataDir = opts.dataDir ?? pluginDataDir();
+    const mark = `lifecycle:${found.key}`;
+    const store = sessionStore(dataDir, input.session_id);
+    const state = store.load();
+    if (state.reminded.includes(mark)) return null;
+    state.reminded.push(mark);
+    store.save(state);
+    opts.onReminder?.({
+      rule: "branch-lifecycle",
+      cmd_class: "hint",
+      session_id: input.session_id,
+    });
+    if (input.session_id) {
+      queueAgentNote(dataDir, input.session_id, found.message);
+    }
+    return found.message;
+  } catch {
+    return null;
+  }
+}
+
+// The answer with the reminder as its systemMessage (after an existing one); never touches the decision.
+function withReminder(
+  answer: StopCheckResult | null,
+  input: HookInput,
+  opts: StopCheckOptions,
+): StopCheckResult | null {
+  if (opts.reminder === false || answer?.decision === "block") return answer;
+  if (isSubagentStop(plainInput(input))) return answer;
+  const message = stopReminder(input, opts.reminder ?? {});
+  if (!message) return answer;
+  return {
+    ...answer,
+    systemMessage: answer?.systemMessage
+      ? `${answer.systemMessage}\n${message}`
+      : message,
+  };
+}
+
 export async function stopCheck(
   input: HookInput,
   run: SyncRunner = defaultSyncRunner,
@@ -937,7 +1007,7 @@ export async function stopCheck(
     // a failing make check never denies a stop (a gate block or a result that passed): it fails open
     check = null;
   }
-  if (!gate) return check;
+  if (!gate) return withReminder(check, input, opts);
   const reason =
     check?.decision === "block" ? `${gate}\n\n${check.reason ?? ""}` : gate;
   return {
@@ -965,6 +1035,7 @@ export async function run(): Promise<void> {
     .find((a) => a.startsWith("--harness="))
     ?.slice(10);
   const activeHarness = flagHarness ?? detectHarnessName();
+  const reminderOnly = process.argv.includes("--reminder-only");
   let input: AntigravityStopInput = {};
   const isAntigravity = (): boolean =>
     activeHarness === "antigravity" || input.terminationReason !== undefined;
@@ -983,7 +1054,11 @@ export async function run(): Promise<void> {
       );
     } else if (activeHarness === "codex" && out.decision) {
       process.stdout.write(
-        JSON.stringify({ decision: out.decision, reason: out.reason }),
+        JSON.stringify({
+          decision: out.decision,
+          reason: out.reason,
+          systemMessage: out.systemMessage,
+        }),
       );
     } else {
       process.stdout.write(JSON.stringify(out));
@@ -1018,7 +1093,12 @@ export async function run(): Promise<void> {
       deadlineMs: STOP_DEADLINE_MS,
     });
     if (!read.ok) throw new StdinReadError(read.why);
-    input = plainInput(JSON.parse(read.text || "{}"));
+    const payload: unknown = JSON.parse(read.text || "{}");
+    input = plainInput(payload);
+    const agentType =
+      isRecord(payload) && typeof payload.agent_type === "string"
+        ? payload.agent_type
+        : undefined;
     if (input.terminationReason !== undefined && !input.hook_event_name) {
       input.hook_event_name = "Stop";
     }
@@ -1031,13 +1111,28 @@ export async function run(): Promise<void> {
     }
 
     const events: Record<string, unknown>[] = [];
-    const out = await stopCheck(input, defaultSyncRunner, {
-      report: (attrs) => events.push(attrs),
-      onGate: (reason) => {
-        gateState.done = true;
-        gateState.reason = reason;
-      },
-    });
+    const reminders: Record<string, unknown>[] = [];
+    const onReminder = (attrs: Record<string, unknown>): void => {
+      reminders.push(attrs);
+    };
+    let out: StopCheckResult | null;
+    if (reminderOnly) {
+      // SubagentStop: no gate and no make check, only the reminder (for a driver or escalate subagent)
+      // (a payload without agent_type cannot be told from a worker's: no reminder)
+      const message = agentType
+        ? stopReminder(input, { agentType, onReminder })
+        : null;
+      out = message ? { systemMessage: message } : null;
+    } else {
+      out = await stopCheck(input, defaultSyncRunner, {
+        report: (attrs) => events.push(attrs),
+        onGate: (reason) => {
+          gateState.done = true;
+          gateState.reason = reason;
+        },
+        reminder: { onReminder },
+      });
+    }
 
     // written before the usage and telemetry steps, so a failure there cannot lose a block or deny a passed result
     writeOut(out);
@@ -1073,6 +1168,17 @@ export async function run(): Promise<void> {
     }
 
     try {
+      for (const attrs of reminders) {
+        await emit(
+          process.env,
+          "guard.reminder",
+          recordAttrs(
+            { ...attrs, tool: "" },
+            input.cwd ?? process.cwd(),
+            harnessName(),
+          ),
+        );
+      }
       for (const event of events) {
         await emit(
           process.env,

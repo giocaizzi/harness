@@ -47,6 +47,8 @@ RUN_ENV := GUARD_RUN_MANIFEST GUARD_RUN_ID GUARD_RUN_MODE GUARD_RUN_TICKET GUARD
 	FACTORY_RUN_ID FACTORY_ATTENDED_RUN_ID FACTORY_TICKET FACTORY_ATTENDED_TICKET FACTORY_RUN_FILE FACTORY_PROTECTED_PATHS FACTORY_EVENTS_FILE FACTORY_RESULT_CHECKER
 unexport $(RUN_ENV)
 test: export GUARD_OTEL := off
+test: export GUARD_LIFECYCLE := off
+test: export GUARD_PUSH_SCAN := off
 test: export GUARD_RUN_EVENTS_FILE :=
 test: ## Run the plugins' hook tests (Node 22+), their mod tests (`claude plugin test`), then the skill script tests.
 	@node --test $(wildcard plugins/*/core/*.test.mjs plugins/*/hooks/*.test.mjs plugins/*/pi/*.test.mjs tests/*.test.mjs tests/contract/*.test.mjs)
@@ -67,6 +69,8 @@ e2e: ## Drive each installed harness CLI (Copilot CLI, Codex, opencode, pi) agai
 	@node tests/e2e/run.mjs
 
 contract-test: export GUARD_OTEL := off
+contract-test: export GUARD_LIFECYCLE := off
+contract-test: export GUARD_PUSH_SCAN := off
 contract-test: export GUARD_STOP_CHECK := off
 contract-test: export GUARD_RUN_EVENTS_FILE :=
 contract-test: ## Run contract v2 kit against a runner's manifest (docs/guard.md).  Usage: make contract-test MANIFEST=<absolute path>
