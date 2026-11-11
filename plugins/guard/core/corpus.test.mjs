@@ -60,7 +60,7 @@ const squashedRun = (argv) => {
         return "2\n";
     if (argv.includes("--git-dir"))
         return "/Users/me/repo/.git/worktrees/w\n/Users/me/repo/.git\n\n/Users/me/repo/w\n";
-    if (argv.includes("status"))
+    if (argv.includes("status") || argv.includes("ls-files"))
         return "";
     if (argv.includes("--show-current"))
         return "worker/u1\n";

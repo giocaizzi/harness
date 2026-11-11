@@ -77,7 +77,7 @@ const squashedRun = (argv: string[]) => {
   if (argv.includes("rev-list")) return "2\n";
   if (argv.includes("--git-dir"))
     return "/Users/me/repo/.git/worktrees/w\n/Users/me/repo/.git\n\n/Users/me/repo/w\n";
-  if (argv.includes("status")) return "";
+  if (argv.includes("status") || argv.includes("ls-files")) return "";
   if (argv.includes("--show-current")) return "worker/u1\n";
   if (argv.includes("--verify")) return "abc123\n";
   if (argv.includes("--show-toplevel")) return "/Users/me/repo\n";

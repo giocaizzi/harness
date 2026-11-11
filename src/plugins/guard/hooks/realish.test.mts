@@ -148,16 +148,13 @@ void test(
       rules,
     });
     assert.equal(d.action, "deny");
-    assert.match(d.reason ?? "", /a\.txt:\d+ \(generic-api-key\)/);
+    assert.match(d.reason ?? "", /(?<![\w/])a\.txt:\d+ \(generic-api-key\)/);
   },
 );
 
 void test(
   "realish: `git push --all` scans the branches it sends, not a local stash it never sends",
-  {
-    skip: !haveGitleaks,
-    todo: "xfail: pushJob maps --all/--branches to the `--all` revision (refs/stash, other remotes); `--branches` is what they push",
-  },
+  { skip: !haveGitleaks },
   async () => {
     const root = mkdtempSync(join(tmpdir(), "scan-all-"));
     const origin = join(root, "origin.git");
