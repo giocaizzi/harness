@@ -11,7 +11,7 @@ Nobody answers prompts, so every confirmation is either a hang (interactive sess
 
 - **Set `GUARD_UNATTENDED=1`** in the launching shell. The `guard` plugin then turns every risky-command ask into a deny that tells the agent to pick another approach, in every harness. Without it an open TUI waits at the prompt until morning.
 - **Prefer headless** (`claude -p`, `copilot -p`, `codex exec`, `opencode run`, `pi -p`) over a TUI left open: a refused command ends in a different approach, not a hang. Headless runs cannot ask, so their risky commands never run.
-- **One worktree per task** (`/wt`), pushed early. Guard lets a clean worktree whose commits are on a remote ref, or squash-merged, be removed without an ask.
+- **One worktree per task** (`/wt`), every commit pushed and a draft PR from the first push (`github-workflow`, Branch lifecycle). The guard lets a worktree or branch whose tip origin holds be removed without an ask; its stop reminder about unpushed work only warns and never holds a stop.
 - **Check quota and host first** (`host-hygiene`): an overnight fan-out hits the plan limit or the load cap while you sleep. Guard's host guard delays heavy builds and tests; on Claude Code the usage throttle refuses new subagents at 90 % only under `GUARD_THROTTLE=deny` (the default `warn` lets them start); elsewhere nothing does, so check quota yourself.
 
 ## What the agent must not rely on
