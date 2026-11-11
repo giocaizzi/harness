@@ -67,9 +67,9 @@ const realRun = (argv: string[], cwd?: string, ms?: number): string | null => {
   return r.status === 0 ? r.stdout : null;
 };
 // A key-shaped line, stored reversed so no scanner flags this file.
-const planted = [
-  ..."\nlQ3pZa9v1xzYCifRxPb/GNEDM7K/IMEFntUXrlaJw = yek_ssecca_terces_swa",
-]
+const planted = Array.from(
+  "\nlQ3pZa9v1xzYCifRxPb/GNEDM7K/IMEFntUXrlaJw = yek_ssecca_terces_swa",
+)
   .reverse()
   .join("");
 

@@ -59,9 +59,7 @@ const realRun = (argv, cwd, ms) => {
     return r.status === 0 ? r.stdout : null;
 };
 // A key-shaped line, stored reversed so no scanner flags this file.
-const planted = [
-    ..."\nlQ3pZa9v1xzYCifRxPb/GNEDM7K/IMEFntUXrlaJw = yek_ssecca_terces_swa",
-]
+const planted = Array.from("\nlQ3pZa9v1xzYCifRxPb/GNEDM7K/IMEFntUXrlaJw = yek_ssecca_terces_swa")
     .reverse()
     .join("");
 void test("realish: the real gitleaks denies a planted key in an unpushed commit, passes it once pushed, and scans a new branch", { skip: !haveGitleaks }, async () => {
