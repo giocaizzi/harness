@@ -40,9 +40,9 @@ ignore = [
   # Google 3.8.3: misuse errors (ValueError on a bad argument) stay out of
   # Raises:, so not every raised exception is documented.
   "DOC501",
-  # Google 3.12: the link goes in the parentheses, TODO(issue-url): text, so
-  # TD002 (something in parentheses) holds and the link line TD003 wants and
-  # the any-TODO FIX002 do not.
+  # Google 3.12: the link goes in the parentheses of a task note, as in
+  # (issue-url): text, so TD002 (something in parentheses) holds and the link
+  # line TD003 wants and FIX002, which flags every such note, do not.
   "TD003", "FIX002",
   # Google 3.19.13: an `if TYPE_CHECKING:` import is the exception, kept for
   # cycles and heavy modules; on 3.14+ annotations are lazy anyway.
