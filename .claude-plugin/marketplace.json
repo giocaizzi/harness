@@ -82,7 +82,7 @@
       "name": "dev-tools",
       "source": "./plugins/dev-tools",
       "description": "General development tooling — git, GitHub, conventional commits, semantic versioning",
-      "version": "1.57.0",
+      "version": "1.58.0",
       "keywords": [
         "git",
         "github",
@@ -97,7 +97,7 @@
       "name": "guard",
       "source": "./plugins/guard",
       "description": "Agent guardrails for Claude Code, Copilot CLI, VS Code, Codex, opencode, pi and Antigravity: skill enforcer, title guard, pip deny, host guard, risky-command ask, make check on stop, post-edit lint, keep-awake; Claude-only usage throttle",
-      "version": "1.4.0",
+      "version": "1.5.0",
       "keywords": [
         "hooks",
         "guardrails",

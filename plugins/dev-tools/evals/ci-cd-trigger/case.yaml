@@ -1,0 +1,10 @@
+schema_version: "1.0"
+name: ci-cd-trigger
+description: "The model loads ci-cd when asked to speed up a slow, serial GitLab pipeline."
+tags: [trigger]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  prompt: "Our GitLab pipeline takes 40 minutes and every job waits for the one before it. Make it faster."
+  max_turns: 15
+  allowed_tools: [Read, Glob, Grep, Edit, Write, Skill]

@@ -1314,6 +1314,76 @@ void test("an edit to a Terraform, Docker or Kubernetes file hints at its infra 
     assert.equal(evaluateEdit({ path: "a.tf", state, rules }).rule, "terraform-file");
     assert.equal(evaluateEdit({ path: "b.tf", state, rules }).rule, undefined);
 });
+void test("CI commands and pipeline files hint at ci-cd or github-actions once, quiet with either loaded", () => {
+    for (const command of [
+        "actionlint",
+        "gh workflow run ci.yml --ref feat/x",
+        "gh run rerun 123 --failed",
+        "glab ci lint",
+        "az pipelines run --name ci",
+    ]) {
+        const state = fresh();
+        const first = evaluateCommand({ command, state, host: calm, rules });
+        assert.equal(first.rule, "ci-local", command);
+        assert.equal(first.action, "allow", command);
+        assert.equal(first.remind, true, command);
+        assert.equal(evaluateCommand({ command, state, host: calm, rules }).rule, undefined, command);
+        for (const loaded of ["dev-tools:ci-cd", "github-actions"])
+            assert.equal(evaluateCommand({
+                command,
+                loadedSkills: new Set([loaded]),
+                state: fresh(),
+                host: calm,
+                rules,
+            }).remind, undefined, `${command} with ${loaded}`);
+    }
+    // `--log-failed` is a CI fix on a PR: pr-fix keeps it.
+    assert.equal(evaluateCommand({
+        command: "gh run view 1 --log-failed",
+        state: fresh(),
+        host: calm,
+        rules,
+    }).rule, "pr-fix");
+    for (const command of [
+        "grep actionlint Makefile",
+        "gh run list --workflow ci.yml",
+        "gh run watch 123",
+        "az pipelines runs list --branch main",
+    ])
+        assert.equal(evaluateCommand({ command, state: fresh(), host: calm, rules }).rule, undefined, command);
+    const rule = (path) => evaluateEdit({ path, state: fresh(), rules }).rule;
+    for (const path of [
+        ".github/workflows/ci.yml",
+        "/r/.github/workflows/release.yaml",
+        ".github/actions/setup/action.yml",
+        "C:\\r\\.github\\workflows\\ci.yml",
+    ])
+        assert.equal(rule(path), "gha-file", path);
+    for (const path of [
+        ".gitlab-ci.yml",
+        ".gitlab/ci/test.yml",
+        "azure-pipelines.yml",
+        "build/azure-pipelines-release.yaml",
+        "Jenkinsfile",
+        ".circleci/config.yml",
+        ".buildkite/pipeline.yml",
+        "bitbucket-pipelines.yml",
+        ".woodpecker.yml",
+    ])
+        assert.equal(rule(path), "ci-file", path);
+    for (const path of [
+        ".github/dependabot.yml",
+        ".github/workflows/README.md",
+        "docs/ci.yml",
+    ])
+        assert.notEqual(rule(path), "gha-file", path);
+    assert.equal(evaluateEdit({
+        path: ".github/workflows/ci.yml",
+        loadedSkills: new Set(["dev-tools:ci-cd"]),
+        state: fresh(),
+        rules,
+    }).rule, undefined);
+});
 void test("an edit to an ADR, migration, contract, architecture config or domain file hints at its foundations skill once", () => {
     const rule = (path) => evaluateEdit({ path, state: fresh(), rules }).rule;
     assert.equal(rule("docs/adr/0003-queue.md"), "adr");

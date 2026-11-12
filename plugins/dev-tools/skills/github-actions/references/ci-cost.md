@@ -57,32 +57,14 @@ awk -F'\t' 'NR == FNR { key[$1] = $2 "\t" $3; runs[$2 "\t" $3]++; next }
 
 ## Reading it
 
-- **`push` minutes on a repo with a merge queue** are the duplicate candidate: the queue already tested that tree (`github-workflow`, CI for a gate: checklist, One full run per tree).
+- **`push` minutes on a repo with a merge queue** are the duplicate candidate: the queue already tested that tree (SKILL.md, CI for a gate: checklist, One full run per tree).
 - **`pull_request` runs per merged PR** above the previous window mean more pushes per PR: batch commits and push once per round (`github-workflow`, Landing a change, rule 1).
 - **`merge_group` runs per merged PR** above 1 are queue ejections and rebuilds: find the failing or flaky job before anything else.
 - **One label dominating** (a macOS or Windows matrix, a multi-arch image build) is where a `changes` job gate pays first.
 
-## Where to cut, by symptom
+## Where to cut
 
-Measure first (above), cut one lever, then measure again. Compare the same metrics over equal windows before and after: runs per merged PR, p50 and p90 duration, queue-to-green, eject rate, skipped share. Use the repo's own CI health target (`make ci-health` in this marketplace's repos; elsewhere its run-history report). A CI change once re-triggered itself and made CI slower, so a lever counts only when the second measurement shows it. Levers are listed in priority order; the mechanics of each are in `github-workflow` (CI for a gate: checklist).
-
-| Symptom in the run history | Likely cause | Lever | Confirm |
-|---|---|---|---|
-| PR runs per merged PR rising | superseded runs left running; one push per fix; many small PRs or stack layers | cancel superseded PR runs; push once per round; batch related work in one PR or stack | runs per merged PR and cancelled share, same window length |
-| Hung or very long outliers; p90 far above p50 | a job with no timeout, or a hang that holds the gate | `timeout-minutes` on every job, from measured duration plus headroom | longest run falls; no timeout hits on healthy runs |
-| Merge-group runs per merged PR rising; queue ejects | a flaky or slow job in the full tier; full checks repeated on the push to the default branch | find the failing job first; run the full tier only in `merge_group` (and nightly), not again on the push | eject rate; push minutes on the default branch drop |
-| p90 or queue-to-green rising while queue wait stays near zero | not runner saturation: the critical path grew (serial jobs, one long job, cold caches) | run independent jobs in parallel; shard the longest; dependency caches | the longest job and the sum along `needs:` shrink |
-| High skipped share; noise in the checks list | trigger-level filters or wide triggers that start runs that do nothing | narrow triggers (events, branches); job-level path filters behind one aggregate check | skipped share falls; the aggregate check still reports on every PR |
-| A required check stuck pending | a trigger-level `paths` filter on a required workflow: no run, so no status | move the filter to a `changes` job; the aggregate `check` always runs | the check reports on a PR touching only ignored paths |
-| One runner label dominates minutes (Windows, macOS, multi-arch) | heavy legs run on every PR push | heavy legs in the queue and nightly; on PRs only when their paths change | minutes per label; the leg still runs in the queue |
-| Whole matrix cancelled on one failure, then re-run | `fail-fast: true` hides which legs fail and costs re-runs | keep `fail-fast: false` where legs are independent and a full failure picture saves re-runs; `true` where one failure makes the rest meaningless | re-run count falls |
-
-Notes on the levers:
-
-- **Two tiers.** Light tier on the PR, full tier on `merge_group` and nightly, each full check run once per tree.
-- **Path filters.** Only job-level, behind ONE aggregate `check` that accepts a skip only when `changes` said the job was not needed.
-- **Trust trade-off.** Moving a manual gate or an OS leg off the PR into the queue or nightly delays the signal: a break shows later and fails the queue entry instead of the PR. Record that trade-off in the PR that makes the move.
-- **No merge queue** (for example a personal account, which cannot have one): there is no `merge_group`. The PR run, with branches required up to date, is the gate. Heavy legs go nightly plus PRs whose paths touch them. How much trust to trade is the owner's call; propose, do not decide.
+The symptom-to-lever table and the trust trade-offs are platform-neutral: `ci-cd`'s `references/diagnose.md`. Measure again with the commands above after each lever, over an equal window.
 
 ## Gotchas
 

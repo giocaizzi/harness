@@ -1,0 +1,10 @@
+schema_version: "1.0"
+name: ci-cd-deploy-lock
+description: "The model loads ci-cd when two deploys to one environment collided."
+tags: [trigger]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  prompt: "Two deploys to staging ran at the same time last night and clobbered each other. Fix the pipeline so that cannot happen again."
+  max_turns: 15
+  allowed_tools: [Read, Glob, Grep, Edit, Write, Skill]

@@ -104,6 +104,14 @@ export const rules = {
             skills: ["kubernetes"],
             why: "manifests and charts follow the house Kubernetes rules (infra plugin)",
         },
+        {
+            id: "ci-local",
+            remind: true,
+            // Commands that change or dispatch CI, not ones that only watch it (`gh run list`, `gh run watch` pass).
+            match: "(?:^|[;&|(\\n]\\s*)(?:actionlint|gh\\s+(?:workflow\\s+run|run\\s+rerun)|glab\\s+ci\\s+(?:lint|run|retry)|az\\s+pipelines\\s+(?:run|create|update))\\b",
+            skills: ["ci-cd", "github-actions"],
+            why: "pipelines follow the house CI/CD techniques",
+        },
     ],
     // Edits whose path matches: a once-per-session hint toward the skill.
     files: [
@@ -154,6 +162,18 @@ export const rules = {
             match: "(^|/)(Chart\\.yaml|kustomization\\.ya?ml)$|(^|/)charts?/(.+/)?(values[^/]*\\.ya?ml|templates/.+)$|(^|/)config/(crd|rbac|manager|default)/.+$",
             skills: ["kubernetes"],
             why: "manifests and charts follow the house Kubernetes rules (infra plugin)",
+        },
+        {
+            id: "gha-file",
+            match: "(^|/)\\.github/(workflows/[^/]+|actions/.+/action)\\.ya?ml$",
+            skills: ["github-actions", "ci-cd"],
+            why: "GitHub Actions workflows follow the house CI/CD techniques",
+        },
+        {
+            id: "ci-file",
+            match: "(^|/)(\\.gitlab-ci\\.ya?ml|\\.gitlab/ci/.+\\.ya?ml|azure-pipelines[^/]*\\.ya?ml|Jenkinsfile[^/]*|\\.circleci/config\\.ya?ml|\\.buildkite/[^/]+\\.ya?ml|bitbucket-pipelines\\.ya?ml|\\.woodpecker(\\.ya?ml|/[^/]+\\.ya?ml))$",
+            skills: ["ci-cd"],
+            why: "pipelines follow the house CI/CD techniques",
         },
         {
             id: "docs",
