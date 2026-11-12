@@ -9,7 +9,7 @@ General development tooling — git, GitHub/GitLab/Azure DevOps, conventional co
 | `conventional-commits` | Conventional Commits 1.0.0 — type, scope, breaking change, and bump semantics. |
 | `semver` | Semantic Versioning 2.0.0 — choosing major, minor, and patch from compatibility impact. |
 | `release-please` | Automated versioning, changelog, and tagging from Conventional Commits. |
-| `github-workflow` | The branch lifecycle (push every commit, draft PR first), stacked PRs, auto-merge, merge queues, and rulesets with required CI checks. |
+| `github-pull-requests` | The branch lifecycle (push every commit, draft PR first), stacked PRs, auto-merge, merge queues, and rulesets with required CI checks. |
 | `ci-cd` | CI/CD on any platform: job graph and critical path, parallelism and sharding, run concurrency and deploy locks, caching, change detection, flakes, build-once delivery; GitLab, Azure Pipelines and Jenkins spellings in its references. |
 | `github-actions` | GitHub Actions: `merge_group`, concurrency, the aggregate `check`, drafts without CI, tiers, job-level path filters, caches, permissions and OIDC, flakes, measuring Actions minutes. |
 | `repo-standard` | Repo baseline checklist and its mapping onto GitHub, GitLab and Azure DevOps. |

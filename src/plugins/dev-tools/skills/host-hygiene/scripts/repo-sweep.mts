@@ -2,7 +2,7 @@
 // repo-sweep.mjs [--apply] [--auto] [--json] [--repo <dir>] [--remote-scope mine|all]
 // repo-sweep.mjs --stores [--json]
 //
-// Applies the branch lifecycle (github-workflow skill) to one repo's worktrees, local and remote
+// Applies the branch lifecycle (github-pull-requests skill) to one repo's worktrees, local and remote
 // branches and stashes. Origin holds the work; a local copy goes once origin has it. Dry run by
 // default: it prints what each item becomes; --apply does it; --auto is --apply for the session-start
 // hook (no-op unless 24 h passed since the last run, one summary line, exits 0 on every failure).

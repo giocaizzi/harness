@@ -1021,7 +1021,7 @@ export function handleSessionStart(input, deps, session, state) {
                 ...sessionAttrs(registered),
             }, input.cwd);
             state.announced = true;
-            // The daily repo sweep (github-workflow, Branch lifecycle): detached, never throws, off with GUARD_LIFECYCLE=off.
+            // The daily repo sweep (github-pull-requests, Branch lifecycle): detached, never throws, off with GUARD_LIFECYCLE=off.
             if (!OFF.test(flag(deps, "GUARD_LIFECYCLE")) &&
                 deps.pluginRoot &&
                 typeof input.cwd === "string") {

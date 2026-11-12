@@ -58,7 +58,7 @@ awk -F'\t' 'NR == FNR { key[$1] = $2 "\t" $3; runs[$2 "\t" $3]++; next }
 ## Reading it
 
 - **`push` minutes on a repo with a merge queue** are the duplicate candidate: the queue already tested that tree (SKILL.md, CI for a gate: checklist, One full run per tree).
-- **`pull_request` runs per merged PR** above the previous window mean more pushes per PR: batch commits and push once per round (`github-workflow`, Landing a change, rule 1).
+- **`pull_request` runs per merged PR** above the previous window mean more pushes per PR: batch commits and push once per round (`github-pull-requests`, Landing a change, rule 1).
 - **`merge_group` runs per merged PR** above 1 are queue ejections and rebuilds: find the failing or flaky job before anything else.
 - **One label dominating** (a macOS or Windows matrix, a multi-arch image build) is where a `changes` job gate pays first.
 

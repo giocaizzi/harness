@@ -9,14 +9,16 @@ export const rules = {
         {
             id: "pr",
             match: "\\bgh\\s+(pr\\s+(create|merge|ready)|stack)\\b|\\bglab\\s+mr\\s+(create|merge)\\b|\\baz\\s+repos\\s+pr\\s+(create|update)\\b",
-            skills: ["github-workflow", "repo-standard", "ship", "land"],
+            skills: ["github-pull-requests", "repo-standard", "ship", "land"],
             why: "PRs land through auto-merge or the merge queue",
         },
         {
             id: "ruleset",
             // Writes only: an explicit write method, or body fields (gh api then defaults to POST).
             match: "\\bgh\\s+api\\b(?=.*\\b(rulesets|protection)\\b)(?=.*(\\s(-X|--method)[\\s=]*(POST|PUT|PATCH|DELETE)\\b|\\s(-f|-F|--field|--raw-field|--input)\\b))",
-            skills: ["github-workflow"],
+            // `github-workflow` is this skill's name before dev-tools 1.58.0: a machine whose dev-tools cache is older than
+            // guard still satisfies this deny. Drop the alias once no supported dev-tools version ships the old name.
+            skills: ["github-pull-requests", "github-workflow"],
             why: "rulesets and branch protection have a house policy",
         },
         {
@@ -217,7 +219,7 @@ export const rules = {
     // The stacked-PR hint on `gh pr create|merge`: the engine builds the text from the facts (the open PR below, the default branch).
     stack: {
         match: "\\bgh\\s+pr\\s+(create|merge)\\b",
-        why: "this branch builds on your open PR #<n> (`<below>`) but this PR targets `<default>`, so it carries #<n>'s commits. Build dependent work as a stack: `gh stack init`/`add`/`submit` where the repo has stacked PRs enabled (one small buildable PR per layer, the bottom layer on `<default>`, merged bottom-up with `gh stack merge`), otherwise base this PR on `<below>` and follow github-workflow, Stacks without `gh stack`.",
+        why: "this branch builds on your open PR #<n> (`<below>`) but this PR targets `<default>`, so it carries #<n>'s commits. Build dependent work as a stack: `gh stack init`/`add`/`submit` where the repo has stacked PRs enabled (one small buildable PR per layer, the bottom layer on `<default>`, merged bottom-up with `gh stack merge`), otherwise base this PR on `<below>` and follow github-pull-requests, Stacks without `gh stack`.",
     },
     // A push, or a command that may push, is scanned for secrets first (pushScanFacts); a finding denies, a scan that
     // cannot run asks. A push that only deletes is not scanned.

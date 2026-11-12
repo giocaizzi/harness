@@ -55,7 +55,7 @@ These load by themselves when the work touches their subject; call them by name 
 | `conventional-commits` | write a commit message or PR title, rewrite history |
 | `semver` | decide whether a change is breaking, plan a release, review a version bump |
 | `release-please` | release, bump versions, edit release-please config |
-| `github-workflow` | open, split, stack or merge PRs; set up rulesets or a merge queue |
+| `github-pull-requests` | open, split, stack or merge PRs; set up rulesets or a merge queue |
 | `ci-cd` | write, review or debug any CI/CD pipeline; CI is slow, flaky, costly or serial |
 | `github-actions` | write or debug a `.github/workflows/` file, run `actionlint`, `gh run` or `gh workflow` |
 | `repo-standard` | set up or audit a repo (CI, settings, publishing) on GitHub, GitLab or Azure DevOps |

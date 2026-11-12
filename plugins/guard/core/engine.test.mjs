@@ -163,6 +163,22 @@ void test("telemetry false positives stay fixed: read-only release, ruleset and 
     ])
         assert.equal(skill(defined(c)), rule, c);
 });
+void test("ruleset writes accept github-pull-requests or its old name github-workflow", () => {
+    const command = "gh api repos/o/r/rulesets -f name=x";
+    assert.equal(evaluateCommand({ command, state: fresh(), host: calm, rules }).rule, "ruleset");
+    for (const loaded of [
+        "dev-tools:github-pull-requests",
+        "github-pull-requests",
+        "dev-tools:github-workflow",
+    ])
+        assert.equal(evaluateCommand({
+            command,
+            loadedSkills: new Set([loaded]),
+            state: fresh(),
+            host: calm,
+            rules,
+        }).rule, undefined, loaded);
+});
 void test("--force-with-lease to a feature branch passes; plain force, + refspecs and main still ask", () => {
     const act = (command) => evaluateCommand({ command, state: fresh(), host: calm, rules }).action;
     for (const c of [
@@ -611,7 +627,7 @@ void test("blast radius: preview is appended and truncated", async () => {
 void test("commit messages and PR titles must be Conventional Commits", () => {
     const run = (command) => evaluateCommand({
         command,
-        loadedSkills: new Set(["ship", "github-workflow"]),
+        loadedSkills: new Set(["ship", "github-pull-requests"]),
         state: fresh(),
         host: calm,
         rules,
@@ -3567,7 +3583,7 @@ void test("protectedPathHit: an edit tool's repo-relative path against the floor
 });
 // ---- Push scan
 const SHIP_SKILLS = new Set([
-    "github-workflow",
+    "github-pull-requests",
     "repo-standard",
     "ship",
     "land",

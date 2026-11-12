@@ -1,6 +1,6 @@
 schema_version: "1.0"
-name: github-workflow-trigger
-description: "The model loads github-workflow when asked to save unpushed work on a branch to GitHub."
+name: github-pull-requests-trigger
+description: "The model loads github-pull-requests when asked to save unpushed work on a branch to GitHub."
 tags: [trigger]
 context:
   scaffold_script: scaffold.sh

@@ -1,6 +1,6 @@
 # Repo cleanup and push safety
 
-Runbook for the branch lifecycle: how worktrees, branches and stashes get cleaned up, how to run the sweep by hand, how to undo it, and how every push is scanned for secrets. The rule itself lives in one place, the `github-workflow` skill's "Branch lifecycle" section ([source](https://github.com/giocaizzi/harness/blob/main/plugins/dev-tools/skills/github-workflow/SKILL.md)); this page only covers operating it. Guard internals: [guard.md](guard.md).
+Runbook for the branch lifecycle: how worktrees, branches and stashes get cleaned up, how to run the sweep by hand, how to undo it, and how every push is scanned for secrets. The rule itself lives in one place, the `github-pull-requests` skill's "Branch lifecycle" section ([source](https://github.com/giocaizzi/harness/blob/main/plugins/dev-tools/skills/github-pull-requests/SKILL.md)); this page only covers operating it. Guard internals: [guard.md](guard.md).
 
 In one line: origin holds the work, and a local branch, worktree or stash is a disposable copy. Every commit is pushed at once, a draft PR opens on the first push, and a local copy goes as soon as origin has it.
 
@@ -80,4 +80,4 @@ Pushing every commit opens a draft PR on the first push. Under the repo standard
 
 ## Stale PRs and issues
 
-Each repo's stale workflow (`actions/stale`, from the repo template and the standard) closes idle PRs and issues; the numbers and exemptions are in the `github-workflow` skill's "Branch lifecycle". It feeds the branch sweep: a PR closed as stale is a PR closed unmerged, so its remote branch goes after 7 idle days, and its commits stay at `refs/pull/<n>/head`.
+Each repo's stale workflow (`actions/stale`, from the repo template and the standard) closes idle PRs and issues; the numbers and exemptions are in the `github-pull-requests` skill's "Branch lifecycle". It feeds the branch sweep: a PR closed as stale is a PR closed unmerged, so its remote branch goes after 7 idle days, and its commits stay at `refs/pull/<n>/head`.

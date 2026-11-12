@@ -5,7 +5,7 @@ description: "GitHub Actions mechanics and house settings: workflow triggers (pu
 
 # GitHub Actions
 
-The techniques and why are in `ci-cd`; this skill is how they are spelled on GitHub and the settings this house uses. Merge gating (rulesets, merge queue settings, landing PRs) is `github-workflow`.
+The techniques and why are in `ci-cd`; this skill is how they are spelled on GitHub and the settings this house uses. Merge gating (rulesets, merge queue settings, landing PRs) is `github-pull-requests`.
 
 ## CI that gates merges
 

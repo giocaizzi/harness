@@ -1,6 +1,6 @@
 schema_version: "1.0"
-name: github-workflow-cleanup
-description: "The model loads github-workflow when asked which local branches are safe to delete."
+name: github-pull-requests-cleanup
+description: "The model loads github-pull-requests when asked which local branches are safe to delete."
 tags: [trigger]
 context:
   scaffold_script: scaffold.sh

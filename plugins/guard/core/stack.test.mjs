@@ -114,7 +114,7 @@ void test("stackFacts: failures and odd names give {}", async () => {
     assert.deepEqual(await stackFacts("gh pr list", rules, fake().run, env), {});
 });
 const below = { below: { number: 7, branch: "feat/a" }, base: "main" };
-const skills = ["pr", "ship", "github-workflow", "conventional-commits"];
+const skills = ["pr", "ship", "github-pull-requests", "conventional-commits"];
 const decide = (command, state, stack = below, loaded = skills) => evaluateCommand({
     command,
     state,

@@ -1,6 +1,6 @@
 schema_version: "1.0"
-name: github-workflow-negative
-description: "The model does not load github-workflow for a CI YAML syntax question with no PR involved."
+name: github-pull-requests-negative
+description: "The model does not load github-pull-requests for a CI YAML syntax question with no PR involved."
 tags: [trigger]
 context:
   scaffold_script: scaffold.sh

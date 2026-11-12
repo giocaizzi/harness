@@ -304,7 +304,7 @@ export function report(agg, range) {
         "|---|---|",
         ...rows.map(([k, v]) => `| ${k} | ${v} |`),
         "",
-        "Target: hot-file-free should-have-been-stacked pairs trend to 0 and the stacked share rises (github-workflow, Landing a change). How to read each figure: .agents/skills/agent-review/references/reading.md (PR graph).",
+        "Target: hot-file-free should-have-been-stacked pairs trend to 0 and the stacked share rises (github-pull-requests, Landing a change). How to read each figure: .agents/skills/agent-review/references/reading.md (PR graph).",
         "",
     ].join("\n");
 }
