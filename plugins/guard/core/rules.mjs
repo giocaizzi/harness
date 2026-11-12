@@ -16,7 +16,7 @@ export const rules = {
             id: "ruleset",
             // Writes only: an explicit write method, or body fields (gh api then defaults to POST).
             match: "\\bgh\\s+api\\b(?=.*\\b(rulesets|protection)\\b)(?=.*(\\s(-X|--method)[\\s=]*(POST|PUT|PATCH|DELETE)\\b|\\s(-f|-F|--field|--raw-field|--input)\\b))",
-            // `github-workflow` is this skill's name before dev-tools 1.58.0: a machine whose dev-tools cache is older than
+            // `github-workflow` is this skill's name before dev-tools 2.0.0: a machine whose dev-tools cache is older than
             // guard still satisfies this deny. Drop the alias once no supported dev-tools version ships the old name.
             skills: ["github-pull-requests", "github-workflow"],
             why: "rulesets and branch protection have a house policy",
