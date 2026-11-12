@@ -1,66 +1,12 @@
-// Status lines for both CLIs (`statusLine.command`), one script: `node statusline.mjs claude` for Claude Code's two-line
-// prompt (session, model and effort, context, rate-limit windows, cost; path, git), `node statusline.mjs subagent` for Claude
-// Code's agent-panel rows (`subagentStatusLine.command`), no argument for Copilot CLI's token-weather line and its running subagents. Each CLI pipes its session status as JSON on stdin. Copilot's token totals are cumulative and include cache
-// reads and writes, so its hit rate is the session's, not the last turn's. No TTL: Copilot has none.
+// Claude Code's status lines, one script: `node statusline.mjs claude` for the two-line prompt (`statusLine.command`:
+// session, model and effort, context, rate-limit windows, cost; path, git), `node statusline.mjs subagent` for the
+// agent-panel rows (`subagentStatusLine.command`). Claude Code pipes its session status as JSON on stdin.
 import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { ICON, battery, forecast, glyph, tokens } from "./weather.mjs";
-
-export interface CopilotStatusInput {
-  context_window?: {
-    total_input_tokens?: number;
-    total_cache_read_tokens?: number;
-    total_cache_write_tokens?: number;
-    last_call_input_tokens?: number;
-    current_context_used_percentage?: number;
-    used_percentage?: number;
-    displayed_context_limit?: number;
-  };
-  cost?: {
-    total_premium_requests?: number;
-  };
-  transcript_path?: string;
-  [key: string]: unknown;
-}
-
-export function copilotWeather(status?: CopilotStatusInput | null): string {
-  const c = status?.context_window ?? {};
-  const read = c.total_cache_read_tokens ?? 0;
-  const write = c.total_cache_write_tokens ?? 0;
-  const usage = c.total_input_tokens
-    ? {
-        cache_read_input_tokens: read,
-        cache_creation_input_tokens: write,
-        input_tokens: Math.max(0, c.total_input_tokens - read - write),
-      }
-    : undefined;
-  const turns =
-    c.total_input_tokens &&
-    c.total_input_tokens > (c.last_call_input_tokens ?? 0)
-      ? 2
-      : 1;
-  const f = forecast({
-    percent:
-      c.current_context_used_percentage ?? c.used_percentage ?? undefined,
-    usage,
-    turns,
-  });
-  const req = status?.cost?.total_premium_requests;
-  return [
-    f.ctx == null ? null : `[${glyph(f.ctx)} ${String(f.ctx)}%]`,
-    ...f.segments
-      .filter((x) => x.kind !== "ctx")
-      .map((x) => `[${ICON[x.kind] ?? ""} ${x.value}]`),
-    req !== undefined && req > 0
-      ? `[${ICON.cost ?? ""} ${String(req)} req]`
-      : null,
-  ]
-    .filter((x): x is string => Boolean(x))
-    .join(" ");
-}
+import { ICON, battery, glyph, tokens } from "./weather.mjs";
 
 const rgb = (hex: number): string =>
   `\x1b[38;2;${String((hex >> 16) & 255)};${String((hex >> 8) & 255)};${String(hex & 255)}m`;
@@ -281,93 +227,6 @@ export function subagentRows(
     .join("");
 }
 
-export interface CopilotAgentItem {
-  name?: string;
-  model?: string;
-  at?: number;
-  effort?: string;
-}
-
-export function copilotAgents(
-  events: string,
-  settings: Record<string, unknown> | null | undefined,
-  now: number,
-): string[] {
-  const running = new Map<string, CopilotAgentItem>();
-  let session: string | null = null;
-  for (const line of events.split("\n")) {
-    if (
-      !line.includes('"type":"subagent.') &&
-      !line.includes('"type":"session.')
-    )
-      continue;
-    let e: {
-      type?: string;
-      agentId?: string;
-      timestamp?: string;
-      data?: Record<string, unknown>;
-    };
-    try {
-      e = JSON.parse(line) as typeof e;
-    } catch {
-      continue;
-    }
-    const data = e.data;
-    if (!data || typeof data !== "object") continue;
-    const id = (e.agentId ?? data.toolCallId) as string | undefined;
-    if (
-      ["session.start", "session.resume", "session.model_change"].includes(
-        e.type ?? "",
-      ) &&
-      !e.agentId &&
-      "reasoningEffort" in data
-    ) {
-      session = data.reasoningEffort as string;
-    }
-    if (
-      ["session.start", "session.resume", "session.shutdown"].includes(
-        e.type ?? "",
-      )
-    ) {
-      running.clear();
-    }
-    if (e.type === "subagent.started" && id) {
-      running.set(id, {
-        name: data.agentName as string | undefined,
-        model: data.model as string | undefined,
-        at: Date.parse(e.timestamp ?? ""),
-      });
-    }
-    if (e.type === "subagent.configured" && id && running.has(id)) {
-      const prev = running.get(id);
-      running.set(id, {
-        ...prev,
-        model: (data.model as string | undefined) ?? prev?.model,
-        effort: data.reasoningEffort as string | undefined,
-      });
-    }
-    if (e.type === "subagent.completed" || e.type === "subagent.failed") {
-      if (id) running.delete(id);
-    }
-  }
-  const subagentsObj = (
-    settings?.subagents as Record<string, unknown> | undefined
-  )?.agents as Record<string, { effortLevel?: string }> | undefined;
-  return [...running.values()].map((a) => {
-    const set = a.name ? subagentsObj?.[a.name]?.effortLevel : undefined;
-    const effort = a.effort ?? (set && set !== "inherit" ? set : session);
-    const parts = [
-      a.name?.split(":").pop(),
-      a.model ? modelName(a.model) : null,
-      effort,
-      a.at !== undefined && Number.isNaN(a.at)
-        ? null
-        : elapsed(now - (a.at ?? now)),
-    ];
-    return `[${ICON.agents ?? ""} ${parts.filter((x): x is string => Boolean(x)).join(" · ")}]`;
-  });
-}
-
 const effortFile = (session: string): string =>
   join(tmpdir(), `hud-effort-${session.replace(/[^\w-]/g, "")}`);
 
@@ -375,7 +234,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   try {
     const status = JSON.parse(
       readFileSync(0, "utf8") || "{}",
-    ) as ClaudeStatusInput & CopilotStatusInput;
+    ) as ClaudeStatusInput;
     if (process.argv[2] === "claude") {
       const cwd = status.workspace?.current_dir ?? status.cwd;
       const home = homedir();
@@ -403,29 +262,6 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
           forced: process.env.CLAUDE_CODE_EFFORT_LEVEL ?? undefined,
           session: status.effort?.level ?? session,
         }),
-      );
-    } else {
-      const read = (...p: string[]): string => {
-        try {
-          return readFileSync(join(status.transcript_path ?? "", ...p), "utf8");
-        } catch {
-          return "";
-        }
-      };
-      let settingsObj: Record<string, unknown> | undefined;
-      try {
-        settingsObj = JSON.parse(read("..", "..", "settings.json")) as Record<
-          string,
-          unknown
-        >;
-      } catch {
-        // none
-      }
-      const agents = status.transcript_path
-        ? copilotAgents(read("events.jsonl"), settingsObj, Date.now())
-        : [];
-      process.stdout.write(
-        [copilotWeather(status), ...agents].filter(Boolean).join(" "),
       );
     }
   } catch {

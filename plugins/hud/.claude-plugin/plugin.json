@@ -1,7 +1,7 @@
 {
   "name": "hud",
-  "version": "0.12.0",
-  "description": "Heads-up display for Claude Code and Copilot CLI: token-weather band with PR, git and limit forecasts, turn footer, tool rows, spinner, /weather, /subagents and /ctx panes (Claude mod), a two-line status line for both CLIs, and reply rewrites (links, paths, commits, states, pass/fail, secrets, URLs, times) in Claude Code and pi",
+  "version": "0.13.0",
+  "description": "Heads-up display for Claude Code: token-weather band with PR, git and limit forecasts, turn footer, tool rows, spinner, /weather, /subagents and /ctx panes (Claude mod), a two-line status line, and reply rewrites (links, paths, commits, states, pass/fail, secrets, URLs, times) in Claude Code and pi",
   "author": {
     "name": "giocaizzi",
     "url": "https://github.com/giocaizzi"
@@ -12,8 +12,7 @@
     "statusline",
     "ui",
     "mod",
-    "claude-code",
-    "copilot-cli"
+    "claude-code"
   ],
   "types": "./types/index.d.ts",
   "userConfig": {
