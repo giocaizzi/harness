@@ -17,7 +17,7 @@ The floor is the oldest supported Go release (two are supported at a time; 1.26 
 - **Make is the command surface**: `help`, `fmt`, `lint`, `vuln`, `test`, `check` (= `lint` + `test`), `build`. `lint` runs golangci-lint once per target `GOOS`, because files behind `//go:build windows` are invisible to a Linux or macOS run. `vuln` needs the network, so it runs in CI as its own job, not inside `check`.
 - `go fix ./...` (the modernizers since 1.26) runs in `make fmt`: it rewrites code to current idioms (`for range n`, `min`/`max`, `slices`, `strings.Cut`, `wg.Go`). Accept its diff; the `modernize` linter flags what it would change.
 
-Read [references/PROJECT_SETUP.md](./references/PROJECT_SETUP.md) when scaffolding: layout, `go.mod`, the tool modfile, the Makefile, CI and Dependabot.
+Read [references/PROJECT_SETUP.md](./references/PROJECT_SETUP.md) when scaffolding: layout, `go.mod`, the tool modfile, the Makefile, CI and Dependabot (the pipeline itself: `ci-cd`; on GitHub, `github-actions`).
 
 ## Layout
 

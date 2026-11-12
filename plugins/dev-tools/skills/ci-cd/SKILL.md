@@ -1,6 +1,6 @@
 ---
 name: ci-cd
-description: "How to make any CI/CD pipeline fast, cheap and safe, on any platform (GitHub Actions, GitLab CI, Azure Pipelines, Jenkins, Buildkite, CircleCI): the job graph and critical path, parallel jobs, sharding and matrices, run concurrency and cancellation, deploy locks, caching, change detection, timeouts, retries and flakes, build-once-promote delivery, environments and federated credentials. Use whenever you write, review or debug a pipeline or workflow file (.github/workflows/*.yml, .gitlab-ci.yml, azure-pipelines.yml, Jenkinsfile, .circleci/config.yml, .buildkite/), add a build, test, release or deploy job, or CI is slow, flaky, costly, stuck pending or serial."
+description: "How to make any CI/CD or DevOps pipeline fast, cheap and safe, on any platform (GitHub Actions, GitLab CI, Azure Pipelines, Jenkins, Buildkite, CircleCI): the job graph and critical path, parallel jobs, sharding and matrices, run concurrency and cancellation, deploy locks, caching, change detection, timeouts, retries and flakes, build-once-promote delivery, GitOps, environments, rollback and federated credentials. Use whenever you write, review or debug a pipeline or workflow file (.github/workflows/*.yml, .gitlab-ci.yml, azure-pipelines.yml, Jenkinsfile, .circleci/config.yml, .buildkite/), add or change a build, test, release or deploy job or a deploy strategy, or CI is slow, flaky, costly, stuck pending or serial."
 ---
 
 # CI/CD
@@ -54,8 +54,9 @@ Anything else with shared state (Terraform state, a release, a database migratio
 ## Delivery
 
 - **Build once, promote by digest.** The artifact the gate tested is the one each environment deploys; environment config is applied at deploy time, never baked into a rebuild.
-- **Environments carry the secrets.** Each deploy runs in a named environment with its own scoped secrets and approvals; nothing deploys with repository-wide credentials.
+- **Environments carry the secrets.** Each deploy runs in a named environment with its own scoped secrets and approvals; nothing deploys with repository-wide credentials. Fetching and masking a secret inside a job: `secrets-handling`.
 - **Federated identity over stored keys.** The pipeline's OIDC token is exchanged for short-lived cloud credentials (`terraform` for the cloud side); no long-lived publish or deploy token where the target accepts OIDC.
+- **GitOps** (Argo CD, Flux): the pipeline builds and tests, then commits the new digest to the config repo through a reviewed change; the controller applies it and reports drift. The pipeline never holds cluster credentials (`kubernetes`).
 - **Untrusted code gets no secrets.** Change requests from forks run without secrets and never write a cache that trusted runs restore.
 - **Rollback is a redeploy** of the previous artifact. A schema change ships expand/contract so both versions run on it (`system-design`); rollout health gates are in `kubernetes`.
 

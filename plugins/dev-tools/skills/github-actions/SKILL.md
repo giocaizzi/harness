@@ -45,6 +45,7 @@ Techniques only; success is relative to the repo's own baseline, and security is
 
 - `permissions: {}` (or `contents: read`) at the workflow level, and each job grants only what it needs; `id-token: write` only on the job that exchanges the OIDC token.
 - Third-party actions pinned by full commit SHA with a version comment (`repo-standard`); the update bot moves the pins.
+- Secrets live in environments, not the repository, and reach a step only through `env:` (`secrets-handling` for the rest).
 - `pull_request_target` and `workflow_run` run with the base repo's secrets: never check out or run the PR's code in them.
 - Untrusted text (`github.event.pull_request.title`, branch names, issue bodies) reaches a `run:` step through an `env:` variable, never as `${{ }}` inside the script.
 

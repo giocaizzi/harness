@@ -47,7 +47,7 @@
 | Flake proxy | Above 0: the same commit failed then passed. Quarantine or fix the test, add retries only around the network step that flakes, and keep `timeout-minutes` on every job so a hung job fails fast. |
 | Merge-group eject rate | Rises: PRs pass on their branch but fail merged with the queue ahead; run the same checks on PRs as on the merge group, and rebase stacks before queuing. |
 | Skipped-run noise | A large share: workflows trigger on every event and then skip; narrow their triggers (`on:` filters, a workflow per event) so the Actions list and run counts show real work. |
-| Workflow audit | Any check below 100% (or a count above 0) is a technique to apply: concurrency on every workflow with `cancel-in-progress` on PR ones, `timeout-minutes` on every job, a `merge_group` trigger on required checks where a merge queue runs, path filters at job level behind one aggregate `check` (a trigger-level filter leaves a required check pending), dependency caches, actions pinned by SHA with an update bot, and a top-level `permissions:` of least privilege (`repo-standard`). |
+| Workflow audit | Any check below 100% (or a count above 0) is a technique to apply: concurrency on every workflow with `cancel-in-progress` on PR ones, `timeout-minutes` on every job, a `merge_group` trigger on required checks where a merge queue runs, path filters at job level behind one aggregate `check` (a trigger-level filter leaves a required check pending), dependency caches, actions pinned by SHA with an update bot, and a top-level `permissions:` of least privilege (`github-actions`; the platform-neutral techniques in `ci-cd`). |
 
 File each action as a GitHub issue, or fix it in a PR the same day.
 

@@ -21,7 +21,7 @@ Baseline: the [Google TypeScript Style Guide](https://google.github.io/styleguid
 - **knip** for unused files, exports and dependencies, in `lint`.
 - **Make is the command surface**: `help`, `install`, `fmt`, `lint` (Prettier check, ESLint, `tsc` on both projects, knip), `test`, `test-integration`, `check` (= `lint` + `test`), `build`. The commands themselves live in `package.json` scripts, which knip reads.
 
-Read [references/PROJECT_SETUP.md](./references/PROJECT_SETUP.md) when scaffolding: layout, `package.json`, Prettier, the Makefile, CI and Dependabot.
+Read [references/PROJECT_SETUP.md](./references/PROJECT_SETUP.md) when scaffolding: layout, `package.json`, Prettier, the Makefile, CI and Dependabot (the pipeline itself: `ci-cd`; on GitHub, `github-actions`).
 
 ## Stricter than Google, or left open by it
 

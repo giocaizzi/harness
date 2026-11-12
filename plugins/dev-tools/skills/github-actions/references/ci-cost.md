@@ -64,7 +64,10 @@ awk -F'\t' 'NR == FNR { key[$1] = $2 "\t" $3; runs[$2 "\t" $3]++; next }
 
 ## Where to cut
 
-The symptom-to-lever table and the trust trade-offs are platform-neutral: `ci-cd`'s `references/diagnose.md`. Measure again with the commands above after each lever, over an equal window.
+The symptom-to-lever table and the trust trade-offs are platform-neutral: `ci-cd`'s `references/diagnose.md`. Measure again with the commands above after each lever, over an equal window. On GitHub, read its rows with these two facts:
+
+- Stack layers count as PRs: each layer pays its own PR, queue and push runs, so a deep stack raises PR runs per merged PR like many small PRs do.
+- A personal account cannot have a merge queue, so there is no `merge_group` run: the PR run, with branches required up to date, is the gate (`ci-cd`'s No gated merge note).
 
 ## Gotchas
 

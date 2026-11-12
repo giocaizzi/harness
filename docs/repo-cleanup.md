@@ -76,7 +76,7 @@ If a secret did reach origin, deleting or rewriting the branch does not remove i
 
 ## Draft PRs and CI cost
 
-Pushing every commit opens a draft PR on the first push. Under the repo standard, drafts run no CI, so a draft push is a free backup. A repo without that gate pays one CI run per push; it adds the draft gate ([github-workflow skill](https://github.com/giocaizzi/harness/blob/main/plugins/dev-tools/skills/github-workflow/SKILL.md), "Drafts run no CI").
+Pushing every commit opens a draft PR on the first push. Under the repo standard, drafts run no CI, so a draft push is a free backup. A repo without that gate pays one CI run per push; it adds the draft gate ([github-actions skill](https://github.com/giocaizzi/harness/blob/main/plugins/dev-tools/skills/github-actions/SKILL.md), "Drafts run no CI").
 
 ## Stale PRs and issues
 

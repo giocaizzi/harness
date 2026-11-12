@@ -15,11 +15,11 @@ Category: code scaffolding and templates. One image per deployable, built once a
 4. **Base pinned by tag and digest** (`FROM python:3.14-slim@sha256:...`); the update bot (Renovate or Dependabot) bumps both. Never `latest`.
 5. **`.dockerignore` is mandatory**: `.git`, env files, build output, local caches.
 6. **Dependency layers before source**: copy the lockfile, install, then copy the source. Use a BuildKit cache mount for the package cache.
-7. **Secrets via `RUN --mount=type=secret`**, never `ARG`, `ENV` or `COPY`: they stay in the image history.
+7. **Secrets via `RUN --mount=type=secret`**, never `ARG`, `ENV` or `COPY`: they stay in the image history. Where the value comes from: `secrets-handling`.
 8. **Exec-form `CMD`/`ENTRYPOINT`** (`["app"]`) so signals reach PID 1. One process per container.
 9. **Health by probe or `HEALTHCHECK`**; the orchestrator's probe wins where there is one. Runtime detail: [RUNTIME.md](references/RUNTIME.md).
 10. **The same image is promoted** across environments; configuration arrives at runtime (env, mounted files), never per-environment image variants. Tags carry the git SHA plus the version.
-11. **Supply chain**: OCI labels (`source`, `revision`), hadolint as a `make lint` step, an image scan in CI, multi-arch only on release. Detail: [SUPPLY_CHAIN.md](references/SUPPLY_CHAIN.md).
+11. **Supply chain**: OCI labels (`source`, `revision`), hadolint as a `make lint` step, an image scan in CI, multi-arch only on release (the pipeline that builds once and promotes: `ci-cd`). Detail: [SUPPLY_CHAIN.md](references/SUPPLY_CHAIN.md).
 12. **Compose is for local development and tests only**, split by purpose: `compose.yaml` plus override files.
 
 ## Gotchas
