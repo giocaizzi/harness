@@ -1,6 +1,6 @@
 ---
 name: ship
-description: "Use when the user asks to commit, push, save or back up work, or open a PR ('commit what I have', 'get it up for review'); /ship [ready]. Small Conventional Commits, push every commit, draft PR on first push."
+description: "Use when the user asks to commit, push, save or back up work, put it up for review, or open a PR; /ship [ready]. Small Conventional Commits, push every commit, draft PR on first push."
 ---
 
 # Ship

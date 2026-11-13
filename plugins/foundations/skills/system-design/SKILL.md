@@ -1,6 +1,6 @@
 ---
 name: system-design
-description: "Use when designing a feature that crosses a process boundary or calls a slow dependency, adding a queue, event, cache or datastore, changing a schema with production data, or writing an ADR. Trade-offs, failure modes, retries."
+description: "Use when designing a feature that crosses a process boundary or calls a slow dependency, adding a queue, event, cache or datastore, changing a schema with production data, deciding between options, or writing an ADR."
 ---
 
 # System design

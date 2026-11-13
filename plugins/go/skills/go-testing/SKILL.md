@@ -1,6 +1,6 @@
 ---
 name: go-testing
-description: "Use when you write, fix, review or debug Go tests (_test.go), including flaky, slow or hanging tests and tests that sleep or use testify. Table tests, go-cmp, fakes, httptest, synctest, fuzzing, the race detector."
+description: "Use when you write, fix, review or debug Go tests (_test.go), including flaky, slow or hanging tests, tests that sleep, hit the network or use testify. Table tests, go-cmp, fakes, httptest, synctest, fuzzing, -race."
 ---
 
 # Go Testing

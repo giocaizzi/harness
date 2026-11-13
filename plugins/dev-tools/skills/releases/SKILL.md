@@ -1,6 +1,6 @@
 ---
 name: releases
-description: "Use when someone wants to release, publish (PyPI, npm, a store), tag, cut a version, write release notes or a changelog, ship a release candidate or hotfix, yank a bad version, or set up a release pipeline."
+description: "Use when someone wants to release, publish (PyPI, npm, a store), tag or cut a version, write release notes or a changelog, ship a candidate or hotfix, yank a version, set up a release pipeline, choose a release tool, or a release went wrong."
 ---
 
 # Releases

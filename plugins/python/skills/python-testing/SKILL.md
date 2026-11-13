@@ -1,6 +1,6 @@
 ---
 name: python-testing
-description: "Use when you write, fix, review or debug Python tests (test_*.py, conftest.py, pytest config), including flaky, slow or mock-heavy tests and shared fixtures. pytest, fakes, parametrize, hypothesis, xdist."
+description: "Use when you write, fix, review or debug Python tests (test_*.py, conftest.py, pytest config), including flaky, slow or hanging tests, tests that sleep, mock, patch, hit the network or share fixtures. pytest, fakes, hypothesis."
 ---
 
 # Python Testing

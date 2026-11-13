@@ -1,6 +1,6 @@
 ---
 name: host-hygiene
-description: "Use before builds, emulators, full test suites or parallel agents, when the machine is slow or the disk full, when old worktrees, branches or stashes pile up, or a setup step installs tools into a worktree."
+description: "Use before builds, emulators, full test suites or parallel agents; when the machine, disk or a worktree is slow, full or large; when old worktrees, branches or stashes pile up; or a setup step installs tools into a worktree."
 ---
 
 # Host hygiene

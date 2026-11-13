@@ -1,6 +1,6 @@
 ---
 name: standup
-description: "Use when the user asks for a recap, status, progress, where things stand, what is left or what they need to decide ('what do you need from me?'), or for the work in simpler words; /standup [detail|explain]."
+description: "Use when the user asks for a recap, status, progress, where things stand, what is left, what they need to decide or do next, or for the work in simpler words; /standup [detail|explain]."
 ---
 
 # Standup

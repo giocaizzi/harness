@@ -1,6 +1,6 @@
 ---
 name: wt
-description: "Use at the start of a new task or issue, before touching code: 'pick up #57', 'start on issue 34', 'new task: add rate limiting'; /wt [issue-or-slug]. Starts it in its own git worktree and branch."
+description: "Use at the start of a new task or issue, before touching code: picking up an issue number or a described task; /wt [issue-or-slug]. Starts it in its own git worktree and branch."
 ---
 
 # Worktree

@@ -1,6 +1,6 @@
 ---
 name: api-design
-description: "Use when adding or changing an endpoint, request or response field, error format or OpenAPI/proto file, renaming a field clients read, paging, retries or idempotency keys, or judging whether a change is breaking."
+description: "Use when adding or changing an endpoint, request or response field, error format or OpenAPI/proto file, or deciding if a change is breaking; also pagination, retries, idempotency, versioning, long-running operations."
 ---
 
 # API design

@@ -1,6 +1,6 @@
 ---
 name: unattended-runs
-description: "Use before an overnight, autopilot, headless or auto-approve run, when launching a harness in bypass or --allow-all mode, or when an agent hangs on a prompt nobody answers. Keeps unattended agents from stalling or harming."
+description: "Use before an overnight, autopilot or headless run, when launching a harness in an auto-approve mode (bypass, --allow-all, --auto, -a never), or when an agent hangs on a prompt nobody answers."
 ---
 
 # Unattended runs

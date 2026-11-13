@@ -1,6 +1,6 @@
 ---
 name: javascript-typescript
-description: "Use when you write, change or review .ts, .tsx or .js code, package.json, tsconfig.json or eslint.config.js: a function, feature, bug fix, refactor or review. Strict TypeScript 7, Node, pnpm, ESLint, zod."
+description: "Use when you write, change or review .ts, .tsx or .js, package.json, tsconfig.json or eslint.config.js, even when the user does not mention conventions. Strict TypeScript 7, Node, pnpm, ESLint, zod."
 ---
 
 # TypeScript and Node.js

@@ -1,6 +1,6 @@
 ---
 name: secrets-handling
-description: "Use when a task touches credentials, tokens, API keys, passwords, .env files, a keyring, a vault (Bitwarden bw/bws, 1Password, pass), or a secret that is logged, printed or committed. Never print, inline or store in plaintext."
+description: "Use when a task touches credentials, tokens, API keys, .env files, a keyring, a vault or password manager (Bitwarden bw/bws, 1Password, pass, cloud secret managers), or a secret that is logged, printed or committed."
 ---
 
 # Secrets handling
