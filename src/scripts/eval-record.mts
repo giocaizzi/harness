@@ -4,11 +4,15 @@
 // skipped. Runbook: docs/skills.md (Evals).
 //
 //   node scripts/eval-record.mjs <plugin-dir> [results-dir...] [--commit <sha>] [--model <id>] [--since <iso>]
-//     [--dirty auto|true|false] [--clean-temp]
+//     [--dirty auto|true|false] [--clean-temp] [--allow "<tools>"]
+//   node scripts/eval-record.mjs --sweep-temp   (removes leftover kept temp dirs of finished runs)
+//   node scripts/eval-record.mjs <plugin-dir> --print-allow <tag>   (the tools `make eval` grants by default)
 import { execFileSync } from "node:child_process";
 import {
   appendFileSync,
+  chmodSync,
   existsSync,
+  lstatSync,
   readdirSync,
   readFileSync,
   realpathSync,
@@ -58,6 +62,8 @@ export interface ScoreRow {
   pluginVersion: string;
   case: string;
   tags: string[];
+  /** Tools granted with --allow-tools (sorted); absent in rows recorded before the field existed. */
+  allow?: string[];
   runs: RunRow[];
   passes: number;
   passRate: number;
@@ -79,6 +85,7 @@ export interface RowContext {
   run: string;
   commit: string;
   dirty?: boolean | undefined;
+  allow?: string[] | undefined;
   model: string;
   tags: (c: AggregateCase) => string[];
 }
@@ -104,6 +111,7 @@ export function rows(agg: Aggregate, ctx: RowContext): ScoreRow[] {
       pluginVersion: plugin.version,
       case: c.name,
       tags: ctx.tags(c),
+      ...(ctx.allow === undefined ? {} : { allow: ctx.allow }),
       runs: arms.map((a) => ({
         passed: a.passed,
         score: a.score,
@@ -176,6 +184,9 @@ interface Options {
   since: string | null;
   dirty: string | null;
   cleanTemp: boolean;
+  allow: string | null;
+  printAllow: string | null;
+  sweepTemp: boolean;
 }
 
 export function parseArgs(argv: string[]): Options {
@@ -187,6 +198,9 @@ export function parseArgs(argv: string[]): Options {
     since: null,
     dirty: null,
     cleanTemp: false,
+    allow: null,
+    printAllow: null,
+    sweepTemp: false,
   };
   const positional: string[] = [];
   for (let i = 0; i < argv.length; i++) {
@@ -200,22 +214,99 @@ export function parseArgs(argv: string[]): Options {
       const v = argv[++i];
       if (!v) throw new Error(`${a} needs a value`);
       opts[a.slice(2) as "commit" | "model" | "since" | "dirty"] = v;
-    } else if (a === "--clean-temp") opts.cleanTemp = true;
+    } else if (a === "--allow" || a === "--print-allow") {
+      const v = argv[++i];
+      if (v === undefined) throw new Error(`${a} needs a value`);
+      if (a === "--allow") opts.allow = v;
+      else opts.printAllow = v;
+    } else if (a === "--sweep-temp") opts.sweepTemp = true;
+    else if (a === "--clean-temp") opts.cleanTemp = true;
     else if (a.startsWith("--")) throw new Error(`unknown option ${a}`);
     else positional.push(a);
   }
   const [pluginDir, ...dirs] = positional;
-  if (!pluginDir)
+  if (!pluginDir && !opts.sweepTemp)
     throw new Error(
-      "usage: eval-record <plugin-dir> [results-dir...] [--commit <sha>] [--model <id>] [--since <iso>] [--dirty auto|true|false] [--clean-temp]",
+      'usage: eval-record <plugin-dir> [results-dir...] [--commit <sha>] [--model <id>] [--since <iso>] [--dirty auto|true|false] [--clean-temp] [--allow "<tools>"]',
     );
-  opts.pluginDir = pluginDir;
+  opts.pluginDir = pluginDir ?? "";
   opts.dirs = dirs;
   return opts;
 }
 
 const git = (dir: string, args: string[]): string =>
   execFileSync("git", ["-C", dir, ...args], { encoding: "utf8" }).trim();
+
+/**
+ * Deletes a kept eval temp dir. `--keep-temp` seals it (the kept dir is read-only and `sealed/` has mode 000),
+ * so every directory is made writable and readable before rm.
+ */
+export function removeTemp(dir: string): void {
+  if (!lstatSync(dir, { throwIfNoEntry: false })) return;
+  const open = (d: string): void => {
+    chmodSync(d, 0o700);
+    for (const name of readdirSync(d)) {
+      const p = join(d, name);
+      if (lstatSync(p).isDirectory()) open(p);
+    }
+  };
+  try {
+    open(dir);
+  } finally {
+    rmSync(dir, {
+      recursive: true,
+      force: true,
+      maxRetries: 5,
+      retryDelay: 100,
+    });
+  }
+}
+
+/** Kept eval temp dirs (`<tmp>/e-XXXXXX` holding `out/trace.jsonl`) left in the system temp dir or /tmp. */
+export function leftoverTemps(): string[] {
+  const found = new Set<string>();
+  for (const root of new Set([real(tmpdir()), real("/tmp")])) {
+    if (!existsSync(root)) continue;
+    for (const name of readdirSync(root)) {
+      const d = join(root, name);
+      if (
+        /^e-[A-Za-z0-9]+$/.test(name) &&
+        existsSync(join(d, "out", "trace.jsonl"))
+      )
+        found.add(d);
+    }
+  }
+  return [...found].sort();
+}
+
+const errMessage = (e: unknown): string =>
+  e instanceof Error ? e.message : String(e);
+
+/** Tools that need no grant: the eval harness always allows them. */
+const READ_ONLY = new Set(["Read", "Glob", "Grep", "Skill"]);
+
+/**
+ * The tools the plugin's cases with `tag` declare in `execution.allowed_tools` that need a grant
+ * (`--allow-tools`), as a sorted union; Bash only when some case declares it.
+ */
+export function grantedTools(pluginDir: string, tag: string): string[] {
+  const evals = join(pluginDir, "evals");
+  const tools = new Set<string>();
+  if (!existsSync(evals)) return [];
+  for (const d of readdirSync(evals)) {
+    const file = join(evals, d, "case.yaml");
+    if (!existsSync(file)) continue;
+    const doc = YAML.parse(readFileSync(file, "utf8")) as {
+      tags?: unknown;
+      execution?: { allowed_tools?: unknown };
+    } | null;
+    const tags = Array.isArray(doc?.tags) ? doc.tags.map(String) : [];
+    const allowed = doc?.execution?.allowed_tools;
+    if (!tags.includes(tag) || !Array.isArray(allowed)) continue;
+    for (const t of allowed.map(String)) if (!READ_ONLY.has(t)) tools.add(t);
+  }
+  return [...tools].sort();
+}
 
 /** An exact model id (`claude-opus-5-5`), not an alias (`opus`, `sonnet`, `opus[1m]`). */
 export function isExactModel(model: string): boolean {
@@ -294,6 +385,10 @@ export function record(
     `${opts.commit ?? "HEAD"}^{commit}`,
   ]);
   const dirty = resolveDirty(opts.pluginDir, opts.dirty);
+  const allow =
+    opts.allow === null
+      ? undefined
+      : opts.allow.split(/\s+/).filter(Boolean).sort();
   const out = join(opts.pluginDir, "evals", "scores.jsonl");
   const seen = recorded(existsSync(out) ? readFileSync(out, "utf8") : "");
   const name = basename(opts.pluginDir.replace(/[\\/]+$/, ""));
@@ -308,8 +403,13 @@ export function record(
       written += recordRun(agg, dir);
     } finally {
       if (opts.cleanTemp)
-        for (const t of tempDirs(agg))
-          rmSync(t, { recursive: true, force: true });
+        for (const t of tempDirs(agg)) {
+          try {
+            removeTemp(t);
+          } catch (e: unknown) {
+            log(`warning: could not remove ${t}: ${errMessage(e)}`);
+          }
+        }
     }
   }
   log(`${String(written)} row(s) appended to ${out}`);
@@ -338,6 +438,7 @@ export function record(
         run,
         commit,
         dirty,
+        allow,
         model,
         tags: (c) => caseTags(c, [agg.suite.root, opts.pluginDir]),
       },
@@ -353,7 +454,18 @@ export function record(
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   try {
-    record(parseArgs(process.argv.slice(2)));
+    const opts = parseArgs(process.argv.slice(2));
+    if (opts.sweepTemp) {
+      for (const d of leftoverTemps()) {
+        try {
+          removeTemp(d);
+        } catch (e: unknown) {
+          console.error(`warning: could not remove ${d}: ${errMessage(e)}`);
+        }
+      }
+    } else if (opts.printAllow !== null)
+      console.log(grantedTools(opts.pluginDir, opts.printAllow).join(" "));
+    else record(opts);
   } catch (e: unknown) {
     console.error(`eval-record: ${e instanceof Error ? e.message : String(e)}`);
     process.exit(1);

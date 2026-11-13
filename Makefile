@@ -1,4 +1,4 @@
-.PHONY: help check lint typecheck format format-check test e2e contract-test install build validate new-agent new-skill clean agent-review pr-graph ci-health eval eval-record eval-scores
+.PHONY: help check lint typecheck format format-check test e2e contract-test install build validate new-agent new-skill clean agent-review pr-graph ci-health eval eval-record eval-scores eval-clean-temp
 
 help: ## Show this help.
 	@awk 'BEGIN {FS = ":.*##"; printf "Usage: make \033[36m<target>\033[0m\n\nTargets:\n"} /^[a-zA-Z0-9_-]+:.*?##/ { printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
@@ -79,19 +79,23 @@ contract-test: ## Run contract v2 kit against a runner's manifest (docs/guard.md
 
 EVAL_PLUGINS = $(if $(PLUGIN),plugins/$(PLUGIN),$(patsubst %/evals/,%,$(sort $(dir $(wildcard plugins/*/evals/)))))
 
-eval: ## Run the plugins' skill evals and record their scores (calls a model, costs money, not part of check or CI).  Usage: make eval [PLUGIN=<plugin>] [TAG=trigger|routing] [MODEL=<model>] [RUNS=<n>] [ALLOW=<tools>] [MAX_COST=<usd>]
+eval: ## Run the plugins' skill evals and record their scores (calls a model, costs money, not part of check or CI).  Usage: make eval [PLUGIN=<plugin>] [TAG=trigger|routing] [MODEL=<model>] [RUNS=<n>] [ALLOW=<tools>] [MAX_COST=<usd>]  (ALLOW defaults to the tools the cases declare that need a grant)
 	@for d in $(EVAL_PLUGINS); do \
 		test -d $$d/evals || { echo "$$d has no evals/"; exit 1; }; \
 		since=$$(date -u +%Y-%m-%dT%H:%M:%SZ); \
-		echo "== $$d"; claude plugin eval $$d --tag $(or $(TAG),trigger) --ablation none --scaffold --trust-plugin --no-publish --keep-temp $(if $(MODEL),--model $(MODEL)) $(if $(RUNS),--runs $(RUNS)) $(if $(ALLOW),--allow-tools $(ALLOW)) $(if $(MAX_COST),--max-cost-usd $(MAX_COST)); s=$$?; \
-		node scripts/eval-record.mjs $$d --since $$since --dirty auto --clean-temp $(if $(MODEL),--model $(MODEL)) || exit 1; \
+		allow="$(ALLOW)"; test -n "$$allow" || allow=$$(node scripts/eval-record.mjs $$d --print-allow $(or $(TAG),trigger)) || exit 1; \
+		echo "== $$d"; claude plugin eval $$d --tag $(or $(TAG),trigger) --ablation none --scaffold --trust-plugin --no-publish --keep-temp $(if $(MODEL),--model $(MODEL)) $(if $(RUNS),--runs $(RUNS)) $${allow:+--allow-tools $$allow} $(if $(MAX_COST),--max-cost-usd $(MAX_COST)); s=$$?; \
+		node scripts/eval-record.mjs $$d --since $$since --dirty auto --clean-temp --allow "$$allow" $(if $(MODEL),--model $(MODEL)) || exit 1; \
 		test $$s -eq 0 || exit $$s; \
 	done
 
-eval-record: ## Append eval results to the plugins' committed evals/scores.jsonl (skips rows already there).  Usage: make eval-record [PLUGIN=<plugin>] [DIRS="<results dir>..."] [COMMIT=<sha>] [MODEL=<model id>] [DIRTY=true|false]
+eval-record: ## Append eval results to the plugins' committed evals/scores.jsonl (skips rows already there).  Usage: make eval-record [PLUGIN=<plugin>] [DIRS="<results dir>..."] [COMMIT=<sha>] [MODEL=<model id>] [DIRTY=true|false] [ALLOW="<granted tools>"]
 	@for d in $(EVAL_PLUGINS); do \
-		node scripts/eval-record.mjs $$d $(DIRS) $(if $(COMMIT),--commit $(COMMIT)) $(if $(MODEL),--model $(MODEL)) $(if $(DIRTY),--dirty $(DIRTY)) || exit 1; \
+		node scripts/eval-record.mjs $$d $(DIRS) $(if $(COMMIT),--commit $(COMMIT)) $(if $(MODEL),--model $(MODEL)) $(if $(DIRTY),--dirty $(DIRTY)) $(if $(ALLOW),--allow "$(ALLOW)") || exit 1; \
 	done
+
+eval-clean-temp: ## Delete kept eval temp dirs (e-*/out/trace.jsonl in the temp dir and /tmp) that earlier runs left; not while an eval is running.
+	@node scripts/eval-record.mjs --sweep-temp
 
 eval-scores: ## Print the latest recorded score of each eval case (needs jq).  Usage: make eval-scores [PLUGIN=<plugin>]
 	@cat $(wildcard $(addsuffix /evals/scores.jsonl,$(EVAL_PLUGINS))) /dev/null | jq -s -r 'group_by(.plugin, .case) | map(max_by(.date))[] | [.plugin, .case, "\(.passes)/\(.runs | length)", .model, .commit[0:7], .date[0:10]] | @tsv'
