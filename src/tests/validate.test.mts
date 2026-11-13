@@ -45,13 +45,13 @@ void test("evalCaseErrors: invalid YAML and duplicate keys fail, naming the file
   );
 });
 
-void test("skillDescriptionError: 250 characters pass, 251 fail naming the skill and the limit", () => {
+void test("skillDescriptionError: 400 characters pass, 401 fail naming the skill and the limit", () => {
   const front = (n: number) => `name: x\ndescription: ${"a".repeat(n)}\n`;
-  assert.equal(skillDescriptionError("x", front(250)), null);
-  const error = skillDescriptionError("x", front(251));
+  assert.equal(skillDescriptionError("x", front(400)), null);
+  const error = skillDescriptionError("x", front(401));
   assert.match(
     error ?? "",
-    /^skills\/x: description is 251 characters, over the 250 limit/,
+    /^skills\/x: description is 401 characters, over the 400 limit/,
   );
 });
 

@@ -551,8 +551,8 @@ const VSCODE_HOOK_EVENTS = new Set([
   "ErrorOccurred",
 ]);
 const KEBAB = /^[a-z0-9]+(-[a-z0-9]+)*$/;
-/** Claude Code lists a skill by name and description; longer descriptions are the first thing its listing budget drops. */
-const MAX_SKILL_DESCRIPTION = 250;
+/** The agentskills.io spec budgets about 100 tokens of metadata per skill, and Claude Code's listing budget drops long descriptions first. */
+const MAX_SKILL_DESCRIPTION = 400;
 
 /** The error for a skill whose frontmatter description is over the limit, else null (invalid YAML is reported elsewhere). */
 export function skillDescriptionError(
