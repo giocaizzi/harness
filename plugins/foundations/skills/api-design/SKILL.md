@@ -1,6 +1,6 @@
 ---
 name: api-design
-description: "Use when adding or changing an HTTP endpoint, request or response field, error format or OpenAPI/proto file, an endpoint too slow for its clients' timeout, or deciding if a change is breaking; pagination, retries, idempotency, versioning."
+description: "Use when adding or changing an endpoint, request or response field, error format or OpenAPI/proto file, deciding if a change is breaking, or an endpoint too slow for its clients' timeout; pagination, retries, idempotency, versioning."
 ---
 
 # API design
