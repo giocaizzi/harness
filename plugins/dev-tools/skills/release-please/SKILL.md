@@ -1,6 +1,6 @@
 ---
 name: release-please
-description: "Use when editing release-please-config.json or its manifest, or the task is the next release's version, a forced version, which commits the changelog shows or hides, a new package, or a Release PR that never appeared. The release-please tool."
+description: "Use when a repo has release-please-config.json, a manifest or a Release PR and the task is cutting the next release or version, forcing a version, which commits the changelog shows, a new package, or a Release PR that never appeared."
 ---
 
 release-please parses Conventional Commits on the default branch and maintains one Release PR. Merging that PR is the release: it bumps tracked version files, regenerates `CHANGELOG.md`, tags `vX.Y.Z` (`<package>-vX.Y.Z` in monorepos) and creates a GitHub Release. Downstream publish/deploy hangs off the release, not the PR; with the default `GITHUB_TOKEN` the tag starts no other workflow, so gate a job on the action's `release_created` output or use an App token ([references/release-flow.md](references/release-flow.md)). It depends on correctly typed commits; see `conventional-commits`, and `semver` for which bump a change deserves. What gets a release at all, when to cut one, recovery and the concepts below hold for every tool: `releases`; this skill is how release-please does them.
