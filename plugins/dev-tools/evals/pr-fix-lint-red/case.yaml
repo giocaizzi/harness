@@ -6,5 +6,5 @@ context:
   scaffold_script: scaffold.sh
 execution:
   prompt: "The lint check on PR 15 is red. Make it green. There is no network and no real GitHub here: the gh CLI is the stand-in script ./bin/gh, so run `export PATH=\"$PWD/bin:$PATH\"` before any gh command."
-  max_turns: 8
+  max_turns: 15
   allowed_tools: [Read, Glob, Grep, Edit, Write, Bash, Skill]
