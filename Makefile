@@ -79,11 +79,11 @@ contract-test: ## Run contract v2 kit against a runner's manifest (docs/guard.md
 
 EVAL_PLUGINS = $(if $(PLUGIN),plugins/$(PLUGIN),$(patsubst %/evals/,%,$(sort $(dir $(wildcard plugins/*/evals/)))))
 
-eval: ## Run the plugins' skill evals and record their scores (calls a model, costs money, not part of check or CI).  Usage: make eval [PLUGIN=<plugin>] [TAG=trigger|routing] [MODEL=<model>] [RUNS=<n>] [ALLOW=<tools>] [MAX_COST=<usd>]
+eval: ## Run the plugins' skill evals and record their scores (calls a model, costs money, not part of check or CI).  Usage: make eval [PLUGIN=<plugin>] [TAG=trigger|routing] [MODEL=<model>] [RUNS=<n>] [ALLOW=<tools>] [MAX_COST=<usd>] [CASE=<glob>] [J=<n>]
 	@for d in $(EVAL_PLUGINS); do \
 		test -d $$d/evals || { echo "$$d has no evals/"; exit 1; }; \
 		since=$$(date -u +%Y-%m-%dT%H:%M:%SZ); \
-		echo "== $$d"; claude plugin eval $$d --tag $(or $(TAG),trigger) --ablation none --scaffold --trust-plugin --no-publish $(if $(MODEL),--model $(MODEL)) $(if $(RUNS),--runs $(RUNS)) $(if $(ALLOW),--allow-tools $(ALLOW)) $(if $(MAX_COST),--max-cost-usd $(MAX_COST)); s=$$?; \
+		echo "== $$d"; claude plugin eval $$d --tag $(or $(TAG),trigger) --ablation none --scaffold --trust-plugin --no-publish $(if $(MODEL),--model $(MODEL)) $(if $(RUNS),--runs $(RUNS)) $(if $(ALLOW),--allow-tools $(ALLOW)) $(if $(MAX_COST),--max-cost-usd $(MAX_COST)) $(if $(CASE),--case '$(CASE)') $(if $(J),-j $(J)); s=$$?; \
 		node scripts/eval-record.mjs $$d --since $$since $(if $(MODEL),--model $(MODEL)) || exit 1; \
 		test $$s -eq 0 || exit $$s; \
 	done
