@@ -14,6 +14,7 @@ import {
   existsSync,
   lstatSync,
   readdirSync,
+  unlinkSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -245,7 +246,12 @@ const git = (dir: string, args: string[]): string =>
  * so every directory is made writable and readable before rm.
  */
 export function removeTemp(dir: string): void {
-  if (!lstatSync(dir, { throwIfNoEntry: false })) return;
+  const top = lstatSync(dir, { throwIfNoEntry: false });
+  if (!top) return;
+  if (top.isSymbolicLink()) {
+    unlinkSync(dir);
+    return;
+  }
   const open = (d: string): void => {
     chmodSync(d, 0o700);
     for (const name of readdirSync(d)) {
@@ -271,9 +277,9 @@ export function removeTemp(dir: string): void {
 export function exposeTrace(dir: string): string {
   const out = join(dir, "out");
   const trace = join(out, "trace.jsonl");
-  chmodSync(dir, 0o755);
-  chmodSync(out, 0o755);
-  chmodSync(trace, 0o644);
+  chmodSync(dir, 0o700);
+  chmodSync(out, 0o700);
+  chmodSync(trace, 0o600);
   return trace;
 }
 
@@ -323,9 +329,15 @@ export function grantedTools(pluginDir: string, tag: string): string[] {
   return [...tools].sort();
 }
 
-/** An exact model id (`claude-opus-5-5`), not an alias (`opus`, `sonnet`, `opus[1m]`). */
+/**
+ * An exact model id (`claude-opus-5-5`, `claude-3-5-sonnet-20241022`), not an alias (`opus`, `sonnet`, `opus[1m]`,
+ * `claude-sonnet`, `claude-3-5-sonnet-latest`): it carries a generation or date digit and does not end in `-latest`.
+ */
 export function isExactModel(model: string): boolean {
-  return /^claude-[a-z0-9.-]*\d[a-z0-9.-]*$/.test(model);
+  return (
+    !model.endsWith("-latest") &&
+    /^claude-[a-z0-9.-]*\d[a-z0-9.-]*$/.test(model)
+  );
 }
 
 const real = (p: string): string => {

@@ -8,7 +8,7 @@
 //   node scripts/eval-record.mjs --sweep-temp   (removes leftover kept temp dirs of finished runs)
 //   node scripts/eval-record.mjs <plugin-dir> --print-allow <tag>   (the tools `make eval` grants by default)
 import { execFileSync } from "node:child_process";
-import { appendFileSync, chmodSync, existsSync, lstatSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, } from "node:fs";
+import { appendFileSync, chmodSync, existsSync, lstatSync, readdirSync, unlinkSync, readFileSync, realpathSync, rmSync, statSync, } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, sep } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -150,8 +150,13 @@ const git = (dir, args) => execFileSync("git", ["-C", dir, ...args], { encoding:
  * so every directory is made writable and readable before rm.
  */
 export function removeTemp(dir) {
-    if (!lstatSync(dir, { throwIfNoEntry: false }))
+    const top = lstatSync(dir, { throwIfNoEntry: false });
+    if (!top)
         return;
+    if (top.isSymbolicLink()) {
+        unlinkSync(dir);
+        return;
+    }
     const open = (d) => {
         chmodSync(d, 0o700);
         for (const name of readdirSync(d)) {
@@ -178,9 +183,9 @@ export function removeTemp(dir) {
 export function exposeTrace(dir) {
     const out = join(dir, "out");
     const trace = join(out, "trace.jsonl");
-    chmodSync(dir, 0o755);
-    chmodSync(out, 0o755);
-    chmodSync(trace, 0o644);
+    chmodSync(dir, 0o700);
+    chmodSync(out, 0o700);
+    chmodSync(trace, 0o600);
     return trace;
 }
 /** Kept eval temp dirs (`<tmp>/e-XXXXXX` holding `out/trace.jsonl`) left in the system temp dir or /tmp. */
@@ -225,9 +230,13 @@ export function grantedTools(pluginDir, tag) {
     }
     return [...tools].sort();
 }
-/** An exact model id (`claude-opus-5-5`), not an alias (`opus`, `sonnet`, `opus[1m]`). */
+/**
+ * An exact model id (`claude-opus-5-5`, `claude-3-5-sonnet-20241022`), not an alias (`opus`, `sonnet`, `opus[1m]`,
+ * `claude-sonnet`, `claude-3-5-sonnet-latest`): it carries a generation or date digit and does not end in `-latest`.
+ */
 export function isExactModel(model) {
-    return /^claude-[a-z0-9.-]*\d[a-z0-9.-]*$/.test(model);
+    return (!model.endsWith("-latest") &&
+        /^claude-[a-z0-9.-]*\d[a-z0-9.-]*$/.test(model));
 }
 const real = (p) => {
     try {
