@@ -1,0 +1,10 @@
+schema_version: "1.0"
+name: repo-standard-negative
+description: "The model does not load repo-standard for one failing test."
+tags: [trigger]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  prompt: "test_total in test_cart.py fails with an assertion error. Fix it."
+  max_turns: 15
+  allowed_tools: [Read, Glob, Grep, Edit, Write, Skill]
