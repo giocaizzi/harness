@@ -1,0 +1,10 @@
+schema_version: "1.0"
+name: ci-cd-skip-unchanged
+description: "The model loads ci-cd when a monorepo pipeline tests every service on every merge request."
+tags: [trigger]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  prompt: "Every merge request runs the tests of all six services, even when only one changed. Only test what changed."
+  max_turns: 8
+  allowed_tools: [Read, Glob, Grep, Edit, Write, Skill]

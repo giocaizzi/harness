@@ -1,0 +1,10 @@
+schema_version: "1.0"
+name: host-hygiene-full-suite
+description: "The model loads host-hygiene when a heavy test run starts on a machine shared with other agents."
+tags: [trigger]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  prompt: "Run the full test suite and the Android emulator tests now; other agents are working on this machine too."
+  max_turns: 8
+  allowed_tools: [Read, Glob, Grep, Bash, Skill]
