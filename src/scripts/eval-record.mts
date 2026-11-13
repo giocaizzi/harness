@@ -4,7 +4,7 @@
 // skipped. Runbook: docs/skills.md (Evals).
 //
 //   node scripts/eval-record.mjs <plugin-dir> [results-dir...] [--commit <sha>] [--model <id>] [--since <iso>]
-//     [--dirty auto|true|false] [--clean-temp] [--allow "<tools>"]
+//     [--dirty auto|true|false] [--clean-temp | --show-traces] [--allow "<tools>"]
 //   node scripts/eval-record.mjs --sweep-temp   (removes leftover kept temp dirs of finished runs)
 //   node scripts/eval-record.mjs <plugin-dir> --print-allow <tag>   (the tools `make eval` grants by default)
 import { execFileSync } from "node:child_process";
@@ -184,6 +184,7 @@ interface Options {
   since: string | null;
   dirty: string | null;
   cleanTemp: boolean;
+  showTraces: boolean;
   allow: string | null;
   printAllow: string | null;
   sweepTemp: boolean;
@@ -198,6 +199,7 @@ export function parseArgs(argv: string[]): Options {
     since: null,
     dirty: null,
     cleanTemp: false,
+    showTraces: false,
     allow: null,
     printAllow: null,
     sweepTemp: false,
@@ -221,13 +223,14 @@ export function parseArgs(argv: string[]): Options {
       else opts.printAllow = v;
     } else if (a === "--sweep-temp") opts.sweepTemp = true;
     else if (a === "--clean-temp") opts.cleanTemp = true;
+    else if (a === "--show-traces") opts.showTraces = true;
     else if (a.startsWith("--")) throw new Error(`unknown option ${a}`);
     else positional.push(a);
   }
   const [pluginDir, ...dirs] = positional;
   if (!pluginDir && !opts.sweepTemp)
     throw new Error(
-      'usage: eval-record <plugin-dir> [results-dir...] [--commit <sha>] [--model <id>] [--since <iso>] [--dirty auto|true|false] [--clean-temp] [--allow "<tools>"]',
+      'usage: eval-record <plugin-dir> [results-dir...] [--commit <sha>] [--model <id>] [--since <iso>] [--dirty auto|true|false] [--clean-temp | --show-traces] [--allow "<tools>"]',
     );
   opts.pluginDir = pluginDir ?? "";
   opts.dirs = dirs;
@@ -260,6 +263,18 @@ export function removeTemp(dir: string): void {
       retryDelay: 100,
     });
   }
+}
+
+/**
+ * Makes a kept dir's `out/trace.jsonl` readable without touching `sealed/` and returns its path.
+ */
+export function exposeTrace(dir: string): string {
+  const out = join(dir, "out");
+  const trace = join(out, "trace.jsonl");
+  chmodSync(dir, 0o755);
+  chmodSync(out, 0o755);
+  chmodSync(trace, 0o644);
+  return trace;
 }
 
 /** Kept eval temp dirs (`<tmp>/e-XXXXXX` holding `out/trace.jsonl`) left in the system temp dir or /tmp. */
@@ -402,6 +417,14 @@ export function record(
     try {
       written += recordRun(agg, dir);
     } finally {
+      if (opts.showTraces)
+        for (const t of tempDirs(agg)) {
+          try {
+            log(`trace: ${exposeTrace(t)}`);
+          } catch (e: unknown) {
+            log(`warning: could not open ${t}: ${errMessage(e)}`);
+          }
+        }
       if (opts.cleanTemp)
         for (const t of tempDirs(agg)) {
           try {

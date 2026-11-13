@@ -4,7 +4,7 @@
 // skipped. Runbook: docs/skills.md (Evals).
 //
 //   node scripts/eval-record.mjs <plugin-dir> [results-dir...] [--commit <sha>] [--model <id>] [--since <iso>]
-//     [--dirty auto|true|false] [--clean-temp] [--allow "<tools>"]
+//     [--dirty auto|true|false] [--clean-temp | --show-traces] [--allow "<tools>"]
 //   node scripts/eval-record.mjs --sweep-temp   (removes leftover kept temp dirs of finished runs)
 //   node scripts/eval-record.mjs <plugin-dir> --print-allow <tag>   (the tools `make eval` grants by default)
 import { execFileSync } from "node:child_process";
@@ -100,6 +100,7 @@ export function parseArgs(argv) {
         since: null,
         dirty: null,
         cleanTemp: false,
+        showTraces: false,
         allow: null,
         printAllow: null,
         sweepTemp: false,
@@ -129,6 +130,8 @@ export function parseArgs(argv) {
             opts.sweepTemp = true;
         else if (a === "--clean-temp")
             opts.cleanTemp = true;
+        else if (a === "--show-traces")
+            opts.showTraces = true;
         else if (a.startsWith("--"))
             throw new Error(`unknown option ${a}`);
         else
@@ -136,7 +139,7 @@ export function parseArgs(argv) {
     }
     const [pluginDir, ...dirs] = positional;
     if (!pluginDir && !opts.sweepTemp)
-        throw new Error('usage: eval-record <plugin-dir> [results-dir...] [--commit <sha>] [--model <id>] [--since <iso>] [--dirty auto|true|false] [--clean-temp] [--allow "<tools>"]');
+        throw new Error('usage: eval-record <plugin-dir> [results-dir...] [--commit <sha>] [--model <id>] [--since <iso>] [--dirty auto|true|false] [--clean-temp | --show-traces] [--allow "<tools>"]');
     opts.pluginDir = pluginDir ?? "";
     opts.dirs = dirs;
     return opts;
@@ -168,6 +171,17 @@ export function removeTemp(dir) {
             retryDelay: 100,
         });
     }
+}
+/**
+ * Makes a kept dir's `out/trace.jsonl` readable without touching `sealed/` and returns its path.
+ */
+export function exposeTrace(dir) {
+    const out = join(dir, "out");
+    const trace = join(out, "trace.jsonl");
+    chmodSync(dir, 0o755);
+    chmodSync(out, 0o755);
+    chmodSync(trace, 0o644);
+    return trace;
 }
 /** Kept eval temp dirs (`<tmp>/e-XXXXXX` holding `out/trace.jsonl`) left in the system temp dir or /tmp. */
 export function leftoverTemps() {
@@ -297,6 +311,15 @@ export function record(opts, log = console.log) {
             written += recordRun(agg, dir);
         }
         finally {
+            if (opts.showTraces)
+                for (const t of tempDirs(agg)) {
+                    try {
+                        log(`trace: ${exposeTrace(t)}`);
+                    }
+                    catch (e) {
+                        log(`warning: could not open ${t}: ${errMessage(e)}`);
+                    }
+                }
             if (opts.cleanTemp)
                 for (const t of tempDirs(agg)) {
                     try {
