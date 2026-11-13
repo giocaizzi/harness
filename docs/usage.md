@@ -153,7 +153,7 @@ With that telemetry in Loki, `/agent-review` in a session opened in a clone of t
 
 ## hud: what's on screen
 
-Claude Code shows everything; Copilot CLI and pi a subset ([compatibility.md](compatibility.md)). Sample output for each part: [hud plugin README](../plugins/hud/README.md).
+Claude Code shows everything; pi and opencode a subset ([compatibility.md](compatibility.md)). Sample output for each part: [hud plugin README](../plugins/hud/README.md).
 
 | Part | Where | Shows |
 |---|---|---|
