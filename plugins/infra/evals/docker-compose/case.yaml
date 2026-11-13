@@ -1,0 +1,10 @@
+schema_version: "1.0"
+name: docker-compose
+description: The model loads docker when local development needs Postgres and Redis next to the service.
+tags: [trigger]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  prompt: "Add Postgres and Redis to local development, so one command starts everything."
+  max_turns: 8
+  allowed_tools: [Read, Glob, Grep, Edit, Write, Skill]

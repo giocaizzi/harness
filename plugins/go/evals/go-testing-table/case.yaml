@@ -1,0 +1,10 @@
+schema_version: "1.0"
+name: go-testing-table
+description: The model loads go-testing when a test file has many copy-pasted test functions.
+tags: [trigger]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  prompt: "parse_test.go has twelve copy-pasted test functions. Clean them up."
+  max_turns: 8
+  allowed_tools: [Read, Glob, Grep, Edit, Write, Skill]

@@ -1,0 +1,10 @@
+schema_version: "1.0"
+name: kubernetes-staging-overlay
+description: The model loads kubernetes when a kustomize base needs a staging overlay.
+tags: [trigger]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  prompt: "Add a staging setup with one replica and the staging image tag."
+  max_turns: 8
+  allowed_tools: [Read, Glob, Grep, Edit, Write, Skill]
