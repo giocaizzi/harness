@@ -1,6 +1,6 @@
 ---
 name: kubernetes
-description: "Use when writing or changing Kubernetes manifests, a Helm chart or values, a kustomize overlay, a CRD, RBAC, a controller or operator, pods that get OOMKilled, or a rollout to a cluster."
+description: "Use when writing or changing Kubernetes manifests, a Helm chart or values file, a kustomize overlay, a CRD, a Role or ServiceAccount, a controller or operator (kubebuilder, controller-runtime), or deploying or rolling out a service to a cluster, including pods that crash or get OOMKilled. Workload defaults (requests and limits, probes, non-root, PodDisruptionBudget), least-privilege RBAC, envtest."
 ---
 
 # Kubernetes

@@ -1,6 +1,6 @@
 ---
 name: docker
-description: "Use when writing or changing a Dockerfile, .dockerignore or compose file, containerizing a service, or fixing a slow, oversized, root or cache-busting image build. Multi-stage, non-root, pinned bases, BuildKit caches."
+description: "Use when writing or changing a Dockerfile, .dockerignore or compose file, containerizing a service, building, tagging or promoting an image, or fixing a slow, cache-busting, oversized, root or leaking image build. Multi-stage dev/test/prod builds, minimal non-root final images, base images pinned by tag and digest, BuildKit cache and secret mounts, health checks, hadolint, image scanning."
 ---
 
 # Docker

@@ -1,6 +1,6 @@
 ---
 name: terraform
-description: "Use when writing or changing Terraform or OpenTofu (.tf, .tfvars, .tftest.hcl): modules, state, providers, importing or renaming a resource, or plan and apply in CI. Not for Dockerfiles or Kubernetes manifests."
+description: "Use when writing or changing Terraform or OpenTofu: .tf, .tfvars or .tftest.hcl files, modules, state, providers and the lockfile, importing or renaming a resource, or a plan or apply step in CI. Layout (modules, envs, bootstrap), remote state and locking, moved blocks, module versioning, provider pinning, drift, mock-provider tests. Not for Dockerfiles or Kubernetes manifests."
 ---
 
 # Terraform and OpenTofu
