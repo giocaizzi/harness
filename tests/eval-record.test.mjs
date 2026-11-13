@@ -1,10 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync, } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { parseArgs, record, } from "../scripts/eval-record.mjs";
+import { resolveDirty, parseArgs, record, } from "../scripts/eval-record.mjs";
 const quiet = () => undefined;
 /** A git repo with plugins/acme (one case) and a results dir per given startedAt. */
 function fixture(runs, plugin = "acme") {
@@ -59,7 +59,7 @@ function fixture(runs, plugin = "acme") {
         .trim()
         .split("\n")
         .map((l) => JSON.parse(l));
-    return { pluginDir, sha, read };
+    return { pluginDir, sha, read, git };
 }
 void test("parseArgs", () => {
     assert.deepEqual(parseArgs([
@@ -77,6 +77,7 @@ void test("parseArgs", () => {
         commit: "abc",
         model: "m",
         since: "2026",
+        dirty: null,
     });
     assert.throws(() => parseArgs([]), /usage/);
     assert.throws(() => parseArgs(["p", "--model"]), /needs a value/);
@@ -96,6 +97,7 @@ void test("records one row per case, model from the trace, and is idempotent", (
         commit: null,
         model: "ignored-when-trace",
         since: null,
+        dirty: null,
     };
     assert.equal(record(opts, quiet), 1);
     assert.deepEqual(f.read(), [
@@ -156,6 +158,7 @@ void test("without a trace, needs --model; --commit resolves a short sha; --sinc
         commit: f.sha.slice(0, 7),
         model: null,
         since: "2026-01-15T00:00:00Z",
+        dirty: null,
     };
     assert.throws(() => record(base, quiet), /pass --model/);
     assert.equal(record({ ...base, model: "claude-test-2" }, quiet), 1);
@@ -172,5 +175,31 @@ void test("refuses results of another plugin", () => {
         commit: null,
         model: null,
         since: null,
+        dirty: null,
     }, quiet), /for other, not acme/);
+});
+void test("dirty: auto reads tracked plugin changes, except results and the scoreboard; unknown leaves it out", () => {
+    const f = fixture([
+        { id: "r", startedAt: "2026-01-01T00:00:00.000Z", trace: true },
+    ]);
+    assert.equal(resolveDirty(f.pluginDir, null), undefined);
+    assert.equal(resolveDirty(f.pluginDir, "true"), true);
+    assert.throws(() => resolveDirty(f.pluginDir, "maybe"), /auto, true or false/);
+    assert.equal(resolveDirty(f.pluginDir, "auto"), false);
+    const opts = {
+        pluginDir: f.pluginDir,
+        dirs: [],
+        commit: null,
+        model: null,
+        since: null,
+        dirty: null,
+    };
+    record(opts, quiet);
+    assert.equal("dirty" in (f.read()[0] ?? {}), false);
+    f.git("add", ".");
+    f.git("commit", "-qm", "scores");
+    appendFileSync(join(f.pluginDir, "evals", "scores.jsonl"), "{}\n");
+    assert.equal(resolveDirty(f.pluginDir, "auto"), false, "scores.jsonl and results do not count");
+    writeFileSync(join(f.pluginDir, "evals", "app-trigger", "case.yaml"), "name: app-trigger\ntags: [trigger]\n");
+    assert.equal(resolveDirty(f.pluginDir, "auto"), true);
 });

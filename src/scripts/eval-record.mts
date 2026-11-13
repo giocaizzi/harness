@@ -4,6 +4,7 @@
 // skipped. Runbook: docs/skills.md (Evals).
 //
 //   node scripts/eval-record.mjs <plugin-dir> [results-dir...] [--commit <sha>] [--model <id>] [--since <iso>]
+//     [--dirty auto|true|false]
 import { execFileSync } from "node:child_process";
 import {
   appendFileSync,
@@ -45,6 +46,8 @@ export interface ScoreRow {
   run: string;
   date: string;
   commit: string;
+  /** Uncommitted changes to tracked plugin files when recorded; absent when unknown. */
+  dirty?: boolean;
   harness: "claude-code";
   harnessVersion: string;
   model: string;
@@ -72,6 +75,7 @@ export interface RunRow {
 export interface RowContext {
   run: string;
   commit: string;
+  dirty?: boolean | undefined;
   model: string;
   tags: (c: AggregateCase) => string[];
 }
@@ -89,6 +93,7 @@ export function rows(agg: Aggregate, ctx: RowContext): ScoreRow[] {
       run: ctx.run,
       date: agg.startedAt,
       commit: ctx.commit,
+      ...(ctx.dirty === undefined ? {} : { dirty: ctx.dirty }),
       harness: "claude-code",
       harnessVersion: agg.claudeVersion,
       model: ctx.model,
@@ -166,6 +171,7 @@ interface Options {
   commit: string | null;
   model: string | null;
   since: string | null;
+  dirty: string | null;
 }
 
 export function parseArgs(argv: string[]): Options {
@@ -175,21 +181,27 @@ export function parseArgs(argv: string[]): Options {
     commit: null,
     model: null,
     since: null,
+    dirty: null,
   };
   const positional: string[] = [];
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i] ?? "";
-    if (a === "--commit" || a === "--model" || a === "--since") {
+    if (
+      a === "--commit" ||
+      a === "--model" ||
+      a === "--since" ||
+      a === "--dirty"
+    ) {
       const v = argv[++i];
       if (!v) throw new Error(`${a} needs a value`);
-      opts[a.slice(2) as "commit" | "model" | "since"] = v;
+      opts[a.slice(2) as "commit" | "model" | "since" | "dirty"] = v;
     } else if (a.startsWith("--")) throw new Error(`unknown option ${a}`);
     else positional.push(a);
   }
   const [pluginDir, ...dirs] = positional;
   if (!pluginDir)
     throw new Error(
-      "usage: eval-record <plugin-dir> [results-dir...] [--commit <sha>] [--model <id>] [--since <iso>]",
+      "usage: eval-record <plugin-dir> [results-dir...] [--commit <sha>] [--model <id>] [--since <iso>] [--dirty auto|true|false]",
     );
   opts.pluginDir = pluginDir;
   opts.dirs = dirs;
@@ -198,6 +210,31 @@ export function parseArgs(argv: string[]): Options {
 
 const git = (dir: string, args: string[]): string =>
   execFileSync("git", ["-C", dir, ...args], { encoding: "utf8" }).trim();
+
+/**
+ * `auto`: whether tracked files under the plugin have uncommitted changes (results and the scoreboard excepted);
+ * `true`/`false` as given; null: unknown, so the field is left out.
+ */
+export function resolveDirty(
+  pluginDir: string,
+  dirty: string | null,
+): boolean | undefined {
+  if (dirty === null) return undefined;
+  if (dirty === "true" || dirty === "false") return dirty === "true";
+  if (dirty !== "auto")
+    throw new Error(`--dirty takes auto, true or false, not ${dirty}`);
+  return (
+    git(pluginDir, [
+      "status",
+      "--porcelain",
+      "--untracked-files=no",
+      "--",
+      ".",
+      ":(exclude)evals/results",
+      ":(exclude)evals/scores.jsonl",
+    ]) !== ""
+  );
+}
 
 /** Appends the rows of each results dir not yet recorded; returns the number of rows written. */
 export function record(
@@ -219,6 +256,7 @@ export function record(
     "--verify",
     `${opts.commit ?? "HEAD"}^{commit}`,
   ]);
+  const dirty = resolveDirty(opts.pluginDir, opts.dirty);
   const out = join(opts.pluginDir, "evals", "scores.jsonl");
   const seen = recorded(existsSync(out) ? readFileSync(out, "utf8") : "");
   const name = basename(opts.pluginDir.replace(/[\\/]+$/, ""));
@@ -245,6 +283,7 @@ export function record(
       {
         run,
         commit,
+        dirty,
         model,
         tags: (c) => caseTags(c, [agg.suite.root, opts.pluginDir]),
       },
