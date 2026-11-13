@@ -1,6 +1,6 @@
 ---
 name: system-design
-description: "Use when designing a feature that crosses a process boundary or calls a slow dependency, a hot read path needs a cache, adding a queue, event or datastore, changing a schema with production data, deciding between options, or writing an ADR."
+description: "Use when a feature calls a slow dependency or another service (timeouts, retries, requests piling up), sends something when an event happens, needs a cache, queue or datastore, changes a schema with production data, or needs a design or ADR."
 ---
 
 # System design
