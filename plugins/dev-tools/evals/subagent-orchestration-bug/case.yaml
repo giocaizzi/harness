@@ -1,0 +1,10 @@
+schema_version: "1.0"
+name: subagent-orchestration-bug
+description: The model loads subagent-orchestration when asked to find the cause of a bug and fix it.
+tags: [trigger]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  prompt: "Users get logged out at random after each deploy. Find out why and fix it."
+  max_turns: 8
+  allowed_tools: [Read, Glob, Grep, Edit, Write, Skill]
