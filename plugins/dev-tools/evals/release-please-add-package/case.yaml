@@ -1,0 +1,10 @@
+schema_version: "1.0"
+name: release-please-add-package
+description: "The model loads release-please when a new package must join automated releases."
+tags: [trigger]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  prompt: "Add the new packages/cli to our automated releases."
+  max_turns: 8
+  allowed_tools: [Read, Glob, Grep, Edit, Write, Skill]
