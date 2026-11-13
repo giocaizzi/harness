@@ -1,6 +1,6 @@
 ---
 name: kubernetes
-description: "Use when writing or changing Kubernetes manifests, a Helm chart or values file, a kustomize overlay, a CRD, a Role or ServiceAccount, a controller or operator (including a reconcile loop that re-creates or flaps resources), pods that get OOMKilled, or when deploying or rolling out a service to a cluster. Kubernetes conventions for manifests, Helm charts and values, Kustomize overlays, CRDs, RBAC, NetworkPolicy, controllers and operators (kubebuilder, controller-runtime), and rollouts: workload defaults (requests and limits, probes, non-root securityContext, PodDisruptionBudget, digest-pinned images), secrets, least-privilege RBAC, delivery from CI or GitOps, reconcile idempotency, status conditions, finalizers, and the tiered operator tests (unit, envtest, kind)."
+description: "Kubernetes conventions for manifests, Helm charts and values, Kustomize overlays, CRDs, RBAC, NetworkPolicy, controllers and operators (kubebuilder, controller-runtime), and rollouts: workload defaults (requests and limits, probes, non-root securityContext, PodDisruptionBudget, digest-pinned images), secrets, least-privilege RBAC, delivery from CI or GitOps, reconcile idempotency, status conditions, finalizers, and the tiered operator tests (unit, envtest, kind). Use when writing or changing Kubernetes manifests, a Helm chart or values file, a kustomize overlay, a CRD, a Role or ServiceAccount, a controller or operator, or deploying or rolling out a service to a cluster."
 ---
 
 # Kubernetes

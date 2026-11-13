@@ -1,6 +1,6 @@
 ---
 name: system-design
-description: "Use when designing or changing a feature that crosses a process boundary or calls a slow dependency (timeouts, retries, requests piling up), sends something when an event happens (an email when an order is paid), adds a queue, event, cache or datastore, changes a schema that has production data, or needs a design or an ADR. System design decisions: non-functional requirements as numbers, trade-offs, consistency, idempotency, synchronous vs asynchronous calls, events and the transactional outbox, failure modes, timeouts and retries, schema migrations on live data (expand/contract), cloud building blocks, and writing an ADR."
+description: "System design decisions for a service or feature: non-functional requirements as numbers, trade-offs, consistency, idempotency, synchronous vs asynchronous calls, events and the transactional outbox, failure modes, timeouts and retries, schema migrations on live data (expand/contract), cloud building blocks, and writing an ADR. Use when designing a feature that crosses a process or service boundary, adding a queue, event, cache or datastore, changing a schema that has production data, deciding between options, or writing or reviewing a design or architecture decision."
 ---
 
 # System design

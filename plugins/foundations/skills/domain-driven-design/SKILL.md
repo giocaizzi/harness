@@ -1,6 +1,6 @@
 ---
 name: domain-driven-design
-description: "Use when business rules are spread across controllers and queries, an invariant must hold (no items added to an order after it shipped), money or another concept is passed around as primitives, two areas share one package and break each other, or when adding a use case, port or adapter, even if the user does not say DDD. Domain-driven design with ports and adapters (hexagonal architecture), in Go and Python: bounded contexts, aggregates, entities and value objects, repositories and unit of work, domain events, use-case handlers, the composition root, context maps."
+description: "Domain-driven design with ports and adapters (hexagonal architecture), in Go and Python: bounded contexts, aggregates, entities and value objects, repositories and unit of work, domain events, use-case handlers, the composition root, context maps. Use when designing or restructuring a service's domain, deciding where business logic or a dependency goes, splitting a module into contexts, or adding a use case, port or adapter, even when the user does not say DDD."
 ---
 
 # Domain-driven design with ports and adapters
