@@ -1,6 +1,6 @@
 ---
 name: domain-driven-design
-description: "Use when a business rule must always hold (an invariant, or a state after which nothing may change), adding a use case to a service, rules spread across routes and queries, or money passed as primitives. House rules: DDD, ports and adapters."
+description: "Use when the code lets something happen that a business rule forbids (an invariant, a state after which nothing may change), adding a use case to a service, rules spread across routes and queries. House rules: DDD, ports and adapters."
 ---
 
 # Domain-driven design with ports and adapters
