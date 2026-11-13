@@ -1,0 +1,10 @@
+schema_version: "1.0"
+name: python-testing-async
+description: The model loads python-testing when writing tests for an async function.
+tags: [trigger]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  prompt: "Add tests for the async fetch_all function."
+  max_turns: 8
+  allowed_tools: [Read, Glob, Grep, Edit, Write, Skill]
