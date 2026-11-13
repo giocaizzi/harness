@@ -1,0 +1,10 @@
+schema_version: "1.0"
+name: secrets-handling-keyring
+description: "The model loads secrets-handling when a CLI token should move from a file to the OS keychain."
+tags: [trigger]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  prompt: "Store the CLI's API token in the OS keychain instead of the plain file at ~/.acme/token."
+  max_turns: 8
+  allowed_tools: [Read, Glob, Grep, Edit, Write, Skill]

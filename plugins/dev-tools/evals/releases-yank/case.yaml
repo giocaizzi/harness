@@ -1,0 +1,10 @@
+schema_version: "1.0"
+name: releases-yank
+description: "The model loads releases when a published version has a data-deleting bug."
+tags: [trigger]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  prompt: "We published 2.3.1 with a bug that deletes user data. What do we do about that release?"
+  max_turns: 8
+  allowed_tools: [Read, Glob, Grep, Skill]
