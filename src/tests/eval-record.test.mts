@@ -8,11 +8,13 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  exposeTrace,
   grantedTools,
   isExactModel,
   removeTemp,
@@ -121,6 +123,7 @@ void test("parseArgs", () => {
       since: "2026",
       dirty: null,
       cleanTemp: false,
+      showTraces: false,
       allow: null,
       printAllow: null,
       sweepTemp: false,
@@ -147,6 +150,7 @@ void test("records one row per case, model from the trace, and is idempotent", (
     since: null,
     dirty: null,
     cleanTemp: false,
+    showTraces: false,
     allow: null,
     printAllow: null,
     sweepTemp: false,
@@ -213,6 +217,7 @@ void test("without a trace, needs --model; --commit resolves a short sha; --sinc
     since: "2026-01-15T00:00:00Z",
     dirty: null,
     cleanTemp: false,
+    showTraces: false,
     allow: null,
     printAllow: null,
     sweepTemp: false,
@@ -241,6 +246,7 @@ void test("refuses results of another plugin", () => {
           since: null,
           dirty: null,
           cleanTemp: false,
+          showTraces: false,
           allow: null,
           printAllow: null,
           sweepTemp: false,
@@ -270,6 +276,7 @@ void test("dirty: auto reads tracked plugin changes, except results and the scor
     since: null,
     dirty: null,
     cleanTemp: false,
+    showTraces: false,
     allow: null,
     printAllow: null,
     sweepTemp: false,
@@ -303,6 +310,7 @@ void test("since compares instants: a run in the same second as since is recorde
     since: "2026-01-01T00:00:54Z",
     dirty: null,
     cleanTemp: false,
+    showTraces: false,
     allow: null,
     printAllow: null,
     sweepTemp: false,
@@ -330,6 +338,7 @@ void test("never records an alias: an alias --model without a trace fails", () =
     since: null,
     dirty: null,
     cleanTemp: false,
+    showTraces: false,
     allow: null,
     printAllow: null,
     sweepTemp: false,
@@ -350,6 +359,7 @@ void test("--clean-temp removes the kept e-* temp dirs after reading the model, 
     since: null,
     dirty: null,
     cleanTemp: true,
+    showTraces: false,
     allow: null,
     printAllow: null,
     sweepTemp: false,
@@ -386,6 +396,7 @@ void test("allow: recorded sorted when given (empty means none granted), left ou
     since: null,
     dirty: null,
     cleanTemp: false,
+    showTraces: false,
     allow: "Write  Edit",
     printAllow: null,
     sweepTemp: false,
@@ -417,4 +428,47 @@ void test("grantedTools: union of the tag's declared tools minus the read-only o
   assert.deepEqual(grantedTools(root, "routing"), ["Agent", "Bash"]);
   assert.deepEqual(grantedTools(root, "none"), []);
   assert.deepEqual(grantedTools(join(root, "missing"), "trigger"), []);
+});
+
+void test("--show-traces keeps the temp dirs, prints each trace path and makes it readable", () => {
+  const f = fixture([
+    { id: "r", startedAt: "2026-01-01T00:00:00.000Z", trace: true },
+  ]);
+  const [temp] = f.temps;
+  assert.ok(temp);
+  mkdirSync(join(temp, "sealed"));
+  chmodSync(join(temp, "out", "trace.jsonl"), 0o444);
+  chmodSync(join(temp, "out"), 0o500);
+  chmodSync(join(temp, "sealed"), 0o000);
+  chmodSync(temp, 0o500);
+  const lines: string[] = [];
+  record(
+    {
+      pluginDir: f.pluginDir,
+      dirs: [],
+      commit: null,
+      model: "claude-test-1",
+      since: null,
+      dirty: null,
+      cleanTemp: false,
+      showTraces: true,
+      allow: null,
+      printAllow: null,
+      sweepTemp: false,
+    },
+    (l) => lines.push(l),
+  );
+  const trace = join(temp, "out", "trace.jsonl");
+  assert.ok(lines.includes(`trace: ${trace}`), lines.join("\n"));
+  assert.match(readFileSync(trace, "utf8"), /claude-test-1/);
+  assert.equal(parseArgs(["p", "--show-traces"]).showTraces, true);
+  assert.equal(exposeTrace(temp), trace);
+  assert.equal(statSync(temp).mode & 0o755, 0o755);
+  assert.equal(statSync(join(temp, "out")).mode & 0o755, 0o755);
+  assert.equal(
+    statSync(join(temp, "sealed")).mode & 0o777,
+    0o000,
+    "sealed stays sealed",
+  );
+  chmodSync(join(temp, "sealed"), 0o700);
 });
