@@ -1,0 +1,10 @@
+schema_version: "1.0"
+name: fastapi-negative
+description: "The model does not load fastapi for a plain Python CLI function."
+tags: [trigger]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  prompt: "Add a function to cli.py that counts the words in a text file and prints the number."
+  max_turns: 15
+  allowed_tools: [Read, Glob, Grep, Edit, Write, Skill]

@@ -1,0 +1,10 @@
+schema_version: "1.0"
+name: secrets-handling-trigger
+description: "The model loads secrets-handling when asked to wire an API key from a .env file."
+tags: [trigger]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  prompt: "My .env has the payment API key. Wire the client to use it without leaking it."
+  max_turns: 15
+  allowed_tools: [Read, Glob, Grep, Edit, Write, Skill]
