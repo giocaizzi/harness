@@ -1,6 +1,6 @@
 ---
 name: go-development
-description: "Use when you write or change Go (.go), go.mod, .golangci.yml or .goreleaser.yaml: a feature, fix, refactor or review, even when the user does not mention conventions. Errors, context, slog, worker pools, golangci-lint v2."
+description: "Use when you write or change Go (.go), go.mod, .golangci.yml or .goreleaser.yaml, even a small fix, and even when the user does not mention conventions. House rules: errors, context, slog, goroutines, os/exec timeouts and process groups."
 ---
 
 # Go Development (1.26+)
