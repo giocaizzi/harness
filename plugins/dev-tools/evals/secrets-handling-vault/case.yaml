@@ -1,0 +1,10 @@
+schema_version: "1.0"
+name: secrets-handling-vault
+description: "The model loads secrets-handling when asked to fetch a credential from a password manager."
+tags: [trigger]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  prompt: "Our deploy script needs the database password. Pull it from Bitwarden with bws instead of hardcoding it."
+  max_turns: 15
+  allowed_tools: [Read, Glob, Grep, Edit, Write, Skill]
