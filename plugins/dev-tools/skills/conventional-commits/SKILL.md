@@ -1,6 +1,6 @@
 ---
 name: conventional-commits
-description: Conventional Commits for commit messages and PR titles, where the type drives version bump and changelog. Use when writing a commit message, drafting a PR title, or rewriting history.
+description: "Use when writing, rewording or fixing a commit message or PR title: the message for staged changes, a vague \"fixed stuff\" commit, a breaking-change marker, a commit-msg hook or commitlint rejection, or rewriting history. Conventional Commits, where the type drives the version bump and changelog."
 ---
 
 The commit `type` is machine-readable intent: release tools (release-please, semantic-release, Changesets) read it to pick the version bump and changelog section. A wrong type ships the wrong version or hides a real change, so treat the header as an API.

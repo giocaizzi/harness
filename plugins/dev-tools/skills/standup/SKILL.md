@@ -1,6 +1,6 @@
 ---
 name: standup
-description: Plain-language status of the current work for its owner, built from a three-line story (goal, progress as a count, next step), then a numbered list of what needs the user's decision that they approve with 'all' or by excluding numbers, then done, in flight and leftovers; `detail` adds PR numbers and SHAs inline; `explain <topic>` explains one part of the current work in a line, table or diagram with every technical term explained. Use when the user asks for a recap, status, summary, progress, where things stand, what is left, what they need to decide, or asks for something from the current work in simpler words, or types /standup.
+description: "Use when the user asks for a recap, status, summary, progress, where things stand, what is left, what you need from them or what they must decide (\"what do you need from me right now?\"), or asks for part of the current work in simpler words, or types /standup. Plain-language status of the current work for its owner, built from a three-line story (goal, progress as a count, next step), then a numbered list of what needs the user's decision that they approve with 'all' or by excluding numbers, then done, in flight and leftovers; `detail` adds PR numbers and SHAs inline; `explain [topic]` explains one part of the current work in a line, table or diagram with every technical term explained."
 ---
 
 # Standup

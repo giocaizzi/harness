@@ -1,6 +1,6 @@
 ---
 name: api-design
-description: HTTP API contract design - resources and naming, the error shape, versioning and deprecation, pagination, idempotency keys, long-running operations, and the OpenAPI document with its drift and breaking-change checks. Use when adding or changing an endpoint, request or response schema, error format or OpenAPI or proto file, when a client retries or pages through results, or when deciding whether a change is breaking. Security review is the api-reviewer agent's.
+description: "Use when adding or changing an HTTP endpoint, a request or response field, an error format or an OpenAPI or proto file; renaming or removing a field clients read; making a slow endpoint asynchronous; when a client retries or pages through results; or when deciding whether a change is breaking. HTTP API contract design - resources and naming, the error shape, versioning and deprecation, pagination, idempotency keys, long-running operations, and the OpenAPI document with its drift and breaking-change checks. Security review is the api-reviewer agent's."
 ---
 
 # API design

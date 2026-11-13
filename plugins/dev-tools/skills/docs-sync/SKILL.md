@@ -1,6 +1,6 @@
 ---
 name: docs-sync
-description: Repo conventions for keeping docs/, runbooks, README and AGENTS.md in step with a change, including which file owns what and when a runbook is required. Use before editing any doc, runbook, README or AGENTS.md, and whenever a change renames, adds or removes a make target, command, flag, config key or procedure, even if the user did not mention docs; or when the user types /docs-sync (optionally a path).
+description: "Use before editing any doc, runbook, README or AGENTS.md, and whenever a change adds, renames or removes a make target, CLI flag, script option, config key, command or procedure (a new --dry-run flag, a renamed target, a changed install step), even if the user did not mention docs; or when the user types /docs-sync (optionally a path). Repo conventions for keeping docs/, runbooks, README and AGENTS.md in step with a change, including which file owns what and when a runbook is required."
 ---
 
 # Docs sync

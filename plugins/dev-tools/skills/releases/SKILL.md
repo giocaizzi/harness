@@ -1,6 +1,6 @@
 ---
 name: releases
-description: "Cutting, publishing and maintaining releases on any stack and with any tool: what gets a versioned release (libraries, CLIs, plugins) and what does not (deployed services ship by digest; mobile and store apps use a version plus a build number), release cadence, release PRs, tags, changelogs and release notes, pre-releases and release candidates, hotfixes and maintenance lines, yanking a bad version, publishing to a registry or store, provenance attestations, and the latest marker. Use when someone wants to release, ship, publish, tag, cut a version or hotfix, write release notes or a changelog, set up a release pipeline, choose a release tool (release-please, semantic-release, Changesets, goreleaser, fastlane), or a release went wrong."
+description: "Use when someone wants to release, publish (PyPI, npm, a registry or store), tag or cut a version, write release notes or a changelog from the commits since the last tag, ship a release candidate or a hotfix to an old line, yank a bad version, set up a release pipeline, choose a release tool (release-please, semantic-release, Changesets, goreleaser, fastlane), or a release went wrong. Cutting, publishing and maintaining releases on any stack and with any tool: what gets a versioned release (libraries, CLIs, plugins) and what does not (deployed services ship by digest; mobile and store apps use a version plus a build number), cadence, release PRs, tags, pre-releases, maintenance lines, provenance attestations, and the latest marker."
 ---
 
 # Releases

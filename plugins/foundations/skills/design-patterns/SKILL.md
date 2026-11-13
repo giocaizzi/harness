@@ -1,6 +1,6 @@
 ---
 name: design-patterns
-description: When to abstract and which pattern fits - rule of three, SOLID as review questions, coupling and cohesion, a catalogue of eight patterns (ports and adapters, repository and unit of work, domain events with outbox, anti-corruption layer, strategy, decorator for cross-cutting concerns, composition root, idempotent consumer) and named anti-patterns. Use when deciding whether to add an interface, base class, factory or layer, when the same code is wrapped or copied in several places, or when reviewing a design for over-engineering.
+description: "Use when deciding whether to add an interface, base class, factory or layer; when the same code is wrapped or copied in several places (retry-and-log around several clients, validation copied into handlers); when an if/elif chain grows with every new type; or when reviewing a design for over-engineering. When to abstract and which pattern fits - rule of three, SOLID as review questions, coupling and cohesion, a catalogue of eight patterns (ports and adapters, repository and unit of work, domain events with outbox, anti-corruption layer, strategy, decorator for cross-cutting concerns, composition root, idempotent consumer) and named anti-patterns."
 ---
 
 # Design patterns
