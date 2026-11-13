@@ -1,6 +1,6 @@
 ---
 name: github-actions
-description: "Use when adding, changing or fixing a GitHub Actions workflow (.github/workflows/*.yml, action.yml): a job, matrix, trigger, permissions error, cache, path filter, stuck required check, or slow or flaky CI."
+description: "Use when changing what CI runs on GitHub (.github/workflows/*.yml, action.yml): another Node, Python or OS version, a job, matrix, trigger, permissions error, cache, path filter, stuck required check, or slow or flaky CI."
 ---
 
 # GitHub Actions
