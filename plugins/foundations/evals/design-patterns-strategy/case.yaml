@@ -1,0 +1,10 @@
+schema_version: "1.0"
+name: design-patterns-strategy
+description: The model loads design-patterns when a growing if/elif chain on a type needs restructuring.
+tags: [trigger]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  prompt: "pricing.py has a huge if/elif on customer type and we're adding two more types. Restructure it."
+  max_turns: 8
+  allowed_tools: [Read, Glob, Grep, Edit, Write, Skill]

@@ -1,0 +1,10 @@
+schema_version: "1.0"
+name: architecture-fitness-coverage-floor
+description: The model loads architecture-fitness when coverage keeps slipping and needs a floor.
+tags: [trigger]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  prompt: "Coverage drops a little with every PR. Stop it from going down."
+  max_turns: 8
+  allowed_tools: [Read, Glob, Grep, Edit, Write, Skill]

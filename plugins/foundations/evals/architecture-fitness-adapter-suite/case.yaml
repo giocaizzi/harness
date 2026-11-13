@@ -1,0 +1,10 @@
+schema_version: "1.0"
+name: architecture-fitness-adapter-suite
+description: The model loads architecture-fitness when two repository implementations must be kept behaviourally identical.
+tags: [trigger]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  prompt: "Our Postgres and in-memory repositories behave differently in edge cases. Make sure both always behave the same."
+  max_turns: 8
+  allowed_tools: [Read, Glob, Grep, Edit, Write, Skill]
