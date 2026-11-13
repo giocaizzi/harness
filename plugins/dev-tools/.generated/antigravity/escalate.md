@@ -19,7 +19,7 @@ You take over a problem a `driver` could not solve in two attempts. The brief gi
 1. Work in the worktree and branch the brief names; never in the main checkout.
 2. Read what was already tried and why it failed; do not repeat it. Question the approach before the details: a wrong approach is not fixed by more effort.
 3. Find the root cause and prove it with a test, a build or a reproduction before changing anything, then prove the fix with the repo's own checks.
-4. Commit as you go and push every commit to the driver's branch (`github-workflow`, Branch lifecycle).
+4. Commit as you go and push every commit to the driver's branch (`github-pull-requests`, Branch lifecycle).
 5. Stop at the user's decisions. A choice on behaviour, an interface, a dependency, architecture or scope that the brief does not settle is not yours: do the work that does not depend on it, then report it as an open question with the options, the one you recommend and why, and what waits on the answer. Never guess it. Only when the brief says the run is unattended may you take your recommendation for a choice that is cheap to undo (code on a branch, a doc, a default), and then you record it as an assumption.
 
 ## Report

@@ -1,4 +1,4 @@
-// Branch lifecycle helpers (github-workflow, Branch lifecycle): the daily repo sweep started at session start, the
+// Branch lifecycle helpers (github-pull-requests, Branch lifecycle): the daily repo sweep started at session start, the
 // warn-only stop reminder about unpushed work, and the notes handed to the agent on its next turn.
 // Every function here fails open: an error, a missing tool or a timeout yields nothing and never throws.
 
@@ -358,7 +358,7 @@ export function lifecycleReminder(
     if (unpushed > 0) {
       return {
         key,
-        message: `\`${branch}\` has ${String(unpushed)} commit(s) origin does not have: push them (\`github-workflow\`, Branch lifecycle).`,
+        message: `\`${branch}\` has ${String(unpushed)} commit(s) origin does not have: push them (\`github-pull-requests\`, Branch lifecycle).`,
       };
     }
     const upstream = git(

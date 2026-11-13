@@ -37,6 +37,6 @@ compatibility: "SQLAlchemy >=2.0, Python >=3.14"
 
 - [references/PERFORMANCE.md](references/PERFORMANCE.md): read for bulk operations, streaming, query optimization.
 - [references/LARGE_COLLECTIONS.md](references/LARGE_COLLECTIONS.md): read for WriteOnlyMapped, AssociationProxy, `type_annotation_map`.
-- [references/MIGRATIONS.md](references/MIGRATIONS.md): read for Alembic setup and practices.
+- [references/MIGRATIONS.md](references/MIGRATIONS.md): read for Alembic setup and practices. A schema change on live data ships expand/contract (`system-design`).
 - [references/DDD_INFRASTRUCTURE.md](references/DDD_INFRASTRUCTURE.md): read for mapper/repository/UoW implementation in a DDD project.
 - [references/MODELS_AND_POOLING.md](references/MODELS_AND_POOLING.md): read for the API-choice routing table, Annotated types and full model examples, pool sizing numbers, and the anti-patterns list.

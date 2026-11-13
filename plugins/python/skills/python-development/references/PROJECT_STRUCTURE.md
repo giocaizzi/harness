@@ -100,7 +100,7 @@ test: ## Run the tests in parallel, with coverage
 check: lint test ## lint + test
 ```
 
-CI runs `uv sync --locked` and then `make check` (workflow shape: the `github-workflow` skill). A library also runs `make test` on each Python version it claims, `uv run --python 3.N`.
+CI runs `uv sync --locked` and then `make check` (workflow shape: the `github-actions` skill). A library also runs `make test` on each Python version it claims, `uv run --python 3.N`.
 
 ## Single-file scripts
 

@@ -1,0 +1,167 @@
+---
+name: github-pull-requests
+description: "Landing changes on main via pull requests: the branch lifecycle (push every commit, draft PR on first push, when branches and worktrees are deleted), stacked PRs with `gh stack`, auto-merge, merge queues, and rulesets that require CI. Use when pushing a branch, opening, splitting or merging PRs, removing branches or worktrees, or setting up branch protection or a merge queue."
+---
+
+## Principle
+
+`main` only changes through a pull request that passed CI. Humans and agents never push to it, never bypass the rules, and never merge by hand when the platform can merge once checks pass.
+
+This skill is the GitHub PR mechanics; the CI workflows are `github-actions`. The repo checklist (aggregate `check`, title check, squash, protection) and the GitLab / Azure DevOps equivalents are in `repo-standard`.
+
+## Branch lifecycle
+
+Origin holds the work; a local branch, worktree or stash is a disposable copy of it. So every commit reaches
+origin at once, and a local copy goes as soon as origin has it.
+
+| Stage | What happens | Who |
+|---|---|---|
+| Start | One worktree and branch per task, from the fresh default branch (`wt`). | the task's owner |
+| Every commit | Pushed at once. The first push opens a draft PR (`gh pr create --draft`; other forges: `repo-standard`). | the branch's owner |
+| Worker unit | Committed on a local branch, never pushed, never a PR. The driver merges it into its own branch, pushes, then removes the worker's worktree and branch. | the driver, or the hub that spawned the worker |
+| Ready | The check passes on the merged tree (rule 5), then `gh pr ready` once, then `land`. | the branch's owner |
+| Merged | The forge deletes the head branch (auto-delete head branches is on); `land` removes the local branch and worktree. | `land` |
+| Closed unmerged | The remote branch is deleted after 7 idle days; its commits stay at `refs/pull/<n>/head`. | the sweep (`host-hygiene`) |
+| Never pushed, no PR, 7 idle days | Pushed to `refs/archive/<branch>/<yyyymmdd>-<sha12>`, logged, then the local branch and worktree are removed. The archive ref expires after 90 days. | the sweep |
+
+- **Fewest PRs across all agents:** one PR per coherent deliverable. A driver batches the related issues in its
+  scope into its one branch and PR; workers never push or open PRs; a split needs one of the `Split-Reason:`
+  values in rule 1.
+- **Local copies** go as soon as origin has the tip (pushed, inside a merged PR's head, or archived) and the
+  worktree is clean; no waiting. The guard lets those deletes through and asks for the rest.
+- **Remote branches** go only when stale: landed on the default branch (proved by content, since a squash merge
+  breaks ancestry) or closed unmerged and idle 7 days. Never close or delete an open PR to tidy up.
+- **Never deleted:** the default branch, the branch checked out in the main checkout or your current worktree,
+  the remote head or base of an open PR, bot branches, a dirty or in-use worktree, and nothing younger than 24 h is
+  removed by the sweep. A clean linked worktree whose branch origin holds goes after 24 idle hours, open draft
+  PR included: recreate it from origin when you need it again.
+- **No stash:** park work as a commit and push it. A stash older than 7 days is archived like a branch, then dropped.
+- **Every push is scanned** for secrets first (gitleaks over the commits origin does not have yet), by the guard and by a
+  pre-push hook; a finding stops the push. Never bypass it (`--no-verify`): a pushed secret stays reachable through
+  PR refs and forks even after the branch is fixed, so the only fix is rotating the secret.
+- **Repos that allow direct commits** to the default branch (their `AGENTS.md` says so): the same rules, with
+  "push to the default branch" in place of the draft PR. A single agent commits there; parallel agents each
+  get a worktree and merge back.
+- The sweep applies these rules at session start; run it by hand with `host-hygiene`'s `repo-sweep`.
+- **Stale PRs and issues** are closed by each repo's stale workflow (`actions/stale`, from the repo template and the standard): a PR goes stale after 30 idle days and closes 14 days later; an issue goes stale after 90 idle days and closes 30 days later; any activity resets the clock. Exempt: labels `keep`, `security`, `release-please`; pinned items; issues with a milestone; bot PRs (Dependabot, release-please). Drafts age like other PRs. A PR closed as stale makes its branch stale under the rules above (deleted 7 idle days after closing).
+- **Keep GitHub current in your own session:** close an issue whose fix merged without a closing keyword (comment with the PR link, then close); keep the PR's title, body, labels and linked issues true to the work as it changes; mark the draft ready when the work is finished (rule 5's check first). Never let your own PR or issue go stale.
+
+## Landing a change
+
+1. **One PR per batch, by default.** Related issues or tasks in your scope that can land cleanly in one review go in one PR, with no size cap: every extra PR costs its own CI (each change is tested on the PR, again in the merge queue, and again on the push to the default branch where that runs, and each queue entry has a fixed cost however small its diff), a serial merge or queue slot, and another re-merge and review round on a moving base, so speed and cost both beat small diffs. The body carries one `Closes #n` or `Refs: #n` line per issue; the commits are grouped per issue, and tests and docs ship in the same PR; with release-please, list each change in the body (`release-please`). A second PR needs one of four reasons, written as a `Split-Reason:` line in its body: `separate-release` (it ships in another release), `sensitive-change` (security, auth, secrets, merge or release gates, protected paths: its own PR and review, never hidden in a bulk PR), `forced-stack` (a layer of a stack, rule 4) or `other-owner` (another owner or reviewer holds that area). No other value is accepted. The guard's `pr-batch` rule denies a new PR whose files overlap another open PR of yours that no running session owns, unless it carries one of those reasons; fold the work into that PR instead. Work with more than one reviewable layer (schema → API → UI) is a stack (rule 4). A workflow skill that scopes a PR to one approved ticket keeps its own rule. **Push every commit** (Branch lifecycle). A draft runs no CI, so a push there is a free backup. Once the PR is ready every push re-runs CI: a round's fixes go in one commit, made after the round's check passed (rule 5), and pushed at once; never an empty commit to re-trigger CI. Only a job that failed on infrastructure (a lost runner, a network error), never a failing test, is re-run, once, with `gh run rerun <run-id> --failed`; a test that passes on a re-run is a flake: report it and give it its `flaky` issue (`github-actions`, Flakes), never land over it as green. History already pushed is not rewritten: a later fix is one new commit carrying every fix of that round.
+2. **Auto-merge, not manual merge.** Open the PR, then `gh pr merge <n> --auto --squash --delete-branch --match-head-commit <sha>`, `<sha>` being the head the review verdict names or that `land`'s `verify-merge-only` script proved (rule 8): gh arms only when the head is that SHA, and rule 9 keeps later pushes off an armed PR. It merges when required checks pass. Arm or enqueue the moment the verdict is on the current head and CI is green; never wait for one PR to merge before arming the next (`land-many` lands a set together). Do not poll and merge by hand, except where auto-merge is unavailable (private repos on the Free plan): then `land` merges directly once every check passed, never with `--admin`.
+3. **Merge queue when the repo has one.** With a queue, the same command enqueues the PR; do not pass a merge method the queue overrides. See Merge queue speed.
+4. **Dependent work is a stack, independent work is not.** A chain of 2 or more dependent PRs is built with `gh stack` (`init`, `add`, `submit`, `sync`) where the repo has stacked PRs enabled (Stacked PRs; `gh stack` exits 9 otherwise): one small buildable PR per layer, the bottom layer on the default branch, landed with one `gh stack merge <top> --yes` once every layer is green and ready (`land`; auto-merge is refused for a stack, Stacked PRs); the stack gives the chain view and retargets each layer as the one below merges. Never hand-build a pile of PRs retargeted by hand; only where `gh stack` is unavailable or not enabled, follow Stacks without `gh stack`. Siblings (several PRs that each need one base PR but not each other) follow Stacks without `gh stack`. A PR that does not need another one targets the default branch directly, so it lands in parallel.
+5. **Check the tree it will merge into; merge the base in only when you must.** The queue, or a required up-to-date branch, re-runs the required checks on the PR merged with the current default branch, not on the branch as approved. Before marking a PR ready, before each push to a ready PR, and again before enqueueing a PR whose base moved, merge `origin/<default>` into a scratch copy (a throwaway worktree, never the PR branch) and run the full check there; that changes nothing on the PR. Merge the default branch into the PR branch itself only on a real conflict (`git merge-tree --write-tree HEAD origin/<default>` exits 1, or the PR's `mergeStateStatus` is `DIRTY`). A branch that is only behind is no reason: a merge queue builds every entry on the latest default branch anyway, and every head change voids the review verdict and the `--match-head-commit` pin (rules 8 and 9) and restarts CI. The exception is a repo without a merge queue whose ruleset or branch protection requires branches to be up to date (`strict_required_status_checks_policy` in a ruleset, `strict` in classic protection; the PR's `mergeStateStatus` is `BEHIND`): there merge the base each time the PR is `BEHIND` while otherwise ready (verdict on its head, CI green), prove each merge with `verify-merge-only` (rule 8) and land it at once, never on a move of the base while the PR is still in review. A repo with a queue leaves that requirement off (Merge queue speed), so a `BEHIND` there is a setting for the owner, not a reason to merge. A stacked child after its parent's squash also needs the base merged in (Stacks without `gh stack`, step 2).
+6. **Never bypass.** No admin override, no `--admin`, no disabling a rule to get a PR through. A failing required check is fixed, or the check is corrected in its own PR.
+7. **Fold everything in before review.** Every related finding, review Minor and follow-up the task's scope covers goes into the PR before review is asked for, so the verdict is the last round; nothing is left "for a follow-up" that this PR could carry.
+8. **After a verdict, only a proven base merge.** The only push to an approved head is a pure merge of the default branch, proven by `land`'s `verify-merge-only` script (two parents, the first the approved head, the second on the default branch, and `git merge-tree --write-tree` redoes the merge to exactly its tree; a conflicted merge is not proven); it prints the landing note. Anything else — a fix, a Minor, a conflict resolution — is a new review round scoped to the delta (round rules in `subagent-orchestration`). At the cap (after round 2) there is no new round: such a change is not pushed to the approved PR; stop and ask the owner.
+9. **Never push to an armed or queued PR.** A push from an account without write access turns auto-merge off, and any push changes the head that the verdict, the `--match-head-commit` pin and the queue's run named. Take it out first (`gh pr merge --disable-auto <n>`, or remove it from the queue), push, re-verify the new head (rule 8 or a new round), then re-arm or re-enqueue.
+10. **One release candidate per coherent set of fixes** (cadence and what gets a release: `releases`). Group fixes that ship together into one release, and enqueue or arm a release PR only when the merge queue is empty, so it is built on every fix it should carry and is not rebuilt behind them.
+
+## Stacked PRs
+
+Native stacks are a GitHub feature (public preview 2026-07-30, rolling to GA) driven by the `gh stack` extension. Verify against the [docs](https://docs.github.com/en/pull-requests/reference/stacked-prs-cli-commands) — the feature is new.
+
+```bash
+gh extension install github/gh-stack     # needs gh >= 2, git >= 2.36
+git fetch origin main:main               # init bases the bottom layer on the LOCAL main ref
+gh stack init -b main                    # start a stack (or: gh stack init <b1> <b2> ... adopts local branches)
+gh stack add -A -m "feat: schema"        # new branch on top (run from the top branch)
+gh stack submit --auto --open            # push + create/update PRs as a stack
+gh stack link <bottom> <mid> <top>       # register already-open chained PRs as a stack: no push, no rewrite
+gh stack sync                            # fetch, rebase, push; after a lower PR merges
+gh stack merge <top> --yes               # enqueue the whole stack, all-or-nothing
+```
+
+Verified against a GitHub merge queue with gh 2.103.3 and gh stack 0.1.1.
+
+- The repository must have stacked PRs enabled; otherwise commands fail (exit 9). A linked PR's REST object then has a non-null `stack` field `{number, position, size}`.
+- **Enqueue the whole stack with one call on the top PR**, never layer by layer: `gh stack merge <top> --yes`. Merging a PR lands every unmerged layer beneath it; branch protection and rulesets still apply and cannot be bypassed. The merge-method flags are ignored with a queue.
+- **Auto-merge is not the path for a stack:** `gh pr merge <n> --auto --squash` fails (`Auto-merge is not supported for stacked pull requests`), and the legacy merge endpoints refuse a stacked PR (`part of a stack and must be enqueued using the asynchronous merge REST API`).
+- REST equivalent, which `land-many` uses: `gh api -X PUT repos/{owner}/{repo}/pulls/<top>/merge-async -H 'X-GitHub-Api-Version: 2026-03-10' -f merge_action=merge_queue -f sha=<head>` (no queue: `-f merge_action=default -f merge_method=squash`) answers `{"status":"pending","details":{"uuid":...}}`; poll `gh api repos/{owner}/{repo}/pulls/<top>/merge-async/<uuid>` until `status` is `enqueued` (queued, not merged), `merged` or `failed`.
+- **Enqueue only when every layer's required checks are green and no layer is a draft.** With a required check in progress `gh stack merge` refuses (`Stack merges are atomic, so nothing was merged`, exit 4), with a draft layer it refuses (exit 5); the REST call accepts with `pending` and then ends `failed` (`Pull request is in draft`, or the check in progress, which is a wait: request again later).
+- Each layer becomes its own queue entry, in order, built on the one below, in the same merge group; each lands as its own squash commit. Only the bottom layer can be dequeued, which removes the whole stack; dequeuing an upper layer fails.
+- **Partial landing:** `gh stack merge <pr-k> --yes` lands layers 1..k; GitHub then retargets layer k+1 to the default branch and rebases it server-side within seconds (CI re-runs). Update a local copy with `git fetch && git checkout -B <branch> origin/<branch>`, no local rebase.
+- **Chain size:** a merge group holds up to the ruleset's `max_entries_to_merge`; GitHub's docs say a group may exceed it by 50% to keep a stack together (not verified). Enqueue at most `max_entries_to_merge` layers per call; land a longer chain in chunks (`gh stack merge <pr-k> --yes`, the server rebases the rest after each chunk), or combine it into fewer PRs.
+- **History:** a linear history is not enforced on enqueue to a merge queue: a layer holding a merge commit, a stale upper layer missing a later lower-layer commit, and a layer with the default branch merged into it all landed; only a real content conflict ejects an entry. So update a layer by merging the lower branch or the default branch into it (normal push); rewrite only with `gh stack rebase` + `gh stack push`, never by hand-rebasing individual branches.
+- **Force-push scope:** `--force-with-lease` only, and only on your own feature or stack branches; never the default branch, a shared branch or another agent's branch.
+
+### Stacks without `gh stack`
+
+A child PR based on another PR's branch, merged one PR at a time with squash (the squash drops the merge commits below from `main`):
+
+1. **Retarget before the parent merges.** List the children (`gh pr list --base <parent-branch>`) and move each to the default branch (`gh pr edit <child> --base <default>`) before arming the parent's merge. Deleting the parent's branch on merge can close every child based on it; GitHub retargets children itself only in some cases, so don't rely on it. A retargeted child now shows the parent's commits too: keep its auto-merge off until the parent has merged.
+2. **Update each child after the squash.** The child still carries the parent's pre-squash commits. Merge the default branch into it (`git merge origin/<default>`; no rebase, no force push), resolve conflicts keeping the child's side, push, let checks re-run, then land it.
+3. **A child already closed this way:** recreate the base at the parent's last head on the server (`gh pr view <parent> --json headRefOid`, then `gh api repos/{owner}/{repo}/git/refs -f ref=refs/heads/<parent-branch> -f sha=<sha>`), reopen the child (`gh pr reopen <child>`), retarget it as in step 1, then delete the recreated branch.
+
+- **Siblings** (several PRs that each need one base PR but not each other) are all children of that PR: retarget every one by hand before the parent merges, as in step 1 (`gh pr list --base <parent-branch>` lists them all), then update each as in step 2. Siblings that change the same files are serialised as one chain instead, each based on the one before, so no two of them conflict after the squash.
+
+## Rulesets on the default branch
+
+Prefer a **repository ruleset** over classic branch protection: it layers, can be evaluated before enforcing, and is the only place the merge-queue rule exists. Minimum for `main`:
+
+| Rule | Setting |
+|---|---|
+| Require a pull request | on; approvals `0` for solo repos, `1+` with collaborators |
+| Require status checks | the CI job names; up-to-date branch required unless a merge queue does that |
+| Block force pushes and deletion | on |
+| Require merge queue | on when the repo supports it (see below) |
+| Bypass list | empty |
+
+Enable auto-merge once per repo: `gh repo edit --enable-auto-merge`.
+
+Apply with the API, and **confirm per repo first** — a required-checks rule on a repo with no CI blocks every merge:
+
+```bash
+gh api repos/OWNER/REPO/rulesets --method POST --input ruleset.json
+gh api repos/OWNER/REPO/rulesets --jq '.[] | {id,name,enforcement}'   # audit
+```
+
+Start with `"enforcement": "evaluate"` where available, then switch to `"active"`. Check field names against the [rulesets docs](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets); they change.
+
+## CI that gates merges
+
+The workflows behind the required checks (the `merge_group` trigger, concurrency, tiers, drafts that run no CI, path filters, caches, flakes) are `github-actions`; the platform-neutral techniques are `ci-cd`.
+
+## Squash merges and PR titles
+
+With squash-only repos, the PR title is the commit on `main` and drives release automation. Require a `Validate PR title` check next to `check` and pin the squash commit to the PR title and body; the settings and gotchas are in `conventional-commits`.
+
+## Merge queue speed
+
+A queue builds several entries at once and merges them in groups, so the speed comes from enqueueing every ready PR together: a loop that enqueues one PR and waits for it to merge before the next pays a full queue CI run per PR. Land a batch with `land`'s `land-many` script.
+
+Read the queue's settings from the branch rules before planning around them: `gh api repos/OWNER/REPO/rules/branches/main --jq '.[] | select(.type == "merge_queue") | .parameters'`. `max_entries_to_build` is how many entries run CI at once, `min_entries_to_merge` / `max_entries_to_merge` the group size, `min_entries_to_merge_wait_minutes` how long the queue waits to fill a group, `grouping_strategy` (`ALLGREEN` or `HEADGREEN`) whether every entry of a group must pass, and `check_response_timeout_minutes` when a silent check fails the entry. An entry whose merge-group run fails is removed and the entries behind it are rebuilt.
+
+Owner checklist (settings are the owner's: propose, never change them):
+
+- Grouping stays all-green (`ALLGREEN`).
+- `min_entries_to_merge_wait_minutes` is 0 when PRs arrive one at a time.
+- `max_entries_to_build` is at least the peak number of PRs ready together.
+- "Require branches to be up to date" only on a repo without a queue.
+
+Read the ruleset with `gh api repos/OWNER/REPO/rulesets --jq '.[] | {id,name}'`, then `gh api repos/OWNER/REPO/rulesets/<id> --jq '{name, target, enforcement, conditions, rules, bypass_actors}' > ruleset.json` (only the fields an update takes). After the owner approves, edit the `merge_queue` rule's `parameters` in that file and `gh api -X PUT repos/OWNER/REPO/rulesets/<id> --input ruleset.json` (same caveat as Rulesets on the default branch: confirm field names against the docs).
+
+With a queue, leave "require branches to be up to date before merging" off: the queue tests each entry on the latest base, so the rule only forces a merge-up and a re-review after every merge, and it serialises entries the queue would build in parallel. The consequence: a PR that conflicts with the base still needs the base merged in, and a semantic break between two PRs shows up in the queue run, not on the PR.
+
+## Merge queue availability
+
+Merge queue is a repository-level ruleset rule and is not offered on every repository: it depends on ownership and plan (for example organization-owned repos; private repos need a qualifying plan). On a repo that cannot have one, fall back to auto-merge + required checks + "require branches to be up to date". Check availability before promising a queue.
+
+## Standardizing many repos
+
+Keep one canonical standard in a single repo (`<owner>/.github`): a prose standard in `docs/`, machine-readable parts (ruleset JSON, labels, repo settings) in `standard/`, and a read-only audit script that reports drift per repo. Change the standard there first, then the repos. A repo's extra labels live in the repo itself (`.github/labels.yaml`), not in the standard repo, so a public standard never names a private repo; the label guard, the sync and the audit all read the standard plus that file.
+
+New repos start from a template repository that already carries the standard files (CI with the aggregate `check`, PR-title, label-guard and TODO-issue workflows, Dependabot, Makefile, `AGENTS.md`), then one onboarding command applies settings, labels and workflows and adds the ruleset once `check` is green. On a personal account nothing applies the standard automatically, so the audit must run on a schedule with a read-only token and fail on an empty scope.
+
+Roll out in the order `repo-standard` gives, labels with the settings, and re-run the audit after each repo; it must report no drift.
+
+## Before handoff
+
+- PR carries the whole batch the task named (Landing a change), is titled as a Conventional Commit (see `conventional-commits`), and auto-merge is armed.
+- Required checks are green or running; nothing was bypassed.
+- Stacked work was submitted as a stack, not as independent PRs targeting each other by hand; independent PRs target the default branch.
+- The full check passed on the branch merged with the current default branch.
+- Every commit is on origin; the worker branches and worktrees you merged are gone.
+- Rules 7-9 held (nothing left to fold in, only a proven base merge after the verdict, no push to an armed or queued PR) and auto-merge is pinned with `--match-head-commit`.

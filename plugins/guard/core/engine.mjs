@@ -909,7 +909,7 @@ export function refTargets(command, rules, env = {}) {
     });
 }
 const refKey = ({ dir, repo, name }) => `${dir}|${repo ?? ""}|${name}`;
-// Remote branches go only when stale (github-workflow, Branch lifecycle): landed through a merged PR, or closed
+// Remote branches go only when stale (github-pull-requests, Branch lifecycle): landed through a merged PR, or closed
 // unmerged and idle STALE_DAYS. An open PR's head or base, the default branch and an archive ref never are.
 const STALE_DAYS = 7;
 const DAY_MS = 86_400_000;
@@ -1078,7 +1078,7 @@ export async function remoteDeleteFacts(command, rules, run, env = {}) {
         facts[i],
     ]));
 }
-// ---- Push scan: gitleaks over the commits a push would add (github-workflow, Branch lifecycle).
+// ---- Push scan: gitleaks over the commits a push would add (github-pull-requests, Branch lifecycle).
 const SCAN_MS = 20_000;
 const PLAIN_REV = /^[\w./@+^~{}-]+$/;
 // A repo's visibility is read once per process, by repo root.
@@ -1460,7 +1460,7 @@ function evaluatePrBatch(rules, facts) {
                     decision: {
                         action: "deny",
                         rule: rule.id,
-                        reason: `PR #${String(o.number)} already touches ${list(o.files)} and no running session owns its branch \`${o.head}\`: commit to that branch instead (one PR per coherent deliverable, \`github-workflow\` rule 1). Only if the split is one of ${rule.reasons.join(", ")}, add \`Split-Reason: <value>\` to the PR body (or \`SPLIT_REASON=<value>\` before \`gh stack submit\`) and retry.`,
+                        reason: `PR #${String(o.number)} already touches ${list(o.files)} and no running session owns its branch \`${o.head}\`: commit to that branch instead (one PR per coherent deliverable, \`github-pull-requests\` rule 1). Only if the split is one of ${rule.reasons.join(", ")}, add \`Split-Reason: <value>\` to the PR body (or \`SPLIT_REASON=<value>\` before \`gh stack submit\`) and retry.`,
                         attrs: { reason: "none" },
                     },
                 };
@@ -3547,6 +3547,7 @@ const RULE_FAMILY = {
     "terraform-local": "hint",
     "docker-build": "hint",
     "k8s-local": "hint",
+    "ci-local": "hint",
     read: "hint",
     edit: "hint",
     docs: "hint",
@@ -3558,6 +3559,9 @@ const RULE_FAMILY = {
     "terraform-file": "hint",
     "docker-file": "hint",
     "k8s-file": "hint",
+    "gha-file": "hint",
+    "ci-file": "hint",
+    "release-file": "hint",
     "guard-error": "guard-error",
     "routing-plan": "routing",
     "routing-model": "routing",

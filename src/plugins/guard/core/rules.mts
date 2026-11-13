@@ -12,7 +12,7 @@ export const rules: GuardRules = {
       id: "pr",
       match:
         "\\bgh\\s+(pr\\s+(create|merge|ready)|stack)\\b|\\bglab\\s+mr\\s+(create|merge)\\b|\\baz\\s+repos\\s+pr\\s+(create|update)\\b",
-      skills: ["github-workflow", "repo-standard", "ship", "land"],
+      skills: ["github-pull-requests", "repo-standard", "ship", "land"],
       why: "PRs land through auto-merge or the merge queue",
     },
     {
@@ -20,7 +20,9 @@ export const rules: GuardRules = {
       // Writes only: an explicit write method, or body fields (gh api then defaults to POST).
       match:
         "\\bgh\\s+api\\b(?=.*\\b(rulesets|protection)\\b)(?=.*(\\s(-X|--method)[\\s=]*(POST|PUT|PATCH|DELETE)\\b|\\s(-f|-F|--field|--raw-field|--input)\\b))",
-      skills: ["github-workflow"],
+      // `github-workflow` is this skill's name before dev-tools 2.0.0: a machine whose dev-tools cache is older than
+      // guard still satisfies this deny. Drop the alias once no supported dev-tools version ships the old name.
+      skills: ["github-pull-requests", "github-workflow"],
       why: "rulesets and branch protection have a house policy",
     },
     {
@@ -35,7 +37,7 @@ export const rules: GuardRules = {
       // `git tag -l` pass. Bare `git tag` lists, so a tag name or a creating flag must follow.
       match:
         "\\brelease-please\\s+(release-pr|github-release|bootstrap)\\b|\\bnpm\\s+version\\b|\\bgit\\s+tag\\s+(?!(-l|--list|-n\\d*|--contains|--no-contains|--points-at|--merged|--no-merged|-v|--verify|--sort|--format|--column|-i|--ignore-case)\\b)[^\\s;&|]",
-      skills: ["release-please", "semver"],
+      skills: ["releases", "release-please", "semver"],
       why: "versions and tags are owned by release automation",
     },
     // `remind`: a once-per-session hint instead of a deny, for skills the agent rarely loads on its own.
@@ -116,6 +118,15 @@ export const rules: GuardRules = {
       skills: ["kubernetes"],
       why: "manifests and charts follow the house Kubernetes rules (infra plugin)",
     },
+    {
+      id: "ci-local",
+      remind: true,
+      // Commands that change or dispatch CI, not ones that only watch it (`gh run list`, `gh run watch` pass).
+      match:
+        "(?:^|[;&|(\\n]\\s*)(?:actionlint|gh\\s+(?:workflow\\s+run|run\\s+rerun)|glab\\s+ci\\s+(?:lint|run|retry)|az\\s+pipelines\\s+(?:run|create|update))\\b",
+      skills: ["ci-cd", "github-actions"],
+      why: "pipelines follow the house CI/CD techniques",
+    },
   ],
   // Edits whose path matches: a once-per-session hint toward the skill.
   files: [
@@ -173,6 +184,26 @@ export const rules: GuardRules = {
       why: "manifests and charts follow the house Kubernetes rules (infra plugin)",
     },
     {
+      id: "gha-file",
+      match: "(^|/)\\.github/(workflows/[^/]+|actions/.+/action)\\.ya?ml$",
+      skills: ["github-actions", "ci-cd"],
+      why: "GitHub Actions workflows follow the house CI/CD techniques",
+    },
+    {
+      id: "ci-file",
+      match:
+        "(^|/)(\\.gitlab-ci\\.ya?ml|\\.gitlab/ci/.+\\.ya?ml|azure-pipelines[^/]*\\.ya?ml|Jenkinsfile[^/]*|\\.circleci/config\\.ya?ml|\\.buildkite/[^/]+\\.ya?ml|bitbucket-pipelines\\.ya?ml|\\.woodpecker(\\.ya?ml|/[^/]+\\.ya?ml))$",
+      skills: ["ci-cd"],
+      why: "pipelines follow the house CI/CD techniques",
+    },
+    {
+      id: "release-file",
+      match:
+        "(^|/)(release-please-config\\.json|\\.release-please-manifest\\.json|\\.goreleaser\\.ya?ml|\\.releaserc(\\.(json|ya?ml|c?js))?|release\\.config\\.(c?js|mjs|ts)|\\.changeset/[^/]+\\.md|CHANGELOG\\.md|fastlane/(Fastfile|Appfile)|\\.github/release\\.ya?ml)$",
+      skills: ["releases", "release-please"],
+      why: "releases follow the house release rules",
+    },
+    {
       id: "docs",
       match: "(^|/)(docs/.+\\.md|README\\.md|AGENTS\\.md)$",
       skills: ["docs-sync"],
@@ -214,7 +245,7 @@ export const rules: GuardRules = {
   // The stacked-PR hint on `gh pr create|merge`: the engine builds the text from the facts (the open PR below, the default branch).
   stack: {
     match: "\\bgh\\s+pr\\s+(create|merge)\\b",
-    why: "this branch builds on your open PR #<n> (`<below>`) but this PR targets `<default>`, so it carries #<n>'s commits. Build dependent work as a stack: `gh stack init`/`add`/`submit` where the repo has stacked PRs enabled (one small buildable PR per layer, the bottom layer on `<default>`, merged bottom-up with `gh stack merge`), otherwise base this PR on `<below>` and follow github-workflow, Stacks without `gh stack`.",
+    why: "this branch builds on your open PR #<n> (`<below>`) but this PR targets `<default>`, so it carries #<n>'s commits. Build dependent work as a stack: `gh stack init`/`add`/`submit` where the repo has stacked PRs enabled (one small buildable PR per layer, the bottom layer on `<default>`, merged bottom-up with `gh stack merge`), otherwise base this PR on `<below>` and follow github-pull-requests, Stacks without `gh stack`.",
   },
   // A push, or a command that may push, is scanned for secrets first (pushScanFacts); a finding denies, a scan that
   // cannot run asks. A push that only deletes is not scanned.

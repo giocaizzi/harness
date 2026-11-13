@@ -1,0 +1,10 @@
+schema_version: "1.0"
+name: ci-cd-negative
+description: "The model does not load ci-cd for a local Makefile target with no pipeline involved."
+tags: [trigger]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  prompt: "Add a fmt target to the Makefile that runs gofmt -w on every Go file."
+  max_turns: 15
+  allowed_tools: [Read, Glob, Grep, Edit, Write, Skill]

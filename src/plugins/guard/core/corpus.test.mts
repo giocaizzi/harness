@@ -45,7 +45,7 @@ const env = {
 };
 const loadedSkills = new Set([
   "conventional-commits",
-  "github-workflow",
+  "github-pull-requests",
   "wt",
   "release-please",
   "docs-sync",

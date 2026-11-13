@@ -49,7 +49,7 @@ Read [references/PATTERNS.md](./references/PATTERNS.md) for the config block and
 
 - `make check` gates every push and every agent stop. Note the full suite's wall time in the repo's `AGENTS.md`; when it reaches minutes, add a `make check-fast` target (lint plus the fast tests) that the guard's stop hook runs instead, while CI runs everything.
 - **Every test has a timeout**: `pytest-timeout` with `timeout = "300"` in config, several times the slowest legitimate test (`pytest --durations=15`; CI runners are slower than a laptop). Raise it per test with `@pytest.mark.timeout(n)` only with a reason. Without it a hung test holds the job until the forge kills it, with no traceback.
-- Coverage (`pytest-cov`, branch coverage) is reported by `make test`, never gated there. A coverage floor, where a repo has one, runs in CI's full tier and is never lowered to make a change pass.
+- Coverage (`pytest-cov`, branch coverage) is reported by `make test`, never gated there. A coverage floor, where a repo has one, runs in CI's full tier (`ci-cd`, Two tiers) and is never lowered to make a change pass.
 
 ## Gotchas
 

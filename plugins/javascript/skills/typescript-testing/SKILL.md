@@ -38,7 +38,7 @@ Vitest 5 is the runner for every package, with the config in [references/vitest.
 - **Snapshots** only for large structured output a reviewer can read: `toMatchFileSnapshot('__snapshots__/<name>.json')` or a short `toMatchInlineSnapshot()`, scrubbed of ids and times. Never snapshot a component tree or an error stack. Review snapshot diffs like code; `vitest -u` is not a fix.
 - **Property tests** with fast-check for every parser and decoder of outside input: `fc.assert(fc.property(arbitrary, input => ...))` asserting properties (never throws, round-trips, rejects what it should). A counterexample becomes a plain regression test.
 - **Type tests** for a library's public generics: `expectTypeOf` in `*.test-d.ts`, which the `unit` project type-checks.
-- **Integration tests** (a real database, Docker, a real third-party API) live in `*.int.test.ts`: the `integration` project, run by `make test-integration` in CI, not by `make test`.
+- **Integration tests** (a real database, Docker, a real third-party API) live in `*.int.test.ts`: the `integration` project, run by `make test-integration` in CI's full tier (`ci-cd`), not by `make test`.
 - **Timeouts**: the 5 s default stays. A test that needs more is slow for a reason to fix (real I/O, real sleeps), not a timeout to raise.
 
 Read [references/PATTERNS.md](./references/PATTERNS.md) for a table test, compacting repetitive tests, concurrent table tests, bug reproduction with test.fails, a fake, fake-timer backoff, an MSW client test and a fast-check property, all run with Vitest 5.1.

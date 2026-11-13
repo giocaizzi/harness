@@ -53,7 +53,7 @@ void test("lifecycleReminder: a feature branch with unpushed commits is told to 
     commit(work);
     const r = lifecycleReminder(work, NO_ENV, deps(NO_PR));
     assert.ok(r);
-    assert.equal(r.message, "`feat/x` has 1 commit(s) origin does not have: push them (`github-workflow`, Branch lifecycle).");
+    assert.equal(r.message, "`feat/x` has 1 commit(s) origin does not have: push them (`github-pull-requests`, Branch lifecycle).");
     assert.equal(r.key, `feat/x@${sh(work, "rev-parse", "HEAD")}`);
 });
 void test("lifecycleReminder: a pushed branch with no open PR is told to open a draft", () => {

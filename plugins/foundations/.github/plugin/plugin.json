@@ -1,6 +1,6 @@
 {
   "name": "foundations",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Language-neutral design and practice: domain-driven design, system design, architecture fitness tests, API design, design patterns; plus the api-reviewer agent",
   "author": {
     "name": "giocaizzi",

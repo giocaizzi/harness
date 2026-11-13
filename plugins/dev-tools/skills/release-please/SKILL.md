@@ -1,9 +1,9 @@
 ---
 name: release-please
-description: Working in a repo that uses release-please (release-please-config.json, manifest, or a Release PR) for automated versioning, changelogs and tags. Use when releasing, bumping versions, or editing release-please config.
+description: The release-please tool, in a repo that uses it (release-please-config.json, manifest, or a Release PR) for automated versioning, changelogs and tags. Use when releasing, bumping versions, or editing release-please config.
 ---
 
-release-please parses Conventional Commits on the default branch and maintains one Release PR. Merging that PR is the release: it bumps tracked version files, regenerates `CHANGELOG.md`, tags `vX.Y.Z` (`<package>-vX.Y.Z` in monorepos) and creates a GitHub Release. Downstream publish/deploy hangs off the release, not the PR; with the default `GITHUB_TOKEN` the tag starts no other workflow, so gate a job on the action's `release_created` output or use an App token ([references/release-flow.md](references/release-flow.md)). It depends on correctly typed commits; see `conventional-commits`.
+release-please parses Conventional Commits on the default branch and maintains one Release PR. Merging that PR is the release: it bumps tracked version files, regenerates `CHANGELOG.md`, tags `vX.Y.Z` (`<package>-vX.Y.Z` in monorepos) and creates a GitHub Release. Downstream publish/deploy hangs off the release, not the PR; with the default `GITHUB_TOKEN` the tag starts no other workflow, so gate a job on the action's `release_created` output or use an App token ([references/release-flow.md](references/release-flow.md)). It depends on correctly typed commits; see `conventional-commits`, and `semver` for which bump a change deserves. What gets a release at all, when to cut one, recovery and the concepts below hold for every tool: `releases`; this skill is how release-please does them.
 
 ## Files and ownership
 
@@ -31,9 +31,13 @@ Config snippets (extra-files types, monorepo layout, changelog sections) are in 
 
 ## Maintenance line
 
+When a line is worth opening and its rules: `releases`, references/maintenance-lines.md. With release-please:
+
 To patch an old minor after `main` has moved on, run release-please on a `release/X.Y.x` branch cut from the release tag, with its own Release PR. Every fix also lands on `main` as its own PR, or the next `main` release regresses it. Steps, workflow changes and gotchas (branch protection, tags, "latest" release): [references/release-flow.md](references/release-flow.md#maintenance-line).
 
 ## Manual release (last resort)
+
+A release that went wrong is handled as `releases` (references/recovery.md) says; a manual release is only for when the tool itself cannot run.
 
 Only if release-please is broken or an emergency cut is needed. The manifest, every tracked version file (check `extra-files`) and the tag must end up consistent, or the next automated release gets confused: set the version in all of them, update `CHANGELOG.md`, then `git tag -a vX.Y.Z`, push the tag, `gh release create vX.Y.Z`. After the next merge to `main`, verify a fresh Release PR opens correctly.
 

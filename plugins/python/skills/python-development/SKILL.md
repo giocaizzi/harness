@@ -18,7 +18,7 @@ The floor is the oldest CPython release still in bugfix support, so new code get
 - **The editor and the agent's LSP run pyright**, a different engine: use it to navigate (definitions, references, hover) and treat its diagnostics as hints. `make lint` (mypy) decides. ty (Astral) would be one engine for both; switch when it has a strict mode and reaches 1.0.
 - **Make is the command surface**: `help`, `fmt`, `lint` (lockfile, format, ruff, mypy; changes nothing), `test`, `check` (= `lint` + `test`). One predictable surface lets humans, CI and agents run the same checks; add the targets when a repo lacks them.
 
-Read [references/PROJECT_STRUCTURE.md](./references/PROJECT_STRUCTURE.md) when scaffolding: layout, `pyproject.toml`, Makefile, CI, scripts, workspaces.
+Read [references/PROJECT_STRUCTURE.md](./references/PROJECT_STRUCTURE.md) when scaffolding: layout, `pyproject.toml`, Makefile, CI, scripts, workspaces (the pipeline itself: `ci-cd`; on GitHub, `github-actions`).
 
 ## Imports
 

@@ -9,7 +9,7 @@ Category: infrastructure operations. Works the same for OpenTofu (`tofu` for `te
 
 ## Opinions
 
-1. Plans and applies run in CI/CD with short-lived federated identity (OIDC), never a local apply against shared state. A local plan needs explicit human approval: a killed plan can strand the state lock. Flow and stages: [PLAN_APPLY_FLOW.md](references/PLAN_APPLY_FLOW.md).
+1. Plans and applies run in CI/CD with short-lived federated identity (OIDC), never a local apply against shared state. A local plan needs explicit human approval: a killed plan can strand the state lock. Flow and stages: [PLAN_APPLY_FLOW.md](references/PLAN_APPLY_FLOW.md); the pipeline side (one run per state at a time, environments, the OIDC exchange) is `ci-cd`.
 2. The local gate has no state and no lock: `fmt -check`, `validate`, tflint and module tests, run through make targets. Tests: [TESTING.md](references/TESTING.md).
 3. Layout is `modules/`, `envs/<env>/` and `bootstrap/`; environments differ by variables, not by copied code. See [STRUCTURE.md](references/STRUCTURE.md).
 4. Remote backend with locking, one state per environment, small blast radius. Never edit state by hand; `force-unlock` is human-only. See [STATE.md](references/STATE.md).

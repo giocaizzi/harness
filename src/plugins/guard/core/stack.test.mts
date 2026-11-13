@@ -226,7 +226,7 @@ void test("stackFacts: failures and odd names give {}", async () => {
 });
 
 const below = { below: { number: 7, branch: "feat/a" }, base: "main" };
-const skills = ["pr", "ship", "github-workflow", "conventional-commits"];
+const skills = ["pr", "ship", "github-pull-requests", "conventional-commits"];
 const decide = (
   command: string,
   state: SessionState,

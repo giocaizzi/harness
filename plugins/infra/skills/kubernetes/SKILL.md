@@ -17,7 +17,7 @@ Category: infrastructure operations. Cluster state comes from reviewed files app
 6. RBAC is least privilege: one ServiceAccount per workload, namespaced Roles, no `cluster-admin`. Namespaces start with a default-deny NetworkPolicy.
 7. Pick Helm or Kustomize per deployable, not both. Helm: one chart per deployable, logic-light templates, `values.schema.json`, `helm lint` and `helm template | kubeconform` as make targets, chart tests. See [HELM.md](references/HELM.md).
 8. The same artifact (image digest, chart version) is promoted across environments; only values or overlays differ.
-9. Changes reach shared clusters from CI or GitOps, never a hand `kubectl apply` (same principle as Terraform). Prefer server-side apply.
+9. Changes reach shared clusters from CI or GitOps, never a hand `kubectl apply` (same principle as Terraform). Prefer server-side apply. The pipeline side (build once, promote by digest, one deploy per environment at a time, a GitOps commit of the new digest) is `ci-cd`.
 10. Operators: idempotent reconcile, status conditions, owner references, finalizers only for external cleanup, versioned and conversion-safe CRDs, tests in tiers with the heavy tier in the merge queue or nightly. See [OPERATORS.md](references/OPERATORS.md).
 
 ## Gotchas

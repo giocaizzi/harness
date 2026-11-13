@@ -163,6 +163,54 @@ void test("telemetry false positives stay fixed: read-only release, ruleset and 
     ])
         assert.equal(skill(defined(c)), rule, c);
 });
+void test("release tooling files hint at releases once; the release rule accepts releases", () => {
+    const rule = (path) => evaluateEdit({ path, state: fresh(), rules }).rule;
+    for (const path of [
+        "release-please-config.json",
+        ".release-please-manifest.json",
+        ".goreleaser.yaml",
+        ".releaserc.json",
+        "release.config.mjs",
+        ".changeset/brave-cats.md",
+        "packages/a/CHANGELOG.md",
+        "ios/fastlane/Fastfile",
+        ".github/release.yml",
+    ])
+        assert.equal(rule(path), "release-file", path);
+    for (const path of ["docs/release.md", ".github/workflows/release.yml"])
+        assert.notEqual(rule(path), "release-file", path);
+    assert.equal(evaluateEdit({
+        path: "CHANGELOG.md",
+        loadedSkills: new Set(["dev-tools:releases"]),
+        state: fresh(),
+        rules,
+    }).rule, undefined);
+    const command = "git tag v1.2.3";
+    assert.equal(evaluateCommand({ command, state: fresh(), host: calm, rules }).rule, "release");
+    assert.equal(evaluateCommand({
+        command,
+        loadedSkills: new Set(["dev-tools:releases"]),
+        state: fresh(),
+        host: calm,
+        rules,
+    }).rule, undefined);
+});
+void test("ruleset writes accept github-pull-requests or its old name github-workflow", () => {
+    const command = "gh api repos/o/r/rulesets -f name=x";
+    assert.equal(evaluateCommand({ command, state: fresh(), host: calm, rules }).rule, "ruleset");
+    for (const loaded of [
+        "dev-tools:github-pull-requests",
+        "github-pull-requests",
+        "dev-tools:github-workflow",
+    ])
+        assert.equal(evaluateCommand({
+            command,
+            loadedSkills: new Set([loaded]),
+            state: fresh(),
+            host: calm,
+            rules,
+        }).rule, undefined, loaded);
+});
 void test("--force-with-lease to a feature branch passes; plain force, + refspecs and main still ask", () => {
     const act = (command) => evaluateCommand({ command, state: fresh(), host: calm, rules }).action;
     for (const c of [
@@ -611,7 +659,7 @@ void test("blast radius: preview is appended and truncated", async () => {
 void test("commit messages and PR titles must be Conventional Commits", () => {
     const run = (command) => evaluateCommand({
         command,
-        loadedSkills: new Set(["ship", "github-workflow"]),
+        loadedSkills: new Set(["ship", "github-pull-requests"]),
         state: fresh(),
         host: calm,
         rules,
@@ -1313,6 +1361,76 @@ void test("an edit to a Terraform, Docker or Kubernetes file hints at its infra 
     const state = fresh();
     assert.equal(evaluateEdit({ path: "a.tf", state, rules }).rule, "terraform-file");
     assert.equal(evaluateEdit({ path: "b.tf", state, rules }).rule, undefined);
+});
+void test("CI commands and pipeline files hint at ci-cd or github-actions once, quiet with either loaded", () => {
+    for (const command of [
+        "actionlint",
+        "gh workflow run ci.yml --ref feat/x",
+        "gh run rerun 123 --failed",
+        "glab ci lint",
+        "az pipelines run --name ci",
+    ]) {
+        const state = fresh();
+        const first = evaluateCommand({ command, state, host: calm, rules });
+        assert.equal(first.rule, "ci-local", command);
+        assert.equal(first.action, "allow", command);
+        assert.equal(first.remind, true, command);
+        assert.equal(evaluateCommand({ command, state, host: calm, rules }).rule, undefined, command);
+        for (const loaded of ["dev-tools:ci-cd", "github-actions"])
+            assert.equal(evaluateCommand({
+                command,
+                loadedSkills: new Set([loaded]),
+                state: fresh(),
+                host: calm,
+                rules,
+            }).remind, undefined, `${command} with ${loaded}`);
+    }
+    // `--log-failed` is a CI fix on a PR: pr-fix keeps it.
+    assert.equal(evaluateCommand({
+        command: "gh run view 1 --log-failed",
+        state: fresh(),
+        host: calm,
+        rules,
+    }).rule, "pr-fix");
+    for (const command of [
+        "grep actionlint Makefile",
+        "gh run list --workflow ci.yml",
+        "gh run watch 123",
+        "az pipelines runs list --branch main",
+    ])
+        assert.equal(evaluateCommand({ command, state: fresh(), host: calm, rules }).rule, undefined, command);
+    const rule = (path) => evaluateEdit({ path, state: fresh(), rules }).rule;
+    for (const path of [
+        ".github/workflows/ci.yml",
+        "/r/.github/workflows/release.yaml",
+        ".github/actions/setup/action.yml",
+        "C:\\r\\.github\\workflows\\ci.yml",
+    ])
+        assert.equal(rule(path), "gha-file", path);
+    for (const path of [
+        ".gitlab-ci.yml",
+        ".gitlab/ci/test.yml",
+        "azure-pipelines.yml",
+        "build/azure-pipelines-release.yaml",
+        "Jenkinsfile",
+        ".circleci/config.yml",
+        ".buildkite/pipeline.yml",
+        "bitbucket-pipelines.yml",
+        ".woodpecker.yml",
+    ])
+        assert.equal(rule(path), "ci-file", path);
+    for (const path of [
+        ".github/dependabot.yml",
+        ".github/workflows/README.md",
+        "docs/ci.yml",
+    ])
+        assert.notEqual(rule(path), "gha-file", path);
+    assert.equal(evaluateEdit({
+        path: ".github/workflows/ci.yml",
+        loadedSkills: new Set(["dev-tools:ci-cd"]),
+        state: fresh(),
+        rules,
+    }).rule, undefined);
 });
 void test("an edit to an ADR, migration, contract, architecture config or domain file hints at its foundations skill once", () => {
     const rule = (path) => evaluateEdit({ path, state: fresh(), rules }).rule;
@@ -3497,7 +3615,7 @@ void test("protectedPathHit: an edit tool's repo-relative path against the floor
 });
 // ---- Push scan
 const SHIP_SKILLS = new Set([
-    "github-workflow",
+    "github-pull-requests",
     "repo-standard",
     "ship",
     "land",
