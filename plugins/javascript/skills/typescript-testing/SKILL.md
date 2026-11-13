@@ -1,6 +1,6 @@
 ---
 name: typescript-testing
-description: "Use when you write, fix, review or debug TypeScript or JavaScript tests (*.test.ts, *.spec.ts, vitest.config.ts), including flaky, slow or hanging tests, tests that sleep, mock modules or hit the network. Vitest, MSW, fakes."
+description: "Use whenever you write, fix, review or debug TypeScript or JavaScript tests (*.test.ts, *.spec.ts, vitest.config.ts), including flaky, slow or hanging tests, tests that sleep, mock modules, use snapshots or hit the network, and adding tests for a function, a retry or an HTTP client. Vitest, table tests with test.for, hand-written fakes over vi.mock, fake timers, MSW, snapshot discipline."
 ---
 
 # TypeScript Testing

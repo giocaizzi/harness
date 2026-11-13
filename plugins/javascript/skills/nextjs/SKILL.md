@@ -1,6 +1,6 @@
 ---
 name: nextjs
-description: "Use in a project that depends on next or has app/layout.tsx, when adding a page, dynamic route, route handler (app/api/**/route.ts), Server Action or caching, or fixing a Next.js build error. Next.js 16 App Router."
+description: "Use in any project whose package.json depends on next or that has an app/ directory with layout.tsx, before adding or changing a page or dynamic route, an API endpoint or form handler (app/api/**/route.ts), a Server Action or caching, or fixing caching or a build error, even when the user does not say Next.js. Next.js 16 App Router: server and client components, async params, Cache Components."
 ---
 
 # Next.js
