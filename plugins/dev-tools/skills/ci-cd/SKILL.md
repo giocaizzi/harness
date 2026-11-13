@@ -1,6 +1,6 @@
 ---
 name: ci-cd
-description: "Use when adding, changing or debugging a CI/CD pipeline or deploy job (.github/workflows/*.yml, .gitlab-ci.yml, Jenkinsfile, azure-pipelines.yml, .buildkite/), or when CI is slow, flaky, costly, serial or stuck. Fast, cheap, safe pipelines."
+description: "Use whenever you write, review or debug a pipeline or workflow file (.github/workflows/*.yml, .gitlab-ci.yml, azure-pipelines.yml, Jenkinsfile, .circleci/, .buildkite/), add or change a build, test, release or deploy job or a deploy strategy, or CI is slow, flaky, costly, stuck pending or serial. Job graph, sharding, concurrency, deploy locks, caching, change detection, build once and promote."
 ---
 
 # CI/CD

@@ -1,6 +1,6 @@
 ---
 name: github-actions
-description: "Use when adding, changing or fixing a GitHub Actions workflow (.github/workflows/*.yml, action.yml) or CI on GitHub: a job, a matrix of runtime versions, a trigger or schedule, a permissions error, cache, path filter, stuck check, slow or flaky CI."
+description: "Use whenever you write, review or debug a GitHub Actions workflow (.github/workflows/*.yml) or an action.yml, such as adding a job, step or matrix, a trigger or schedule, a permissions or token error, caching or path filters, a red or stuck required check, or slow, costly or flaky GitHub CI; also actionlint, gh run and gh workflow. Concurrency, the aggregate check, OIDC, pull_request_target."
 ---
 
 # GitHub Actions

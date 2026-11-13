@@ -1,6 +1,6 @@
 ---
 name: host-hygiene
-description: "Use before builds, emulators, full test suites or parallel agents; when the machine, disk or a worktree is slow, full or large; when old worktrees, branches or stashes pile up; or a setup step installs tools into a worktree."
+description: "Use before builds, emulators or simulators, full test suites, long-running services or dev servers, or parallel agents; when a make target or setup step installs tools, binaries or browsers into a worktree; when a worktree is slow to start or large; when the host or disk is slow or full; or when a repo has piled up worktrees, branches or stashes. Disk floor, load cap, semaphore, repo sweep."
 ---
 
 # Host hygiene

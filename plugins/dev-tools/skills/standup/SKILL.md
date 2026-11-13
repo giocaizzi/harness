@@ -1,6 +1,6 @@
 ---
 name: standup
-description: "Use when the user asks for a recap, status, progress, where things stand, what is left, what they need to decide or do next, or for the work in simpler words; /standup [detail|explain]."
+description: "Use when the user asks for a recap, status, summary, progress, where things stand, what is left, what they need to decide or approve, or asks for something from the current work in simpler words, or types /standup (detail, explain). A plain-language status: a three-line story (goal, progress as a count, next step), a numbered list of decisions to approve, then done, in flight and leftovers."
 ---
 
 # Standup
