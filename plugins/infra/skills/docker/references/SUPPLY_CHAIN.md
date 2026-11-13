@@ -33,7 +33,7 @@ ignored:
 ## Scan and provenance
 
 - CI scans every built image (Trivy or Grype) and fails on fixable high or critical findings; the same scan runs on a schedule for images already shipped.
-- Generate an SBOM and provenance attestation at build (`docker buildx build --sbom=true --provenance=mode=max`), and sign the pushed digest (cosign keyless) on release.
+- Generate an SBOM and provenance attestation at build (`docker buildx build --sbom=true --provenance=mode=max`), and, on release, sign the pushed digest (cosign keyless) where a consumer verifies signatures (an admission policy, a customer); the provenance attestation is required either way (`releases`).
 
 ## Multi-arch
 

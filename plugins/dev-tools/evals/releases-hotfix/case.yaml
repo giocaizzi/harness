@@ -1,0 +1,10 @@
+schema_version: "1.0"
+name: releases-hotfix
+description: "The model loads releases when asked to hotfix an older version in a repo with tags and no release tool."
+tags: [trigger]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  prompt: "Users on 1.4 hit a crash we already fixed on main, which is at 2.1 now. Get them a fixed 1.4 build."
+  max_turns: 15
+  allowed_tools: [Read, Glob, Grep, Edit, Write, Skill]

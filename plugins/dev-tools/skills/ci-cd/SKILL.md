@@ -53,6 +53,7 @@ Anything else with shared state (Terraform state, a release, a database migratio
 
 ## Delivery
 
+- **A release is not a deploy.** A release names a version that consumers install; a deploy puts an artifact in an environment. Libraries are released, services are deployed by digest, store apps are both: `releases` owns what gets a version, when, and recovery; this skill owns the jobs that publish and deploy.
 - **Build once, promote by digest.** The artifact the gate tested is the one each environment deploys; environment config is applied at deploy time, never baked into a rebuild.
 - **Environments carry the secrets.** Each deploy runs in a named environment with its own scoped secrets and approvals; nothing deploys with repository-wide credentials. Fetching and masking a secret inside a job: `secrets-handling`.
 - **Federated identity over stored keys.** The pipeline's OIDC token is exchanged for short-lived cloud credentials (`terraform` for the cloud side); no long-lived publish or deploy token where the target accepts OIDC.

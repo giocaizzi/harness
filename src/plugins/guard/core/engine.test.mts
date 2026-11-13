@@ -246,6 +246,49 @@ void test("telemetry false positives stay fixed: read-only release, ruleset and 
     assert.equal(skill(defined(c)), rule, c);
 });
 
+void test("release tooling files hint at releases once; the release rule accepts releases", () => {
+  const rule = (path: string) =>
+    evaluateEdit({ path, state: fresh(), rules }).rule;
+  for (const path of [
+    "release-please-config.json",
+    ".release-please-manifest.json",
+    ".goreleaser.yaml",
+    ".releaserc.json",
+    "release.config.mjs",
+    ".changeset/brave-cats.md",
+    "packages/a/CHANGELOG.md",
+    "ios/fastlane/Fastfile",
+    ".github/release.yml",
+  ])
+    assert.equal(rule(path), "release-file", path);
+  for (const path of ["docs/release.md", ".github/workflows/release.yml"])
+    assert.notEqual(rule(path), "release-file", path);
+  assert.equal(
+    evaluateEdit({
+      path: "CHANGELOG.md",
+      loadedSkills: new Set(["dev-tools:releases"]),
+      state: fresh(),
+      rules,
+    }).rule,
+    undefined,
+  );
+  const command = "git tag v1.2.3";
+  assert.equal(
+    evaluateCommand({ command, state: fresh(), host: calm, rules }).rule,
+    "release",
+  );
+  assert.equal(
+    evaluateCommand({
+      command,
+      loadedSkills: new Set(["dev-tools:releases"]),
+      state: fresh(),
+      host: calm,
+      rules,
+    }).rule,
+    undefined,
+  );
+});
+
 void test("ruleset writes accept github-pull-requests or its old name github-workflow", () => {
   const command = "gh api repos/o/r/rulesets -f name=x";
   assert.equal(

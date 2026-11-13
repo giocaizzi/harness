@@ -18,7 +18,7 @@ Category: code scaffolding and templates. One image per deployable, built once a
 7. **Secrets via `RUN --mount=type=secret`**, never `ARG`, `ENV` or `COPY`: they stay in the image history. Where the value comes from: `secrets-handling`.
 8. **Exec-form `CMD`/`ENTRYPOINT`** (`["app"]`) so signals reach PID 1. One process per container.
 9. **Health by probe or `HEALTHCHECK`**; the orchestrator's probe wins where there is one. Runtime detail: [RUNTIME.md](references/RUNTIME.md).
-10. **The same image is promoted** across environments; configuration arrives at runtime (env, mounted files), never per-environment image variants. Tags carry the git SHA plus the version.
+10. **The same image is promoted** across environments; configuration arrives at runtime (env, mounted files), never per-environment image variants. Tags carry the git SHA, plus the version when the deployable has one (`releases`).
 11. **Supply chain**: OCI labels (`source`, `revision`), hadolint as a `make lint` step, an image scan in CI, multi-arch only on release (the pipeline that builds once and promotes: `ci-cd`). Detail: [SUPPLY_CHAIN.md](references/SUPPLY_CHAIN.md).
 12. **Compose is for local development and tests only**, split by purpose: `compose.yaml` plus override files.
 

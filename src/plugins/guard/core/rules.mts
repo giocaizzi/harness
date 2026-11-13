@@ -37,7 +37,7 @@ export const rules: GuardRules = {
       // `git tag -l` pass. Bare `git tag` lists, so a tag name or a creating flag must follow.
       match:
         "\\brelease-please\\s+(release-pr|github-release|bootstrap)\\b|\\bnpm\\s+version\\b|\\bgit\\s+tag\\s+(?!(-l|--list|-n\\d*|--contains|--no-contains|--points-at|--merged|--no-merged|-v|--verify|--sort|--format|--column|-i|--ignore-case)\\b)[^\\s;&|]",
-      skills: ["release-please", "semver"],
+      skills: ["releases", "release-please", "semver"],
       why: "versions and tags are owned by release automation",
     },
     // `remind`: a once-per-session hint instead of a deny, for skills the agent rarely loads on its own.
@@ -195,6 +195,13 @@ export const rules: GuardRules = {
         "(^|/)(\\.gitlab-ci\\.ya?ml|\\.gitlab/ci/.+\\.ya?ml|azure-pipelines[^/]*\\.ya?ml|Jenkinsfile[^/]*|\\.circleci/config\\.ya?ml|\\.buildkite/[^/]+\\.ya?ml|bitbucket-pipelines\\.ya?ml|\\.woodpecker(\\.ya?ml|/[^/]+\\.ya?ml))$",
       skills: ["ci-cd"],
       why: "pipelines follow the house CI/CD techniques",
+    },
+    {
+      id: "release-file",
+      match:
+        "(^|/)(release-please-config\\.json|\\.release-please-manifest\\.json|\\.goreleaser\\.ya?ml|\\.releaserc(\\.(json|ya?ml|c?js))?|release\\.config\\.(c?js|mjs|ts)|\\.changeset/[^/]+\\.md|CHANGELOG\\.md|fastlane/(Fastfile|Appfile)|\\.github/release\\.ya?ml)$",
+      skills: ["releases", "release-please"],
+      why: "releases follow the house release rules",
     },
     {
       id: "docs",

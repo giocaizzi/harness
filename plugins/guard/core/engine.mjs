@@ -3561,6 +3561,7 @@ const RULE_FAMILY = {
     "k8s-file": "hint",
     "gha-file": "hint",
     "ci-file": "hint",
+    "release-file": "hint",
     "guard-error": "guard-error",
     "routing-plan": "routing",
     "routing-model": "routing",

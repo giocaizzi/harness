@@ -44,6 +44,7 @@ Techniques only; success is relative to the repo's own baseline, and security is
 ## Security
 
 - `permissions: {}` (or `contents: read`) at the workflow level, and each job grants only what it needs; `id-token: write` only on the job that exchanges the OIDC token.
+- Every published artifact gets a build provenance attestation (`releases`): `actions/attest` in the publishing job with `id-token: write` and `attestations: write`; consumers check it with `gh attestation verify`. Trusted publishing to PyPI and npm attests on its own.
 - Third-party actions pinned by full commit SHA with a version comment (`repo-standard`); the update bot moves the pins.
 - Secrets live in environments, not the repository, and reach a step only through `env:` (`secrets-handling` for the rest).
 - `pull_request_target` and `workflow_run` run with the base repo's secrets: never check out or run the PR's code in them.

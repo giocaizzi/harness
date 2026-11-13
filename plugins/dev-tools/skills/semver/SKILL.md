@@ -3,6 +3,8 @@ name: semver
 description: Choosing MAJOR.MINOR.PATCH from the real compatibility impact of a change, including pre-1.0 and deprecation policy. Use when deciding if a change is breaking, planning a release, reviewing a version bump, or writing versioning policy.
 ---
 
+This skill is for things consumers install (libraries, CLIs, plugins, charts). A deployed service or a store app is versioned as `releases` says, not by SemVer.
+
 Versions are a compatibility contract, not a status light: consumers decide whether to upgrade from them and automation decides what to publish. Classify from compatibility impact, never from code size. A wrong bump either hides a breaking change or creates upgrade noise.
 
 The public contract is whatever consumers are expected to rely on: documented APIs and exports, CLI flags and exit codes, config keys and defaults, HTTP schemas and status codes, events/hooks, file formats, migration guarantees, plugin manifests, supported runtime ranges. Check [references/public-surface-checklist.md](references/public-surface-checklist.md) when a change touches several surfaces or you are unsure what counts.

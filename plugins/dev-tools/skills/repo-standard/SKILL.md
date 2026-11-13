@@ -41,7 +41,7 @@ description: The baseline every repository should meet (CI with one aggregate `c
 - **Dev mode:** a component with a dev mode follows `references/dev-mode.md`.
 - **Python uses uv**, never poetry (unless the repo already does; see the rule above).
 - **Publish and deploy jobs run in a named environment** (`pypi`, `production`, ...) and read environment-scoped secrets, never repository-wide ones. Where the plan offers no environments (e.g. private GitHub repos on the free plan), say so as a gap.
-- **No long-lived publish tokens when OIDC exists**: publish packages with trusted publishing (PyPI: GitHub Actions or GitLab CI, `id-token: write`, no token) from the release.
+- **No long-lived publish tokens when OIDC exists**: publish packages with trusted publishing (PyPI: GitHub Actions or GitLab CI, `id-token: write`, no token) from the release, and attach build provenance to every published artifact (`releases`).
 
 Roll out lowest risk first: settings, CI with `check`, and only then the protection that requires it. Protection requiring a check that does not exist blocks every merge.
 
@@ -55,7 +55,7 @@ Roll out lowest risk first: settings, CI with `check`, and only then the protect
 | TypeScript | the repo's package manager, typecheck + lint + tests (see `javascript-typescript`). |
 | `Dockerfile` | hadolint in `lint` (see `docker`). |
 | Infrastructure | validate in `lint` (`terraform validate`, `bicep build`, `helm lint`). |
-| Releases | release-please; the changelog comes from it (see `release-please`). Package publishing is triggered by the release, in its environment. |
+| Releases | By kind (`releases`): libraries, CLIs and plugins use release-please, the changelog comes from it (see `release-please`), and publishing is triggered by the release, in its environment; deployed services ship by digest with no release tool; store apps use a release train. |
 | Coverage | Codecov or similar, informational only, never a required check; a floor, where a repo wants one, lives inside `make test` as a ratchet that may only rise. |
 
 Optional: pre-commit (mirrors `make lint`, never replaces CI), `CODEOWNERS`.
