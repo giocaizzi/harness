@@ -1,10 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync, } from "node:fs";
+import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync, } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { isExactModel, resolveDirty, parseArgs, record, } from "../scripts/eval-record.mjs";
+import { grantedTools, isExactModel, removeTemp, resolveDirty, parseArgs, record, } from "../scripts/eval-record.mjs";
 const quiet = () => undefined;
 /** A git repo with plugins/acme (one case) and a results dir per given startedAt. */
 function fixture(runs, plugin = "acme") {
@@ -84,6 +84,9 @@ void test("parseArgs", () => {
         since: "2026",
         dirty: null,
         cleanTemp: false,
+        allow: null,
+        printAllow: null,
+        sweepTemp: false,
     });
     assert.throws(() => parseArgs([]), /usage/);
     assert.throws(() => parseArgs(["p", "--model"]), /needs a value/);
@@ -105,6 +108,9 @@ void test("records one row per case, model from the trace, and is idempotent", (
         since: null,
         dirty: null,
         cleanTemp: false,
+        allow: null,
+        printAllow: null,
+        sweepTemp: false,
     };
     assert.equal(record(opts, quiet), 1);
     assert.deepEqual(f.read(), [
@@ -167,6 +173,9 @@ void test("without a trace, needs --model; --commit resolves a short sha; --sinc
         since: "2026-01-15T00:00:00Z",
         dirty: null,
         cleanTemp: false,
+        allow: null,
+        printAllow: null,
+        sweepTemp: false,
     };
     assert.throws(() => record(base, quiet), /pass --model/);
     assert.equal(record({ ...base, model: "claude-test-2" }, quiet), 1);
@@ -185,6 +194,9 @@ void test("refuses results of another plugin", () => {
         since: null,
         dirty: null,
         cleanTemp: false,
+        allow: null,
+        printAllow: null,
+        sweepTemp: false,
     }, quiet), /for other, not acme/);
 });
 void test("dirty: auto reads tracked plugin changes, except results and the scoreboard; unknown leaves it out", () => {
@@ -203,6 +215,9 @@ void test("dirty: auto reads tracked plugin changes, except results and the scor
         since: null,
         dirty: null,
         cleanTemp: false,
+        allow: null,
+        printAllow: null,
+        sweepTemp: false,
     };
     record(opts, quiet);
     assert.equal("dirty" in (f.read()[0] ?? {}), false);
@@ -225,6 +240,9 @@ void test("since compares instants: a run in the same second as since is recorde
         since: "2026-01-01T00:00:54Z",
         dirty: null,
         cleanTemp: false,
+        allow: null,
+        printAllow: null,
+        sweepTemp: false,
     };
     assert.equal(record(opts, quiet), 1);
 });
@@ -248,6 +266,9 @@ void test("never records an alias: an alias --model without a trace fails", () =
         since: null,
         dirty: null,
         cleanTemp: false,
+        allow: null,
+        printAllow: null,
+        sweepTemp: false,
     };
     assert.throws(() => record(opts, quiet), /alias, not an exact model id/);
 });
@@ -264,9 +285,63 @@ void test("--clean-temp removes the kept e-* temp dirs after reading the model, 
         since: null,
         dirty: null,
         cleanTemp: true,
+        allow: null,
+        printAllow: null,
+        sweepTemp: false,
     };
     assert.throws(() => record(opts, quiet), /pass --model/);
     assert.equal(f.read()[0]?.model, "claude-test-1");
     for (const t of f.temps)
         assert.equal(existsSync(t), false, t);
+});
+void test("removeTemp deletes a sealed kept dir: read-only parent, mode-000 subdirs", () => {
+    const dir = mkdtempSync(join(tmpdir(), "e-"));
+    mkdirSync(join(dir, "out"));
+    writeFileSync(join(dir, "out", "trace.jsonl"), "{}\n");
+    mkdirSync(join(dir, "sealed", "home", "deep"), { recursive: true });
+    writeFileSync(join(dir, "sealed", "home", "deep", "f"), "x");
+    chmodSync(join(dir, "sealed", "home", "deep"), 0o000);
+    chmodSync(join(dir, "sealed", "home"), 0o000);
+    chmodSync(join(dir, "sealed"), 0o000);
+    chmodSync(dir, 0o500);
+    removeTemp(dir);
+    assert.equal(existsSync(dir), false);
+    removeTemp(dir);
+});
+void test("allow: recorded sorted when given (empty means none granted), left out otherwise", () => {
+    const f = fixture([
+        { id: "r", startedAt: "2026-01-01T00:00:00.000Z", trace: true },
+    ]);
+    const base = {
+        pluginDir: f.pluginDir,
+        dirs: [],
+        commit: null,
+        model: null,
+        since: null,
+        dirty: null,
+        cleanTemp: false,
+        allow: "Write  Edit",
+        printAllow: null,
+        sweepTemp: false,
+    };
+    record(base, quiet);
+    assert.deepEqual(f.read()[0]?.allow, ["Edit", "Write"]);
+    assert.deepEqual(parseArgs(["p", "--allow", ""]).allow, "");
+    assert.deepEqual(parseArgs(["p", "--print-allow", "trigger"]).printAllow, "trigger");
+    assert.equal(parseArgs(["--sweep-temp"]).sweepTemp, true);
+});
+void test("grantedTools: union of the tag's declared tools minus the read-only ones, Bash only if declared", () => {
+    const root = mkdtempSync(join(tmpdir(), "eval-allow-"));
+    const add = (name, tags, tools) => {
+        mkdirSync(join(root, "evals", name), { recursive: true });
+        writeFileSync(join(root, "evals", name, "case.yaml"), `name: ${name}\ntags: ${tags}\nexecution:\n  prompt: x\n  allowed_tools: ${tools}\n`);
+    };
+    add("a", "[trigger]", "[Read, Glob, Grep, Skill]");
+    assert.deepEqual(grantedTools(root, "trigger"), []);
+    add("b", "[trigger]", "[Read, Edit, Write, Skill]");
+    add("c", "[routing]", "[Bash, Agent]");
+    assert.deepEqual(grantedTools(root, "trigger"), ["Edit", "Write"]);
+    assert.deepEqual(grantedTools(root, "routing"), ["Agent", "Bash"]);
+    assert.deepEqual(grantedTools(root, "none"), []);
+    assert.deepEqual(grantedTools(join(root, "missing"), "trigger"), []);
 });
