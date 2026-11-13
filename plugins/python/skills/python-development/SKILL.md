@@ -1,6 +1,6 @@
 ---
 name: python-development
-description: "Use when you write or change Python (.py), pyproject.toml or a ruff config: a feature, fix, refactor, review or scaffold, even when the user does not mention conventions. Python 3.14, uv, ruff, mypy --strict."
+description: "Use when you write or change Python (.py), pyproject.toml or a ruff config, even a one-line bug fix, and even when the user does not mention conventions. House rules for Python 3.14: imports, typing, errors, layout, uv, ruff, mypy --strict."
 ---
 
 # Python Development (3.14+)
