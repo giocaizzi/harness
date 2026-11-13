@@ -1,6 +1,6 @@
 ---
 name: docs-sync
-description: "Use when a change renames, adds or removes a make target, command, flag, config key or procedure that a doc, README or runbook mentions, even if the user did not mention docs, and before editing any doc or AGENTS.md; /docs-sync [path]."
+description: "Use when renaming, adding or removing a make target, command, flag, config key or procedure, even if the user did not mention docs: its README, docs and runbook mentions must change with it; also before editing any doc; /docs-sync [path]."
 ---
 
 # Docs sync
