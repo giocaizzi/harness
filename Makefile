@@ -79,18 +79,18 @@ contract-test: ## Run contract v2 kit against a runner's manifest (docs/guard.md
 
 EVAL_PLUGINS = $(if $(PLUGIN),plugins/$(PLUGIN),$(patsubst %/evals/,%,$(sort $(dir $(wildcard plugins/*/evals/)))))
 
-eval: ## Run the plugins' skill evals and record their scores (calls a model, costs money, not part of check or CI).  Usage: make eval [PLUGIN=<plugin>] [TAG=trigger|routing] [MODEL=<model>] [RUNS=<n>] [ALLOW=<tools>] [MAX_COST=<usd>] [CASE=<glob>] [J=<n>]
+eval: ## Run the plugins' skill evals and record their scores (calls a model, costs money, not part of check or CI).  Usage: make eval [PLUGIN=<plugin>] [TAG=trigger|routing] [MODEL=<model>] [RUNS=<n>] [ALLOW=<tools>] [MAX_COST=<usd>]
 	@for d in $(EVAL_PLUGINS); do \
 		test -d $$d/evals || { echo "$$d has no evals/"; exit 1; }; \
 		since=$$(date -u +%Y-%m-%dT%H:%M:%SZ); \
-		echo "== $$d"; claude plugin eval $$d --tag $(or $(TAG),trigger) --ablation none --scaffold --trust-plugin --no-publish $(if $(MODEL),--model $(MODEL)) $(if $(RUNS),--runs $(RUNS)) $(if $(ALLOW),--allow-tools $(ALLOW)) $(if $(MAX_COST),--max-cost-usd $(MAX_COST)) $(if $(CASE),--case '$(CASE)') $(if $(J),-j $(J)); s=$$?; \
-		node scripts/eval-record.mjs $$d --since $$since $(if $(MODEL),--model $(MODEL)) || exit 1; \
+		echo "== $$d"; claude plugin eval $$d --tag $(or $(TAG),trigger) --ablation none --scaffold --trust-plugin --no-publish --keep-temp $(if $(MODEL),--model $(MODEL)) $(if $(RUNS),--runs $(RUNS)) $(if $(ALLOW),--allow-tools $(ALLOW)) $(if $(MAX_COST),--max-cost-usd $(MAX_COST)); s=$$?; \
+		node scripts/eval-record.mjs $$d --since $$since --dirty auto --clean-temp $(if $(MODEL),--model $(MODEL)) || exit 1; \
 		test $$s -eq 0 || exit $$s; \
 	done
 
-eval-record: ## Append eval results to the plugins' committed evals/scores.jsonl (skips rows already there).  Usage: make eval-record [PLUGIN=<plugin>] [DIRS="<results dir>..."] [COMMIT=<sha>] [MODEL=<model id>]
+eval-record: ## Append eval results to the plugins' committed evals/scores.jsonl (skips rows already there).  Usage: make eval-record [PLUGIN=<plugin>] [DIRS="<results dir>..."] [COMMIT=<sha>] [MODEL=<model id>] [DIRTY=true|false]
 	@for d in $(EVAL_PLUGINS); do \
-		node scripts/eval-record.mjs $$d $(DIRS) $(if $(COMMIT),--commit $(COMMIT)) $(if $(MODEL),--model $(MODEL)) || exit 1; \
+		node scripts/eval-record.mjs $$d $(DIRS) $(if $(COMMIT),--commit $(COMMIT)) $(if $(MODEL),--model $(MODEL)) $(if $(DIRTY),--dirty $(DIRTY)) || exit 1; \
 	done
 
 eval-scores: ## Print the latest recorded score of each eval case (needs jq).  Usage: make eval-scores [PLUGIN=<plugin>]

@@ -1,0 +1,10 @@
+schema_version: "1.0"
+name: github-pull-requests-merge-queue
+description: "The model loads github-pull-requests when asked to stop concurrent merges from breaking main."
+tags: [trigger]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  prompt: "Two PRs that each passed CI broke main when they merged at the same time. Make sure each PR is tested against the latest main before it lands."
+  max_turns: 15
+  allowed_tools: [Read, Glob, Grep, Skill]

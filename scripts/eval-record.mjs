@@ -4,9 +4,11 @@
 // skipped. Runbook: docs/skills.md (Evals).
 //
 //   node scripts/eval-record.mjs <plugin-dir> [results-dir...] [--commit <sha>] [--model <id>] [--since <iso>]
+//     [--dirty auto|true|false] [--clean-temp]
 import { execFileSync } from "node:child_process";
-import { appendFileSync, existsSync, readdirSync, readFileSync, statSync, } from "node:fs";
-import { basename, join } from "node:path";
+import { appendFileSync, existsSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, } from "node:fs";
+import { tmpdir } from "node:os";
+import { basename, dirname, join, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import YAML from "yaml";
 const round = (n) => Math.round(n * 1e6) / 1e6;
@@ -22,6 +24,7 @@ export function rows(agg, ctx) {
             run: ctx.run,
             date: agg.startedAt,
             commit: ctx.commit,
+            ...(ctx.dirty === undefined ? {} : { dirty: ctx.dirty }),
             harness: "claude-code",
             harnessVersion: agg.claudeVersion,
             model: ctx.model,
@@ -92,16 +95,23 @@ export function parseArgs(argv) {
         commit: null,
         model: null,
         since: null,
+        dirty: null,
+        cleanTemp: false,
     };
     const positional = [];
     for (let i = 0; i < argv.length; i++) {
         const a = argv[i] ?? "";
-        if (a === "--commit" || a === "--model" || a === "--since") {
+        if (a === "--commit" ||
+            a === "--model" ||
+            a === "--since" ||
+            a === "--dirty") {
             const v = argv[++i];
             if (!v)
                 throw new Error(`${a} needs a value`);
             opts[a.slice(2)] = v;
         }
+        else if (a === "--clean-temp")
+            opts.cleanTemp = true;
         else if (a.startsWith("--"))
             throw new Error(`unknown option ${a}`);
         else
@@ -109,12 +119,63 @@ export function parseArgs(argv) {
     }
     const [pluginDir, ...dirs] = positional;
     if (!pluginDir)
-        throw new Error("usage: eval-record <plugin-dir> [results-dir...] [--commit <sha>] [--model <id>] [--since <iso>]");
+        throw new Error("usage: eval-record <plugin-dir> [results-dir...] [--commit <sha>] [--model <id>] [--since <iso>] [--dirty auto|true|false] [--clean-temp]");
     opts.pluginDir = pluginDir;
     opts.dirs = dirs;
     return opts;
 }
 const git = (dir, args) => execFileSync("git", ["-C", dir, ...args], { encoding: "utf8" }).trim();
+/** An exact model id (`claude-opus-5-5`), not an alias (`opus`, `sonnet`, `opus[1m]`). */
+export function isExactModel(model) {
+    return /^claude-[a-z0-9.-]*\d[a-z0-9.-]*$/.test(model);
+}
+const real = (p) => {
+    try {
+        return realpathSync(p);
+    }
+    catch {
+        return p;
+    }
+};
+/**
+ * The temp dirs `claude plugin eval --keep-temp` kept for a run's executions (`<tmp>/e-XXXXXX`, holding
+ * `out/trace.jsonl`); only dirs of that shape directly in the system temp dir or /tmp, never anything else.
+ */
+export function tempDirs(agg) {
+    const roots = new Set([real(tmpdir()), real("/tmp")]);
+    const dirs = new Set();
+    for (const c of agg.cases)
+        for (const a of c.arms.with ?? []) {
+            const p = a.tracePath;
+            if (!p?.endsWith(`${sep}out${sep}trace.jsonl`))
+                continue;
+            const d = dirname(dirname(p));
+            if (/^e-[A-Za-z0-9]+$/.test(basename(d)) && roots.has(real(dirname(d))))
+                dirs.add(d);
+        }
+    return [...dirs];
+}
+/**
+ * `auto`: whether tracked files under the plugin have uncommitted changes (results and the scoreboard excepted);
+ * `true`/`false` as given; null: unknown, so the field is left out.
+ */
+export function resolveDirty(pluginDir, dirty) {
+    if (dirty === null)
+        return undefined;
+    if (dirty === "true" || dirty === "false")
+        return dirty === "true";
+    if (dirty !== "auto")
+        throw new Error(`--dirty takes auto, true or false, not ${dirty}`);
+    return (git(pluginDir, [
+        "status",
+        "--porcelain",
+        "--untracked-files=no",
+        "--",
+        ".",
+        ":(exclude)evals/results",
+        ":(exclude)evals/scores.jsonl",
+    ]) !== "");
+}
 /** Appends the rows of each results dir not yet recorded; returns the number of rows written. */
 export function record(opts, log = console.log) {
     const resultsRoot = join(opts.pluginDir, "evals", "results");
@@ -131,6 +192,7 @@ export function record(opts, log = console.log) {
         "--verify",
         `${opts.commit ?? "HEAD"}^{commit}`,
     ]);
+    const dirty = resolveDirty(opts.pluginDir, opts.dirty);
     const out = join(opts.pluginDir, "evals", "scores.jsonl");
     const seen = recorded(existsSync(out) ? readFileSync(out, "utf8") : "");
     const name = basename(opts.pluginDir.replace(/[\\/]+$/, ""));
@@ -140,31 +202,44 @@ export function record(opts, log = console.log) {
         if (!existsSync(file))
             continue;
         const agg = JSON.parse(readFileSync(file, "utf8"));
-        if (opts.since && agg.startedAt < opts.since)
+        if (opts.since && Date.parse(agg.startedAt) < Date.parse(opts.since))
             continue;
+        try {
+            written += recordRun(agg, dir);
+        }
+        finally {
+            if (opts.cleanTemp)
+                for (const t of tempDirs(agg))
+                    rmSync(t, { recursive: true, force: true });
+        }
+    }
+    log(`${String(written)} row(s) appended to ${out}`);
+    return written;
+    function recordRun(agg, dir) {
         const run = basename(dir.replace(/[\\/]+$/, ""));
         if (agg.suite.plugins[0]?.name !== name)
             throw new Error(`${run}: results are for ${agg.suite.plugins[0]?.name ?? "no plugin"}, not ${name}`);
         const fresh = agg.cases.filter((c) => !seen.has(`${run}/${c.name}`));
         if (fresh.length === 0)
-            continue;
+            return 0;
         const model = traceModel(agg) ?? opts.model;
         if (!model)
             throw new Error(`${run}: no trace left to read the model from; pass --model <exact model id>`);
+        if (!isExactModel(model))
+            throw new Error(`${run}: ${model} is an alias, not an exact model id; no trace names the exact one, so pass --model <exact model id>`);
         const lines = rows({ ...agg, cases: fresh }, {
             run,
             commit,
+            dirty,
             model,
             tags: (c) => caseTags(c, [agg.suite.root, opts.pluginDir]),
         });
         appendFileSync(out, lines.map((r) => JSON.stringify(r) + "\n").join(""));
         for (const r of lines)
             seen.add(`${r.run}/${r.case}`);
-        written += lines.length;
         log(`${run}: ${String(lines.length)} row(s) for ${model} at ${commit.slice(0, 7)}`);
+        return lines.length;
     }
-    log(`${String(written)} row(s) appended to ${out}`);
-    return written;
 }
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
     try {
