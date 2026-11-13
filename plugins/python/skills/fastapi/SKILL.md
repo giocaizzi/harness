@@ -1,6 +1,6 @@
 ---
 name: fastapi
-description: "Use when testing, adding or changing anything in a FastAPI app: TestClient tests of its endpoints, an endpoint or router, request validation, a Pydantic schema, an auth or API-key dependency, middleware or settings. House rules for FastAPI."
+description: "Use when testing, adding or changing anything in a FastAPI app: TestClient tests, an endpoint or router, request validation, a Pydantic schema, settings from the environment, an auth or API-key dependency, middleware. House rules for FastAPI."
 compatibility: "Python >=3.14, Pydantic >=2.9.0, Starlette >=1.0.0"
 ---
 
