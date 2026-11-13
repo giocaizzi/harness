@@ -1,6 +1,6 @@
 ---
 name: system-design
-description: "Use when a hot path needs a cache, a feature crosses a process boundary or calls a slow dependency, adding a queue, event or datastore, changing a schema with production data, or writing an ADR. House rules for trade-offs and failure modes."
+description: "Use when designing a feature that crosses a process boundary or calls a slow dependency, a hot read path needs a cache, adding a queue, event or datastore, changing a schema with production data, deciding between options, or writing an ADR."
 ---
 
 # System design
