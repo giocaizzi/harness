@@ -1,6 +1,6 @@
 ---
 name: design-patterns
-description: "Use when the same code is copied or wrapped in several places, deciding whether to add an interface, base class, factory or layer, a growing if/elif or switch on a type, or reviewing a design for over-engineering. Which pattern fits."
+description: "Use when deciding whether to add an interface, base class, factory or layer, when the same code is wrapped or copied in several places, when a conditional on a type keeps growing, or when reviewing a design for over-engineering. When to abstract and which pattern fits: rule of three, SOLID as review questions, strategy, decorator, repository, composition root, anti-patterns."
 ---
 
 # Design patterns

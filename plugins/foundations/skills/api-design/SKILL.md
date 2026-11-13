@@ -1,6 +1,6 @@
 ---
 name: api-design
-description: "Use when renaming, removing or changing a field or endpoint that clients read (is it breaking?), adding an endpoint, error format or OpenAPI/proto file; also pagination, retries, idempotency, versioning, long-running operations."
+description: "Use when adding or changing an HTTP endpoint, request or response schema, error format or OpenAPI or proto file, when a client retries or pages through results, a call too slow to answer synchronously, or deciding whether a change (a renamed or removed field) is breaking. API contract design: the error shape, versioning, pagination, idempotency keys, long-running operations, OpenAPI drift."
 ---
 
 # API design

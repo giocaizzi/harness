@@ -1,6 +1,6 @@
 ---
 name: domain-driven-design
-description: "Use when business rules are spread across controllers and queries, an invariant must hold or a state forbids changes, money is passed as primitives, two areas share one package, or adding a use case, port or adapter. DDD, ports and adapters."
+description: "Use when designing or restructuring a service's domain, deciding where business logic or a dependency goes, a business rule or invariant must hold, a concept such as money is passed around as primitives, two areas share one package, or adding a use case, port or adapter, even when the user does not say DDD. Domain-driven design with ports and adapters, in Go and Python."
 ---
 
 # Domain-driven design with ports and adapters
