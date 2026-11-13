@@ -1,0 +1,10 @@
+schema_version: "1.0"
+name: sqlalchemy-model
+description: The model loads sqlalchemy when adding a model with a many-to-many relationship.
+tags: [trigger]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  prompt: "Add a Tag model with a many-to-many relationship to Post."
+  max_turns: 8
+  allowed_tools: [Read, Glob, Grep, Edit, Write, Skill]

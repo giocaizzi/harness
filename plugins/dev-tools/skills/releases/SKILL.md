@@ -1,9 +1,11 @@
 ---
 name: releases
-description: "Cutting, publishing and maintaining releases on any stack and with any tool: what gets a versioned release (libraries, CLIs, plugins) and what does not (deployed services ship by digest; mobile and store apps use a version plus a build number), release cadence, release PRs, tags, changelogs and release notes, pre-releases and release candidates, hotfixes and maintenance lines, yanking a bad version, publishing to a registry or store, provenance attestations, and the latest marker. Use when someone wants to release, ship, publish, tag, cut a version or hotfix, write release notes or a changelog, set up a release pipeline, choose a release tool (release-please, semantic-release, Changesets, goreleaser, fastlane), or a release went wrong."
+description: "Use when someone wants to release, ship, publish (PyPI, npm, a registry or store), tag or cut a version or hotfix, write release notes or a changelog, ship a pre-release or release candidate, yank a bad version, set up a release pipeline, choose a release tool (release-please, semantic-release, Changesets, goreleaser, fastlane), or a release went wrong. What gets a release, on any stack."
 ---
 
 # Releases
+
+Covers any stack and tool (release-please, semantic-release, Changesets, goreleaser, fastlane): cadence, release PRs, tags, release notes, pre-releases, hotfixes and maintenance lines, yanking a bad version, publishing to a registry or store, provenance attestations and the latest marker.
 
 A release gives an artifact a name that people outside the repo rely on. The version number is `semver`'s; the commit input to it is `conventional-commits`'; the pipeline that builds, publishes and deploys is `ci-cd` (on GitHub, `github-actions`); the house tool for libraries is `release-please`. This skill is what holds whichever of those is in play.
 

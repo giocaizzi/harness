@@ -37,5 +37,5 @@ Skill content here.
 EOF
 
 echo "Created plugins/$plugin/skills/$name/SKILL.md."
-echo "Next: edit the description (10–1024 chars, agent-triggering phrase) and the body."
+echo 'Next: edit the description (at most 400 chars, "Use when ..." first) and the body.'
 echo "Then bump the plugin version and update README.md, then run \`make validate\`."

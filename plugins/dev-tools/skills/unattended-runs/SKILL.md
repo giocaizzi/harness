@@ -1,6 +1,6 @@
 ---
 name: unattended-runs
-description: Running agents with nobody at the keyboard - overnight, autopilot, headless or auto-approve sessions - without stalling on a prompt or doing damage. Use before starting or resuming a long autonomous run, when launching a harness with an auto-approve mode (bypass, --allow-all, --auto, -a never), or when an agent hangs waiting for confirmation.
+description: "Use before an overnight, autopilot or headless run, when launching a harness in an auto-approve mode (bypass, --allow-all, --auto, -a never), or when an agent hangs on a prompt nobody answers."
 ---
 
 # Unattended runs

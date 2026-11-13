@@ -1,9 +1,11 @@
 ---
 name: ci-cd
-description: "How to make any CI/CD or DevOps pipeline fast, cheap and safe, on any platform (GitHub Actions, GitLab CI, Azure Pipelines, Jenkins, Buildkite, CircleCI): the job graph and critical path, parallel jobs, sharding and matrices, run concurrency and cancellation, deploy locks, caching, change detection, timeouts, retries and flakes, build-once-promote delivery, GitOps, environments, rollback and federated credentials. Use whenever you write, review or debug a pipeline or workflow file (.github/workflows/*.yml, .gitlab-ci.yml, azure-pipelines.yml, Jenkinsfile, .circleci/config.yml, .buildkite/), add or change a build, test, release or deploy job or a deploy strategy, or CI is slow, flaky, costly, stuck pending or serial."
+description: "Use whenever you write, review or debug a pipeline or workflow file (.github/workflows/*.yml, .gitlab-ci.yml, azure-pipelines.yml, Jenkinsfile, .circleci/, .buildkite/), add or change a build, test, release or deploy job or a deploy strategy, or CI is slow, flaky, costly, stuck pending or serial. Job graph, sharding, concurrency, deploy locks, caching, change detection, build once and promote."
 ---
 
 # CI/CD
+
+For any platform: GitHub Actions, GitLab CI, Azure Pipelines, Jenkins, Buildkite, CircleCI.
 
 The techniques, platform-neutral. Each platform's spelling is in its own place: GitHub Actions in the `github-actions` skill, GitLab CI, Azure Pipelines and Jenkins in [references/platforms.md](references/platforms.md). The repo baseline (one aggregate required `check`, task runner, secret scan) is `repo-standard`. When a repo already has its own pipeline conventions, follow them and propose changes separately.
 

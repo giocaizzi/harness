@@ -1,0 +1,10 @@
+schema_version: "1.0"
+name: python-testing-patching
+description: The model loads python-testing when mock.patch-heavy tests need rewriting.
+tags: [trigger]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  prompt: "test_notifier.py patches four things with mock.patch and breaks on every refactor. Rewrite it."
+  max_turns: 8
+  allowed_tools: [Read, Glob, Grep, Edit, Write, Skill]

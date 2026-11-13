@@ -1,0 +1,10 @@
+schema_version: "1.0"
+name: go-testing-race
+description: The model loads go-testing when a Go test reports a data race.
+tags: [trigger]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  prompt: "go test -race reports a data race in TestCacheConcurrent. Fix it."
+  max_turns: 8
+  allowed_tools: [Read, Glob, Grep, Edit, Write, Skill]

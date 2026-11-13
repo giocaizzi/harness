@@ -1,6 +1,6 @@
 ---
 name: architecture-fitness
-description: "Enforce architecture with checks that fail instead of documents: dependency-direction tests, adapter conformance suites, lint baseline ratchets and coverage floors, wired into make check. Tools per language: import-linter for Python, depguard or an import test for Go, the ESLint and dependency-cruiser boundary rules for TypeScript. Use when a layering or import rule was broken (again), when adding a rule that one module must never import another, when a lint or warning backlog must stop growing without being fixed now, or when adding a second implementation of a port."
+description: "Use when a layering or import rule keeps being broken, two implementations of a port must behave the same, or lint warnings or coverage must stop getting worse. Checks that fail in make check instead of documents."
 ---
 
 # Architecture Fitness

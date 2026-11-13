@@ -1,6 +1,6 @@
 ---
 name: github-pull-requests
-description: "Landing changes on main via pull requests: the branch lifecycle (push every commit, draft PR on first push, when branches and worktrees are deleted), stacked PRs with `gh stack`, auto-merge, merge queues, and rulesets that require CI. Use when pushing a branch, opening, splitting or merging PRs, removing branches or worktrees, or setting up branch protection or a merge queue."
+description: "Use when pushing a branch, opening, splitting, stacking or merging PRs, setting up branch protection, a ruleset or a merge queue, or removing merged branches and worktrees. Branch lifecycle, gh stack, auto-merge."
 ---
 
 ## Principle

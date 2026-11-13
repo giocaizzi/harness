@@ -1,0 +1,10 @@
+schema_version: "1.0"
+name: terraform-provider-pin
+description: The model loads terraform when a provider upgrade broke the plan.
+tags: [trigger]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  prompt: "init pulled a new AWS provider version and broke the plan. Stop that from happening."
+  max_turns: 8
+  allowed_tools: [Read, Glob, Grep, Edit, Write, Skill]

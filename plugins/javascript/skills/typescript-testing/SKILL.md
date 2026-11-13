@@ -1,6 +1,6 @@
 ---
 name: typescript-testing
-description: "TypeScript and Node.js test rules: Vitest, table tests with test.for, hand-written fakes instead of vi.mock, fake timers, MSW for HTTP, property tests with fast-check, test maintenance and compacting, test.fails for bug handoff, concurrent execution, snapshot discipline, isolation and timeouts. Use whenever you write, fix, review or debug TypeScript or JavaScript tests (*.test.ts, *.spec.ts, vitest.config.ts), including flaky, slow or hanging tests, tests that sleep, mock modules or hit the network, and adding tests for a function, a retry or an HTTP client."
+description: "Use whenever you write, fix, review or debug TypeScript or JavaScript tests (*.test.ts, *.spec.ts, vitest.config.ts), including flaky, slow or hanging tests, tests that sleep, mock modules, use snapshots or hit the network, and adding tests for a function, a retry or an HTTP client. Vitest, table tests with test.for, hand-written fakes over vi.mock, fake timers, MSW, snapshot discipline."
 ---
 
 # TypeScript Testing

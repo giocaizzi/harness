@@ -1,0 +1,10 @@
+schema_version: "1.0"
+name: domain-driven-design-aggregate
+description: The model loads domain-driven-design when an order invariant must be enforced after shipping.
+tags: [trigger]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  prompt: "Items can still be added to an order after it has shipped. Make that impossible."
+  max_turns: 8
+  allowed_tools: [Read, Glob, Grep, Edit, Write, Skill]

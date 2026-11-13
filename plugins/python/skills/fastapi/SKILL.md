@@ -1,6 +1,6 @@
 ---
 name: fastapi
-description: FastAPI with Pydantic v2 for production REST APIs. Use when writing routes, schemas, dependencies, middleware, settings, or tests for a FastAPI app.
+description: "Use when testing, adding or changing anything in a FastAPI app: TestClient tests, an endpoint or router, request validation, a Pydantic schema, settings from the environment, an auth or API-key dependency, middleware. House rules for FastAPI."
 compatibility: "Python >=3.14, Pydantic >=2.9.0, Starlette >=1.0.0"
 ---
 

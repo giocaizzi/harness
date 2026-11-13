@@ -1,6 +1,6 @@
 ---
 name: go-testing
-description: "Go test rules: the standard testing package with go-cmp instead of testify, table tests with t.Parallel, test compacting and maintenance, xfail subtests for bug handoff, fakes over mocks, golden files, httptest, testing/synctest for time and concurrency, fuzzing, b.Loop benchmarks, the race detector. Use whenever you write, fix, review or debug Go tests (_test.go), including flaky, slow or hanging tests and tests that sleep or use testify."
+description: "Use when you write, fix, review or debug Go tests (_test.go), including flaky, slow or hanging tests, tests that sleep, hit the network or use testify. Table tests, go-cmp, fakes, httptest, synctest, fuzzing, -race."
 ---
 
 # Go Testing

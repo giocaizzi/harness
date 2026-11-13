@@ -1,0 +1,10 @@
+schema_version: "1.0"
+name: javascript-typescript-bugfix
+description: The model loads javascript-typescript when fixing a bug in a TypeScript function.
+tags: [trigger]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  prompt: "formatDate in src/format.ts returns 'Invalid Date' for ISO strings with a timezone offset. Fix it."
+  max_turns: 8
+  allowed_tools: [Read, Glob, Grep, Edit, Write, Skill]

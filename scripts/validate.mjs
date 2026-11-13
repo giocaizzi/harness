@@ -466,6 +466,26 @@ const VSCODE_HOOK_EVENTS = new Set([
     "ErrorOccurred",
 ]);
 const KEBAB = /^[a-z0-9]+(-[a-z0-9]+)*$/;
+/** The agentskills.io spec budgets about 100 tokens of metadata per skill, and Claude Code's listing budget drops long descriptions first. */
+const MAX_SKILL_DESCRIPTION = 400;
+/** The error for a skill whose frontmatter description is over the limit, else null (invalid YAML is reported elsewhere). */
+export function skillDescriptionError(skillDir, front) {
+    if (front === undefined)
+        return null;
+    let description;
+    try {
+        description = YAML.parse(front)
+            ?.description;
+    }
+    catch {
+        return null;
+    }
+    if (typeof description !== "string" ||
+        description.length <= MAX_SKILL_DESCRIPTION) {
+        return null;
+    }
+    return `skills/${skillDir}: description is ${String(description.length)} characters, over the ${String(MAX_SKILL_DESCRIPTION)} limit; Claude Code drops long descriptions from its skill listing (docs/skills.md)`;
+}
 /** Errors for every evals/<case>/case.yaml under pluginsRoot that is not valid YAML. */
 export function evalCaseErrors(pluginsRoot) {
     const errors = [];
@@ -533,6 +553,9 @@ function checkVscode(r) {
                         errors.push(`skills/${skillDir}: frontmatter is not valid YAML (${firstLine}); quote the value`);
                     }
                 }
+                const descriptionError = skillDescriptionError(skillDir, front);
+                if (descriptionError !== null)
+                    errors.push(descriptionError);
                 const nameMatch = /^name:\s*['"]?([^'"\r\n]+?)['"]?\s*$/m.exec(text);
                 const name = nameMatch?.[1];
                 if (name !== skillDir || !KEBAB.test(name)) {

@@ -1,6 +1,6 @@
 ---
 name: terraform
-description: "Terraform and OpenTofu conventions: repository layout (modules, envs, bootstrap), plan and apply only in CI with federated identity, remote state and locking, moved blocks for refactors, module design and versioning, lockfile and provider pinning, secrets in state, drift detection, and offline tests with mock providers. Use when writing or changing Terraform or OpenTofu: .tf, .tfvars or .tftest.hcl files, modules, state, providers, importing or renaming a resource, or a plan or apply step in CI. Not for Dockerfiles or Kubernetes manifests."
+description: "Use when writing or changing Terraform or OpenTofu: .tf, .tfvars or .tftest.hcl files, modules, state, providers and the lockfile, importing or renaming a resource, or a plan or apply step in CI. Layout (modules, envs, bootstrap), remote state and locking, moved blocks, module versioning, provider pinning, drift, mock-provider tests. Not for Dockerfiles or Kubernetes manifests."
 ---
 
 # Terraform and OpenTofu

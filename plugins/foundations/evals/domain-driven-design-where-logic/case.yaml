@@ -1,0 +1,10 @@
+schema_version: "1.0"
+name: domain-driven-design-where-logic
+description: The model loads domain-driven-design when asked where scattered business rules belong.
+tags: [trigger]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  prompt: "The discount rules are spread across the controller and the SQL queries. Where should they live?"
+  max_turns: 8
+  allowed_tools: [Read, Glob, Grep, Skill]

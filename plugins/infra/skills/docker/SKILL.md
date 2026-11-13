@@ -1,6 +1,6 @@
 ---
 name: docker
-description: "Dockerfiles, .dockerignore, compose files and image builds: multi-stage builds with dev/test/prod stages, minimal non-root final images, base images pinned by tag and digest, BuildKit cache and secret mounts, layer caching, exec-form CMD, health checks, OCI labels, hadolint, image scanning, tagging and promoting one image across environments. Use when writing or changing a Dockerfile, .dockerignore or compose file, containerizing a service, building or tagging an image, or fixing a slow, cache-busting, oversized or leaking image build."
+description: "Use when writing or changing a Dockerfile, .dockerignore or compose file, containerizing a service, building, tagging or promoting an image, or fixing a slow, cache-busting, oversized, root or leaking image build. Multi-stage dev/test/prod builds, minimal non-root final images, base images pinned by tag and digest, BuildKit cache and secret mounts, health checks, hadolint, image scanning."
 ---
 
 # Docker

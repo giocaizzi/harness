@@ -1,6 +1,6 @@
 ---
 name: python-development
-description: "House rules for Python 3.14+ code on top of the Google Python Style Guide: module imports, typing, errors, abstractions and module layout, uv, ruff with every rule on, mypy --strict and make targets. Use whenever you write or change Python (.py) code, a pyproject.toml or a ruff config, whether adding a function or feature, fixing a bug, refactoring, reviewing or scaffolding a project, even when the user does not mention conventions."
+description: "Use when you write or change Python (.py), pyproject.toml or a ruff config: a feature, fix, refactor or review, even a one-line bug fix, and even when conventions are not mentioned. House rules: typing, errors, uv, ruff, mypy --strict."
 ---
 
 # Python Development (3.14+)

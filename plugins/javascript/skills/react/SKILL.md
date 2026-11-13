@@ -1,6 +1,6 @@
 ---
 name: react
-description: "React 19+ rules: components, state, effects, data fetching, forms, Tailwind v4, testing, Storybook. Use whenever you write, change, debug or review a React component or hook (.tsx or .jsx), such as adding UI behaviour, fixing an effect that loops or refetches, or handling loading and error states."
+description: "Use whenever you write, change, debug or review a React component or hook (.tsx or .jsx), such as adding UI behaviour or a form, fixing an effect that loops or refetches, handling loading and error states, styling with Tailwind, or writing component tests or Storybook stories. React 19+ rules: components, state, effects, data fetching, forms, Tailwind v4, testing, Storybook."
 ---
 
 # React

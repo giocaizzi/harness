@@ -1,11 +1,13 @@
 ---
 name: kubernetes
-description: "Kubernetes conventions for manifests, Helm charts and values, Kustomize overlays, CRDs, RBAC, NetworkPolicy, controllers and operators (kubebuilder, controller-runtime), and rollouts: workload defaults (requests and limits, probes, non-root securityContext, PodDisruptionBudget, digest-pinned images), secrets, least-privilege RBAC, delivery from CI or GitOps, reconcile idempotency, status conditions, finalizers, and the tiered operator tests (unit, envtest, kind). Use when writing or changing Kubernetes manifests, a Helm chart or values file, a kustomize overlay, a CRD, a Role or ServiceAccount, a controller or operator, or deploying or rolling out a service to a cluster."
+description: "Use when writing or changing Kubernetes manifests, a Helm chart or values file, a kustomize overlay, a CRD, a Role or ServiceAccount, a controller or operator (kubebuilder, controller-runtime), or deploying or rolling out a service to a cluster, including pods that crash or get OOMKilled. Workload defaults (requests and limits, probes, non-root, PodDisruptionBudget), least-privilege RBAC, envtest."
 ---
 
 # Kubernetes
 
 Category: infrastructure operations. Cluster state comes from reviewed files applied by CI or GitOps; the defaults below are what a reviewer checks first.
+
+Scope: manifests, Helm charts and values, Kustomize overlays, CRDs, RBAC, NetworkPolicy, controllers and operators (kubebuilder, controller-runtime) and rollouts.
 
 ## Opinions
 

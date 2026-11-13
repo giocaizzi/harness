@@ -1,0 +1,10 @@
+schema_version: "1.0"
+name: python-development-bugfix
+description: The model loads python-development when fixing a bug in a Python function.
+tags: [trigger]
+context:
+  scaffold_script: scaffold.sh
+execution:
+  prompt: "parse_price('1,234.50') returns 1.0. Fix it."
+  max_turns: 8
+  allowed_tools: [Read, Glob, Grep, Edit, Write, Skill]

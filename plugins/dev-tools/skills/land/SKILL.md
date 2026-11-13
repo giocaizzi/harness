@@ -1,6 +1,6 @@
 ---
 name: land
-description: Wait for CI on a PR, fix trivial failures, merge it through auto-merge or the merge queue (a direct squash merge once every check passed where auto-merge is unavailable), then sync main, remove the branch and worktree, and verify the change works where it lands. Use when the user asks to merge, land or verify a PR, or types /land or /verify (optionally a PR number).
+description: "Use when the user asks to merge, land or verify a PR, or types /land or /verify (optionally a PR number). Waits for CI on the PR, fixes trivial failures, merges through auto-merge or the merge queue (a direct squash merge where neither exists), then syncs main, removes the branch and worktree, and verifies the change works where it lands."
 ---
 
 # Land

@@ -1,6 +1,6 @@
 ---
 name: javascript-typescript
-description: "House rules for TypeScript, JavaScript and Node.js on top of the Google TypeScript Style Guide: TypeScript 7, Node 26 LTS, pnpm, ESLint 10 with typescript-eslint and Prettier, the strict tsconfig, no any, casts, ! or enums, named exports, snake_case files, zod at the boundaries, discriminated unions over class hierarchies, when to abstract. Use whenever you write, change or review .ts, .tsx or .js code, a package.json, tsconfig.json or eslint.config.js, whether adding a function or feature, fixing a bug, refactoring, scaffolding a package or reviewing before a merge, even when the user does not mention conventions."
+description: "Use whenever you write, change or review .ts, .tsx or .js code, a package.json, tsconfig.json or eslint.config.js, whether adding a function or feature, fixing a bug, refactoring, scaffolding a package or reviewing before a merge, even when the user does not mention conventions. House rules: TypeScript 7, Node 26, pnpm, ESLint 10, strict tsconfig, no any or enums, zod at the boundaries."
 ---
 
 # TypeScript and Node.js

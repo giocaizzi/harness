@@ -1,6 +1,6 @@
 ---
 name: python-testing
-description: "pytest rules for Python tests: plain asserts, parametrize with ids, fakes over mocks and patching, factories over fixture chains, injected clocks, hypothesis for parsers, syrupy snapshots, async tests, xdist with random order, test compacting and maintenance, xfail for bug handoff, per-test timeouts, coverage. Use whenever you write, fix, review or debug Python tests (test_*.py, conftest.py, pytest config), including flaky, slow or hanging tests and tests that mock, patch, sleep or share fixtures."
+description: "Use when you write, fix, review or debug Python tests (test_*.py, conftest.py, pytest config), including flaky, slow or hanging tests, tests that sleep, mock, patch, hit the network or share fixtures. pytest, fakes, hypothesis."
 ---
 
 # Python Testing
