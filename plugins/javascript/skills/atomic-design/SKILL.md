@@ -1,6 +1,6 @@
 ---
 name: atomic-design
-description: "Use when structuring a UI kit or component folders, deciding where a component goes, or adding lint rules for import boundaries (feature to feature, UI kit to features, layers, cycles). Atomic design."
+description: "Use when pulling a layout or component that several pages repeat into a shared one, structuring a UI kit or component folders, deciding where a component goes, or adding lint rules for import boundaries. House rules: atomic design."
 ---
 
 # Atomic design
