@@ -1,11 +1,13 @@
 ---
 name: nextjs
-description: "Next.js 16 App Router rules and gotchas: server and client components, async params and cookies, Cache Components, route handlers, env vars. Use in any project whose package.json depends on next or that has an app/ directory with layout.tsx, before adding or changing a page or dynamic route, an API endpoint or form handler (app/api/**/route.ts), a Server Action or caching, or fixing a build error, even when the user does not say Next.js. Load it alongside javascript-typescript and react, not instead of them."
+description: "Use in a project that depends on next or has app/layout.tsx, when adding a page, dynamic route, route handler (app/api/**/route.ts), Server Action or caching, or fixing a Next.js build error. Next.js 16 App Router."
 ---
 
 # Next.js
 
 Assume the App Router and Next.js 16. The APIs move fast: check the current Next.js docs (a docs or library-lookup tool if available) before relying on memory for anything version-specific.
+
+Load it alongside `javascript-typescript` and `react`, not instead of them. It applies in any project whose package.json depends on `next` or that has an `app/` directory with `layout.tsx`, even when the user does not say Next.js.
 
 ## Structure and naming
 

@@ -1,6 +1,6 @@
 ---
 name: repo-standard
-description: The baseline every repository should meet (CI with one aggregate `check`, task runner, secret scan, PR title check, update bot, protected default branch, squash merge) and how each practice maps onto GitHub, GitLab and Azure DevOps. Use when setting up or auditing a repo, opening or merging a PR/MR on any forge, or deciding which convention applies in a repo that has its own.
+description: "Use when setting up or auditing a repo (CI with one aggregate check, task runner, secret scan, PR title check, update bot, branch protection) or opening or merging a PR/MR on GitHub, GitLab or Azure DevOps."
 ---
 
 # Repo standard

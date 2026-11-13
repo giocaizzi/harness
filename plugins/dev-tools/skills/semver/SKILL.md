@@ -1,6 +1,6 @@
 ---
 name: semver
-description: Choosing MAJOR.MINOR.PATCH from the real compatibility impact of a change, including pre-1.0 and deprecation policy. Use when deciding if a change is breaking, planning a release, reviewing a version bump, or writing versioning policy.
+description: "Use when deciding if a change is breaking, choosing the next MAJOR.MINOR.PATCH, reviewing a version bump, planning a deprecation or writing versioning policy, including pre-1.0. Compatibility impact decides the bump."
 ---
 
 This skill is for things consumers install (libraries, CLIs, plugins, charts). A deployed service or a store app is versioned as `releases` says, not by SemVer.

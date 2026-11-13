@@ -1,6 +1,6 @@
 ---
 name: go-development
-description: "House rules for Go 1.26+ code: errors, context, slog, goroutines and worker pools, os/exec process supervision, go tool dependencies, golangci-lint v2, cross-builds and goreleaser. Use whenever you write or change Go (.go) code, a go.mod, a .golangci.yml or a .goreleaser.yaml, whether adding a feature, fixing a bug, refactoring, reviewing or scaffolding, even when the user does not mention conventions."
+description: "Use when you write or change Go (.go), a go.mod, .golangci.yml or .goreleaser.yaml: a feature, bug fix, refactor, review or scaffold. Errors, context, slog, worker pools, golangci-lint v2, cross-builds."
 ---
 
 # Go Development (1.26+)

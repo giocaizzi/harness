@@ -1,6 +1,6 @@
 ---
 name: host-hygiene
-description: Keeping a shared dev machine healthy when several agents run at once - disk floor, load cap, heavy-command semaphore, device leases, service registry, repo sweep (worktrees, branches, stashes left behind) and plugin-cache sweep, shared tool and package stores (Go build and module cache, npm/pnpm, uv, Playwright, envtest), memory hygiene, plan-quota awareness. Use before builds, emulators or simulators, full test suites, long-running services or parallel agents, when a make target or setup step installs tools, binaries or browsers into a worktree, when a worktree is slow to start or large, when the host or disk is slow or full, or when a repo has piled up worktrees, branches or stashes.
+description: "Use before builds, emulators, full test suites or parallel agents, when the machine is slow or the disk full, when old worktrees, branches or stashes pile up, or a setup step installs tools into a worktree."
 ---
 
 # Host hygiene
@@ -40,7 +40,7 @@ Why each rule exists, and the incidents behind it: [references/lessons.md](refer
 
 ## Shared stores
 
-A make target or agent step never installs tools, binaries, browsers or package caches into a git worktree. They go to a per-user, version-keyed, concurrency-safe store; a worktree holds only source plus build output that is cheap to regenerate. Otherwise every parallel worktree repeats each install (disk, cold start, a rebuild after every toolchain bump), and read-only files written there (the Go module cache, envtest binaries) make `git worktree remove` fail halfway and leave a dir only the owner can delete. Per ecosystem: [references/shared-stores.md](references/shared-stores.md).
+A make target or agent step never installs tools, binaries, browsers or package caches into a git worktree. They go to a per-user, version-keyed, concurrency-safe store; a worktree holds only source plus build output that is cheap to regenerate. Otherwise every parallel worktree repeats each install (disk, cold start, a rebuild after every toolchain bump), and read-only files written there (the Go module cache, envtest binaries) make `git worktree remove` fail halfway and leave a dir only the owner can delete. Stores covered: Go build and module cache, npm/pnpm, uv, Playwright, envtest. Per ecosystem: [references/shared-stores.md](references/shared-stores.md).
 
 - **Go.** `GOFLAGS=-trimpath` so worktrees share compiled packages (the `go-development` skill). Run tools with `go tool`: since Go 1.24 its executables live in the build cache, keyed by the compiler, so one build per toolchain serves every worktree with no install step. envtest without `--bin-dir` uses setup-envtest's per-user store, one copy per Kubernetes version.
 - **Downloaded binaries.** A prebuilt binary that must be downloaded goes into a per-user cache dir whose path carries the tool and version (plus the Go version when built from source), written to a temp dir beside it and renamed into place (or under a lock) so a concurrent agent never runs a half-written binary. Keep the location in a make variable the environment can override (e.g. `TOOLS_DIR ?= ...`) and use the same logic in CI.

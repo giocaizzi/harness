@@ -1,6 +1,6 @@
 ---
 name: secrets-handling
-description: Handling secrets safely with any vault or password manager (Bitwarden bw/bws, 1Password, pass, cloud secret managers), OS keyrings and encrypted config - never printed, never inlined, never stored in plaintext. Use when a task touches credentials, tokens, API keys, .env files, a keyring, a vault or password manager, or secret injection.
+description: "Use when a task touches credentials, tokens, API keys, passwords, .env files, a keyring, a vault (Bitwarden bw/bws, 1Password, pass), or a secret that is logged, printed or committed. Never print, inline or store in plaintext."
 ---
 
 # Secrets handling

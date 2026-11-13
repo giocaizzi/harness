@@ -1,6 +1,6 @@
 ---
 name: pr-fix
-description: Fix unresolved review comments and failing CI on a PR, then commit and push. Use when the user asks to address review comments or CI failures, or types /pr-fix (optionally a PR number).
+description: "Use when a PR has review comments to address or a red check to fix: 'address the review comments', 'CI is red on PR 15', 'make lint green', 'changes requested'; /pr-fix [PR]. Fixes, commits and pushes."
 ---
 
 # PR fix

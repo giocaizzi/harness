@@ -1,6 +1,6 @@
 ---
 name: ship
-description: Commit the current changes as small Conventional Commits, push every commit and open a draft PR on the first push. Use when the user asks to commit, push, save or back up work, or open a PR, or types /ship (optionally "ready").
+description: "Use when the user asks to commit, push, save or back up work, or open a PR ('commit what I have', 'get it up for review'); /ship [ready]. Small Conventional Commits, push every commit, draft PR on first push."
 ---
 
 # Ship

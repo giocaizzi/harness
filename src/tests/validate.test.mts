@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { evalCaseErrors } from "../scripts/validate.mjs";
+import { evalCaseErrors, skillDescriptionError } from "../scripts/validate.mjs";
 
 const writeCase = (
   root: string,
@@ -43,4 +43,20 @@ void test("evalCaseErrors: invalid YAML and duplicate keys fail, naming the file
     errors[1] ?? "",
     /^plugins\/python\/evals\/dupe\/case\.yaml: invalid YAML/,
   );
+});
+
+void test("skillDescriptionError: 250 characters pass, 251 fail naming the skill and the limit", () => {
+  const front = (n: number) => `name: x\ndescription: ${"a".repeat(n)}\n`;
+  assert.equal(skillDescriptionError("x", front(250)), null);
+  const error = skillDescriptionError("x", front(251));
+  assert.match(
+    error ?? "",
+    /^skills\/x: description is 251 characters, over the 250 limit/,
+  );
+});
+
+void test("skillDescriptionError: missing frontmatter, no description or invalid YAML are not this check's", () => {
+  assert.equal(skillDescriptionError("x", undefined), null);
+  assert.equal(skillDescriptionError("x", "name: x\n"), null);
+  assert.equal(skillDescriptionError("x", "description: [unclosed\n"), null);
 });

@@ -1,6 +1,6 @@
 ---
 name: github-actions
-description: "GitHub Actions mechanics and house settings: workflow triggers (pull_request, merge_group, push, schedule, workflow_dispatch), the concurrency block, the aggregate check job, draft PRs that run no CI, light and full tiers, job-level path filters, actions/cache save and restore, matrices and sharding, timeouts, permissions and OIDC, pull_request_target, flakes, and measuring Actions minutes with gh. Use whenever you write, review or debug a file under .github/workflows/ or an action.yml, run actionlint, gh run or gh workflow, or GitHub CI is slow, costly, flaky or a required check is stuck."
+description: "Use when adding, changing or fixing a GitHub Actions workflow (.github/workflows/*.yml, action.yml): a job, matrix, trigger, permissions error, cache, path filter, stuck required check, or slow or flaky CI."
 ---
 
 # GitHub Actions
