@@ -1,6 +1,6 @@
 ---
 name: design-patterns
-description: "Use when restructuring code: a growing if/elif or switch on a type, the same code copied or wrapped in several places, whether to add an interface, base class, factory or layer, or a design review for over-engineering. Which pattern fits."
+description: "Use when the same code is copied or wrapped in several places, deciding whether to add an interface, base class, factory or layer, a growing if/elif or switch on a type, or reviewing a design for over-engineering. Which pattern fits."
 ---
 
 # Design patterns
