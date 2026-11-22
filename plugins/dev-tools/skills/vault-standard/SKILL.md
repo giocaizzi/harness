@@ -24,6 +24,7 @@ The same name is used for the same secret in every store, so a password-manager 
 - `<context>/<system or product>` plus one `_archive`; a store without folders puts the context in the name's scope or in labels.
 - Contexts are the owner's (personal, work, dev). Work stays apart from everything else.
 - One folder per system or product, never per item. A folder under about five items is merged up.
+- A nested folder (`dev/cloud`) only shows as nested when its parent (`dev`) exists as a folder of its own, so keep the empty parent folders; never delete one as "empty".
 
 ## Shape
 
