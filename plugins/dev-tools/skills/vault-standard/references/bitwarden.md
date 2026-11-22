@@ -14,15 +14,9 @@ The standard in [SKILL.md](../SKILL.md) applied to the password-vault CLI. Unloc
 - Nested folders are one folder whose name contains `/`. Create one with `bw create folder "$(jq -n --arg n 'Dev/cloud' '{name:$n}' | bw encode)"`.
 - `bw sync` after writing, and before any audit: a stale local cache lists stale items.
 
-## Reorganizing
-
-- `scripts/bw-audit.sh <dir>`: value-free `meta.json` (names, folder, type, field and attachment names, note lengths), raw export deleted.
-- `bw export --format encrypted_json --output <file>` without a password gives an account-restricted file; attachments are not included.
-- `scripts/bw-apply.sh mapping.tsv` (`DRY_RUN=1` first): creates folders, edits name and folder in place, compares each item's secret-bearing content before and after, prints ids and names only.
-
 ## Gotchas
 
-- Each `bw` call takes a few seconds: about 150 edits take tens of minutes, so run the apply in the background and wait on the process.
-- macOS ships bash 3.2 (no associative arrays), and `xargs` cannot call a shell function; the scripts avoid both.
+- Each `bw` call takes a few seconds, so a bulk edit of many items takes long: run it in the background. macOS ships bash 3.2 (no associative arrays), and `xargs` cannot call a shell function.
 - A `jq` lookup keyed by `folderId` fails on unfiled items (null); default the key.
-- An edit can normalise empty keys (`null`, `[]`), so compare secret-bearing fields, not the whole object.
+- An edit can normalise empty keys (`null`, `[]`); to check an edit left a secret alone, compare hashes of the secret fields, not the whole object.
+- An encrypted export (`bw export --format encrypted_json --output <file>`, no password) is account-restricted and leaves out attachments.

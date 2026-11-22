@@ -5,7 +5,7 @@ description: "Use whenever a task reads from or writes to a password vault or se
 
 # Vault standard
 
-Every machine secret in a vault is named, filed and typed by one standard, so it can be found by name alone and referenced by id without surprises. Every read and write follows it, in a tidy vault and a messy one. `secrets-handling` keeps values out of output; this skill says where things live, what they are called and how to find and add them. Human web logins are outside it and keep the site's own name.
+Every machine secret in a vault is named, filed and typed by one standard, so it can be found by name alone and referenced by id without surprises. Every read and write follows it. `secrets-handling` keeps values out of output; this skill says where things live, what they are called and how to find and add them. Human web logins are outside it and keep the site's own name.
 
 ## The standard
 
@@ -13,7 +13,7 @@ Every machine secret in a vault is named, filed and typed by one standard, so it
 - **Folders:** context first, then system: `<context>/<system or product>` plus one `_archive`. Contexts are the owner's (personal, work, dev), and work stays apart from the rest. One folder per system or product, never per item; a folder with fewer than about five items is merged up.
 - **Item type follows shape:** one token or key is a single-value item; a credential of several parts is one item with fields and an attachment.
 - **One item per secret, one home per secret.** Different values are different items; identical values are merged. A self-hosted service's own login is `<scope>-<service>-ui-login`.
-- **Ids are stable, names are not.** Other systems hold item ids. Rename and move in place; never delete and recreate.
+- **Ids are stable, names are not.** Other systems hold item ids. Rename and move in place; never delete and recreate. Bringing an old item up to the standard is the same: edit it in place and tell its consumers.
 
 ## Reading
 
@@ -28,19 +28,9 @@ Every machine secret in a vault is named, filed and typed by one standard, so it
 - Record non-secret context on the item: what it is for, who holds a copy, the expiry date.
 - Re-read only names and hashes to confirm. Tell the owner and any session that uses an item about a rename or a rotation.
 
-## Reorganizing an existing vault
-
-1. **Unlock in the user's terminal**; read through a session the user created and delete it at the end.
-2. **Audit without values:** names, folders, types, field and attachment names, note lengths, and hashes to find identical secrets. Look for unfiled items, tiny folders, mixed naming styles, one kind of secret in several places, items of the wrong type.
-3. **Design with the owner, one question at a time:** folder model, grammar, how to treat duplicates (archive first, delete later). Show the grammar on their own items before applying it.
-4. **Write a mapping** (`id old new old_folder new_folder note`). An item the owner cannot explain is asked about one by one; an unknown purpose is flagged `CHECK`, never guessed into a final name. What the owner calls dead goes to `_archive`, never deleted.
-5. **Back up** with an encrypted export first, and say what it excludes (attachments).
-6. **Apply** in place, a dry run first, checking each item's content before and after.
-7. **Verify**, remove emptied folders, lock the vault, delete the session and every scratch file, and report what changed, what was archived and what is flagged.
-
 ## Providers
 
-Commands, scripts and quirks per vault live in one reference each: [references/bitwarden.md](references/bitwarden.md) (`bw`, with `scripts/bw-audit.sh` and `scripts/bw-apply.sh`). For any other vault, apply the standard through its CLI and check its docs before relying on a flag you have not used.
+Commands and quirks per vault live in one reference each: [references/bitwarden.md](references/bitwarden.md) (`bw`). For any other vault, apply the standard through its CLI and check its docs before relying on a flag you have not used.
 
 ## Gotchas
 
