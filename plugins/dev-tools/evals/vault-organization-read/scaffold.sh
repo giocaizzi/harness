@@ -9,4 +9,10 @@ cat > vault-export.json <<'J'
  {"name":"Cloudflare token (new)","folder":"Misc","type":1},
  {"name":"[dev] TF_VAR_API_TOKEN","folder":"Projects","type":1}]
 J
+cat > deploy.sh <<'D'
+#!/usr/bin/env bash
+# Deploys the staging site; needs CLOUDFLARE_API_TOKEN.
+set -euo pipefail
+wrangler deploy --env staging
+D
 git init -q -b main && git add -A && git -c user.name=eval -c user.email=eval@example.com commit -qm init

@@ -1,9 +1,11 @@
 ---
 name: vault-organization
-description: "Use when a password manager vault (Bitwarden, 1Password) is messy: inconsistent item names, unfiled items, scattered keys, GitHub App keys with no metadata, or when naming, filing or auditing machine secrets, SSH keys, tokens and service accounts there; also reorganizing, renaming or deduplicating a vault."
+description: "Use when reading from, writing to or organizing a password vault (Bitwarden bw, 1Password): finding a token, key, SSH key or GitHub App credential by name, adding or renaming an item, choosing its folder and type, or fixing a messy vault. Gives the naming grammar, filing rules and lookup and write recipes."
 ---
 
 # Vault organization
+
+Use this whenever a task reads or writes a vault, not only when reorganizing one. `secrets-handling` says how to keep values out of output; this skill says where things live, what they are called and how to find and add them.
 
 Goal: a vault where every machine secret is findable by name alone, filed in one predictable place, and stable enough that other systems can reference it by item id. Human web logins stay as they are; this governs everything a machine uses. Handling rules (never print a value, unlock in the user's terminal) come from `secrets-handling` and apply throughout.
 
@@ -14,7 +16,21 @@ Goal: a vault where every machine secret is findable by name alone, filed in one
 - **Web logins** keep the site's own name. A self-hosted service login is `<scope>-<service>-ui-login`.
 - **One item per secret, one home per secret.** Different values are different items; identical values are merged.
 
-## Procedure
+## Reading
+
+- Derive the name from the grammar, then look it up by name: `bw list items --search <name> | jq '[.[]|{id,name,folder:.folderId}]'`. A name match is exact; several hits means ask, never pick one. Prefer the item id once known: ids survive renames, names do not.
+- Fields: `bw get password <id>`, `bw get username <id>`, a custom field with `jq -r '.fields[]|select(.name=="client-secret")|.value'` over `bw get item <id>`, an attachment with `bw get attachment <file> --itemid <id> --output <path>` into a mode-600 file you delete after use.
+- Hand the value straight to the process that needs it (stdin, an env var for one command, a secret manager write). Never print it, never put it in an argument, never leave it in a file.
+- Not found: search by system and kind (`--search github-app`), then the `_archive` folder, then ask. Never create a duplicate to get unblocked.
+
+## Writing
+
+- Check first: `bw list items --search <name>` must return nothing, otherwise edit that item in place.
+- Name per the grammar, file in the folder for its context, type by shape: a login item with the value in the password field for one token or key; a secure note with fields and an attachment for a multi-part credential (GitHub App, service account, OAuth client).
+- Build the JSON with `jq`, take the value from a file, stdin or the keyring (never a literal on the command line or in history), then `bw encode` and `bw create item`. Put non-secret context in the notes: what it is for, who consumes it, the expiry date in a field.
+- Sync after writing (`bw sync`) and re-read only names and hashes to confirm. Tell the owner and any session that consumes the item about a rename or a rotation.
+
+## Reorganizing: procedure
 
 1. **Unlock in the user's terminal**, then `bw sync`. Read only through a session file the user created; delete it at the end.
 2. **Audit**, value-free: `scripts/bw-audit.sh <dir>` writes `meta.json` (names, folder, type, field names, attachment names, note lengths, never values) and deletes the raw export. Look for: unfiled items, folders of one to three items, mixed naming styles, secrets of one kind in several places, items whose type does not fit (key in a note, login without password), identical values under different names (compare hashes, print only group sizes and names).
