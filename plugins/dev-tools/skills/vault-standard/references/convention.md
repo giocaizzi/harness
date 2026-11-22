@@ -30,7 +30,7 @@ Add a kind only when none fits and the owner agrees; a new kind goes in this lis
 
 ## Folders
 
-`<context>/<system or product>`, plus `_archive` for superseded or dead items awaiting review. Contexts belong to the owner (for example `personal`, `work/<employer>`, `dev`), and work stays separate from everything else. Below a context, one folder per system or product, not per service or item: `dev/cloud`, `dev/ai`, `dev/signing` (SSH, deploy and signing keys), `dev/<product>`. Folder names are lowercase kebab-case. Human accounts keep whatever area folders they already have.
+`<context>/<system or product>`, plus `_archive` for superseded or dead items awaiting review. A store without folders (a cloud secret manager, a keyring) uses the name's scope and system, or labels, instead. Contexts belong to the owner (for example `personal`, `work/<employer>`, `dev`), and work stays separate from everything else. Below a context, one folder per system or product, not per service or item: `dev/cloud`, `dev/ai`, `dev/signing` (SSH, deploy and signing keys), `dev/<product>`. Folder names are lowercase kebab-case. Human accounts keep whatever area folders they already have.
 
 ## Multi-part item
 

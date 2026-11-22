@@ -1,39 +1,45 @@
 ---
 name: vault-standard
-description: "Use whenever a task reads from or writes to a password vault or secret store (Bitwarden, 1Password, pass): looking up a token, key, SSH key, certificate or service credential, adding, renaming or moving an item. One standard for names, folders and item types, with lookup and write recipes."
+description: "Use whenever a task reads, writes, names, files or renames a secret in any store: a password manager (Bitwarden, 1Password), a cloud secret manager (GCP, AWS, Azure), Vault, pass, a keyring or a CI secret. The one standard for secret names, folders, item types and ids, so every secret is findable by name."
 ---
 
 # Vault standard
 
-Every machine secret in a vault is named, filed and typed by one standard, so it can be found by name alone and referenced by id without surprises. Every read and write follows it. `secrets-handling` keeps values out of output; this skill says where things live, what they are called and how to find and add them. Human web logins are outside it and keep the site's own name.
+One standard for every machine secret, in any store, so it is found by name alone and referenced without surprises. It governs names, places and shapes, not how a value is kept out of output (`secrets-handling`). Human web logins are outside it and keep the site's own name.
 
-## The standard
+## Name
 
-- **Name:** `<scope>-<system>-<kind>[-<qualifier>][-<env>]`, lowercase kebab-case. Scope is who owns it (org, product, host), system is what it authenticates to, kind comes from a fixed list, qualifier says which one, env (`dev`, `prod`) only when more than one exists. Kinds, examples and the multi-part model: [references/convention.md](references/convention.md).
-- **Folders:** context first, then system: `<context>/<system or product>` plus one `_archive`. Contexts are the owner's (personal, work, dev), and work stays apart from the rest. One folder per system or product, never per item; a folder with fewer than about five items is merged up.
-- **Item type follows shape:** one token or key is a single-value item; a credential of several parts is one item with fields and an attachment.
-- **One item per secret, one home per secret.** Different values are different items; identical values are merged. A self-hosted service's own login is `<scope>-<service>-ui-login`.
-- **Ids are stable, names are not.** Other systems hold item ids. Rename and move in place; never delete and recreate. Bringing an old item up to the standard is the same: edit it in place and tell its consumers.
+`<scope>-<system>-<kind>[-<qualifier>][-<env>]`, lowercase kebab-case.
 
-## Reading
+- **scope:** who owns it (org, product, host).
+- **system:** what it authenticates to.
+- **kind:** one of a fixed list.
+- **qualifier:** which one (machine, repo, purpose, service).
+- **env:** `dev` or `prod`, only when more than one exists.
 
-- Derive the name from the grammar and look it up by exact name. Several hits means ask, never pick one. Use the item id from then on.
-- Hand the value straight to the process that needs it (stdin, an environment variable for one command, a secret-manager write). Never print it, put it in an argument or leave it in a file.
-- Not found: search by system and kind, then `_archive`, then ask. Never create a duplicate to get unblocked.
+The same name is used for the same secret in every store, so a password-manager item, a cloud secret and a CI secret for one credential differ only where the store forces it (case, separators). Kinds, examples and multi-part items: [references/convention.md](references/convention.md).
 
-## Writing
+## Place
 
-- Search for the name first; if it exists, edit that item in place.
-- Name per the grammar, file in the context's folder, type by shape. Take the value from a file, stdin or the keyring, never a literal on a command line or in history.
-- Record non-secret context on the item: what it is for, who holds a copy, the expiry date.
-- Re-read only names and hashes to confirm. Tell the owner and any session that uses an item about a rename or a rotation.
+- `<context>/<system or product>` plus one `_archive`; a store without folders puts the context in the name's scope or in labels.
+- Contexts are the owner's (personal, work, dev). Work stays apart from everything else.
+- One folder per system or product, never per item. A folder under about five items is merged up.
 
-## Providers
+## Shape
 
-Commands and quirks per vault live in one reference each: [references/bitwarden.md](references/bitwarden.md) (`bw`). For any other vault, apply the standard through its CLI and check its docs before relying on a flag you have not used.
+- A single token or key is one single-value item.
+- A credential of several parts is one item with fields for the non-secret identifiers and hidden fields for each secret part; a key file is its attachment.
+- Every item records what it is for, who holds a copy and when it expires, never a secret, in notes or fields.
+
+## Rules
+
+- One item per secret and one home per secret: different values are different items, identical values are merged.
+- Look a secret up by its exact name; several hits means ask. Not found: search by system and kind, then `_archive`, then ask. Never create a duplicate to get unblocked.
+- Write only after searching for the name; if it exists, edit it in place.
+- Ids are stable, names are not: other systems hold ids. Rename and move in place, never delete and recreate; tell the holders of a copy about a rename.
+- Dead or superseded items go to `_archive` before any deletion.
 
 ## Gotchas
 
-- Rotating a key or client secret breaks every holder of a copy (a cluster, a CI secret, a secret manager). Ask who holds it first.
-- Renaming the thing a secret belongs to (an app, a service account, a repo) can change identifiers stored beside the secret, such as a slug, while its ids stay. Record the new identifier after the rename, not before.
-- A listing that prints notes or custom fields leaks values. Print names, counts and hashes only; a value that leaked is rotated.
+- Rotating a key or client secret breaks every holder of a copy (a cluster, a CI secret, another store). Ask who holds it first.
+- Renaming what a secret belongs to (an app, a service account, a repo) can change identifiers stored beside it, such as a slug, while its ids stay. Record the new identifier after the rename.

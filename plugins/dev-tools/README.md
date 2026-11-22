@@ -23,7 +23,7 @@ General development tooling — git, GitHub/GitLab/Azure DevOps, conventional co
 | `standup` | Plain-language status: a 3-line story, a numbered "Needs you" list you approve with `all`, then done and in flight; `detail` adds refs, `explain <topic>` explains one part of the work (`/standup`). |
 | `docs-sync` | Update docs and runbooks the diff made stale (`/docs-sync`). |
 | `secrets-handling` | Bitwarden (bw, bws), keyrings and encrypted config; secrets never printed or inlined. |
-| `vault-standard` | One standard for reading and writing machine secrets in a password vault: names, folders, item types, lookup and write recipes. |
+| `vault-standard` | One standard for naming, filing and shaping machine secrets in any store (password manager, cloud secret manager, keyring), applied on every read and write. |
 | `subagent-orchestration` | Which agent takes which work (judgement to `driver`, edits to `worker`, lookups to `scout`, review to `reviewer`), spawn rules, escalation and gotchas; tiers per harness and review rounds in its references. |
 
 ## Agents
