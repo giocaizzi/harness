@@ -12,7 +12,7 @@ The standard in [SKILL.md](../SKILL.md) applied to the password-vault CLI. Unloc
 
 - `jq` builds the item JSON (name, folderId, type, login or notes, fields), the value comes from a file, stdin or the keyring; then `bw encode` and `bw create item <encoded>`. Edit with `bw get item <id> | jq … | bw encode`, then `bw edit item <id> <encoded>`: id, attachments and history stay.
 - Nested folders are one folder whose name contains `/`. Create one with `bw create folder "$(jq -n --arg n 'Dev/cloud' '{name:$n}' | bw encode)"`.
-- `bw sync` after writing, and before any audit: a stale local cache lists stale items.
+- `bw sync` after writing, and before reading: a stale local cache lists stale items.
 
 ## Gotchas
 

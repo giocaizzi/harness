@@ -1,6 +1,6 @@
 ---
 name: vault-standard
-description: "Use whenever a task reads from or writes to a password vault or secret store (Bitwarden, 1Password, pass): looking up a token, key, SSH key, certificate or service credential, adding, renaming or moving an item. One standard for names, folders and item types, with lookup, write and audit recipes."
+description: "Use whenever a task reads from or writes to a password vault or secret store (Bitwarden, 1Password, pass): looking up a token, key, SSH key, certificate or service credential, adding, renaming or moving an item. One standard for names, folders and item types, with lookup and write recipes."
 ---
 
 # Vault standard
