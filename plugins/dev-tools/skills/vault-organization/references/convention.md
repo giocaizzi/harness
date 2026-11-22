@@ -32,12 +32,12 @@ Add a kind only when none fits and the owner agrees; a new kind goes in this lis
 
 `Personal/<area>` (accounts, unchanged), `Work/<employer>` (kept separate from everything else), `Dev/github-apps`, `Dev/cloud`, `Dev/ai`, `Dev/signing` (SSH, deploy, signing keys), `Dev/<host or product>` (one folder per host or product, not per service), `_archive` (superseded or dead, reviewed later). Folder names are lowercase kebab-case below `Dev`.
 
-## GitHub App item
+## Multi-part item
 
-One secure note per App (so a rename of the App is one item), named `<owner>-github-app-<purpose>`:
+A credential made of several parts (a service account, an OAuth client, an app with an id, a secret and a key file) is one secure note, so a rename or rotation touches one item:
 
-- fields: `app-id`, `client-id`, `slug`, `owner`, `purpose`, `installed-on` (repos or orgs), `callback-url`, hidden `client-secret`, hidden `webhook-secret`;
-- attachment: `<slug>.<YYYY-MM-DD>.private-key.pem`; a regenerated key is a new attachment, and the old one is removed once nothing uses it;
+- fields: the non-secret identifiers (`client-id`, `account-id`, `slug`), `owner`, `purpose`, `consumers` (what holds a copy), `expires`; hidden fields for each secret part (`client-secret`, `webhook-secret`);
+- attachment: the key file, named `<id>.<YYYY-MM-DD>.<what>`; a regenerated key is a new attachment, and the old one is removed once nothing uses it;
 - the note body holds no secret text, only a short human description.
 
-A personal access token is `<owner>-github-pat-<purpose>`, a login-type item with the expiry in a field.
+A single token or key is a login-type item with the value in the password field and `expires` in a field. Example: a GitHub App is `<owner>-github-app-<purpose>` with fields `app-id`, `client-id`, `slug`, `installed-on`, `callback-url`.
