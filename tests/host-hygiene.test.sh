@@ -368,12 +368,14 @@ cfg2=$tmp/claude2 c2=$tmp/claude2/plugins/cache/mkt
 mkdir -p "$c2/r/1.0" "$c2/r/2.0" "$tmp/fake/bin" "$tmp/fake/claude/versions" "$tmp/fake/Application Support" "$tmp/precious"
 echo keep >"$tmp/precious/file" && ln -s "$tmp/precious" "$c2/r/0.5"
 printf '{"version":2,"plugins":{"r@mkt":[{"scope":"user","installPath":"%s","version":"2.0","lastUpdated":"2099-01-01T00:00:00.000Z"}]}}' "$c2/r/2.0" >"$tmp/claude2/plugins/installed_plugins.json"
-ln -s "$(command -v sleep)" "$tmp/fake/bin/claude" && ln -s "$(command -v sleep)" "$tmp/fake/claude/versions/9.9.9"
-ln -s "$(command -v sleep)" "$tmp/fake/Application Support/claude"
-"$tmp/fake/bin/claude" 60 & s1=$!
-"$tmp/fake/claude/versions/9.9.9" 60 & s2=$!
+# The fakes link bash, not sleep: a multicall coreutils (uutils, as on Ubuntu 26.04) refuses to run under
+# another name. `; :` keeps bash from exec'ing sleep, so the fake's command line stays in ps.
+ln -s "$(command -v bash)" "$tmp/fake/bin/claude" && ln -s "$(command -v bash)" "$tmp/fake/claude/versions/9.9.9"
+ln -s "$(command -v bash)" "$tmp/fake/Application Support/claude"
+"$tmp/fake/bin/claude" -c 'sleep 60; :' & s1=$!
+"$tmp/fake/claude/versions/9.9.9" -c 'sleep 60; :' & s2=$!
 sh -c 'sleep 60; :' "$tmp/fake/node_modules/@anthropic-ai/claude-code/cli.js" & s3=$!
-"$tmp/fake/Application Support/claude" 60 & s4=$!
+"$tmp/fake/Application Support/claude" -c 'sleep 60; :' & s4=$!
 sleep 0.3
 sessions() { (unset SWEEP_SESSION_STARTS; CLAUDE_CONFIG_DIR=$cfg2 "$sweep" --plugins) | sed -n 's|.*r/1.0: \([0-9]*\) sessions started before the update.*|\1|p'; }
 n1=$(sessions)

@@ -42,7 +42,10 @@ try {
 
     Remove-Item $log
     $env:HOST_HEAVY_SLOTS = '2'
-    $a = Invoke-Heavy $slow
+    # The first run holds its slot until the second one starts (30 s cap), so a slow pwsh start on the runner
+    # cannot finish it early and read as serialized; with one slot it would time out into 'start end start end'.
+    $hold = "Add-Content '$log' start; `$t = [DateTime]::Now.AddSeconds(30); while (@(Get-Content '$log' | Where-Object { `$_ -eq 'start' }).Count -lt 2 -and [DateTime]::Now -lt `$t) { Start-Sleep -Milliseconds 100 }; Add-Content '$log' end"
+    $a = Invoke-Heavy $hold
     Start-Sleep -Milliseconds 1000
     $b = Invoke-Heavy $fast
     $a, $b | Wait-Process
