@@ -1,13 +1,13 @@
 ---
 name: vault-organization
-description: "Use when reading from, writing to or organizing a password vault (Bitwarden bw, 1Password): finding a token, key, SSH key or GitHub App credential by name, adding or renaming an item, choosing its folder and type, or fixing a messy vault. Gives the naming grammar, filing rules and lookup and write recipes."
+description: "Use whenever a task reads from or writes to a password vault (Bitwarden bw, 1Password): looking up a token, key, SSH key or GitHub App credential, adding, renaming or moving an item. The vault follows one standard for names, folders and item types; this gives it, plus lookup, write and audit recipes."
 ---
 
 # Vault organization
 
-Use this whenever a task reads or writes a vault, not only when reorganizing one. `secrets-handling` says how to keep values out of output; this skill says where things live, what they are called and how to find and add them.
+The vault follows one standard, and every read and write follows it, whether the vault is tidy or not. `secrets-handling` says how to keep values out of output; this skill says where things live, what they are called and how to find and add them. A messy vault is one use of it (the last section), not the reason to load it.
 
-Goal: a vault where every machine secret is findable by name alone, filed in one predictable place, and stable enough that other systems can reference it by item id. Human web logins stay as they are; this governs everything a machine uses. Handling rules (never print a value, unlock in the user's terminal) come from `secrets-handling` and apply throughout.
+Goal: every machine secret is findable by name alone, filed in one predictable place, and stable enough that other systems can reference it by item id. Human web logins stay as they are; this governs everything a machine uses.
 
 ## The convention
 
@@ -30,7 +30,7 @@ Goal: a vault where every machine secret is findable by name alone, filed in one
 - Build the JSON with `jq`, take the value from a file, stdin or the keyring (never a literal on the command line or in history), then `bw encode` and `bw create item`. Put non-secret context in the notes: what it is for, who consumes it, the expiry date in a field.
 - Sync after writing (`bw sync`) and re-read only names and hashes to confirm. Tell the owner and any session that consumes the item about a rename or a rotation.
 
-## Reorganizing: procedure
+## Reorganizing an existing vault: procedure
 
 1. **Unlock in the user's terminal**, then `bw sync`. Read only through a session file the user created; delete it at the end.
 2. **Audit**, value-free: `scripts/bw-audit.sh <dir>` writes `meta.json` (names, folder, type, field names, attachment names, note lengths, never values) and deletes the raw export. Look for: unfiled items, folders of one to three items, mixed naming styles, secrets of one kind in several places, items whose type does not fit (key in a note, login without password), identical values under different names (compare hashes, print only group sizes and names).
