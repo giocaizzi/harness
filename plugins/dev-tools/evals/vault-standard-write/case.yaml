@@ -1,6 +1,6 @@
 schema_version: "1.0"
-name: vault-organization-write
-description: "The model loads vault-organization when a task adds or renames a multi-part credential in a password vault."
+name: vault-standard-write
+description: "The model loads vault-standard when a task adds or renames a multi-part credential in a password vault."
 tags: [trigger]
 context:
   scaffold_script: scaffold.sh

@@ -1,6 +1,6 @@
 schema_version: "1.0"
-name: vault-organization-negative
-description: "The model does not load vault-organization for reading an environment variable in application code."
+name: vault-standard-negative
+description: "The model does not load vault-standard for reading an environment variable in application code."
 tags: [trigger]
 context:
   scaffold_script: scaffold.sh

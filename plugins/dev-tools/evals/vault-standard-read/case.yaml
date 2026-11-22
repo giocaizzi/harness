@@ -1,6 +1,6 @@
 schema_version: "1.0"
-name: vault-organization-read
-description: "The model loads vault-organization when a task needs to read a credential from a password vault."
+name: vault-standard-read
+description: "The model loads vault-standard when a task needs to read a credential from a password vault."
 tags: [trigger]
 context:
   scaffold_script: scaffold.sh

@@ -1,4 +1,4 @@
-# Naming and filing convention
+# Naming and filing standard
 
 ## Grammar
 
@@ -30,7 +30,7 @@ Add a kind only when none fits and the owner agrees; a new kind goes in this lis
 
 ## Folders
 
-`Personal/<area>` (accounts, unchanged), `Work/<employer>` (kept separate from everything else), `Dev/github-apps`, `Dev/cloud`, `Dev/ai`, `Dev/signing` (SSH, deploy, signing keys), `Dev/<host or product>` (one folder per host or product, not per service), `_archive` (superseded or dead, reviewed later). Folder names are lowercase kebab-case below `Dev`.
+`<context>/<system or product>`, plus `_archive` for superseded or dead items awaiting review. Contexts belong to the owner (for example `personal`, `work/<employer>`, `dev`), and work stays separate from everything else. Below a context, one folder per system or product, not per service or item: `dev/cloud`, `dev/ai`, `dev/signing` (SSH, deploy and signing keys), `dev/<product>`. Folder names are lowercase kebab-case. Human accounts keep whatever area folders they already have.
 
 ## Multi-part item
 
