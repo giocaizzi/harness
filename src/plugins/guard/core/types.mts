@@ -1,5 +1,7 @@
 // Type definitions for the guard core engine, shell parser, host probes and OTel telemetry.
 
+import type { RuleId } from "./toggles.mjs";
+
 export type EnvMap = Record<string, string | undefined>;
 
 export interface DirSet {
@@ -408,7 +410,7 @@ export interface ProtectConfig {
   cwd?: string;
   // Waives `registered` globs only.
   exempt?: string[];
-  // Never waived: the built-in floor and GUARD_RUN_PROTECTED_PATHS.
+  // Never waived: the built-in floor and AGENT_RUN_PROTECTED_PATHS.
   globs: string[];
   // The registration's globs: waived by `exempt`.
   registered?: string[];
@@ -420,7 +422,7 @@ export interface ProtectHit {
   unsure?: string;
 }
 
-// A registered unattended run's facts for the shell and edit rules (run contract v2): the runner's labels, its
+// A registered unattended run's facts for the shell and edit rules (run contract v3): the runner's labels, its
 // protected paths. Null outside such a run.
 export interface RunFacts {
   labels?: { approval?: string; protected?: string[]; takeover?: string };
@@ -428,7 +430,7 @@ export interface RunFacts {
     cwd?: string;
     // The registration's protected_paths.exempt: waives its own globs (`registered`) only.
     exempt?: string[];
-    // GUARD_RUN_PROTECTED_PATHS: never waived.
+    // AGENT_RUN_PROTECTED_PATHS: never waived.
     extra?: string[];
     // The registration's protected_paths.globs.
     registered?: string[];
@@ -470,6 +472,8 @@ export interface CommandEvaluationInput {
   early?: StackEarlyFact | null;
   state: SessionState;
   tags?: Record<string, TagFact | undefined>;
+  // Rules switched off (core/toggles): a missing id is on.
+  toggles?: Partial<Record<RuleId, boolean>>;
   worktrees?: Record<string, SafeFact | undefined>;
 }
 
@@ -492,6 +496,7 @@ export interface EditEvaluationInput {
   path?: unknown;
   rules: GuardRules;
   state: SessionState;
+  toggles?: Partial<Record<RuleId, boolean>>;
 }
 
 export interface RoutingEvaluationInput {
@@ -500,6 +505,7 @@ export interface RoutingEvaluationInput {
   rules: GuardRules;
   state: SessionState;
   tool?: string;
+  toggles?: Partial<Record<RuleId, boolean>>;
   type?: unknown;
 }
 

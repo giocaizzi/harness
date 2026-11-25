@@ -35,7 +35,7 @@ void test("contract probe: guardVersion falls back to unknown", () => {
 });
 void test("contract probe: contractProbe shape", () => {
     assert.deepEqual(contractProbe("9.9.9"), {
-        contract: 2,
+        contract: 3,
         capabilities: [...CAPABILITIES],
         enforced: ENFORCED,
         guard: "9.9.9",
@@ -55,7 +55,7 @@ void test("contract probe: guard.mjs --contract prints one JSON line", () => {
     assert.equal(r.stderr, "");
     assert.match(r.stdout, /^[^\n]+\n$/);
     const out = JSON.parse(r.stdout);
-    assert.equal(out.contract, 2);
+    assert.equal(out.contract, 3);
     assert.deepEqual(out.capabilities, [...CAPABILITIES]);
     assert.equal(typeof out.enforced, "boolean");
     assert.equal(out.enforced, ENFORCED);

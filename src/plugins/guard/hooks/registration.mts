@@ -1,8 +1,8 @@
-// Run contract v2: loads the runner's registration from GUARD_RUN_MANIFEST, on every hook call. The manifest (and its
+// Run contract v3: loads the runner's registration from AGENT_RUN_MANIFEST, on every hook call. The manifest (and its
 // result.checker) must be out of this user's reach, vetted as the result checker is (hooks/checker.mjs), and its
 // realpath and sha256 are pinned in the session's state on first sight: a later change denies. Every failure is a
 // deny with rule run-registration (fails closed); nothing here throws. Enforced from guard 1.0.0. The pin also holds
-// the run id, the mode and the ticket (GUARD_RUN_*) the session started with: a later change denies.
+// the run id, the mode and the ticket (AGENT_RUN_*) the session started with: a later change denies.
 
 import { createHash } from "node:crypto";
 import {
@@ -24,8 +24,8 @@ import {
   runEnvErrors,
 } from "../core/registration.mjs";
 import { rawPath } from "../core/result.mjs";
-import type { PrepareOptions } from "./checker.mjs";
-import { vetTrustedFile } from "./checker.mjs";
+import type { PrepareOptions, Trust } from "./checker.mjs";
+import { prepareChecker, vetTrustedFile } from "./checker.mjs";
 import { appendDataFile, readDataFileStrict } from "./data.mjs";
 import { scrub } from "./telemetry.mjs";
 
@@ -37,6 +37,7 @@ export type Loaded =
       registration: Registration;
       sha256: string;
       state: "registered";
+      trust: Trust;
     }
   | {
       // true when the session pin alone failed the registration (the manifest and the run variables passed)
@@ -139,7 +140,7 @@ function readBounded(fd: number): Buffer | null {
   return n > MAX_MANIFEST_BYTES ? null : buf.subarray(0, n);
 }
 
-// The registration for this hook call: none (no GUARD_RUN_* variable), registered, or a deny with rule
+// The registration for this hook call: none (no AGENT_RUN_* variable), registered, or a deny with rule
 // run-registration. Never throws.
 export function loadRegistration(
   env: Readonly<Record<string, string | undefined>>,
@@ -156,21 +157,36 @@ export function loadRegistration(
   try {
     const platform = opts.platform ?? process.platform;
     const pathApi = platform === "win32" ? path.win32 : path;
-    const vetOpts: PrepareOptions = { platform, ...opts.vet };
-    const m = env.GUARD_RUN_MANIFEST;
-    const idSet = (env.GUARD_RUN_ID ?? "").trim() !== "";
-    if (m === undefined && !idSet) return { state: "none" };
+    // AGENT_RUN_MANIFEST_SHA256 unset: ownership; set (even empty): the manifest's bytes must hash to it
+    const digest = env.AGENT_RUN_MANIFEST_SHA256;
+    const trust: Trust = digest === undefined ? "owner" : "digest";
+    const vetOpts: PrepareOptions = { platform, ...opts.vet, trust };
+    const m = env.AGENT_RUN_MANIFEST;
+    const idSet = (env.AGENT_RUN_ID ?? "").trim() !== "";
+    if (m === undefined && !idSet) {
+      // a digest with nothing to check names a run the launcher meant to register: fail closed
+      return digest === undefined
+        ? { state: "none" }
+        : deny(
+            "AGENT_RUN_MANIFEST_SHA256 is set but AGENT_RUN_MANIFEST and AGENT_RUN_ID are not",
+          );
+    }
     if (idSet && (m === undefined || m.trim() === "")) {
-      return deny("GUARD_RUN_ID is set but GUARD_RUN_MANIFEST is not");
+      return deny("AGENT_RUN_ID is set but AGENT_RUN_MANIFEST is not");
     }
     if (m === undefined) throw new Error("unreachable");
     if (!idSet) {
-      return deny("GUARD_RUN_MANIFEST is set but GUARD_RUN_ID is not");
+      return deny("AGENT_RUN_MANIFEST is set but AGENT_RUN_ID is not");
     }
     if (m.includes("\n") || m.includes("\r")) {
-      return deny("GUARD_RUN_MANIFEST names more than one path");
+      return deny("AGENT_RUN_MANIFEST names more than one path");
     }
-    const at = `manifest ${rawPath(m)} (GUARD_RUN_MANIFEST)`;
+    const at = `manifest ${rawPath(m)} (AGENT_RUN_MANIFEST)`;
+    if (digest !== undefined && !SHA.test(digest)) {
+      return deny(
+        `AGENT_RUN_MANIFEST_SHA256 must be 64 lowercase hex characters, got ${JSON.stringify(digest.length > 200 ? `${digest.slice(0, 200)}…` : digest)}`,
+      );
+    }
     const vet = vetTrustedFile(m, ".json", vetOpts);
     if (!("path" in vet)) return deny(`${at}: ${vet.why}`);
     const real = vet.path;
@@ -190,6 +206,9 @@ export function loadRegistration(
       const bytes = readBounded(fd);
       if (!bytes) return deny(`${at}: too large (over 64 KiB)`);
       sha256 = createHash("sha256").update(bytes).digest("hex");
+      if (digest !== undefined && sha256 !== digest) {
+        return deny(`${at}: sha256 does not match AGENT_RUN_MANIFEST_SHA256`);
+      }
       const key = `${real}\0${sha256}`;
       const hit = opts.cache?.entry;
       if (hit?.key === key) {
@@ -218,21 +237,32 @@ export function loadRegistration(
     let checker: string | undefined;
     const rawChecker = registration.result?.checker;
     if (rawChecker !== undefined) {
-      const c = vetTrustedFile(rawChecker, ".mjs", vetOpts);
+      if (
+        trust === "digest" &&
+        registration.result?.checker_sha256 === undefined
+      ) {
+        return deny(
+          "result.checker needs result.checker_sha256 when the manifest is trusted by AGENT_RUN_MANIFEST_SHA256",
+        );
+      }
+      const c = prepareChecker(rawChecker, {
+        ...vetOpts,
+        checkerSha256: registration.result?.checker_sha256,
+      });
       if (!("path" in c)) {
         return deny(
-          `result.checker ${rawPath(rawChecker)} (GUARD_RUN_MANIFEST): ${c.why}`,
+          `result.checker ${rawPath(rawChecker)} (AGENT_RUN_MANIFEST): ${c.why}`,
         );
       }
       checker = c.path;
     }
 
     if (opts.dataDir && opts.sessionId) {
-      const rawMode = env.GUARD_RUN_MODE ?? "";
+      const rawMode = env.AGENT_RUN_MODE ?? "";
       const vars = {
-        run_id: env.GUARD_RUN_ID ?? "",
+        run_id: env.AGENT_RUN_ID ?? "",
         mode: rawMode === "" ? "unattended" : rawMode,
-        ticket: env.GUARD_RUN_TICKET ?? "",
+        ticket: env.AGENT_RUN_TICKET ?? "",
       };
       const file = pinFile(opts.dataDir, opts.sessionId);
       const read = (): { pin?: Pin; why?: string } => {
@@ -264,7 +294,7 @@ export function loadRegistration(
       }
       if (r.pin.manifest !== real) {
         return pinDeny(
-          "GUARD_RUN_MANIFEST names more than one path (another manifest is pinned for this session)",
+          "AGENT_RUN_MANIFEST names more than one path (another manifest is pinned for this session)",
         );
       }
       if (r.pin.sha256 !== sha256) {
@@ -277,7 +307,7 @@ export function loadRegistration(
       );
       if (changed.length > 0) {
         return pinDeny(
-          `run variables changed during the session (${changed.map((k) => `GUARD_RUN_${k === "run_id" ? "ID" : k.toUpperCase()}`).join(", ")})`,
+          `run variables changed during the session (${changed.map((k) => `AGENT_RUN_${k === "run_id" ? "ID" : k.toUpperCase()}`).join(", ")})`,
         );
       }
     }
@@ -287,6 +317,7 @@ export function loadRegistration(
       registration,
       path: real,
       sha256,
+      trust,
       ...(checker === undefined ? {} : { checker }),
     };
   } catch (e: unknown) {

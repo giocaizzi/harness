@@ -256,6 +256,8 @@ export function createGuard({
         const res = lintFile(
           { cwd, tool_name: tool, tool_input: input },
           d.spawnSync as SpawnSyncFn | undefined,
+          undefined,
+          d.env,
         );
         return res?.additionalContext ?? null;
       } catch {
@@ -372,6 +374,7 @@ export function createGuard({
         return keepAwake({
           dataDir,
           start: process.pid,
+          env: d.env,
           launch: d.launch ?? launchDetached,
         });
       } catch {

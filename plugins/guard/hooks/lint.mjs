@@ -5,6 +5,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { isTempPath } from "../core/engine.mjs";
+import { ruleOn } from "../core/toggles.mjs";
 import { isEditTool } from "./harnesses.mjs";
 const PS_LINT = "if (Get-Module -ListAvailable -Name PSScriptAnalyzer) { $r = Invoke-ScriptAnalyzer -Path $env:GUARD_LINT_FILE -Severity Error,Warning; " +
     "if ($r) { $r | Format-List RuleName,Line,Message | Out-String } }";
@@ -48,6 +49,8 @@ export function editedFiles(input) {
 }
 export function lintFile(input, run = spawnSync, platform = process.platform, env = process.env) {
     const tool = input.tool_name ?? "";
+    if (!ruleOn(env, "lint"))
+        return null;
     if (!isEditTool(tool) && tool.toLowerCase() !== "apply_patch")
         return null;
     const found = editedFiles(input)

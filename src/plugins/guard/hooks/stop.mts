@@ -36,9 +36,10 @@ import { pathToFileURL } from "node:url";
 import { docsOnly } from "../core/docsonly.mjs";
 import { hostCaps } from "../core/host.mjs";
 import { emit } from "../core/otel.mjs";
-import { UNREGISTERED_RULE, resultFile } from "../core/registration.mjs";
+import { resultFile } from "../core/registration.mjs";
 import { coreErrors, couldNotRun, report } from "../core/result.mjs";
 import { rules } from "../core/rules.mjs";
+import { ruleOn } from "../core/toggles.mjs";
 import { prepareChecker, runChecker } from "./checker.mjs";
 import type { PrepareOptions, Prepared } from "./checker.mjs";
 import { pluginDataDir, readDataFile, readDataFileStrict } from "./data.mjs";
@@ -49,12 +50,7 @@ import type { ReminderOptions } from "./lifecycle.mjs";
 import { STOP_DEADLINE_MS, readStdin } from "./stdin.mjs";
 import type { RegistrationCache } from "./registration.mjs";
 import type { RunContext } from "./run.mjs";
-import {
-  denyReason,
-  legacySet,
-  recordUnregistered,
-  runContext,
-} from "./run.mjs";
+import { denyReason, runContext, runIdentified } from "./run.mjs";
 import {
   emitAntigravityUsage,
   failedTarget,
@@ -430,7 +426,8 @@ export function gateFailClosed(
     }
     if (ctx.state === "none") return null;
     const result = ctx.registration.result;
-    if (env.GUARD_RESULT_GATE === "off" || !result) return null;
+    if (!ruleOn(env, "result-gate", ctx.registration.requires) || !result)
+      return null;
     const strict = result.checker !== undefined;
     if (!(strict || ctx.mode === "unattended")) return null;
     const shown = scrub(why).slice(0, 200);
@@ -441,9 +438,7 @@ export function gateFailClosed(
     // the gate's own failure must not open a run
     try {
       const raw = plainInput(input);
-      const set = (k: string): boolean => (env[k] ?? "").trim() !== "";
-      return !isSubagentStop(raw) &&
-        (set("GUARD_RUN_ID") || set("GUARD_RUN_MANIFEST") || legacySet(env))
+      return !isSubagentStop(raw) && runIdentified(env)
         ? "Run result gate: could not check the result for this run (internal error); the stop stays blocked."
         : null;
     } catch {
@@ -567,13 +562,10 @@ export async function resultGate(
   if (isSubagentStop(payload)) return null;
 
   try {
-    const { ctx, dataDir } = stopContext(env, payload, checkerOpts);
+    const { ctx } = stopContext(env, payload, checkerOpts);
     if (ctx.state === "deny") {
       // Not switched off by GUARD_RESULT_GATE. Capped like result errors, per session: the agent cannot fix a
       // registration and every tool call guard sees is already denied, so an uncapped block would only loop the session.
-      if (ctx.rule === UNREGISTERED_RULE) {
-        recordUnregistered(env, dataDir, registrationKey(payload, checkerOpts));
-      }
       const blocked = cappedRegistrationBlock(ctx, payload, checkerOpts);
       if (blocked === null) {
         event("capped", { rule: ctx.rule });
@@ -585,7 +577,8 @@ export async function resultGate(
     if (ctx.state === "none") return null;
     const { registration, runId } = ctx;
     const spec = registration.result;
-    if (env.GUARD_RESULT_GATE === "off" || !spec) return null;
+    if (!ruleOn(env, "result-gate", registration.requires) || !spec)
+      return null;
     const cwd = payload.cwd ?? process.cwd();
     const strict = spec.checker !== undefined;
     const runtime = ctx.mode === "unattended";
@@ -595,7 +588,11 @@ export async function resultGate(
     const checker: Prepared | null =
       spec.checker === undefined
         ? null
-        : prepareChecker(spec.checker, checkerOpts);
+        : prepareChecker(spec.checker, {
+            ...checkerOpts,
+            trust: ctx.trust,
+            checkerSha256: spec.checker_sha256,
+          });
     const checkerShown = checker?.shown ?? "";
 
     const git = run(
@@ -620,14 +617,14 @@ export async function resultGate(
     let parsedOk = false;
     const coreEnv: Record<string, string | undefined> = runtime
       ? {
-          GUARD_RUN_ID: runId,
-          ...(ctx.ticket ? { GUARD_RUN_TICKET: ctx.ticket } : {}),
+          AGENT_RUN_ID: runId,
+          ...(ctx.ticket ? { AGENT_RUN_TICKET: ctx.ticket } : {}),
         }
       : {};
     const checkEnv: Record<string, string | undefined> = runtime
       ? {
           ...env,
-          ...(ctx.runFile ? { GUARD_RUN_FILE: resolve(cwd, ctx.runFile) } : {}),
+          ...(ctx.runFile ? { AGENT_RUN_FILE: resolve(cwd, ctx.runFile) } : {}),
         }
       : {};
     try {
@@ -666,6 +663,7 @@ export async function resultGate(
       errors.push(...couldNotRun(checkerShown, checker.why));
     } else if (checker && parsedOk) {
       const r = await runChecker(checker.path, parsed, checkEnv, {
+        source: checker.source,
         timeoutMs: checkerOpts.timeoutMs,
       });
       errors.push(
@@ -898,7 +896,7 @@ async function makeCheck(
   run: SyncRunner = defaultSyncRunner,
   opts: StopCheckOptions = {},
 ): Promise<StopCheckResult | null> {
-  if (input.stop_hook_active || process.env.GUARD_STOP_CHECK === "off") {
+  if (input.stop_hook_active || !ruleOn(process.env, "stop-check")) {
     return null;
   }
   const cwd = input.cwd ?? process.cwd();

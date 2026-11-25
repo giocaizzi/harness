@@ -130,13 +130,13 @@ void test("readStdin: a multi-byte character split across chunks survives", asyn
 const GUARD = fileURLToPath(new URL("./guard.mjs", import.meta.url));
 const STOP = fileURLToPath(new URL("./stop.mjs", import.meta.url));
 const hook = (script, args, chunks, { gapMs = 0, end = true, env = {} } = {}) => new Promise((resolve, reject) => {
-    const clean = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("FACTORY_") && !k.startsWith("GUARD_")));
+    const clean = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("GUARD_")));
     const child = spawn(process.execPath, [script, ...args], {
         env: {
             ...clean,
             GUARD_OTEL: "off",
             GUARD_STOP_CHECK: "off",
-            GUARD_RUN_EVENTS_FILE: "",
+            AGENT_RUN_EVENTS_FILE: "",
             GUARD_UNATTENDED: "",
             CLAUDE_PLUGIN_DATA: mkdtempSync(join(tmpdir(), "guard-stdin-")),
             ...env,
@@ -221,7 +221,7 @@ void test("guard hook: a payload that trickles in is judged whole", async () => 
     assert.match(d.reason, /not a Conventional Commit header/);
 });
 // A run whose registration cannot load (no manifest): the stop hook fails closed for it, as for any identified run.
-const RUNTIME = { GUARD_RUN_ID: "run-1" };
+const RUNTIME = { AGENT_RUN_ID: "run-1" };
 void test("stop hook: a payload that never completes blocks an identified run, and lets a stop with no run go", async () => {
     // stdin stays open on a partial payload, so the reader runs out its deadline
     const [runtime, attended] = await Promise.all([
@@ -231,7 +231,7 @@ void test("stop hook: a payload that never completes blocks an identified run, a
     assert.equal(runtime.status, 0, runtime.stderr);
     const o = JSON.parse(runtime.stdout);
     assert.equal(o.decision, "block");
-    assert.match(o.reason, /^Run registration failed: GUARD_RUN_ID is set/);
+    assert.match(o.reason, /^Run registration failed: AGENT_RUN_ID is set/);
     assert.equal(attended.status, 0, attended.stderr);
     assert.equal(attended.stdout, "");
 });
@@ -252,7 +252,7 @@ void test("gateFailClosed: a registered unattended run whose stop input cannot b
     const dir = mkdtempSync(join(tmpdir(), "guard-stdin-"));
     const m = join(dir, "run.json");
     writeFileSync(m, JSON.stringify({
-        contract: 2,
+        contract: 3,
         runner: "acme-runner",
         requires: ["result-gate"],
         result: { file: ".acme/runs/{ticket_number}/result.json" },
@@ -265,20 +265,20 @@ void test("gateFailClosed: a registered unattended run whose stop input cannot b
         dataDir: mkdtempSync(join(tmpdir(), "guard-stdin-data-")),
     };
     const env = {
-        GUARD_RUN_MANIFEST: m,
-        GUARD_RUN_ID: "run-1",
-        GUARD_RUN_TICKET: "acme/app#12",
+        AGENT_RUN_MANIFEST: m,
+        AGENT_RUN_ID: "run-1",
+        AGENT_RUN_TICKET: "acme/app#12",
     };
     const input = { session_id: "s-unreadable" };
     assert.match(gateFailClosed(env, input, "stdin: payload never completed", opts) ?? "", /^Run result gate: could not check the result for run run-1 /);
-    assert.equal(gateFailClosed({ ...env, GUARD_RUN_MODE: "attended" }, 
+    assert.equal(gateFailClosed({ ...env, AGENT_RUN_MODE: "attended" }, 
     // another session: the run variables are pinned per session
     { session_id: "s-unreadable-attended" }, "stdin: payload never completed", opts), null);
 });
 void test("stopCheck: the gate's answer is reported before the make check starts", async () => {
     const saved = { ...process.env };
     for (const k of Object.keys(process.env)) {
-        if (k.startsWith("FACTORY_") || k.startsWith("GUARD_")) {
+        if (k.startsWith("GUARD_")) {
             Reflect.deleteProperty(process.env, k);
         }
     }
@@ -307,7 +307,7 @@ const noMake = () => ({ status: 1, stdout: "", stderr: "" });
 async function cleanEnv(fn) {
     const saved = { ...process.env };
     for (const k of Object.keys(process.env)) {
-        if (k.startsWith("FACTORY_") || k.startsWith("GUARD_")) {
+        if (k.startsWith("GUARD_")) {
             Reflect.deleteProperty(process.env, k);
         }
     }

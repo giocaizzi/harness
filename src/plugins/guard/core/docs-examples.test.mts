@@ -26,7 +26,6 @@ const exampleAfter = (intro: string): string => {
 };
 
 for (const intro of [
-  "The tripwire line has no paths and no env values:",
   "prints one JSON line and exits 0 without reading stdin:",
 ]) {
   void test(`docs/guard.md: the example after "${intro.slice(0, 30)}" is one line of JSON`, () => {

@@ -2,6 +2,7 @@
 // every OS; the ones that need POSIX permissions are named `posix checker:` and skip on Windows.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync, } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -166,9 +167,9 @@ void test("result check: returns the checker errors, or none", async () => {
     assert.deepEqual(await run("export const resultErrors = async () => ['late']"), { errors: ["late"] });
 });
 void test("result check: the checker gets the result and the environment", async () => {
-    const c = prepareChecker(file("export const resultErrors = (r, env) => [`${r.run_id}/${env.GUARD_RUN_X}`]"), ro);
+    const c = prepareChecker(file("export const resultErrors = (r, env) => [`${r.run_id}/${env.AGENT_RUN_X}`]"), ro);
     assert.ok("path" in c);
-    assert.deepEqual(await runChecker(c.path, { run_id: "r1" }, { GUARD_RUN_X: "x" }), {
+    assert.deepEqual(await runChecker(c.path, { run_id: "r1" }, { AGENT_RUN_X: "x" }), {
         errors: ["r1/x"],
     });
 });
@@ -279,4 +280,45 @@ void test("result check: vetTrustedFile takes a .json file and checks the extens
         return; // no symlink privilege (Windows)
     }
     assert.match(why(vetTrustedFile(link, ".json", ro)), /not a \.json file \(resolves to /);
+});
+void test("result check: with a digest the reach checks are skipped and the shape checks stay", () => {
+    const p = file("export const resultErrors = () => []");
+    const owned = {
+        owner: () => true,
+        writable: () => true,
+        readOnlyMount: () => false,
+    };
+    if (process.platform !== "win32") {
+        assert.ok("why" in prepareChecker(p, owned));
+    }
+    assert.ok("path" in prepareChecker(p, { ...owned, trust: "digest" }));
+    assert.match(why(prepareChecker("rel/c.mjs", { trust: "digest" })), /absolute/);
+    assert.match(why(prepareChecker(join(root, "none.mjs"), { trust: "digest" })), /no such file/);
+});
+void test("result check: checkerSha256 reads once, matches, and hands back the verified bytes", () => {
+    const body = "export const resultErrors = () => ['x']";
+    const p = file(body);
+    const sum = createHash("sha256").update(body).digest("hex");
+    const ok = prepareChecker(p, { ...ro, checkerSha256: sum });
+    assert.ok("source" in ok && ok.source?.toString() === body);
+    assert.equal(why(prepareChecker(p, { ...ro, checkerSha256: "0".repeat(64) })), "sha256 does not match result.checker_sha256");
+});
+void test("result check: a checker run from verified source never re-reads the path", async () => {
+    const body = "export const resultErrors = () => ['from-verified-bytes']";
+    const p = file(body);
+    const c = prepareChecker(p, {
+        ...ro,
+        checkerSha256: createHash("sha256").update(body).digest("hex"),
+    });
+    assert.ok("path" in c);
+    // swapped on disk after the hash read: the child still runs the verified bytes
+    writeFileSync(p, "export const resultErrors = () => ['swapped']");
+    assert.deepEqual(await runChecker(c.path, {}, {}, { source: c.source }), {
+        errors: ["from-verified-bytes"],
+    });
+    // and with the file gone altogether
+    rmSync(p);
+    assert.deepEqual(await runChecker(c.path, {}, {}, { source: c.source }), {
+        errors: ["from-verified-bytes"],
+    });
 });

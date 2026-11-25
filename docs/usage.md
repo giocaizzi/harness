@@ -1,6 +1,6 @@
 # Usage guide
 
-Every feature this marketplace ships, how to call it and how to tune it. New here: [quickstart.md](quickstart.md). Install and update: [install.md](install.md). What each harness supports and why: [compatibility.md](compatibility.md). Internals of each plugin: [guard.md](guard.md), [hud.md](hud.md), [sounds.md](sounds.md).
+Every feature this marketplace ships, how to call it and how to tune it. New here: [quickstart.md](quickstart.md). Install and update: [install.md](install.md). What each harness supports and why: [compatibility.md](compatibility.md). Internals of each plugin: [guard.md](guard.md) (what it writes: [guard-events.md](guard-events.md)), [hud.md](hud.md), [sounds.md](sounds.md).
 
 ## How you call things
 
@@ -123,7 +123,7 @@ You never call guard. You see it when it denies or asks:
 | A heavy build or test run denied once | Load over 30, CPU over 90 % or under 20 GB free disk. | Wait, or let the agent wrap it in `heavy.sh`. |
 | A toast "Plan usage is at 9x %" on a subagent spawn (Claude Code) | A plan window is at 90 %; the subagent still starts (`GUARD_THROTTLE=warn`, the default). With `ask` you get an Allow/Deny prompt; with `deny` the spawn is refused. | Nothing, or pick another `GUARD_THROTTLE` mode. |
 | The agent keeps working after it said "done" | `make check` failed on stop (only when the repo changed since the last green run), or, in a run a runner registered, its result file is missing or invalid. | Nothing: it fixes the failure once (the result file within two tries, or until it passes when the runner registered a checker), then may stop. |
-| Every tool call guard sees denied with `run-registration` or `run-unregistered`, and the stop blocked | A runner's run is not registered correctly: the registration failed to load or validate, or only the old `FACTORY_*` variables are set. | Nothing the agent can fix: the runner registers the run ([guard.md](guard.md#run-contract-v2)). |
+| Every tool call guard sees denied with `run-registration`, and the stop blocked | A runner's run is not registered correctly: the registration failed to load or validate. | Nothing the agent can fix: the runner registers the run ([guard.md](guard.md#run-contract-v3)). |
 | In an unattended run, a command denied for naming a protected label, a gh alias or a protected path (`run-label`, `run-config`, `protected-path`), also for an edit tool | The runner's registration protects its approval and takeover labels and its paths; the agent never touches them. | Nothing: the agent works around it or reports it. |
 | Shellcheck/PSScriptAnalyzer findings after an edit | An edited `.sh`/`.bash`/`.ps1` has lint findings. | Nothing: advice for the agent. |
 
@@ -134,13 +134,14 @@ Settings are env vars, set in the shell that starts the harness (or the `env` bl
 | Variable | Default | Effect |
 |---|---|---|
 | `GUARD_UNATTENDED=1` | off | Every risky ask becomes a deny, and Claude Code parks its permission asks at once. Use for overnight and headless runs (`unattended-runs` skill). Set it in the launching shell or Claude Code's settings `env`; a command that exports it in the session holds for the rest of the session ([guard.md](guard.md#unattended-and-auto-approve-runs)). |
+| `GUARD_RULES` | every rule on | Switches rules on and off by id, e.g. `-awake,-lint` or `none,risky,run-labels,protected-paths,result-gate`; the older switches below still work. A registered run keeps the rules its manifest requires ([guard.md](guard.md#rule-toggles)). |
 | `GUARD_STOP_CHECK=off` | on | Turns off `make check` on stop; `force` runs it even on a strained host (CI). |
 | `GUARD_LIFECYCLE=off` | on | Turns off the session repo sweep and the branch-lifecycle reminder on stop ([repo-cleanup](repo-cleanup.md)). |
 | `GUARD_PUSH_SCAN=off` | on | Turns off the secret scan before a push; for tests and probes only ([repo-cleanup](repo-cleanup.md#push-safety)). |
 | `GITLEAKS_PRIVATE_CONFIG` | unset | Path to a gitleaks config of names that must not reach a public repo; when set, pushes to a public repo get a second scan with it. |
 | `GUARD_HOST_LOAD_CAP`, `GUARD_HOST_CPU_CAP`, `GUARD_HOST_DISK_FLOOR_GB` | `30`, `90` (%), `20` | Caps of the host rule (a heavy build or test is denied once per session on a strained host unless it runs through a script named `heavy` or `lease`, `.sh` or `.ps1`) and of the stop check's deferral: Unix one-minute load, Windows CPU percent, free disk in GB. A positive plain decimal (`60`, `12.5`); anything else falls back to the default. Read from the hook process's environment: the harness's launch environment, Claude Code's settings `env` included, never the command text; whoever can edit those settings can set them ([guard.md](guard.md#decisions)). |
 | `GUARD_HOST_CHECK=off` | on | Turns the host rule and the stop check's strain deferral off, for a sandbox or container whose load reading reflects a shared VM. Set in the launching shell or Claude Code's settings `env` (whoever can edit them can set it); a command that sets it changes nothing ([guard.md](guard.md#decisions)). |
-| `GUARD_RESULT_GATE=off` | on | Turns off the result gate: in a registered run, a stop is held (an unattended run's until the result passes, an attended run's at most twice) while the run's result file is missing or invalid. It turns off the result check only, never a registration failure. The gate's counters live in guard's data dir, which the agent can write: no count releases an unattended run, and an attended run's block may be skipped ([guard.md](guard.md#run-contract-v2)). A verifier or other side session started with the run's variables sets it. |
+| `GUARD_RESULT_GATE=off` | on | Turns off the result gate: in a registered run, a stop is held (an unattended run's until the result passes, an attended run's at most twice) while the run's result file is missing or invalid. It turns off the result check only, never a registration failure. The gate's counters live in guard's data dir, which the agent can write: no count releases an unattended run, and an attended run's block may be skipped ([guard.md](guard.md#run-contract-v3)). A verifier or other side session started with the run's variables sets it. |
 | `GUARD_STOP_TIMEOUT_MS` | `300000` | Time limit for that check; a timeout defers it to the next stop, never blocks. |
 | `GUARD_ASK_TIMEOUT_MS` | `60000` | Claude Code: an unanswered permission prompt is parked after this (the agent is told nobody answered and to carry on, not that you denied it); `0` turns it off. |
 | `GUARD_THROTTLE` | `warn` | Claude Code: what a subagent spawn does once a plan window is at 90 %. `warn` starts it with a toast, `ask` puts it in an Allow/Deny prompt (parked like any ask: after `GUARD_ASK_TIMEOUT_MS`, at once under `GUARD_UNATTENDED`), `deny` refuses it, `off` turns the throttle off. Any other value is `warn`. |
@@ -148,7 +149,7 @@ Settings are env vars, set in the shell that starts the harness (or the `env` bl
 | `GUARD_OTEL_EXPORTER_OTLP_ENDPOINT`, `GUARD_OTEL_EXPORTER_OTLP_HEADERS` | unset | Send each deny and ask to Grafana as logs ([guard.md](guard.md#grafana)). |
 | `GUARD_TRACEPARENT` | unset | A W3C `traceparent` a runner sets for a traced run: each decision record carries its trace and span ids; a malformed value is ignored ([guard.md](guard.md#grafana)). |
 
-The run registration (`GUARD_RUN_MANIFEST`, whose `result.checker` is the gate's checker) and the other `GUARD_RUN_*` variables are set by a run's runner, not by you: [guard.md](guard.md#run-contract-v2).
+The run registration (`AGENT_RUN_MANIFEST`, whose `result.checker` is the gate's checker) and the other `AGENT_RUN_*` variables are set by a run's runner, not by you: [guard.md](guard.md#run-contract-v3).
 
 A repo with a slow suite defines a `check-fast` make target; the stop hook runs that instead of `check`.
 

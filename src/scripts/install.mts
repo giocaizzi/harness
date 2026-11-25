@@ -22,6 +22,7 @@ import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { codexRules } from "../plugins/guard/core/engine.mjs";
 import { rules } from "../plugins/guard/core/rules.mjs";
+import { antigravityHooks } from "../plugins/guard/hooks/describe.mjs";
 import { CODEX_RULES } from "../plugins/guard/hooks/guard.mjs";
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -78,32 +79,9 @@ export function plan(harness: string): PlanItem[] {
     ];
   }
   if (harness === "antigravity") {
-    const guardScript = join(PLUGINS, "guard", "hooks", "guard.mjs");
-    const stopScript = join(PLUGINS, "guard", "hooks", "stop.mjs");
     const agyHooks =
       JSON.stringify(
-        {
-          "giocaizzi-guard": {
-            PreToolUse: [
-              {
-                matcher:
-                  "run_command|read_file|view_file|edit_file|write_file|invoke_subagent",
-                hooks: [
-                  {
-                    type: "command",
-                    command: `node ${JSON.stringify(guardScript)} PreToolUse --harness=antigravity`,
-                  },
-                ],
-              },
-            ],
-            Stop: [
-              {
-                type: "command",
-                command: `node ${JSON.stringify(stopScript)} Stop --harness=antigravity`,
-              },
-            ],
-          },
-        },
+        { "giocaizzi-guard": antigravityHooks(join(PLUGINS, "guard")) },
         null,
         2,
       ) + "\n";

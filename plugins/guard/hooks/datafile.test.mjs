@@ -44,7 +44,7 @@ ${body}
             ...process.env,
             GUARD_OTEL: "off",
             GUARD_STOP_CHECK: "off",
-            GUARD_RUN_EVENTS_FILE: "",
+            AGENT_RUN_EVENTS_FILE: "",
             CLAUDE_PLUGIN_DATA: join(dir, "data"),
         },
     });
@@ -72,9 +72,9 @@ for (const shape of SHAPES) {
         const r = child(`
 const { loadRegistration, pinFile } = await import(${JSON.stringify(url("registration"))});
 const m = join(root, "m.json");
-writeFileSync(m, JSON.stringify({ contract: 2, runner: "acme-runner", requires: [] }));
+writeFileSync(m, JSON.stringify({ contract: 3, runner: "acme-runner", requires: [] }));
 const vet = { writable: () => false, owner: () => false, readOnlyMount: () => false };
-const env = { GUARD_RUN_ID: "r1", GUARD_RUN_MANIFEST: m };
+const env = { AGENT_RUN_ID: "r1", AGENT_RUN_MANIFEST: m };
 const opts = { vet, dataDir: join(root, "data"), sessionId: "s1" };
 loadRegistration(env, opts);
 const pin = pinFile(opts.dataDir, "s1");
@@ -126,12 +126,12 @@ mkdirSync(repo, { recursive: true });
 execFileSync("git", ["init", "-q", repo]);
 const m = join(root, "m.json");
 writeFileSync(m, JSON.stringify({
-  contract: 2, runner: "acme-runner", requires: ["protected-paths", "result-gate"],
+  contract: 3, runner: "acme-runner", requires: ["protected-paths", "result-gate"],
   protected_paths: { globs: [".acme/**"] },
   result: { file: ".acme/runs/{ticket_number}/result.json" },
 }));
 const dataDir = join(root, "data");
-const env = { GUARD_RUN_ID: "r1", GUARD_RUN_TICKET: "acme/app#12", GUARD_RUN_MANIFEST: m };
+const env = { AGENT_RUN_ID: "r1", AGENT_RUN_TICKET: "acme/app#12", AGENT_RUN_MANIFEST: m };
 const vet = { writable: () => false, owner: () => false, readOnlyMount: () => false };
 const call = async (command) => {
   const res = await handle(
@@ -165,26 +165,3 @@ out(res);
     assert.match(r.gateFifo, /Run result gate/);
     assert.match(r.gateLink, /Run result gate/);
 });
-// The tripwire log is a data-dir file too: a FIFO or a symlink at its path is neither blocked on nor written through,
-// and the legacy-only deny stands.
-for (const shape of ["fifo", "fifolink", "reglink"]) {
-    void test(`data dir writes (${shape}): the tripwire log is lost, the legacy-only deny stands, never a hang`, posix, () => {
-        const r = child(`
-const { handle } = await import(${JSON.stringify(url("guard"))});
-const dataDir = join(root, "data");
-const log = join(dataDir, "run-unregistered.jsonl");
-plant(${JSON.stringify(shape)}, log, "");
-const res = await handle(
-  { session_id: "s1", cwd: root, hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: { command: "ls" } },
-  { dataDir, env: { FACTORY_RUN_ID: "r1" }, hostFacts: async () => ({ load1: 1, freeGb: 100 }), run: async () => null },
-);
-const o = res.stdout ? JSON.parse(res.stdout).hookSpecificOutput : {};
-out({
-  d: o.permissionDecision,
-  rule: /GUARD_RUN_MANIFEST/.test(o.permissionDecisionReason ?? ""),
-  target: ${JSON.stringify(shape)} === "reglink" ? readFileSync(log + ".t", "utf8") : "",
-});
-`);
-        assert.deepEqual(r, { d: "deny", rule: true, target: "" });
-    });
-}

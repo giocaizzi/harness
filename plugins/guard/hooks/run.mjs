@@ -1,29 +1,46 @@
-// Run contract v2: which run a hook call belongs to, from the hook process's environment. A registered run
-// (GUARD_RUN_MANIFEST and GUARD_RUN_ID, loaded and pinned by hooks/registration.mjs), a run whose registration fails
-// (rule run-registration), a session that sets only the legacy run variables (the legacy-only tripwire, rule
-// run-unregistered), or no run. Guard reads no legacy variable for any decision: the tripwire only names them to fail
-// loudly, and writes its one line to FACTORY_EVENTS_FILE when that is set. Nothing here throws.
-import { createHash } from "node:crypto";
-import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { RULE, UNREGISTERED_REASON, UNREGISTERED_RULE, unregisteredLine, } from "../core/registration.mjs";
-import { appendDataFile } from "./data.mjs";
+// Run contract v3: which run a hook call belongs to, from the hook process's environment. A registered run
+// (AGENT_RUN_MANIFEST and AGENT_RUN_ID, loaded and pinned by hooks/registration.mjs), a run whose registration fails
+// (rule run-registration), or no run. Nothing here throws.
+import { RULE } from "../core/registration.mjs";
 import { loadRegistration } from "./registration.mjs";
-// The contract v1 run variables. Any of them set (to a non-blank value) without a registration trips the tripwire.
-export const LEGACY_VARS = [
-    "FACTORY_RUN_ID",
-    "FACTORY_ATTENDED_RUN_ID",
-    "FACTORY_TICKET",
-    "FACTORY_ATTENDED_TICKET",
-    "FACTORY_RUN_FILE",
-    "FACTORY_PROTECTED_PATHS",
-    "FACTORY_EVENTS_FILE",
-    "FACTORY_RESULT_CHECKER",
-];
-export const legacySet = (env) => LEGACY_VARS.some((k) => (env[k] ?? "").trim() !== "");
+// Run contract 2 named the run variables GUARD_RUN_*. Guard reads them for no decision, only to fail closed: a runner
+// still on contract 2 after a plugin update must not get an ordinary unregistered session with no run rules. Each
+// old name set (not blank) without its AGENT_RUN_* twin set to the same value is returned. The five identity names
+// count on their own; the protected-paths and events-file names count once the run is identified (by an identity
+// name or an AGENT_RUN_* one), so a runner moving names cannot lose its extra globs or its events file in silence,
+// while either of the two alone stays an ordinary session.
+const OLD_RUN_VARS = ["ID", "TICKET", "MODE", "FILE", "MANIFEST"];
+const OLD_RUN_EXTRAS = ["PROTECTED_PATHS", "EVENTS_FILE"];
+const staleOf = (env, names) => names
+    .filter((k) => {
+    const old = env[`GUARD_RUN_${k}`];
+    return (old !== undefined && old.trim() !== "" && env[`AGENT_RUN_${k}`] !== old);
+})
+    .map((k) => `GUARD_RUN_${k}`);
+// The AGENT_RUN_* identity: a run id, a manifest variable (defined, even blank, as the loader reads it) or a digest.
+const agentRunNamed = (env) => (env.AGENT_RUN_ID ?? "").trim() !== "" ||
+    env.AGENT_RUN_MANIFEST !== undefined ||
+    env.AGENT_RUN_MANIFEST_SHA256 !== undefined;
+export function staleRunVars(env) {
+    const core = staleOf(env, OLD_RUN_VARS);
+    const identified = agentRunNamed(env) ||
+        OLD_RUN_VARS.some((k) => (env[`GUARD_RUN_${k}`] ?? "").trim() !== "");
+    return identified ? [...core, ...staleOf(env, OLD_RUN_EXTRAS)] : core;
+}
+// Whether the environment names a run at all (registered, failing or on the old names): a guard crash then fails
+// closed.
+export const runIdentified = (env) => agentRunNamed(env) || staleRunVars(env).length > 0;
 // The run this hook call belongs to. `opts` as for loadRegistration (dataDir and sessionId pin the manifest).
 export function runContext(env, opts = {}) {
     try {
+        const stale = staleRunVars(env);
+        if (stale.length > 0) {
+            return {
+                state: "deny",
+                rule: RULE,
+                why: `run contract 2 variables are set (${stale.join(", ")}) without the same value in AGENT_RUN_*: this guard speaks run contract 3 only, so the runner must set AGENT_RUN_* and register a contract 3 manifest`,
+            };
+        }
         const loaded = loadRegistration(env, opts);
         if (loaded.state === "deny") {
             return {
@@ -34,26 +51,25 @@ export function runContext(env, opts = {}) {
             };
         }
         if (loaded.state === "none") {
-            return legacySet(env)
-                ? { state: "deny", rule: UNREGISTERED_RULE, why: UNREGISTERED_REASON }
-                : { state: "none" };
+            return { state: "none" };
         }
-        // loadRegistration checked GUARD_RUN_ID, GUARD_RUN_MODE and GUARD_RUN_TICKET as given.
-        const ticket = env.GUARD_RUN_TICKET;
-        const runFile = (env.GUARD_RUN_FILE ?? "").trim();
+        // loadRegistration checked AGENT_RUN_ID, AGENT_RUN_MODE and AGENT_RUN_TICKET as given.
+        const ticket = env.AGENT_RUN_TICKET;
+        const runFile = (env.AGENT_RUN_FILE ?? "").trim();
         return {
             state: "registered",
             registration: loaded.registration,
             path: loaded.path,
             sha256: loaded.sha256,
+            trust: loaded.trust,
             ...(loaded.checker === undefined ? {} : { checker: loaded.checker }),
-            runId: env.GUARD_RUN_ID ?? "",
-            mode: env.GUARD_RUN_MODE === "attended" ? "attended" : "unattended",
+            runId: env.AGENT_RUN_ID ?? "",
+            mode: env.AGENT_RUN_MODE === "attended" ? "attended" : "unattended",
             ...(ticket
                 ? { ticket, ticketNumber: ticket.slice(ticket.lastIndexOf("#") + 1) }
                 : {}),
             ...(runFile ? { runFile } : {}),
-            extra: (env.GUARD_RUN_PROTECTED_PATHS ?? "")
+            extra: (env.AGENT_RUN_PROTECTED_PATHS ?? "")
                 .split(/\r?\n/)
                 .map((g) => g.trim())
                 .filter(Boolean),
@@ -91,52 +107,7 @@ export function runFacts(run, at) {
 }
 // The deny reason for a tool call, or the block reason for a stop, in a run whose registration failed.
 export function denyReason(deny, at) {
-    if (deny.rule === UNREGISTERED_RULE) {
-        return at === "tool"
-            ? "Legacy run variables are set without a run registration. This guard enforces run contract v2 only, so it denies every tool call guard sees until the runner registers the run with GUARD_RUN_MANIFEST; stop and report it."
-            : "Legacy run variables are set without a run registration (run contract v2 needs GUARD_RUN_MANIFEST), so every tool call guard sees in this run is denied; stop and report it.";
-    }
     return at === "tool"
         ? `Run registration failed: ${deny.why}. Guard denies every tool call guard sees in this run until the runner fixes its registration; stop and report it.`
         : `Run registration failed: ${deny.why}. Every tool call guard sees in this run is denied until the runner fixes its registration; stop and report it.`;
-}
-// Where the tripwire line always goes: guard's own log, in its data directory.
-export const unregisteredLog = (dataDir) => join(dataDir, "run-unregistered.jsonl");
-// Appends the tripwire's one line ({ts, event, decision, rule, reason}: no paths, no env values) to guard's own log
-// and, when set, to FACTORY_EVENTS_FILE: once per session when `sessionId` is given (a marker file next to the
-// session's pin), on every call otherwise. Best effort: a failed write is dropped and the deny stands.
-export function recordUnregistered(env, dataDir, sessionId, now = new Date()) {
-    try {
-        if (sessionId) {
-            const marker = join(join(dataDir, "sessions"), `${createHash("sha256").update(sessionId).digest("hex").slice(0, 32)}.unregistered`);
-            try {
-                mkdirSync(dirname(marker), { recursive: true, mode: 0o700 });
-                writeFileSync(marker, "", { flag: "wx" });
-            }
-            catch (e) {
-                if (e.code === "EEXIST")
-                    return;
-            }
-        }
-        const line = `${unregisteredLine(now.toISOString())}\n`;
-        const legacy = (env.FACTORY_EVENTS_FILE ?? "").trim();
-        if (legacy) {
-            try {
-                appendFileSync(legacy, line);
-            }
-            catch {
-                // unwritable path: the deny stands
-            }
-        }
-        try {
-            mkdirSync(dataDir, { recursive: true, mode: 0o700 });
-            appendDataFile(unregisteredLog(dataDir), line);
-        }
-        catch {
-            // unwritable data dir: the deny stands
-        }
-    }
-    catch {
-        // never throws
-    }
 }

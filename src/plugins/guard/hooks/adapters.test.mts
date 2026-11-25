@@ -43,21 +43,13 @@ afterEach(() => {
 delete process.env.GUARD_STOP_CHECK;
 delete process.env.GUARD_UNATTENDED;
 for (const k of [
-  "FACTORY_RUN_ID",
-  "FACTORY_TICKET",
-  "FACTORY_ATTENDED_RUN_ID",
-  "FACTORY_ATTENDED_TICKET",
-  "FACTORY_RUN_FILE",
-  "FACTORY_EVENTS_FILE",
-  "FACTORY_PROTECTED_PATHS",
-  "FACTORY_RESULT_CHECKER",
   "GUARD_RESULT_GATE",
-  "GUARD_RUN_MANIFEST",
-  "GUARD_RUN_ID",
-  "GUARD_RUN_TICKET",
-  "GUARD_RUN_MODE",
-  "GUARD_RUN_FILE",
-  "GUARD_RUN_EVENTS_FILE",
+  "AGENT_RUN_MANIFEST",
+  "AGENT_RUN_ID",
+  "AGENT_RUN_TICKET",
+  "AGENT_RUN_MODE",
+  "AGENT_RUN_FILE",
+  "AGENT_RUN_EVENTS_FILE",
 ]) {
   Reflect.deleteProperty(process.env, k);
 }
@@ -533,7 +525,7 @@ const writeManifest = (body: Record<string, unknown>): string => {
   const file = join(dir(), "run.json");
   writeFileSync(
     file,
-    JSON.stringify({ contract: 2, runner: "acme-runner", ...body }),
+    JSON.stringify({ contract: 3, runner: "acme-runner", ...body }),
   );
   return file;
 };
@@ -569,9 +561,9 @@ const registeredRun = async (
   execFileSync("git", ["init", "-q", cwd]);
   await withEnv(
     {
-      GUARD_RUN_MANIFEST: manifest,
-      GUARD_RUN_ID: "run-1",
-      GUARD_RUN_TICKET: "acme/app#12",
+      AGENT_RUN_MANIFEST: manifest,
+      AGENT_RUN_ID: "run-1",
+      AGENT_RUN_TICKET: "acme/app#12",
       CLAUDE_PLUGIN_DATA: dir(),
       ...extra,
     },
@@ -761,7 +753,7 @@ void test("opencode and pi: GUARD_TRACEPARENT adds trace_id and span_id to the e
       { client: mockClient, directory: dir() },
       {
         ...deps(),
-        env: { GUARD_RUN_EVENTS_FILE: ocFile, GUARD_TRACEPARENT: value },
+        env: { AGENT_RUN_EVENTS_FILE: ocFile, GUARD_TRACEPARENT: value },
       },
     );
     await assert.rejects(
@@ -775,7 +767,7 @@ void test("opencode and pi: GUARD_TRACEPARENT adds trace_id and span_id to the e
     const { handlers, api } = fakePi();
     guardExtension(api, {
       ...deps(),
-      env: { GUARD_RUN_EVENTS_FILE: piFile, GUARD_TRACEPARENT: value },
+      env: { AGENT_RUN_EVENTS_FILE: piFile, GUARD_TRACEPARENT: value },
     });
     const blocked = (await handlers.tool_call?.(
       {
@@ -845,7 +837,7 @@ void test("pi: the default emit sends the guard.decision OTLP record with traceI
     "OTEL_EXPORTER_OTLP_ENDPOINT",
     "GUARD_OTEL_EXPORTER_OTLP_ENDPOINT",
     "GUARD_TRACEPARENT",
-    "GUARD_RUN_EVENTS_FILE",
+    "AGENT_RUN_EVENTS_FILE",
   ];
   const saved = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
   const realFetch = globalThis.fetch;
@@ -855,7 +847,7 @@ void test("pi: the default emit sends the guard.decision OTLP record with traceI
     GUARD_OTEL_EXPORTER_OTLP_ENDPOINT: "http://collector.invalid",
     GUARD_TRACEPARENT:
       "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
-    GUARD_RUN_EVENTS_FILE: "",
+    AGENT_RUN_EVENTS_FILE: "",
   });
   globalThis.fetch = (async (_: unknown, init: { body: string }) => {
     await Promise.resolve();
@@ -1128,7 +1120,7 @@ void test("bridge: a stop with no session id keys its cap on the host's own pid"
   const data = dir();
   const cwd = dir();
   await withEnv(
-    { GUARD_RUN_ID: "run-1", CLAUDE_PLUGIN_DATA: data },
+    { AGENT_RUN_ID: "run-1", CLAUDE_PLUGIN_DATA: data },
     async () => {
       assert.match((await guard.stop({ cwd })) ?? "", /block 1 of 2/);
     },
@@ -1179,7 +1171,7 @@ void test("bridge: an internal error in strict mode is a reason, not null", asyn
     async (cwd) => {
       assert.equal(await attended.guard.stop({ cwd }), null);
     },
-    { GUARD_RUN_MODE: "attended" },
+    { AGENT_RUN_MODE: "attended" },
   );
 });
 
@@ -1217,7 +1209,7 @@ void test("opencode and pi: a throwing gate in an unattended run is sent the una
       assert.equal(attended.sentOc.length, 0);
       assert.equal(attended.sent.length, 0);
     },
-    { GUARD_RUN_MODE: "attended" },
+    { AGENT_RUN_MODE: "attended" },
   );
 });
 
@@ -1646,7 +1638,7 @@ void test("opencode and pi: the approval label is denied in a registered run, al
     requires: ["labels"],
     labels: { approval: "acme:approved", takeover: "acme:takeover" },
   });
-  const env = { GUARD_RUN_MANIFEST: manifest, GUARD_RUN_ID: "run-1" };
+  const env = { AGENT_RUN_MANIFEST: manifest, AGENT_RUN_ID: "run-1" };
   const why = /`acme:approved` label is registered for this run/;
   const oc = await GuardPlugin(
     { client: ocClient(), directory: dir() },
@@ -1691,7 +1683,7 @@ void test("opencode and pi: the takeover label is denied in a registered run, al
     requires: ["labels"],
     labels: { approval: "acme:approved", takeover: "acme:takeover" },
   });
-  const env = { GUARD_RUN_MANIFEST: manifest, GUARD_RUN_ID: "run-1" };
+  const env = { AGENT_RUN_MANIFEST: manifest, AGENT_RUN_ID: "run-1" };
   const why = /`acme:takeover` label is registered for this run/;
   const oc = await GuardPlugin(
     { client: ocClient(), directory: dir() },
@@ -2051,9 +2043,8 @@ void test("pi: session_start sends guard.session, a dev-tools subagent child doe
   assert.equal(events.length, 1);
 });
 
-// A run whose registration cannot be trusted (GUARD_RUN_ID without a manifest), and a session that sets only the
-// legacy run variables (the tripwire): both deny every tool call and block the stop twice at most, in every adapter,
-// with no trusted file involved.
+// A run whose registration cannot be trusted (AGENT_RUN_ID without a manifest) denies every tool call and blocks the
+// stop twice at most, in every adapter, with no trusted file involved.
 const FAILED_RUNS: readonly {
   env: Record<string, string>;
   name: string;
@@ -2062,105 +2053,67 @@ const FAILED_RUNS: readonly {
 }[] = [
   {
     name: "registration",
-    env: { GUARD_RUN_ID: "run-1" },
-    tool: /^Run registration failed: GUARD_RUN_ID is set but GUARD_RUN_MANIFEST is not\./,
-    stop: /^Run registration failed: GUARD_RUN_ID is set but GUARD_RUN_MANIFEST is not\./,
-  },
-  {
-    name: "tripwire",
-    env: { FACTORY_RUN_ID: "run-1" },
-    tool: /^Legacy run variables are set without a run registration/,
-    stop: /^Legacy run variables are set without a run registration/,
+    env: { AGENT_RUN_ID: "run-1" },
+    tool: /^Run registration failed: AGENT_RUN_ID is set but AGENT_RUN_MANIFEST is not\./,
+    stop: /^Run registration failed: AGENT_RUN_ID is set but AGENT_RUN_MANIFEST is not\./,
   },
 ];
 
-const eventLines = (file: string): Record<string, unknown>[] =>
-  readFileSync(file, "utf8")
-    .trim()
-    .split("\n")
-    .filter(Boolean)
-    .map((l) => JSON.parse(l) as Record<string, unknown>);
-
-// The tripwire's line: fixed keys, no path and no env value.
-const assertTripwireLine = (file: string): void => {
-  const lines = eventLines(file);
-  assert.equal(lines.length, 1, "the tripwire writes its line once");
-  assert.deepEqual(Object.keys(lines[0] ?? {}), [
-    "ts",
-    "event",
-    "decision",
-    "rule",
-    "reason",
-  ]);
-  assert.equal(lines[0]?.rule, "run-unregistered");
-  assert.equal(lines[0].decision, "deny");
-};
-
-void test("opencode: a failed registration or the legacy-only tripwire denies every tool call and re-prompts the idle twice at most", async () => {
+void test("opencode: a failed registration denies every tool call and re-prompts the idle twice at most", async () => {
   for (const c of FAILED_RUNS) {
-    const events = join(dir(), "events.jsonl");
-    await withEnv(
-      { ...c.env, CLAUDE_PLUGIN_DATA: dir(), FACTORY_EVENTS_FILE: events },
-      async () => {
-        const sent: string[] = [];
-        const hooks = await GuardPlugin(
-          { client: ocClient(sent), directory: dir() },
-          deps(),
+    await withEnv({ ...c.env, CLAUDE_PLUGIN_DATA: dir() }, async () => {
+      const sent: string[] = [];
+      const hooks = await GuardPlugin(
+        { client: ocClient(sent), directory: dir() },
+        deps(),
+      );
+      for (let i = 0; i < 2; i++) {
+        await assert.rejects(
+          hooks["tool.execute.before"](
+            { tool: "bash", sessionID: "s", callID: "c" },
+            { args: { command: "ls" } },
+          ),
+          new RegExp(c.tool.source.replace(/^\^/, "")),
+          c.name,
         );
-        for (let i = 0; i < 2; i++) {
-          await assert.rejects(
-            hooks["tool.execute.before"](
-              { tool: "bash", sessionID: "s", callID: "c" },
-              { args: { command: "ls" } },
-            ),
-            new RegExp(c.tool.source.replace(/^\^/, "")),
-            c.name,
-          );
-        }
-        if (c.name === "tripwire") assertTripwireLine(events);
-        for (let i = 0; i < 3; i++) await idle(hooks);
-        assert.equal(sent.length, 2, c.name);
-        assert.match(sent[0] ?? "", c.stop);
-        assert.match(sent[0] ?? "", / \(block 1 of 2\)$/);
-        assert.match(sent[1] ?? "", / \(block 2 of 2\)$/);
-      },
-    );
+      }
+      for (let i = 0; i < 3; i++) await idle(hooks);
+      assert.equal(sent.length, 2, c.name);
+      assert.match(sent[0] ?? "", c.stop);
+      assert.match(sent[0] ?? "", / \(block 1 of 2\)$/);
+      assert.match(sent[1] ?? "", / \(block 2 of 2\)$/);
+    });
   }
 });
 
-void test("pi: a failed registration or the legacy-only tripwire blocks every tool call and re-prompts the settle twice at most", async () => {
+void test("pi: a failed registration blocks every tool call and re-prompts the settle twice at most", async () => {
   for (const c of FAILED_RUNS) {
-    const events = join(dir(), "events.jsonl");
-    await withEnv(
-      { ...c.env, CLAUDE_PLUGIN_DATA: dir(), FACTORY_EVENTS_FILE: events },
-      async () => {
-        const { handlers, sent, api } = fakePi();
-        guardExtension(api, deps());
-        for (let i = 0; i < 2; i++) {
-          const blocked = (await handlers.tool_call?.(
-            { toolName: "bash", toolCallId: "c", input: { command: "ls" } },
-            piCtx(dir()),
-          )) as { block?: boolean; reason?: string } | undefined;
-          assert.equal(blocked?.block, true, c.name);
-          assert.match(blocked.reason ?? "", c.tool);
-        }
-        if (c.name === "tripwire") assertTripwireLine(events);
-        const ctx = piCtx(dir());
-        for (let i = 0; i < 3; i++) {
-          await handlers.agent_settled?.({ aborted: false }, ctx);
-        }
-        assert.equal(sent.length, 2, c.name);
-        assert.match(sent[0] ?? "", c.stop);
-        assert.match(sent[0] ?? "", / \(block 1 of 2\)$/);
-        assert.match(sent[1] ?? "", / \(block 2 of 2\)$/);
-      },
-    );
+    await withEnv({ ...c.env, CLAUDE_PLUGIN_DATA: dir() }, async () => {
+      const { handlers, sent, api } = fakePi();
+      guardExtension(api, deps());
+      for (let i = 0; i < 2; i++) {
+        const blocked = (await handlers.tool_call?.(
+          { toolName: "bash", toolCallId: "c", input: { command: "ls" } },
+          piCtx(dir()),
+        )) as { block?: boolean; reason?: string } | undefined;
+        assert.equal(blocked?.block, true, c.name);
+        assert.match(blocked.reason ?? "", c.tool);
+      }
+      const ctx = piCtx(dir());
+      for (let i = 0; i < 3; i++) {
+        await handlers.agent_settled?.({ aborted: false }, ctx);
+      }
+      assert.equal(sent.length, 2, c.name);
+      assert.match(sent[0] ?? "", c.stop);
+      assert.match(sent[0] ?? "", / \(block 1 of 2\)$/);
+      assert.match(sent[1] ?? "", / \(block 2 of 2\)$/);
+    });
   }
 });
 
 void test("opencode: two sessions in one process keep separate registration block counters", async () => {
   await withEnv(
-    { GUARD_RUN_ID: "run-1", CLAUDE_PLUGIN_DATA: dir() },
+    { AGENT_RUN_ID: "run-1", CLAUDE_PLUGIN_DATA: dir() },
     async () => {
       const sent: string[] = [];
       const hooks = await GuardPlugin(
@@ -2183,7 +2136,7 @@ void test("opencode: two sessions in one process keep separate registration bloc
 
 void test("pi: successive sessions keep separate counters, and a subagent child's settle is exempt", async () => {
   await withEnv(
-    { GUARD_RUN_ID: "run-1", CLAUDE_PLUGIN_DATA: dir() },
+    { AGENT_RUN_ID: "run-1", CLAUDE_PLUGIN_DATA: dir() },
     async () => {
       const { handlers, sent, api } = fakePi();
       guardExtension(api, deps());
@@ -2203,7 +2156,7 @@ void test("pi: successive sessions keep separate counters, and a subagent child'
   );
   await withEnv(
     {
-      GUARD_RUN_ID: "run-1",
+      AGENT_RUN_ID: "run-1",
       CLAUDE_PLUGIN_DATA: dir(),
       GUARD_PARENT_SESSION: "parent",
       GUARD_AGENT_ID: "child",
@@ -2234,13 +2187,6 @@ const CRASH_RUNS: readonly {
   {
     name: "registered run",
     run: (fn) => registeredRun(writeManifest({ requires: [] }), fn),
-  },
-  {
-    name: "tripwire",
-    run: (fn) =>
-      withEnv({ FACTORY_RUN_ID: "run-1", CLAUDE_PLUGIN_DATA: dir() }, () =>
-        fn(dir()),
-      ),
   },
 ];
 
@@ -2320,7 +2266,6 @@ const spawnHook = (
   const clean = Object.fromEntries(
     Object.entries(process.env).filter(
       ([k]) =>
-        !k.startsWith("FACTORY_") &&
         !k.startsWith("GUARD_") &&
         !k.endsWith("_PLUGIN_DATA") &&
         k !== "CLAUDE_PLUGIN_ROOT",
@@ -2338,7 +2283,7 @@ const spawnHook = (
       ...clean,
       GUARD_OTEL: "off",
       GUARD_STOP_CHECK: "off",
-      GUARD_RUN_EVENTS_FILE: "",
+      AGENT_RUN_EVENTS_FILE: "",
       ...env,
     },
   });
@@ -2351,7 +2296,7 @@ const shell = (tool: string, command = "ls") => ({
   tool_input: { command },
 });
 
-void test("command harnesses: a failed registration or the legacy-only tripwire denies PreToolUse in each harness's shape", () => {
+void test("command harnesses: a failed registration denies PreToolUse in each harness's shape", () => {
   const claudeArgs = hookArgs("hooks/hooks.json", "PreToolUse");
   const codexArgs = hookArgs(".generated/codex/hooks.json", "PreToolUse");
   assert.ok(codexArgs.includes("--harness=codex"));
@@ -2361,10 +2306,8 @@ void test("command harnesses: a failed registration or the legacy-only tripwire 
     "--harness=antigravity",
   ];
   for (const c of FAILED_RUNS) {
-    const events = join(dir(), "events.jsonl");
     const withEvents = (extra: Record<string, string>) => ({
       ...c.env,
-      FACTORY_EVENTS_FILE: events,
       ...extra,
     });
     const harnesses: [
@@ -2411,36 +2354,10 @@ void test("command harnesses: a failed registration or the legacy-only tripwire 
     );
     assert.equal(anti.decision, "deny", c.name);
     assert.match(String(anti.reason), c.tool);
-    // each spawned session writes its own tripwire line, one per session and none from a failed registration
-    if (c.name === "tripwire") {
-      const lines = eventLines(events);
-      assert.equal(lines.length, 5);
-      for (const l of lines) assert.equal(l.rule, "run-unregistered");
-    }
   }
 });
 
-void test("command harnesses: the legacy-only tripwire writes its line once per session", () => {
-  const events = join(dir(), "events.jsonl");
-  const data = dir();
-  const args = hookArgs("hooks/hooks.json", "PreToolUse");
-  const env = {
-    FACTORY_RUN_ID: "run-1",
-    FACTORY_EVENTS_FILE: events,
-    CLAUDE_PLUGIN_DATA: data,
-  };
-  for (let i = 0; i < 3; i++) {
-    const out = spawnHook(
-      args,
-      { ...shell("Bash"), session_id: "adapters-one-session" },
-      env,
-    ) as { hookSpecificOutput?: { permissionDecision?: string } };
-    assert.equal(out.hookSpecificOutput?.permissionDecision, "deny");
-  }
-  assertTripwireLine(events);
-});
-
-void test("command harnesses: a failed registration or the legacy-only tripwire blocks Stop in each harness's shape, twice at most", () => {
+void test("command harnesses: a failed registration blocks Stop in each harness's shape, twice at most", () => {
   const claudeArgs = hookArgs("hooks/hooks.json", "Stop");
   const codexArgs = hookArgs(".generated/codex/hooks.json", "Stop");
   const antigravityArgs = [

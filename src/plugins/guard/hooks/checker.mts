@@ -2,7 +2,17 @@
 // path, running it in a child process.
 
 import { type ChildProcess, spawn } from "node:child_process";
-import { accessSync, constants, realpathSync, statSync } from "node:fs";
+import { createHash } from "node:crypto";
+import {
+  accessSync,
+  closeSync,
+  constants,
+  fstatSync,
+  openSync,
+  readSync,
+  realpathSync,
+  statSync,
+} from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -58,16 +68,33 @@ function isSticky(target: string): boolean {
   }
 }
 
+// How a file is trusted: "owner" (out of this user's reach) or "digest" (its bytes match a digest the launcher passed).
+export type Trust = "digest" | "owner";
+
 export interface PrepareOptions {
+  // the expected SHA-256 of the checker's bytes (result.checker_sha256): prepareChecker then reads the file once and
+  // keeps the verified bytes as `source`
+  checkerSha256?: string;
   owner?: (target: string) => boolean;
   platform?: Platform;
   readOnlyMount?: (target: string) => boolean;
   sticky?: (target: string) => boolean;
+  // default "owner"; "digest" vets the shape only (the caller checks the bytes against a digest)
+  trust?: Trust;
   writable?: (target: string) => boolean;
 }
 
 export type Prepared =
-  { path: string; shown: string } | { shown: string; why: string };
+  | {
+      path: string;
+      shown: string;
+      // the checker's bytes, read once and matching checkerSha256; the child imports these, never the path
+      source?: Buffer;
+    }
+  | { shown: string; why: string };
+
+// Largest result checker guard will hash and load.
+export const MAX_CHECKER_BYTES = 1024 * 1024;
 
 const WRITABLE_TAIL =
   "install it owned by another user and not writable by this one, or on a read-only mount";
@@ -76,7 +103,8 @@ const WRITABLE_TAIL =
 // or { why, shown }. Never throws. The file, its directory
 // and every ancestor directory must be out of this user's reach: an owned or plainly writable directory lets the user
 // rename it and swap the module between this check and the import (a sticky writable one, like /tmp, does not). A
-// path on a read-only mount cannot be chmodded, so there the owner check is skipped for that path.
+// path on a read-only mount cannot be chmodded, so there the owner check is skipped for that path. With
+// opts.trust "digest" those reach checks are skipped: the shape checks stay.
 export function vetTrustedFile(
   raw: unknown,
   ext: ".json" | ".mjs",
@@ -120,6 +148,7 @@ export function vetTrustedFile(
     } catch {
       return { why: "not readable", shown };
     }
+    if (opts.trust === "digest") return { path: real, shown };
     const refuse = (which: string): Prepared => ({
       why: `writable by this user (${which}): ${WRITABLE_TAIL}`,
       shown,
@@ -147,12 +176,56 @@ export function vetTrustedFile(
   }
 }
 
-// Vets the raw result.checker value (a .mjs file): see vetTrustedFile.
+// The file's bytes read once from an open descriptor: at most MAX_CHECKER_BYTES, regular file, non-blocking open.
+function readCheckerBytes(file: string, platform: Platform): Buffer | string {
+  const fd = openSync(
+    file,
+    constants.O_RDONLY | (platform === "win32" ? 0 : constants.O_NONBLOCK),
+  );
+  try {
+    if (!fstatSync(fd).isFile()) return "not a regular file";
+    const buf = Buffer.alloc(MAX_CHECKER_BYTES + 1);
+    let n = 0;
+    while (n < buf.length) {
+      const got = readSync(fd, buf, n, buf.length - n, null);
+      if (got === 0) break;
+      n += got;
+    }
+    return n > MAX_CHECKER_BYTES
+      ? "too large (over 1 MiB)"
+      : Buffer.from(buf.subarray(0, n));
+  } finally {
+    closeSync(fd);
+  }
+}
+
+// Vets the raw result.checker value (a .mjs file): see vetTrustedFile. With opts.checkerSha256 the file is also read
+// once and must hash to it; the verified bytes come back as `source`.
 export function prepareChecker(
   raw: unknown,
   opts: PrepareOptions = {},
 ): Prepared {
-  return vetTrustedFile(raw, ".mjs", opts);
+  const vet = vetTrustedFile(raw, ".mjs", opts);
+  if (!("path" in vet) || opts.checkerSha256 === undefined) return vet;
+  try {
+    const bytes = readCheckerBytes(vet.path, opts.platform ?? process.platform);
+    if (typeof bytes === "string") return { why: bytes, shown: vet.shown };
+    if (
+      createHash("sha256").update(bytes).digest("hex") !== opts.checkerSha256
+    ) {
+      return {
+        why: "sha256 does not match result.checker_sha256",
+        shown: vet.shown,
+      };
+    }
+    return { ...vet, source: bytes };
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return {
+      why: `cannot be checked (${scrub(msg).slice(0, 100)})`,
+      shown: vet.shown,
+    };
+  }
 }
 
 export type RunResult = { errors: string[] } | { why: string };
@@ -195,12 +268,13 @@ const nodeBinary = (): string =>
 const RUNNER = fileURLToPath(new URL("./checker-run.mjs", import.meta.url));
 
 // Runs the checker in a child process: resolves { errors } or { why }, never rejects. Its console output is discarded.
+// With `source` (bytes already verified against result.checker_sha256) the child imports those, not the path.
 // A process, not a thread: one blocked in a syscall (a FIFO the session planted) can be killed.
 export function runChecker(
   checkerPath: string,
   result: unknown,
   env: Readonly<Record<string, string | undefined>>,
-  { timeoutMs = 10_000 }: { timeoutMs?: number } = {},
+  { source, timeoutMs = 10_000 }: { source?: Buffer; timeoutMs?: number } = {},
 ): Promise<RunResult> {
   return new Promise((resolve) => {
     let done = false;
@@ -243,7 +317,10 @@ export function runChecker(
         finish({ why: `timed out after ${String(timeoutMs / 1000)} s` });
       }, timeoutMs);
       child.send({
-        href: pathToFileURL(checkerPath).href,
+        // verified bytes are imported from a data: URL, so the path is never read again
+        href: source
+          ? `data:text/javascript;base64,${source.toString("base64")}`
+          : pathToFileURL(checkerPath).href,
         result,
         env: { ...env },
       });

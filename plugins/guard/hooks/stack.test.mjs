@@ -9,14 +9,7 @@ import { GuardPlugin } from "./opencode.mjs";
 import guardExtension from "./pi.mjs";
 delete process.env.GUARD_STACK_HINT;
 delete process.env.GUARD_UNATTENDED;
-for (const k of [
-    "GUARD_RUN_ID",
-    "GUARD_RUN_MANIFEST",
-    "FACTORY_RUN_ID",
-    "FACTORY_TICKET",
-    "FACTORY_ATTENDED_RUN_ID",
-    "FACTORY_ATTENDED_TICKET",
-]) {
+for (const k of ["AGENT_RUN_ID", "AGENT_RUN_MANIFEST"]) {
     Reflect.deleteProperty(process.env, k);
 }
 // feat/b (HEAD) is built on feat/a (#7), which is not in main.

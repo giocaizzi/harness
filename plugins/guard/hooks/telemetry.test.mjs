@@ -466,13 +466,13 @@ void test("emitAntigravityUsage: preserves observed tokens without guessing a mi
         },
     ]);
 });
-void test("appendDecision: one line to GUARD_RUN_EVENTS_FILE, nothing when it is blank or unset, no legacy variable", () => {
+void test("appendDecision: one line to AGENT_RUN_EVENTS_FILE, nothing when it is blank or unset", () => {
     const written = [];
     const append = (file, data) => {
         written.push([file, data]);
     };
     const now = new Date("2026-01-02T03:04:05.000Z");
-    appendDecision({ GUARD_RUN_EVENTS_FILE: "/run/events.jsonl" }, { decision: "deny", rule: "run-label", cmd_hash: "abc" }, now, append);
+    appendDecision({ AGENT_RUN_EVENTS_FILE: "/run/events.jsonl" }, { decision: "deny", rule: "run-label", cmd_hash: "abc" }, now, append);
     assert.deepEqual(written, [
         [
             "/run/events.jsonl",
@@ -482,14 +482,13 @@ void test("appendDecision: one line to GUARD_RUN_EVENTS_FILE, nothing when it is
     for (const env of [
         undefined,
         {},
-        { GUARD_RUN_EVENTS_FILE: "" },
-        { GUARD_RUN_EVENTS_FILE: "  " },
-        { FACTORY_EVENTS_FILE: "/legacy.jsonl" },
+        { AGENT_RUN_EVENTS_FILE: "" },
+        { AGENT_RUN_EVENTS_FILE: "  " },
     ])
         appendDecision(env, { decision: "deny", rule: "x" }, now, append);
     assert.equal(written.length, 1);
     assert.doesNotThrow(() => {
-        appendDecision({ GUARD_RUN_EVENTS_FILE: "/x" }, { decision: "deny" }, now, () => {
+        appendDecision({ AGENT_RUN_EVENTS_FILE: "/x" }, { decision: "deny" }, now, () => {
             throw new Error("unwritable");
         });
     });

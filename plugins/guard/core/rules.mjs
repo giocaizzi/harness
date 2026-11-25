@@ -584,7 +584,7 @@ export const rules = {
             why: "runs a command the guard cannot read (encoded, decoded at run time, or nested too deep)",
         },
     ],
-    // A registered unattended run (run contract v2, docs/guard.md): the labels its registration names (approval, takeover,
+    // A registered unattended run (run contract v3, docs/guard.md): the labels its registration names (approval, takeover,
     // protected) are never touched (applied or removed), and its shell and edit tools never change a protected path.
     run: {
         labelWhy: "A run must not touch a label its runner registered: applying or removing it is the owner's.",
@@ -650,7 +650,7 @@ export const rules = {
         ],
         ghUnseenWhy: "In a run every gh command must be one the guard can read: a gh alias or extension can run any command, a label change included, out of its sight.",
         // The built-in floor: repo-relative globs a run's shell and edit tools never change (rule `protected-path`), never
-        // waived. The registration's globs and GUARD_RUN_PROTECTED_PATHS add to them; the registration's exemptions waive
+        // waived. The registration's globs and AGENT_RUN_PROTECTED_PATHS add to them; the registration's exemptions waive
         // only its own globs.
         protectedPaths: [".github/**"],
         // Past any of these a command that may write is denied (a hook that times out lets the command through): write

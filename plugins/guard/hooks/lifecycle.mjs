@@ -5,6 +5,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, renameSync, rmSync, statSync, writeFileSync, } from "node:fs";
 import { basename, dirname, join } from "node:path";
+import { ruleOn } from "../core/toggles.mjs";
 import { readDataFile } from "./data.mjs";
 import { installedVersions } from "./stale.mjs";
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -40,9 +41,8 @@ function repoDirs(run, cwd) {
         return null;
     return { common, main: gitDir === common };
 }
-// The values every guard off switch reads as off (GUARD_LIFECYCLE, GUARD_PUSH_SCAN, ...).
-export const OFF = /^(0|false|off)$/i;
-const off = (env) => OFF.test(env.GUARD_LIFECYCLE ?? "");
+// Off by GUARD_LIFECYCLE or by GUARD_RULES (core/toggles).
+const off = (env) => !ruleOn(env, "lifecycle");
 function resolveScript(pluginRoot, cwd) {
     const versioned = SEMVER.test(basename(pluginRoot));
     const plugins = versioned

@@ -1,11 +1,11 @@
-// Run contract v2: the runner's registration manifest (GUARD_RUN_MANIFEST). Pure: no fs or process I/O. The schema is
+// Run contract v3: the runner's registration manifest (AGENT_RUN_MANIFEST). Pure: no fs or process I/O. The schema is
 // strict (unknown keys, unknown capabilities and another contract major are refused), and a registration can only add
 // protection on top of guard's built-in floor, never remove or loosen it. Enforced from guard 1.0.0.
 import path from "node:path";
 import { DEFAULT_PROTECTED_LIMITS } from "./constants.mjs";
 import { checkerPathError, report, show, TICKET } from "./result.mjs";
 import { rules } from "./rules.mjs";
-export const CONTRACT = 2;
+export const CONTRACT = 3;
 // The capabilities a registration may require, sorted. A required capability guard does not know is refused.
 export const CAPABILITIES = [
     "events",
@@ -16,9 +16,8 @@ export const CAPABILITIES = [
     "result-gate",
 ];
 export const MODES = ["attended", "unattended"];
-// The rule every registration failure denies with, and the legacy-only tripwire's rule.
+// The rule every registration failure denies with.
 export const RULE = "run-registration";
-export const UNREGISTERED_RULE = "run-unregistered";
 export const MAX_MANIFEST_BYTES = 64 * 1024;
 export const RUNNER = /^[a-z0-9-]{1,40}$/;
 export const LABEL = /^[\w.:-]{1,50}$/;
@@ -172,7 +171,7 @@ const checkResult = (v, limits, pathApi, errors) => {
         errors.push(`result must be an object, got ${show(v)}`);
         return undefined;
     }
-    unknownKeys(v, ["checker", "file", "hint"], "result", errors);
+    unknownKeys(v, ["checker", "checker_sha256", "file", "hint"], "result", errors);
     const out = {};
     const file = get(v, "file");
     if (!isStr(file)) {
@@ -220,6 +219,17 @@ const checkResult = (v, limits, pathApi, errors) => {
             else
                 out.checker = checker;
         }
+    }
+    const sum = get(v, "checker_sha256");
+    if (sum !== undefined) {
+        if (!isStr(sum) || !/^[0-9a-f]{64}$/.test(sum)) {
+            errors.push(`result.checker_sha256 must be 64 lowercase hex characters, got ${show(sum)}`);
+        }
+        else if (checker === undefined) {
+            errors.push("result.checker_sha256 is only allowed with result.checker");
+        }
+        else
+            out.checker_sha256 = sum;
     }
     const hint = get(v, "hint");
     if (hint !== undefined) {
@@ -401,48 +411,36 @@ export function resultFile(template, vars) {
     }
     return { path: expanded };
 }
-// Errors in the run's GUARD_RUN_* variables against a valid registration (GUARD_RUN_ID, GUARD_RUN_MODE,
-// GUARD_RUN_TICKET), each checked as-is (no trimming; unset or "" mode means unattended, unset or "" ticket means
+// Errors in the run's AGENT_RUN_* variables against a valid registration (AGENT_RUN_ID, AGENT_RUN_MODE,
+// AGENT_RUN_TICKET), each checked as-is (no trimming; unset or "" mode means unattended, unset or "" ticket means
 // unset). Never throws.
 export function runEnvErrors(env, registration) {
     const errors = [];
     try {
-        if (!RUN_ID.test(env.GUARD_RUN_ID ?? "")) {
-            errors.push(`GUARD_RUN_ID must match ${RUN_ID.source}, got ${show(env.GUARD_RUN_ID)}`);
+        if (!RUN_ID.test(env.AGENT_RUN_ID ?? "")) {
+            errors.push(`AGENT_RUN_ID must match ${RUN_ID.source}, got ${show(env.AGENT_RUN_ID)}`);
         }
-        const raw = env.GUARD_RUN_MODE ?? "";
+        const raw = env.AGENT_RUN_MODE ?? "";
         const mode = raw === "" ? "unattended" : raw;
         const allowed = registration.modes ?? MODES;
         if (!MODES.includes(mode) ||
             !allowed.includes(mode)) {
-            errors.push(`GUARD_RUN_MODE ${show(mode)} is not one of the registration's modes ${show(allowed)}`);
+            errors.push(`AGENT_RUN_MODE ${show(mode)} is not one of the registration's modes ${show(allowed)}`);
         }
-        const ticket = env.GUARD_RUN_TICKET;
+        const ticket = env.AGENT_RUN_TICKET;
         if (ticket !== undefined && ticket !== "") {
             if (!TICKET.test(ticket)) {
-                errors.push(`GUARD_RUN_TICKET must match ${String(TICKET)}, got ${show(ticket)}`);
+                errors.push(`AGENT_RUN_TICKET must match ${String(TICKET)}, got ${show(ticket)}`);
             }
         }
         else if (registration.result?.file.includes("{ticket_number}")) {
-            errors.push("GUARD_RUN_TICKET is required by result.file");
+            errors.push("AGENT_RUN_TICKET is required by result.file");
         }
     }
     catch (e) {
         errors.push(failure(e));
     }
     return errors;
-}
-// The reason the legacy-only tripwire denies with.
-export const UNREGISTERED_REASON = "legacy run variables are set without a run registration";
-// The legacy-only tripwire's events line: {ts, event, decision, rule, reason}, no paths and no env values.
-export function unregisteredLine(ts = new Date().toISOString()) {
-    return JSON.stringify({
-        ts,
-        event: "run-unregistered",
-        decision: "deny",
-        rule: UNREGISTERED_RULE,
-        reason: UNREGISTERED_REASON,
-    });
 }
 // The secret-free guard.session attributes for a run: run.registered, and for a registered run runner.name,
 // runner.contract and runner.manifest_sha16 (the first 16 hex characters of the manifest's sha256).

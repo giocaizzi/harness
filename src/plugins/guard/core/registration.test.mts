@@ -1,4 +1,4 @@
-// The run contract v2 registration schema. Names start with `registration:`.
+// The run contract v3 registration schema. Names start with `registration:`.
 
 import assert from "node:assert/strict";
 import path from "node:path";
@@ -11,8 +11,6 @@ import {
   resultFile,
   runEnvErrors,
   sessionAttrs,
-  UNREGISTERED_REASON,
-  unregisteredLine,
   validateRegistration as validateNative,
   type Registration,
   type Validation,
@@ -29,7 +27,7 @@ const parseRegistration = (b: Uint8Array): Validation =>
   parseNative(b, undefined, path.posix);
 
 const full = () => ({
-  contract: 2,
+  contract: 3,
   runner: "acme-runner",
   requires: [
     "events",
@@ -91,7 +89,7 @@ void test("registration: a valid full manifest passes and is copied", () => {
   assert.notEqual(got.labels?.protected, input.labels.protected);
   assert.notEqual(got.modes, input.modes);
   assert.notEqual(got.result, input.result);
-  const min = validateRegistration({ contract: 2, runner: "a", requires: [] });
+  const min = validateRegistration({ contract: 3, runner: "a", requires: [] });
   assert.equal(min.ok, true);
 });
 
@@ -101,7 +99,7 @@ void test("registration: not an object, unknown keys", () => {
   }
   bad((m) => (m.extra = 1), /^unknown key "extra"/);
   has(
-    errs(JSON.parse('{"__proto__":1,"contract":2,"runner":"a","requires":[]}')),
+    errs(JSON.parse('{"__proto__":1,"contract":3,"runner":"a","requires":[]}')),
     /^unknown key "__proto__"/,
   );
   bad((m) => ((m.labels as M).x = 1), /^labels: unknown key "x"/);
@@ -113,10 +111,10 @@ void test("registration: not an object, unknown keys", () => {
 });
 
 void test("registration: contract, runner", () => {
-  for (const c of ["2", 2.5, 3, 1, undefined]) {
+  for (const c of ["3", 3.5, 2, 1, undefined]) {
     bad(
       (m) => (m.contract = c),
-      /^contract must be 2 \(this guard speaks run contract 2\), got /,
+      /^contract must be 3 \(this guard speaks run contract 3\), got /,
     );
   }
   for (const r of ["Acme", "", "a_b", "a".repeat(41), 3, undefined]) {
@@ -193,7 +191,7 @@ void test("registration: protected_paths globs", () => {
 void test("registration: protected_paths limits", () => {
   const limits = { chars: 5, globs: 2, ms: 1, targets: 1 };
   const m = {
-    contract: 2,
+    contract: 3,
     runner: "a",
     requires: ["protected-paths"],
     protected_paths: { globs: ["a", "b"], exempt: ["a/x"] },
@@ -399,7 +397,7 @@ void test("registration: cross-checks between sections and requires", () => {
     /^requires lists "result-gate" but result is not set/,
   );
   assert.equal(
-    validateRegistration({ contract: 2, runner: "a", requires: ["events"] }).ok,
+    validateRegistration({ contract: 3, runner: "a", requires: ["events"] }).ok,
     true,
   );
 });
@@ -414,7 +412,7 @@ void test("registration: validate never throws and collects every error", () => 
     },
   );
   has(errs(hostile), /^cannot be checked \(boom\)/);
-  assert.ok(errs({ contract: 1, runner: "X", requires: "x" }).length >= 3);
+  assert.ok(errs({ contract: 2, runner: "X", requires: "x" }).length >= 3);
 });
 
 void test("registration: parse bytes", () => {
@@ -498,93 +496,75 @@ void test("registration: resultFile expands and checks", () => {
 void test("registration: runEnvErrors", () => {
   const reg = (validateRegistration(full()) as { registration: Registration })
     .registration;
-  const base = { GUARD_RUN_ID: "run-1", GUARD_RUN_TICKET: "acme/app#12" };
+  const base = { AGENT_RUN_ID: "run-1", AGENT_RUN_TICKET: "acme/app#12" };
   assert.deepEqual(runEnvErrors(base, reg), []);
   has(
-    runEnvErrors({ ...base, GUARD_RUN_ID: "  run-1  " }, reg),
-    /^GUARD_RUN_ID must match/,
+    runEnvErrors({ ...base, AGENT_RUN_ID: "  run-1  " }, reg),
+    /^AGENT_RUN_ID must match/,
   );
   has(
-    runEnvErrors({ ...base, GUARD_RUN_ID: "../x" }, reg),
-    /^GUARD_RUN_ID must match .*, got "\.\.\/x"/,
+    runEnvErrors({ ...base, AGENT_RUN_ID: "../x" }, reg),
+    /^AGENT_RUN_ID must match .*, got "\.\.\/x"/,
   );
   has(
-    runEnvErrors({ GUARD_RUN_TICKET: base.GUARD_RUN_TICKET }, reg),
-    /^GUARD_RUN_ID must match/,
+    runEnvErrors({ AGENT_RUN_TICKET: base.AGENT_RUN_TICKET }, reg),
+    /^AGENT_RUN_ID must match/,
   );
   const only = { ...reg, modes: ["attended" as const] };
   has(
     runEnvErrors(base, only),
-    /^GUARD_RUN_MODE "unattended" is not one of the registration's modes \["attended"\]/,
+    /^AGENT_RUN_MODE "unattended" is not one of the registration's modes \["attended"\]/,
   );
   has(
-    runEnvErrors({ ...base, GUARD_RUN_MODE: " attended " }, only),
-    /^GUARD_RUN_MODE " attended " is not one of/,
+    runEnvErrors({ ...base, AGENT_RUN_MODE: " attended " }, only),
+    /^AGENT_RUN_MODE " attended " is not one of/,
   );
   assert.deepEqual(
-    runEnvErrors({ ...base, GUARD_RUN_MODE: "attended" }, only),
+    runEnvErrors({ ...base, AGENT_RUN_MODE: "attended" }, only),
     [],
   );
   has(
-    runEnvErrors({ ...base, GUARD_RUN_MODE: "x" }, reg),
-    /^GUARD_RUN_MODE "x" is not one of/,
+    runEnvErrors({ ...base, AGENT_RUN_MODE: "x" }, reg),
+    /^AGENT_RUN_MODE "x" is not one of/,
   );
   assert.deepEqual(
-    runEnvErrors({ ...base, GUARD_RUN_MODE: "" }, { ...reg, modes: undefined }),
+    runEnvErrors({ ...base, AGENT_RUN_MODE: "" }, { ...reg, modes: undefined }),
     [],
   );
   has(
-    runEnvErrors({ ...base, GUARD_RUN_TICKET: "bad" }, reg),
-    /^GUARD_RUN_TICKET must match/,
+    runEnvErrors({ ...base, AGENT_RUN_TICKET: "bad" }, reg),
+    /^AGENT_RUN_TICKET must match/,
   );
   has(
-    runEnvErrors({ GUARD_RUN_ID: "r" }, reg),
-    /^GUARD_RUN_TICKET is required by result\.file/,
+    runEnvErrors({ AGENT_RUN_ID: "r" }, reg),
+    /^AGENT_RUN_TICKET is required by result\.file/,
   );
   has(
-    runEnvErrors({ ...base, GUARD_RUN_MODE: "" }, only),
-    /^GUARD_RUN_MODE "unattended" is not one of/,
+    runEnvErrors({ ...base, AGENT_RUN_MODE: "" }, only),
+    /^AGENT_RUN_MODE "unattended" is not one of/,
   );
   assert.deepEqual(
     runEnvErrors(
-      { ...base, GUARD_RUN_MODE: "" },
+      { ...base, AGENT_RUN_MODE: "" },
       { ...reg, modes: ["unattended"] },
     ),
     [],
   );
   const emptyTicket = runEnvErrors(
-    { GUARD_RUN_ID: "r", GUARD_RUN_TICKET: "" },
+    { AGENT_RUN_ID: "r", AGENT_RUN_TICKET: "" },
     reg,
   );
   assert.equal(emptyTicket.length, 1);
-  has(emptyTicket, /^GUARD_RUN_TICKET is required by result\.file/);
+  has(emptyTicket, /^AGENT_RUN_TICKET is required by result\.file/);
   const noTicket = { ...reg, result: { file: "x/result.json" } };
   assert.deepEqual(
-    runEnvErrors({ GUARD_RUN_ID: "r", GUARD_RUN_TICKET: "" }, noTicket),
+    runEnvErrors({ AGENT_RUN_ID: "r", AGENT_RUN_TICKET: "" }, noTicket),
     [],
   );
-  assert.deepEqual(runEnvErrors({ GUARD_RUN_ID: "r" }, noTicket), []);
+  assert.deepEqual(runEnvErrors({ AGENT_RUN_ID: "r" }, noTicket), []);
   assert.deepEqual(
-    runEnvErrors({ GUARD_RUN_ID: "r" }, { ...reg, result: undefined }),
+    runEnvErrors({ AGENT_RUN_ID: "r" }, { ...reg, result: undefined }),
     [],
-  );
-});
-
-void test("registration: unregisteredLine has exactly the documented keys", () => {
-  const line = JSON.parse(
-    unregisteredLine("2026-01-01T00:00:00.000Z"),
-  ) as Record<string, unknown>;
-  assert.deepEqual(line, {
-    ts: "2026-01-01T00:00:00.000Z",
-    event: "run-unregistered",
-    decision: "deny",
-    rule: "run-unregistered",
-    reason: UNREGISTERED_REASON,
-  });
-  assert.ok(!unregisteredLine().endsWith("\n"));
-  assert.match(
-    (JSON.parse(unregisteredLine()) as { ts: string }).ts,
-    /^\d{4}-\d\d-\d\dT/,
   );
 });
 
@@ -597,14 +577,37 @@ void test("registration: sessionAttrs", () => {
   assert.deepEqual(sessionAttrs({ registration, sha256 }), {
     "run.registered": true,
     "runner.name": "acme-runner",
-    "runner.contract": 2,
+    "runner.contract": 3,
     "runner.manifest_sha16": "0123456789abcdef",
   });
   for (const s of ["ABCDEF".repeat(11), "abc", ""]) {
     assert.deepEqual(sessionAttrs({ registration, sha256: s }), {
       "run.registered": true,
       "runner.name": "acme-runner",
-      "runner.contract": 2,
+      "runner.contract": 3,
     });
   }
+});
+
+void test("registration: result.checker_sha256 is 64 lowercase hex and needs result.checker", () => {
+  const sum = "a".repeat(64);
+  const ok = validateRegistration(
+    mod((m) => ((m.result as M).checker_sha256 = sum)),
+  );
+  assert.ok("registration" in ok);
+  assert.equal(
+    ok.registration.result?.checker_sha256,
+    sum,
+    "kept on the registration",
+  );
+  for (const v of ["A".repeat(64), "a".repeat(63), "", ` ${sum}`, 7]) {
+    bad(
+      (m) => ((m.result as M).checker_sha256 = v),
+      /^result\.checker_sha256 must be 64 lowercase hex characters, got /,
+    );
+  }
+  bad((m) => {
+    delete (m.result as M).checker;
+    (m.result as M).checker_sha256 = sum;
+  }, /^result\.checker_sha256 is only allowed with result\.checker$/);
 });

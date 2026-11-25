@@ -268,7 +268,7 @@ export interface DecisionPayload {
 
 export type AppendFileFn = (file: string, data: string) => void;
 
-// One JSON line per decision to $GUARD_RUN_EVENTS_FILE, when a run's runner sets it: the runner's guard deny-rate
+// One JSON line per decision to $AGENT_RUN_EVENTS_FILE, when a run's runner sets it: the runner's guard deny-rate
 // breaker reads it. Only the hash of the command, never its text; a failed write is dropped and the decision stands.
 // A well-formed GUARD_TRACEPARENT adds `trace_id` and `span_id`, the same ids as the OTLP record's.
 export function appendDecision(
@@ -277,7 +277,7 @@ export function appendDecision(
   now: Date = new Date(),
   append: AppendFileFn = appendFileSync,
 ): void {
-  const file = env?.GUARD_RUN_EVENTS_FILE;
+  const file = env?.AGENT_RUN_EVENTS_FILE;
   if (!file?.trim()) return;
   try {
     const trace = traceContext(env);

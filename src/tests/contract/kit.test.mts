@@ -1,4 +1,4 @@
-// The run contract v2 kit (docs/guard.md, "Run contract v2"). An external runner runs it as one CI job against a
+// The run contract v3 kit (docs/guard.md, "Run contract v3"). An external runner runs it as one CI job against a
 // pinned checkout of this repo:
 //
 //   make contract-test MANIFEST=<absolute path to the runner's installed manifest>
@@ -9,24 +9,11 @@
 // Spawned guards inherit these: no telemetry, no stop check, no fake events in a real run's file.
 process.env.GUARD_OTEL = "off";
 process.env.GUARD_STOP_CHECK = "off";
-process.env.GUARD_RUN_EVENTS_FILE = "";
-// Guard reads no legacy run variable for a decision: a stray one in the caller's shell would trip the tripwire.
-for (const k of [
-  "FACTORY_RUN_ID",
-  "FACTORY_ATTENDED_RUN_ID",
-  "FACTORY_TICKET",
-  "FACTORY_ATTENDED_TICKET",
-  "FACTORY_RUN_FILE",
-  "FACTORY_PROTECTED_PATHS",
-  "FACTORY_EVENTS_FILE",
-  "FACTORY_RESULT_CHECKER",
-]) {
-  Reflect.deleteProperty(process.env, k);
-}
-
+process.env.AGENT_RUN_EVENTS_FILE = "";
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   copyFileSync,
   mkdirSync,
@@ -40,9 +27,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  UNREGISTERED_RULE,
   parseRegistration,
-  unregisteredLine,
   validateRegistration,
 } from "../../plugins/guard/core/registration.mjs";
 import { DEFAULT_PROTECTED_LIMITS } from "../../plugins/guard/core/constants.mjs";
@@ -100,7 +85,7 @@ void test("contract: MANIFEST is an absolute path", () => {
   }
 });
 
-void test("contract: the guard probe reports contract 2 and the required capabilities", () => {
+void test("contract: the guard probe reports contract 3 and the required capabilities", () => {
   const r = spawnSync(process.execPath, [GUARD, "--contract"], {
     input: "",
     timeout: 10000,
@@ -114,7 +99,7 @@ void test("contract: the guard probe reports contract 2 and the required capabil
     guard?: unknown;
     capabilities?: unknown;
   };
-  assert.equal(probe.contract, 2);
+  assert.equal(probe.contract, 3);
   assert.equal(typeof probe.guard, "string");
   assert.ok(Array.isArray(probe.capabilities));
   const missing = subjectJson().requires.filter(
@@ -154,10 +139,10 @@ void test("contract: the manifest validates", () => {
 });
 
 const runEnv = (): Record<string, string | undefined> => ({
-  GUARD_RUN_MANIFEST: MANIFEST,
-  GUARD_RUN_ID: "contract-test-1",
-  GUARD_RUN_TICKET: "acme/app#1",
-  GUARD_RUN_MODE: subjectJson().modes?.[0] ?? "unattended",
+  AGENT_RUN_MANIFEST: MANIFEST,
+  AGENT_RUN_ID: "contract-test-1",
+  AGENT_RUN_TICKET: "acme/app#1",
+  AGENT_RUN_MODE: subjectJson().modes?.[0] ?? "unattended",
 });
 
 void test(
@@ -188,11 +173,11 @@ void test("contract: an unknown capability is refused", () => {
 });
 
 void test("contract: another contract major is refused", () => {
-  for (const contract of [3, "2"]) {
+  for (const contract of [2, "3"]) {
     const v = validate({ ...subjectJson(), contract });
     assert.equal(v.ok, false, `contract ${JSON.stringify(contract)}`);
     assert.ok(
-      errorsOf(v).some((e) => e.includes("contract must be 2")),
+      errorsOf(v).some((e) => e.includes("contract must be 3")),
       errorsOf(v).join("; "),
     );
   }
@@ -216,8 +201,8 @@ void test("contract: an unknown key is refused at any level", () => {
 void test("contract: a missing manifest denies", () => {
   const loaded = loadRegistration(
     {
-      GUARD_RUN_MANIFEST: path.join(dataDir, "missing.json"),
-      GUARD_RUN_ID: "contract-test-1",
+      AGENT_RUN_MANIFEST: path.join(dataDir, "missing.json"),
+      AGENT_RUN_ID: "contract-test-1",
     },
     { dataDir, sessionId: "contract-missing" },
   );
@@ -228,20 +213,20 @@ void test("contract: a missing manifest denies", () => {
 
 void test("contract: the run variables out of step deny", () => {
   const noManifest = loadRegistration(
-    { GUARD_RUN_ID: "contract-test-1" },
+    { AGENT_RUN_ID: "contract-test-1" },
     { dataDir, sessionId: "contract-step-1" },
   );
   assert.match(
     denied(noManifest).why,
-    /GUARD_RUN_ID is set but GUARD_RUN_MANIFEST is not/,
+    /AGENT_RUN_ID is set but AGENT_RUN_MANIFEST is not/,
   );
   const noId = loadRegistration(
-    { GUARD_RUN_MANIFEST: subject },
+    { AGENT_RUN_MANIFEST: subject },
     { dataDir, sessionId: "contract-step-2" },
   );
   assert.match(
     denied(noId).why,
-    /GUARD_RUN_MANIFEST is set but GUARD_RUN_ID is not/,
+    /AGENT_RUN_MANIFEST is set but AGENT_RUN_ID is not/,
   );
 });
 
@@ -249,10 +234,40 @@ void test("contract: a manifest this user can write is refused", () => {
   const copy = path.join(dataDir, "writable-manifest.json");
   copyFileSync(subject, copy);
   const loaded = loadRegistration(
-    { GUARD_RUN_MANIFEST: copy, GUARD_RUN_ID: "contract-test-1" },
+    { AGENT_RUN_MANIFEST: copy, AGENT_RUN_ID: "contract-test-1" },
     { dataDir, sessionId: "contract-writable" },
   );
   assert.match(denied(loaded).why, /writable by this user/);
+});
+
+void test("contract: a manifest in this user's reach is accepted with the right AGENT_RUN_MANIFEST_SHA256 and denied with a wrong one", () => {
+  const body = JSON.stringify({
+    contract: 3,
+    runner: "acme-runner",
+    requires: ["result-gate"],
+    result: { file: "result.json" },
+  });
+  const copy = path.join(dataDir, "digest-manifest.json");
+  writeFileSync(copy, body);
+  const env = (digest: string) => ({
+    AGENT_RUN_MANIFEST: copy,
+    AGENT_RUN_ID: "contract-test-1",
+    AGENT_RUN_MANIFEST_SHA256: digest,
+  });
+  const right = createHash("sha256").update(body).digest("hex");
+  const ok = loadRegistration(env(right), {
+    dataDir,
+    sessionId: "contract-digest-ok",
+  });
+  assert.equal(ok.state, "registered", JSON.stringify(ok));
+  const wrong = loadRegistration(env("0".repeat(64)), {
+    dataDir,
+    sessionId: "contract-digest-wrong",
+  });
+  assert.match(
+    denied(wrong).why,
+    /sha256 does not match AGENT_RUN_MANIFEST_SHA256/,
+  );
 });
 
 void test("contract: a checker this user can write is refused", () => {
@@ -274,31 +289,15 @@ void test(
       JSON.stringify({
         manifest: realpathSync(subject),
         sha256: "0".repeat(64),
-        run_id: runEnv().GUARD_RUN_ID,
-        mode: runEnv().GUARD_RUN_MODE,
-        ticket: runEnv().GUARD_RUN_TICKET,
+        run_id: runEnv().AGENT_RUN_ID,
+        mode: runEnv().AGENT_RUN_MODE,
+        ticket: runEnv().AGENT_RUN_TICKET,
       }) + "\n",
     );
     const loaded = loadRegistration(runEnv(), { dataDir, sessionId });
     assert.match(denied(loaded).why, /changed during the session/);
   },
 );
-
-void test("contract: the legacy-only tripwire line has a fixed shape", () => {
-  const line = JSON.parse(unregisteredLine()) as Record<string, string>;
-  assert.deepEqual(Object.keys(line).sort(), [
-    "decision",
-    "event",
-    "reason",
-    "rule",
-    "ts",
-  ]);
-  assert.equal(line.event, UNREGISTERED_RULE);
-  assert.equal(line.rule, UNREGISTERED_RULE);
-  assert.equal(line.decision, "deny");
-  assert.ok(!Number.isNaN(Date.parse(line.ts ?? "")), "ts is not a date");
-  assert.ok(!/[/\\]/.test(line.reason ?? ""), "reason carries a path");
-});
 
 // The decisions, end to end: the real hooks in a temp git repo, one fresh session per scenario. Those that need the
 // registration trusted run only against MANIFEST; the unattended-only ones also need its modes to allow it.
@@ -323,7 +322,6 @@ const cleanEnv = (): Record<string, string> =>
     Object.entries(process.env).filter(
       (e): e is [string, string] =>
         e[1] !== undefined &&
-        !e[0].startsWith("FACTORY_") &&
         !e[0].startsWith("GUARD_") &&
         e[0] !== "CLAUDE_PLUGIN_DATA",
     ),
@@ -353,11 +351,11 @@ const newRun = (mode = "unattended"): Run => {
     events,
     session: `contract-scenario-${String(scenarioCount)}`,
     env: {
-      GUARD_RUN_MANIFEST: MANIFEST ?? "",
-      GUARD_RUN_ID: `contract-run-${String(scenarioCount)}`,
-      GUARD_RUN_TICKET: "acme/app#1",
-      GUARD_RUN_MODE: mode,
-      GUARD_RUN_EVENTS_FILE: events,
+      AGENT_RUN_MANIFEST: MANIFEST ?? "",
+      AGENT_RUN_ID: `contract-run-${String(scenarioCount)}`,
+      AGENT_RUN_TICKET: "acme/app#1",
+      AGENT_RUN_MODE: mode,
+      AGENT_RUN_EVENTS_FILE: events,
       GUARD_OTEL: "off",
       GUARD_STOP_CHECK: "off",
       CLAUDE_PLUGIN_DATA: scratch("data"),
@@ -454,7 +452,7 @@ void test("contract: an unusable manifest denies label changes", () => {
   const copy = path.join(scratch("writable"), "run.json");
   copyFileSync(subject, copy);
   assertDenied(
-    bash(run, "gh issue edit 1 --add-label x", { GUARD_RUN_MANIFEST: copy }),
+    bash(run, "gh issue edit 1 --add-label x", { AGENT_RUN_MANIFEST: copy }),
     "run-registration",
     run,
   );
@@ -470,8 +468,8 @@ void test(
         ? "unattended"
         : (unattendedModes[0] ?? "attended");
     const changes: Record<string, string>[] = [
-      { GUARD_RUN_ID: "contract-run-other" },
-      { GUARD_RUN_TICKET: "acme/app#2" },
+      { AGENT_RUN_ID: "contract-run-other" },
+      { AGENT_RUN_TICKET: "acme/app#2" },
     ];
     // the mode flip needs a manifest that allows both modes
     if (
@@ -479,7 +477,7 @@ void test(
       (unattendedModes.includes("attended") &&
         unattendedModes.includes("unattended"))
     ) {
-      changes.push({ GUARD_RUN_MODE: "attended" });
+      changes.push({ AGENT_RUN_MODE: "attended" });
     }
     for (const change of changes) {
       const run = newRun(first);
@@ -573,12 +571,12 @@ void test(
     );
     const file = (subjectJson().result?.file ?? "")
       .replaceAll("{ticket_number}", "1")
-      .replaceAll("{run_id}", run.env.GUARD_RUN_ID ?? "");
+      .replaceAll("{run_id}", run.env.AGENT_RUN_ID ?? "");
     mkdirSync(path.join(run.cwd, path.dirname(file)), { recursive: true });
     // valid JSON carrying the run id that fails the core check (no ticket, no end_state): both modes block on it
     writeFileSync(
       path.join(run.cwd, file),
-      JSON.stringify({ run_id: run.env.GUARD_RUN_ID }),
+      JSON.stringify({ run_id: run.env.AGENT_RUN_ID }),
     );
     const stdout = stopOf(run);
     assert.notEqual(
@@ -602,11 +600,11 @@ void test(
     const run = newRun("unattended");
     const file = (subjectJson().result?.file ?? "")
       .replaceAll("{ticket_number}", "1")
-      .replaceAll("{run_id}", run.env.GUARD_RUN_ID ?? "");
+      .replaceAll("{run_id}", run.env.AGENT_RUN_ID ?? "");
     mkdirSync(path.join(run.cwd, path.dirname(file)), { recursive: true });
     writeFileSync(
       path.join(run.cwd, file),
-      JSON.stringify({ run_id: run.env.GUARD_RUN_ID }),
+      JSON.stringify({ run_id: run.env.AGENT_RUN_ID }),
     );
     // more stops than any cap of two: every one stays blocked while the result fails
     for (let i = 1; i <= 4; i++) {
@@ -629,11 +627,11 @@ void test(
     const run = newRun("unattended");
     const file = (subjectJson().result?.file ?? "")
       .replaceAll("{ticket_number}", "1")
-      .replaceAll("{run_id}", run.env.GUARD_RUN_ID ?? "");
+      .replaceAll("{run_id}", run.env.AGENT_RUN_ID ?? "");
     mkdirSync(path.join(run.cwd, path.dirname(file)), { recursive: true });
     writeFileSync(
       path.join(run.cwd, file),
-      JSON.stringify({ run_id: run.env.GUARD_RUN_ID }),
+      JSON.stringify({ run_id: run.env.AGENT_RUN_ID }),
     );
     const blocked = (label: string): void => {
       const stdout = stopOf(run);
@@ -655,48 +653,3 @@ void test(
     for (let i = 1; i <= 4; i++) blocked(`stop ${String(i)} after the forgery`);
   },
 );
-
-void test("contract: legacy run variables without a registration trip the legacy-only tripwire", () => {
-  scenarioCount += 1;
-  const legacy = path.join(scratch("legacy"), "events.jsonl");
-  const run = newRun();
-  const env = {
-    GUARD_OTEL: "off",
-    GUARD_STOP_CHECK: "off",
-    CLAUDE_PLUGIN_DATA: scratch("data"),
-    FACTORY_RUN_ID: "x",
-    FACTORY_EVENTS_FILE: legacy,
-  };
-  const call = (): string => {
-    const r = spawnSync(process.execPath, [GUARD], {
-      input: JSON.stringify({
-        hook_event_name: "PreToolUse",
-        session_id: run.session,
-        cwd: run.cwd,
-        tool_name: "Bash",
-        tool_input: { command: "ls" },
-      }),
-      encoding: "utf8",
-      timeout: 30000,
-      env: { ...cleanEnv(), ...env },
-    });
-    assert.equal(r.status, 0, r.stderr);
-    return r.stdout;
-  };
-  for (let i = 0; i < 2; i++) {
-    const out = JSON.parse(call()) as {
-      hookSpecificOutput?: { permissionDecision?: string };
-    };
-    assert.equal(out.hookSpecificOutput?.permissionDecision, "deny");
-  }
-  const lines = eventLines(legacy);
-  assert.equal(lines.length, 1, "one tripwire line per session");
-  assert.deepEqual(Object.keys(lines[0] ?? {}), [
-    "ts",
-    "event",
-    "decision",
-    "rule",
-    "reason",
-  ]);
-  assert.equal(lines[0]?.rule, UNREGISTERED_RULE);
-});

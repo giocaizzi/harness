@@ -2353,7 +2353,7 @@ export function shellEdit(command, env = {}) {
     return false;
 }
 // A shell write, in a registered run, to a protected path (#213): `protect.globs` (the floor `rules.run.protectedPaths`
-// plus GUARD_RUN_PROTECTED_PATHS, never waived) and `protect.registered` (the registration's globs), each over paths relative to the repo root (`protect.root`; the cwd when unknown). Writes are output redirections of any command, `tee`, `sed -i`/`perl -pi`, Set-Content, Add-Content,
+// plus AGENT_RUN_PROTECTED_PATHS, never waived) and `protect.registered` (the registration's globs), each over paths relative to the repo root (`protect.root`; the cwd when unknown). Writes are output redirections of any command, `tee`, `sed -i`/`perl -pi`, Set-Content, Add-Content,
 // Out-File and Tee-Object, the operands of rm, Remove-Item and their aliases, the sources and destination of mv and
 // Move-Item, and the destination of cp and Copy-Item (a destination also as `<dest>/<source name>`, a directory it may
 // be). Removing or moving away a directory above a protected path counts (`rm -rf .github`, `rm -rf .`), along a
@@ -2362,7 +2362,7 @@ export function shellEdit(command, env = {}) {
 // a dot file), a brace list is expanded (one group a level, 64 words at most), and one whose start is a variable or a
 // `cd` not followed is matched by the rest of its path anywhere (`$ROOT/.github/x`). A registered glob is waived for
 // `protect.exempt` (the registration's exemptions, e.g. files inside a run directory) when the normalised path is spelled out;
-// a glob in `protect.globs` (the floor, GUARD_RUN_PROTECTED_PATHS) is never waived. A command that may write fails
+// a glob in `protect.globs` (the floor, AGENT_RUN_PROTECTED_PATHS) is never waived. A command that may write fails
 // closed past the limits (`rules.run.protectedLimits`: targets, characters, milliseconds) or when the check throws,
 // since a hook that times out or emits nothing lets the command through; globs past the limits are ignored. Returns { target } (the first protected target as written), { unsure } (a limit it hit) or null.
 const PROTECT_RM = /^(?:rm|rmdir|unlink|remove-item|ri|del|erase|rd)$/;
@@ -2521,7 +2521,7 @@ const MAY_WRITE = /[>]|(?:^|[^\w-])(?:tee|sed|perl|rm|rmdir|unlink|mv|cp|move|co
 export function protectedWrite(command, protect, env = {}, limits = { globs: 256, targets: 512, chars: 1024, ms: 2000 }) {
     // A setting past the limits is cut, not failed: globs over `chars` are dropped, then all past `globs` (the floor first,
     // so it is never cut). `protect.registered` (the registration's globs) come after and may be exempted
-    // (`protect.exempt`); `protect.globs` (the floor and GUARD_RUN_PROTECTED_PATHS) never are.
+    // (`protect.exempt`); `protect.globs` (the floor and AGENT_RUN_PROTECTED_PATHS) never are.
     const segsOf = (g) => normalizeSegments(posixPath(g).replace(/\/$/, "/**"));
     const tagged = [
         ...protect.globs.map((g) => ({ g, base: false })),
@@ -3331,7 +3331,7 @@ function evaluateRunLabels(command, run, rules) {
 function evaluateProtectedPaths(command, run, env, rules) {
     if (!run)
         return null;
-    // Nor a protected path (the floor, the registration's globs, GUARD_RUN_PROTECTED_PATHS) through a shell write.
+    // Nor a protected path (the floor, the registration's globs, AGENT_RUN_PROTECTED_PATHS) through a shell write.
     const shielded = protectedWrite(command, {
         ...run.protect,
         globs: [...rules.run.protectedPaths, ...(run.protect?.extra ?? [])],
@@ -3443,11 +3443,14 @@ function evaluateHostStrain(command, host, rules, state) {
     }
     return null;
 }
-function evaluateSkillAndToolAdvice({ command, env, loadedSkills, note, python, readTool, rules, stack, early, state, tags, }) {
+function evaluateSkillAndToolAdvice({ command, env, loadedSkills, note, python, readTool, rules, stack, early, state, tags, toggles, }) {
+    const on = (id) => toggles[id] !== false;
     const loaded = new Set([...loadedSkills].map(bare));
     // Moving or deleting a tag no remote has is local bookkeeping, not a release.
-    const rule = rules.skills.find((r) => new RegExp(r.match, "i").test(matchable(command)) &&
-        !(r.id === "release" && localTagsOnly(command, rules, tags, env)));
+    const rule = on("skills")
+        ? rules.skills.find((r) => new RegExp(r.match, "i").test(matchable(command)) &&
+            !(r.id === "release" && localTagsOnly(command, rules, tags, env)))
+        : undefined;
     if (rule &&
         !rule.skills.some((s) => loaded.has(s)) &&
         !state.reminded.has(rule.id)) {
@@ -3467,6 +3470,7 @@ function evaluateSkillAndToolAdvice({ command, env, loadedSkills, note, python, 
         };
     }
     if (!note &&
+        on("stack-hint") &&
         stack?.below &&
         stack.verb !== "create" &&
         !state.reminded.has("stack")) {
@@ -3478,7 +3482,7 @@ function evaluateSkillAndToolAdvice({ command, env, loadedSkills, note, python, 
             .replaceAll("<default>", stack.base ?? "");
         return { action: "allow", rule: "stack", remind: true, context };
     }
-    if (!note && early && !state.reminded.has(early.key)) {
+    if (!note && on("stack-hint") && early && !state.reminded.has(early.key)) {
         state.reminded.add(early.key);
         const text = early.kind === "branch" ? rules.stack.branch : rules.stack.push;
         const context = `Stack hint: ${text}`
@@ -3496,6 +3500,7 @@ function evaluateSkillAndToolAdvice({ command, env, loadedSkills, note, python, 
         };
     }
     if (!note &&
+        on("hints") &&
         readTool &&
         !state.reminded.has("read") &&
         SHELL_READ.test(command)) {
@@ -3507,7 +3512,10 @@ function evaluateSkillAndToolAdvice({ command, env, loadedSkills, note, python, 
             context: "Read files with the harness's read tool, not cat/head/tail/sed: it shows line numbers, pages large files and a wrong path is a plain error, not a failed shell command.",
         };
     }
-    if (!note && !state.reminded.has("edit") && shellEdit(command, env)) {
+    if (!note &&
+        on("hints") &&
+        !state.reminded.has("edit") &&
+        shellEdit(command, env)) {
         state.reminded.add("edit");
         return {
             action: "allow",
@@ -3531,34 +3539,46 @@ function evaluateSkillAndToolAdvice({ command, env, loadedSkills, note, python, 
 // `readTool`: the harness has a file-read tool (all but Codex), so a shell read gets a once-per-session hint.
 // `worktrees`, `branches`, `pushes`, `regenerable`: facts the adapters gather (worktreeFacts, branchFacts, pushFacts,
 // regenFacts).
-export function evaluateCommand({ command, loadedSkills = new Set(), state, host = {}, env = {}, worktrees = {}, branches = {}, pushes = {}, regenerable = {}, refs = {}, remoteDeletes = {}, pushScan = {}, prBatch = {}, tags = {}, stack = null, early = null, python = null, readTool = false, run = null, rules, }) {
-    const runLabelDecision = evaluateRunLabels(command, run, rules);
+export function evaluateCommand({ command, loadedSkills = new Set(), state, host = {}, env = {}, worktrees = {}, branches = {}, pushes = {}, regenerable = {}, refs = {}, remoteDeletes = {}, pushScan = {}, prBatch = {}, tags = {}, stack = null, early = null, python = null, readTool = false, run = null, rules, toggles = {}, }) {
+    // A rule switched off is skipped where it is evaluated, so it never hides an enabled one on the same command.
+    const on = (id) => toggles[id] !== false;
+    const runLabelDecision = on("run-labels")
+        ? evaluateRunLabels(command, run, rules)
+        : null;
     if (runLabelDecision)
         return runLabelDecision;
-    const protectedPathDecision = evaluateProtectedPaths(command, run, env, rules);
+    const protectedPathDecision = on("protected-paths")
+        ? evaluateProtectedPaths(command, run, env, rules)
+        : null;
     if (protectedPathDecision)
         return protectedPathDecision;
-    const runConfigDecision = evaluateRunConfig(command, run, rules);
+    const runConfigDecision = on("run-labels")
+        ? evaluateRunConfig(command, run, rules)
+        : null;
     if (runConfigDecision)
         return runConfigDecision;
     // Hard denies come first and fire every time, like the title guard. A `when` rule denies only in a repo
     // that adopted that manager; elsewhere it lets the command through with a once-per-session note.
-    const denied = deniedBy(command, rules);
+    const denied = on("python") ? deniedBy(command, rules) : undefined;
     if (denied && (!denied.when || denied.when === python))
         return { action: "deny", rule: denied.id, reason: denied.why };
     const note = denied && !state.reminded.has(denied.id) ? denied.id : null;
     // A secret in the push is a deny that no risky ask on the same command may hide: approving that ask would send it.
-    const scanDecision = evaluatePushScan(command, rules, pushScan);
+    const scanDecision = on("push-scan")
+        ? evaluatePushScan(command, rules, pushScan)
+        : null;
     if (scanDecision?.action === "deny")
         return scanDecision;
-    const riskyDecision = evaluateRiskyCommand(command, rules, env, worktrees, regenerable, branches, refs, pushes, remoteDeletes);
+    const riskyDecision = on("risky")
+        ? evaluateRiskyCommand(command, rules, env, worktrees, regenerable, branches, refs, pushes, remoteDeletes)
+        : null;
     if (riskyDecision)
         return riskyDecision;
     if (scanDecision)
         return scanDecision;
     // A create that carries an open PR's commits to the default branch is denied before the pr-batch check: the stack
     // message names the fix.
-    if (stack?.below && stack.verb === "create") {
+    if (on("stack-hint") && stack?.below && stack.verb === "create") {
         const { number, branch } = stack.below;
         return {
             action: "deny",
@@ -3570,10 +3590,10 @@ export function evaluateCommand({ command, loadedSkills = new Set(), state, host
                 .replaceAll("<head>", stack.head ?? "HEAD"),
         };
     }
-    const batch = evaluatePrBatch(rules, prBatch);
+    const batch = on("pr-batch") ? evaluatePrBatch(rules, prBatch) : {};
     if (batch.decision)
         return batch.decision;
-    const title = badTitle(command, rules);
+    const title = on("title") ? badTitle(command, rules) : null;
     if (title !== null) {
         return {
             action: "deny",
@@ -3582,7 +3602,9 @@ export function evaluateCommand({ command, loadedSkills = new Set(), state, host
                 `Use \`type(scope): lowercase description\` with type in ${rules.titles.types.join(", ")}; footers (BREAKING CHANGE, Co-Authored-By) go in the body/PR description. Then retry.`,
         };
     }
-    const hostDecision = evaluateHostStrain(command, host, rules, state);
+    const hostDecision = on("host")
+        ? evaluateHostStrain(command, host, rules, state)
+        : null;
     if (hostDecision)
         return hostDecision;
     const advice = evaluateSkillAndToolAdvice({
@@ -3597,6 +3619,7 @@ export function evaluateCommand({ command, loadedSkills = new Set(), state, host
         early,
         state,
         tags,
+        toggles,
     });
     const context = [batch.hint, advice.context].filter(Boolean).join("\n");
     return {
@@ -3606,7 +3629,9 @@ export function evaluateCommand({ command, loadedSkills = new Set(), state, host
     };
 }
 // An edit (any harness's edit or write tool) to a path a `files` rule watches: a once-per-session skill hint.
-export function evaluateEdit({ path, loadedSkills = new Set(), state, rules, }) {
+export function evaluateEdit({ path, loadedSkills = new Set(), state, rules, toggles = {}, }) {
+    if (toggles.skills === false)
+        return { action: "allow" };
     const p = inputText(path ?? "").replace(/\\/g, "/");
     const rule = (rules.files ?? []).find((r) => new RegExp(r.match, "i").test(p));
     const loaded = new Set([...loadedSkills].map(bare));
@@ -3620,7 +3645,9 @@ export function evaluateEdit({ path, loadedSkills = new Set(), state, rules, }) 
 // A subagent spawn that bypasses the typed agents: the built-in Plan agent, an untyped spawn on a judgement-tier model,
 // or a typed agent whose model the spawn overrides. A once-per-session hint per case, never a deny.
 // `tool`: the spawn tool, lower-cased (`spawn_agent` is Codex, whose built-in roles share bare names with ours).
-export function evaluateRouting({ type, model, effort, tool, state, rules, }) {
+export function evaluateRouting({ type, model, effort, tool, state, rules, toggles = {}, }) {
+    if (toggles.hints === false)
+        return { action: "allow" };
     const r = rules.routing;
     const t = inputText(type ?? "")
         .trim()

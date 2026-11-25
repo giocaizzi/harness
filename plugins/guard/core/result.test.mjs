@@ -13,12 +13,12 @@ void test("result check: a valid core passes, each field is named when wrong", (
     assert.equal(coreErrors({}).length, 3);
 });
 void test("result check: the run id and ticket must equal the environment's", () => {
-    const env = { GUARD_RUN_ID: " run-2 ", GUARD_RUN_TICKET: "acme/app#13" };
+    const env = { AGENT_RUN_ID: " run-2 ", AGENT_RUN_TICKET: "acme/app#13" };
     assert.deepEqual(coreErrors(good, env), [
-        'run_id "run-1" differs from GUARD_RUN_ID "run-2"',
-        'ticket "acme/app#12" differs from GUARD_RUN_TICKET "acme/app#13"',
+        'run_id "run-1" differs from AGENT_RUN_ID "run-2"',
+        'ticket "acme/app#12" differs from AGENT_RUN_TICKET "acme/app#13"',
     ]);
-    assert.deepEqual(coreErrors(good, { GUARD_RUN_ID: "  " }), []);
+    assert.deepEqual(coreErrors(good, { AGENT_RUN_ID: "  " }), []);
 });
 void test("result check: anything but an object is one error", () => {
     for (const v of [null, [], "x", 3, undefined]) {

@@ -1,13 +1,13 @@
-// Run contract v2 run context: which run a hook call belongs to, the facts the shell and edit rules read, the deny texts
-// and the tripwire's line. The manifest is trusted through the vet probes (the real vet needs a file out of the test
+// Run contract v3 run context: which run a hook call belongs to, the facts the shell and edit rules read and the deny
+// texts. The manifest is trusted through the vet probes (the real vet needs a file out of the test
 // user's reach).
 import assert from "node:assert/strict";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync, } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync, } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { pinFile } from "./registration.mjs";
-import { denyReason, LEGACY_VARS, legacySet, recordUnregistered, runContext, runFacts, unregisteredLog, } from "./run.mjs";
+import { denyReason, runContext, runFacts, runIdentified, staleRunVars, } from "./run.mjs";
 const root = realpathSync(mkdtempSync(join(tmpdir(), "guard-run-ctx-")));
 after(() => {
     rmSync(root, { recursive: true, force: true });
@@ -20,12 +20,12 @@ const vet = {
 let n = 0;
 const manifest = (body) => {
     const file = join(root, `m${String(n++)}.json`);
-    writeFileSync(file, JSON.stringify({ contract: 2, runner: "acme-runner", ...body }));
+    writeFileSync(file, JSON.stringify({ contract: 3, runner: "acme-runner", ...body }));
     return file;
 };
 const envFor = (file, extra = {}) => ({
-    GUARD_RUN_ID: "r1",
-    GUARD_RUN_MANIFEST: file,
+    AGENT_RUN_ID: "r1",
+    AGENT_RUN_MANIFEST: file,
     ...extra,
 });
 const reg = (env) => {
@@ -39,29 +39,20 @@ const denied = (ctx) => {
 };
 void test("runContext: no run variable is none, blank values included", () => {
     assert.deepEqual(runContext({}, { vet }), { state: "none" });
-    assert.deepEqual(runContext({ GUARD_RUN_ID: " ", FACTORY_RUN_ID: "", FACTORY_TICKET: "  " }, { vet }), { state: "none" });
+    assert.deepEqual(runContext({ AGENT_RUN_ID: " " }, { vet }), {
+        state: "none",
+    });
 });
 void test("runContext: a run id without a manifest (or the reverse) denies with run-registration", () => {
     for (const env of [
-        { GUARD_RUN_ID: "r1" },
-        { GUARD_RUN_MANIFEST: "/x/m.json" },
-        { GUARD_RUN_ID: "r1", GUARD_RUN_MANIFEST: join(root, "missing.json") },
+        { AGENT_RUN_ID: "r1" },
+        { AGENT_RUN_MANIFEST: "/x/m.json" },
+        { AGENT_RUN_ID: "r1", AGENT_RUN_MANIFEST: join(root, "missing.json") },
     ]) {
         const d = denied(runContext(env, { vet }));
         assert.equal(d.rule, "run-registration", JSON.stringify(env));
         assert.ok(d.why.length > 0);
     }
-});
-void test("runContext: each legacy variable alone trips run-unregistered; a registration wins over them", () => {
-    for (const k of LEGACY_VARS) {
-        const d = denied(runContext({ [k]: "x" }, { vet }));
-        assert.equal(d.rule, "run-unregistered", k);
-        assert.equal(legacySet({ [k]: "x" }), true, k);
-        assert.equal(runContext({ [k]: "" }, { vet }).state, "none", k);
-        assert.equal(runContext({ [k]: "  " }, { vet }).state, "none", k);
-    }
-    const file = manifest({ requires: [] });
-    assert.equal(reg(envFor(file, { FACTORY_RUN_ID: "r9", FACTORY_TICKET: "x" })).state, "registered");
 });
 void test("runContext: a registered run carries its mode, ticket, run file and extra globs", () => {
     const file = manifest({ requires: [] });
@@ -75,24 +66,24 @@ void test("runContext: a registered run carries its mode, ticket, run file and e
     assert.match(plain.sha256, /^[0-9a-f]{64}$/);
     assert.equal(plain.path, realpathSync(file));
     const full = reg(envFor(file, {
-        GUARD_RUN_MODE: "attended",
-        GUARD_RUN_TICKET: "acme/app#42",
-        GUARD_RUN_FILE: " .acme/runs/42/result.json ",
-        GUARD_RUN_PROTECTED_PATHS: " infra/** \r\n\n deploy/*.tf\n",
+        AGENT_RUN_MODE: "attended",
+        AGENT_RUN_TICKET: "acme/app#42",
+        AGENT_RUN_FILE: " .acme/runs/42/result.json ",
+        AGENT_RUN_PROTECTED_PATHS: " infra/** \r\n\n deploy/*.tf\n",
     }));
     assert.equal(full.mode, "attended");
     assert.equal(full.ticket, "acme/app#42");
     assert.equal(full.ticketNumber, "42");
     assert.equal(full.runFile, ".acme/runs/42/result.json");
     assert.deepEqual(full.extra, ["infra/**", "deploy/*.tf"]);
-    assert.equal(reg(envFor(file, { GUARD_RUN_MODE: "" })).mode, "unattended");
+    assert.equal(reg(envFor(file, { AGENT_RUN_MODE: "" })).mode, "unattended");
 });
 void test("runContext: a session id and data dir pin the manifest, a changed one denies", () => {
     const dataDir = mkdtempSync(join(root, "data-"));
     const file = manifest({ requires: [] });
     const opts = { vet, dataDir, sessionId: "s1" };
     assert.equal(runContext(envFor(file), opts).state, "registered");
-    writeFileSync(file, JSON.stringify({ contract: 2, runner: "acme-other", requires: [] }));
+    writeFileSync(file, JSON.stringify({ contract: 3, runner: "acme-other", requires: [] }));
     chmodSync(file, 0o600);
     const d = denied(runContext(envFor(file), opts));
     assert.equal(d.rule, "run-registration");
@@ -112,9 +103,9 @@ void test("runFacts: an attended run has none; labels and protect map from the r
             exempt: ["out/runs/*/*/**"],
         },
     });
-    const attended = reg(envFor(file, { GUARD_RUN_MODE: "attended" }));
+    const attended = reg(envFor(file, { AGENT_RUN_MODE: "attended" }));
     assert.equal(runFacts(attended, { cwd: "/r", root: "/r" }), null);
-    const run = reg(envFor(file, { GUARD_RUN_PROTECTED_PATHS: "infra/**" }));
+    const run = reg(envFor(file, { AGENT_RUN_PROTECTED_PATHS: "infra/**" }));
     assert.deepEqual(runFacts(run, { cwd: "/r/src", root: "/r" }), {
         labels: {
             approval: "go-ahead",
@@ -148,72 +139,81 @@ void test("runFacts: a registration that requires labels but names none is unsur
 });
 void test("denyReason: the texts say what to do and carry no env value", () => {
     const env = {
-        GUARD_RUN_ID: "secret-run-id",
-        FACTORY_RUN_ID: "legacy-secret",
-        GUARD_RUN_MANIFEST: "/very/secret/path.json",
+        AGENT_RUN_ID: "secret-run-id",
+        AGENT_RUN_MANIFEST: "/very/secret/path.json",
     };
-    const trip = denied(runContext({ FACTORY_RUN_ID: "legacy-secret" }, { vet }));
     const bad = denied(runContext(env, { vet }));
-    assert.match(denyReason(trip, "tool"), /GUARD_RUN_MANIFEST/);
-    assert.match(denyReason(trip, "stop"), /^Legacy run variables are set without a run registration/);
     assert.match(denyReason(bad, "tool"), /^Run registration failed: /);
     assert.match(denyReason(bad, "stop"), /^Run registration failed: .*stop and report it\.$/);
-    for (const d of [trip, bad])
-        for (const at of ["tool", "stop"])
-            assert.match(denyReason(d, at), /every tool call guard sees/i, at);
-    for (const d of [trip, bad])
-        for (const at of ["tool", "stop"])
-            assert.doesNotMatch(denyReason(d, at), /secret-run-id|legacy-secret/, `${d.rule} ${at}`);
+    for (const at of ["tool", "stop"]) {
+        assert.match(denyReason(bad, at), /every tool call guard sees/i, at);
+        assert.doesNotMatch(denyReason(bad, at), /secret-run-id/, `${bad.rule} ${at}`);
+    }
 });
-void test("recordUnregistered: one line per session in guard's log and the legacy events file, in the {ts, event, decision, rule, reason} shape", () => {
-    const dir = mkdtempSync(join(root, "tw-"));
-    const dataDir = join(dir, "data");
-    const events = join(dir, "events.jsonl");
-    const now = new Date("2026-03-04T05:06:07.000Z");
-    const env = { FACTORY_EVENTS_FILE: events, FACTORY_RUN_ID: "r1" };
-    recordUnregistered(env, dataDir, "s1", now);
-    recordUnregistered(env, dataDir, "s1", now);
-    recordUnregistered(env, dataDir, "s2", now);
-    const own = readFileSync(unregisteredLog(dataDir), "utf8").trim().split("\n");
-    assert.equal(own.length, 2, "once per session");
-    assert.deepEqual(readFileSync(events, "utf8").trim().split("\n"), own);
-    const line = JSON.parse(own[0] ?? "");
-    assert.deepEqual(Object.keys(line), [
-        "ts",
-        "event",
-        "decision",
-        "rule",
-        "reason",
+void test("run contract 2 variables fail closed unless AGENT_RUN_* holds the same value", () => {
+    for (const env of [
+        { GUARD_RUN_ID: "r1" },
+        { GUARD_RUN_MANIFEST: "/x/m.json" },
+        { GUARD_RUN_TICKET: "o/r#1" },
+        { GUARD_RUN_MODE: "attended" },
+        { GUARD_RUN_FILE: "run.json" },
+        { GUARD_RUN_ID: "r1", AGENT_RUN_ID: "r2" },
+    ]) {
+        const ctx = runContext(env);
+        assert.equal(ctx.state, "deny", JSON.stringify(env));
+        assert.equal(ctx.rule, "run-registration");
+        assert.match(ctx.why, /run contract 2 variables are set/);
+        assert.ok(runIdentified(env), JSON.stringify(env));
+    }
+    assert.deepEqual(staleRunVars({ GUARD_RUN_ID: "r1", GUARD_RUN_MODE: "x" }), [
+        "GUARD_RUN_ID",
+        "GUARD_RUN_MODE",
     ]);
-    assert.equal(line.ts, "2026-03-04T05:06:07.000Z");
-    assert.equal(line.event, "run-unregistered");
-    assert.equal(line.decision, "deny");
-    assert.equal(line.rule, "run-unregistered");
-    assert.doesNotMatch(own.join("\n"), /r1|events\.jsonl/);
-    // Without a session id every call writes.
-    const other = join(dir, "other");
-    recordUnregistered({}, other, undefined, now);
-    recordUnregistered({}, other, undefined, now);
-    assert.equal(readFileSync(unregisteredLog(other), "utf8").trim().split("\n").length, 2);
+    // blank old names, the same values in both, and the names contract 2 had no twin check for pass
+    for (const env of [
+        { GUARD_RUN_ID: " " },
+        { GUARD_RUN_ID: "" },
+        { GUARD_RUN_EVENTS_FILE: "/tmp/e.jsonl" },
+        { GUARD_RUN_PROTECTED_PATHS: "x/**" },
+    ]) {
+        assert.deepEqual(runContext(env), { state: "none" }, JSON.stringify(env));
+        assert.equal(runIdentified(env), false);
+    }
+    assert.deepEqual(staleRunVars({ GUARD_RUN_ID: "r1", AGENT_RUN_ID: "r1" }), []);
 });
-void test("recordUnregistered: a very long session key still writes once", () => {
-    const dir = mkdtempSync(join(root, "tw-long-"));
-    const dataDir = join(dir, "data");
-    const key = `${"x".repeat(150)}/${"y".repeat(150)}:12345`;
-    assert.equal(key.length > 300, true);
-    recordUnregistered({}, dataDir, key);
-    recordUnregistered({}, dataDir, key);
-    assert.equal(readFileSync(unregisteredLog(dataDir), "utf8").trim().split("\n").length, 1);
+// A runner moving from contract 2 sets both names, as the docs allow, but misses the twin of
+// GUARD_RUN_PROTECTED_PATHS or GUARD_RUN_EVENTS_FILE. The run registers, and the extra protected globs (or the events
+// file its breaker counts) are dropped without a word: the silent loss the contract 2 check exists to prevent.
+void test("an identified run with a contract 2 protected-paths or events-file name and no equal AGENT_RUN_* twin denies", () => {
+    const file = manifest({ requires: ["protected-paths"] });
+    const moving = { GUARD_RUN_ID: "r1", GUARD_RUN_MANIFEST: file };
+    for (const extra of [
+        { GUARD_RUN_PROTECTED_PATHS: "secrets/**" },
+        { GUARD_RUN_EVENTS_FILE: join(root, "events.jsonl") },
+    ]) {
+        const env = envFor(file, { ...moving, ...extra });
+        assert.equal(runContext(env, { vet }).state, "deny", JSON.stringify(extra));
+    }
 });
-void test("recordUnregistered: an unwritable path never throws", () => {
-    const dir = mkdtempSync(join(root, "tw-"));
-    const blocker = join(dir, "file");
-    writeFileSync(blocker, "x");
-    assert.doesNotThrow(() => {
-        recordUnregistered({ FACTORY_EVENTS_FILE: join(blocker, "e.jsonl") }, join(blocker, "data"), "s1");
+void test("AGENT_RUN_MANIFEST_SHA256 alone denies; the twins of an identified run pass when equal", () => {
+    for (const digest of ["a".repeat(64), ""]) {
+        const env = { AGENT_RUN_MANIFEST_SHA256: digest };
+        const ctx = runContext(env);
+        assert.equal(ctx.state, "deny", JSON.stringify(env));
+        assert.match(ctx.why, /AGENT_RUN_MANIFEST_SHA256 is set but/);
+        assert.ok(runIdentified(env));
+    }
+    const file = manifest({ requires: ["protected-paths"] });
+    const events = join(root, "events.jsonl");
+    const env = envFor(file, {
+        GUARD_RUN_ID: "r1",
+        GUARD_RUN_MANIFEST: file,
+        GUARD_RUN_PROTECTED_PATHS: "secrets/**",
+        AGENT_RUN_PROTECTED_PATHS: "secrets/**",
+        GUARD_RUN_EVENTS_FILE: events,
+        AGENT_RUN_EVENTS_FILE: events,
     });
-    mkdirSync(join(dir, "ok"));
-    assert.doesNotThrow(() => {
-        recordUnregistered({ FACTORY_EVENTS_FILE: join(dir, "missing", "e.jsonl") }, join(dir, "ok", "data"));
-    });
+    assert.equal(runContext(env, { vet }).state, "registered");
+    // an AGENT_RUN_* identity alone makes the extras count too
+    assert.deepEqual(staleRunVars({ AGENT_RUN_ID: "r1", GUARD_RUN_EVENTS_FILE: events }), ["GUARD_RUN_EVENTS_FILE"]);
 });
