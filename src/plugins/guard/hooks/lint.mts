@@ -7,6 +7,7 @@ import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { isTempPath } from "../core/engine.mjs";
+import { ruleOn } from "../core/toggles.mjs";
 import { isEditTool } from "./harnesses.mjs";
 import type { HookInput, HookSpecificOutput } from "./types.mjs";
 
@@ -91,6 +92,7 @@ export function lintFile(
   env: NodeJS.ProcessEnv = process.env,
 ): LintResult | null {
   const tool = input.tool_name ?? "";
+  if (!ruleOn(env, "lint")) return null;
   if (!isEditTool(tool) && tool.toLowerCase() !== "apply_patch") return null;
   const found = editedFiles(input)
     .map((file) => lintOne(file, run, platform, env))

@@ -15,6 +15,7 @@ import {
 import { basename, dirname, join } from "node:path";
 
 import type { EnvMap } from "../core/types.mjs";
+import { ruleOn } from "../core/toggles.mjs";
 import { readDataFile } from "./data.mjs";
 import { installedVersions } from "./stale.mjs";
 
@@ -96,9 +97,8 @@ function repoDirs(run: Runner, cwd: string): RepoDirs | null {
   return { common, main: gitDir === common };
 }
 
-// The values every guard off switch reads as off (GUARD_LIFECYCLE, GUARD_PUSH_SCAN, ...).
-export const OFF = /^(0|false|off)$/i;
-const off = (env: EnvMap): boolean => OFF.test(env.GUARD_LIFECYCLE ?? "");
+// Off by GUARD_LIFECYCLE or by GUARD_RULES (core/toggles).
+const off = (env: EnvMap): boolean => !ruleOn(env, "lifecycle");
 
 function resolveScript(pluginRoot: string, cwd: string): string | null {
   const versioned = SEMVER.test(basename(pluginRoot));

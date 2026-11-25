@@ -39,6 +39,7 @@ import { emit } from "../core/otel.mjs";
 import { resultFile } from "../core/registration.mjs";
 import { coreErrors, couldNotRun, report } from "../core/result.mjs";
 import { rules } from "../core/rules.mjs";
+import { ruleOn } from "../core/toggles.mjs";
 import { prepareChecker, runChecker } from "./checker.mjs";
 import type { PrepareOptions, Prepared } from "./checker.mjs";
 import { pluginDataDir, readDataFile, readDataFileStrict } from "./data.mjs";
@@ -425,7 +426,8 @@ export function gateFailClosed(
     }
     if (ctx.state === "none") return null;
     const result = ctx.registration.result;
-    if (env.GUARD_RESULT_GATE === "off" || !result) return null;
+    if (!ruleOn(env, "result-gate", ctx.registration.requires) || !result)
+      return null;
     const strict = result.checker !== undefined;
     if (!(strict || ctx.mode === "unattended")) return null;
     const shown = scrub(why).slice(0, 200);
@@ -575,7 +577,8 @@ export async function resultGate(
     if (ctx.state === "none") return null;
     const { registration, runId } = ctx;
     const spec = registration.result;
-    if (env.GUARD_RESULT_GATE === "off" || !spec) return null;
+    if (!ruleOn(env, "result-gate", registration.requires) || !spec)
+      return null;
     const cwd = payload.cwd ?? process.cwd();
     const strict = spec.checker !== undefined;
     const runtime = ctx.mode === "unattended";
@@ -893,7 +896,7 @@ async function makeCheck(
   run: SyncRunner = defaultSyncRunner,
   opts: StopCheckOptions = {},
 ): Promise<StopCheckResult | null> {
-  if (input.stop_hook_active || process.env.GUARD_STOP_CHECK === "off") {
+  if (input.stop_hook_active || !ruleOn(process.env, "stop-check")) {
     return null;
   }
   const cwd = input.cwd ?? process.cwd();

@@ -166,7 +166,7 @@ Each section needs its capability in `requires`; requiring `result-gate` needs `
 - A registration that requires `labels` but names none denies every label change.
 - The core result check always runs.
 
-**Modes.** `AGENT_RUN_MODE=unattended` (or unset, or empty) applies every rule below. `AGENT_RUN_MODE=attended` applies only the result gate, with attended semantics (Attended runs); none of the shell and edit rules.
+**Modes.** `AGENT_RUN_MODE=unattended` (or unset, or empty) applies every rule below. `AGENT_RUN_MODE=attended` applies only the result gate, with attended semantics (Attended runs); none of the shell and edit rules. A rule a required capability backs stays on under `GUARD_RULES` (Rule toggles, Floor).
 
 **Labels (unattended).** A command that names the registered `approval` or `takeover` label, or any `labels.protected` label, is denied (rule `run-label`) unless it is one plain `gh` read. Names compare ignoring case; a name is matched as a whole word in any quoting or case, across a line continuation (`acme:app'r'oved`, `ACME:Approved`). Plain means: single-quoted spans removed (they are literal), double-quoted spans removed when they hold no `\`, `$` or backtick, `{name}` braces (one name, no `,` or `..`) kept as literal, and nothing left of `; & | < > ( ) { } $` backtick `\ # * ? [ ] ' "` or a newline; then `gh` is the first word, with no assignment or wrapper before it. A read is `gh issue|pr view|list|status` without `--web`, or `gh api <path>` with no `-X`/`--method` but GET, no `-f`/`-F`/`--field`/`--raw-field`/`--input` in any pflag spelling (`-f=k=v`, `-fk=v`, `-XPOST`) and no flag `gh api` does not know. Everything else that names a protected label is denied, adding and removing alike, and so is a read that is piped, chained, substituted, redirected, wrapped or behind a prefix. Denied on purpose, as text that names the label: a comment or commit message that mentions it, a GET search with `-f q=label:<name>`, and a `DELETE` of the label. Leave the name out of such text, or put it in a file and use `--body-file`.
 
@@ -338,6 +338,54 @@ docker run --rm --read-only --tmpfs /tmp --user 1000:1000 \
 ```
 
 Without `CONTRACT_MANIFEST` (or with a manifest in the user's reach) the trust scenarios skip: a run that skips them did not prove the black-box case. The registration test `a 0444 manifest owned by another uid on a read-only mount is accepted and pinned` (`hooks/registration.test.mts`) covers the same case without a container.
+
+## Rule toggles
+
+`GUARD_RULES` switches guard's rules on and off. It is read from the hook's environment like every other switch (the launcher's: a command prefix changes nothing), in the Claude Code hooks and in the opencode and pi adapters alike.
+
+**Grammar.** Comma- or space-separated tokens, applied left to right over the defaults (every rule on):
+
+| Token | Effect |
+|---|---|
+| `all`, `none` | Every rule on, every rule off. |
+| `<id>`, `+<id>` | That rule on. |
+| `-<id>` | That rule off. |
+
+Ids are lowercase. An unknown token (`RISKY`, a typo, a lone `-`) makes the whole value invalid: guard then uses the defaults (every rule on, so it fails toward more checks) and says so once per session, in the agent's context and as a user notice, logged as `guard.reminder` with `rule=guard-rules`. Examples: `GUARD_RULES=-awake,-lint`; `GUARD_RULES=none,risky,run-labels,protected-paths,result-gate`.
+
+| Id | Rule | Default | Older switch |
+|---|---|---|---|
+| `risky` | Risky-command ask, and its unattended deny | on | |
+| `title` | Commit and PR title guard | on | |
+| `python` | pip and poetry deny in a uv repo, and the note elsewhere | on | |
+| `skills` | Skill rules: the deny-once enforcer, the skill reminders and the edit-path skill hints | on | |
+| `hints` | Read, edit and routing hints | on | |
+| `host` | Host-strain deny | on | `GUARD_HOST_CHECK=off` |
+| `push-scan` | gitleaks before a push | on | `GUARD_PUSH_SCAN=off` (also `0`, `false`) |
+| `pr-batch` | PR batching deny | on | |
+| `stack-hint` | Stacked-PR hint | on | `GUARD_STACK_HINT=off` (also `0`, `false`) |
+| `stale-plugins` | Stale-plugins note | on | |
+| `lifecycle` | Repo sweep and branch-lifecycle reminder | on | `GUARD_LIFECYCLE=off` (also `0`, `false`) |
+| `stop-check` | `make check` on stop | on | `GUARD_STOP_CHECK=off` |
+| `lint` | Post-edit lint | on | |
+| `awake` | Keep-awake keeper | on | |
+| `run-labels` | Run label rules (`run-label`, `run-config`) | on | |
+| `protected-paths` | Run protected-path deny (shell and edit tools) | on | |
+| `result-gate` | Run result gate | on | `GUARD_RESULT_GATE=off` |
+
+The older single switches keep working with their own spelling: a rule runs only when `GUARD_RULES` enables it and its older switch is not off. A disabled rule is skipped where it is evaluated, so it never hides an enabled one on the same command (with `title` off, `git commit -m bad && rm -rf build` still asks).
+
+**Floor.** In a registered run, a rule backing a capability the manifest `requires` runs whatever `GUARD_RULES` says: `labels` keeps `run-labels`, `protected-paths` keeps `protected-paths`, `result-gate` keeps `result-gate`. Toggles never loosen a registration. The floor overrides `GUARD_RULES` only: `GUARD_RESULT_GATE=off` still turns the result check off. A registration failure denies every tool call whatever `GUARD_RULES` says. The rules a manifest does not require (`risky`, `lint`, and the rest) can be switched off, and a run's own attended or unattended mode decides which of the run rules apply, as before.
+
+**Environment only.** There is no config file for toggles: a file the agent can write could switch rules off, and the environment of the harness process is already guard's trust boundary. The known limit is the same as for the other switches: a Claude Code settings `env` block the agent can edit, or an in-process plugin (opencode, pi) running with the host's privileges, can set the variable, so a runner protects that config (protected paths) or locks it.
+
+**Orchestrator example.** An orchestrator that runs its own agents and wants only the run rules and the risky ask:
+
+```sh
+GUARD_RULES=none,risky,run-labels,protected-paths,result-gate claude -p "…"
+```
+
+Every other rule (hints, titles, lint, the stop check, the repo sweep) is off for that harness; the run rules its manifest requires stay on through the floor even if the list is shortened.
 
 ## Unattended and auto-approve runs
 

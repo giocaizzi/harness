@@ -5,6 +5,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { ruleOn } from "../core/toggles.mjs";
 import { pluginDataDir } from "./data.mjs";
 // The hook's parent is often the shell the harness ran `command` in: skip shells up to the harness itself.
 const SHELL = /^-?(sh|bash|zsh|dash|ksh|fish|pwsh|powershell|cmd)(\.exe)?$/i;
@@ -75,7 +76,9 @@ const alive = (pid) => {
     }
 };
 // Start a keeper for this harness unless one recorded for it is still running (resume, /clear, compact).
-export function keepAwake({ dataDir, start = process.ppid, lookup = lookupProcess, platform = process.platform, launch, isAlive = alive, }) {
+export function keepAwake({ dataDir, start = process.ppid, lookup = lookupProcess, platform = process.platform, launch, isAlive = alive, env = process.env, }) {
+    if (!ruleOn(env, "awake"))
+        return null;
     const pid = harnessPid(start, (p) => lookup(p, platform));
     const argv = keeperArgv(pid, platform);
     if (!argv)
