@@ -9,7 +9,7 @@ import { handle, pythonManager } from "./guard.mjs";
 const skip = process.platform !== "win32";
 const manifest = join(mkdtempSync(join(tmpdir(), "guard-win32-reg-")), "m.json");
 writeFileSync(manifest, JSON.stringify({
-    contract: 2,
+    contract: 3,
     runner: "acme-runner",
     labels: { approval: "agent-ok", takeover: "factory-takeover" },
     requires: ["labels"],
@@ -26,9 +26,9 @@ const denied = async (input) => {
     const out = await handle({ session_id: "s1", cwd: repo, ...input }, {
         dataDir,
         env: {
-            GUARD_RUN_ID: "r1",
-            GUARD_RUN_TICKET: "acme/app#7",
-            GUARD_RUN_MANIFEST: manifest,
+            AGENT_RUN_ID: "r1",
+            AGENT_RUN_TICKET: "acme/app#7",
+            AGENT_RUN_MANIFEST: manifest,
             GUARD_OTEL: "off",
         },
         hostFacts: () => Promise.resolve({ load1: 1, freeGb: 100 }),

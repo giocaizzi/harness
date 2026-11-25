@@ -84,11 +84,11 @@ function sh(
 }
 
 // The runs must not reach the real collector: guard decisions from scripted sessions polluted the agent-ops data.
-// Nor must they run a stray run of the caller's shell (a legacy or GUARD_RUN_* variable), a make check at the stop,
+// Nor must they run a stray run of the caller's shell (an AGENT_RUN_* variable), a make check at the stop,
 // or a sound: a stop block that never released once made Codex loop, each pass playing a clip.
 const BASE_ENV: Record<string, string> = {};
 for (const [k, v] of Object.entries(process.env)) {
-  if (!/^(GUARD_)?OTEL_/.test(k) && !/^(FACTORY_|GUARD_RUN_)/.test(k)) {
+  if (!/^(GUARD_)?OTEL_/.test(k) && !k.startsWith("AGENT_RUN_")) {
     if (v !== undefined) BASE_ENV[k] = v;
   }
 }
@@ -589,7 +589,7 @@ async function check(name: string): Promise<string[]> {
         command.startsWith("pip")
           ? {
               ...env,
-              GUARD_RUN_EVENTS_FILE: events,
+              AGENT_RUN_EVENTS_FILE: events,
               GUARD_TRACEPARENT: TRACEPARENT,
             }
           : env,
@@ -672,7 +672,7 @@ async function check(name: string): Promise<string[]> {
       const out = h.run(
         {
           ...env,
-          GUARD_RUN_ID: `e2e-${name}`,
+          AGENT_RUN_ID: `e2e-${name}`,
         },
         dir,
         m.port,

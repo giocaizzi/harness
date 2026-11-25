@@ -133,7 +133,7 @@ export interface SweepStartOptions {
   env: EnvMap;
   // This plugin's root (guard); dev-tools' repo-sweep.mjs is resolved beside it.
   pluginRoot: string;
-  // A registered run (run contract v2) never starts a sweep.
+  // A registered run (run contract v3) never starts a sweep.
   registered: boolean;
 }
 

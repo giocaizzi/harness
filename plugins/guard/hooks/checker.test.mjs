@@ -166,9 +166,9 @@ void test("result check: returns the checker errors, or none", async () => {
     assert.deepEqual(await run("export const resultErrors = async () => ['late']"), { errors: ["late"] });
 });
 void test("result check: the checker gets the result and the environment", async () => {
-    const c = prepareChecker(file("export const resultErrors = (r, env) => [`${r.run_id}/${env.GUARD_RUN_X}`]"), ro);
+    const c = prepareChecker(file("export const resultErrors = (r, env) => [`${r.run_id}/${env.AGENT_RUN_X}`]"), ro);
     assert.ok("path" in c);
-    assert.deepEqual(await runChecker(c.path, { run_id: "r1" }, { GUARD_RUN_X: "x" }), {
+    assert.deepEqual(await runChecker(c.path, { run_id: "r1" }, { AGENT_RUN_X: "x" }), {
         errors: ["r1/x"],
     });
 });

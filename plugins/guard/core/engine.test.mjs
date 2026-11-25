@@ -2758,7 +2758,7 @@ void test("run: a command naming the approval label is denied unless it only rea
     }
     // G26: a line of several commands whose `gh api` calls are each plain reads naming no label passes.
     for (const c of [
-        'echo "RUN_ID=${FACTORY_RUN_ID:-unset} ..."; gh api user --jq .login; git remote -v | head -2',
+        'echo "RUN_ID=${AGENT_RUN_ID:-unset} ..."; gh api user --jq .login; git remote -v | head -2',
         'echo hi && gh api repos/o/r/pulls --jq ".[].number"',
         "gh api user --jq .login | head -1",
     ]) {
@@ -3070,7 +3070,7 @@ void test("run: files inside a registered exemption are waived from the register
         "echo x > .factory/runs/12/a > .factory/config.yaml",
     ])
         assert.notEqual(hit(c), null, c);
-    // A glob in `globs` (GUARD_RUN_PROTECTED_PATHS) wins over the waiver, however it is spelled.
+    // A glob in `globs` (AGENT_RUN_PROTECTED_PATHS) wins over the waiver, however it is spelled.
     const listed = {
         ...base,
         globs: [".github/**", ".factory/**"],
@@ -3500,7 +3500,7 @@ void test("run: the approval, takeover and protected labels are all denied", () 
     ])
         assert.equal(run(c).action, "allow", c);
 });
-void test("run: gh that cannot be read is denied whenever a run is active, labels or not (run contract v2)", () => {
+void test("run: gh that cannot be read is denied whenever a run is active, labels or not (run contract v3)", () => {
     const run = (command, facts) => evaluateCommand({ command, state: fresh(), host: calm, run: facts, rules });
     const hidden = run("GH issue edit 1 --add-label x", {});
     assert.equal(hidden.action, "deny");
@@ -3558,7 +3558,7 @@ void test("run: the .github floor is always protected, a registration adds to it
     assert.equal(run("echo x > out/a", facts).rule, "protected-path");
     assert.equal(run("echo x > out/runs/1/r/a", facts).action, "allow");
     assert.equal(run("echo x > infra/a", facts).rule, "protected-path");
-    // An exemption never waives a GUARD_RUN_PROTECTED_PATHS glob.
+    // An exemption never waives a AGENT_RUN_PROTECTED_PATHS glob.
     const extraOverlap = {
         protect: {
             root: "/r",

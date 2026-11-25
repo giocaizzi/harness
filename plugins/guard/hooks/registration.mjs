@@ -1,8 +1,8 @@
-// Run contract v2: loads the runner's registration from GUARD_RUN_MANIFEST, on every hook call. The manifest (and its
+// Run contract v3: loads the runner's registration from AGENT_RUN_MANIFEST, on every hook call. The manifest (and its
 // result.checker) must be out of this user's reach, vetted as the result checker is (hooks/checker.mjs), and its
 // realpath and sha256 are pinned in the session's state on first sight: a later change denies. Every failure is a
 // deny with rule run-registration (fails closed); nothing here throws. Enforced from guard 1.0.0. The pin also holds
-// the run id, the mode and the ticket (GUARD_RUN_*) the session started with: a later change denies.
+// the run id, the mode and the ticket (AGENT_RUN_*) the session started with: a later change denies.
 import { createHash } from "node:crypto";
 import { closeSync, constants, fstatSync, mkdirSync, openSync, readSync, } from "node:fs";
 import path from "node:path";
@@ -63,7 +63,7 @@ function readBounded(fd) {
     }
     return n > MAX_MANIFEST_BYTES ? null : buf.subarray(0, n);
 }
-// The registration for this hook call: none (no GUARD_RUN_* variable), registered, or a deny with rule
+// The registration for this hook call: none (no AGENT_RUN_* variable), registered, or a deny with rule
 // run-registration. Never throws.
 export function loadRegistration(env, opts = {}) {
     const deny = (why) => ({ rule: RULE, state: "deny", why });
@@ -78,22 +78,22 @@ export function loadRegistration(env, opts = {}) {
         const platform = opts.platform ?? process.platform;
         const pathApi = platform === "win32" ? path.win32 : path;
         const vetOpts = { platform, ...opts.vet };
-        const m = env.GUARD_RUN_MANIFEST;
-        const idSet = (env.GUARD_RUN_ID ?? "").trim() !== "";
+        const m = env.AGENT_RUN_MANIFEST;
+        const idSet = (env.AGENT_RUN_ID ?? "").trim() !== "";
         if (m === undefined && !idSet)
             return { state: "none" };
         if (idSet && (m === undefined || m.trim() === "")) {
-            return deny("GUARD_RUN_ID is set but GUARD_RUN_MANIFEST is not");
+            return deny("AGENT_RUN_ID is set but AGENT_RUN_MANIFEST is not");
         }
         if (m === undefined)
             throw new Error("unreachable");
         if (!idSet) {
-            return deny("GUARD_RUN_MANIFEST is set but GUARD_RUN_ID is not");
+            return deny("AGENT_RUN_MANIFEST is set but AGENT_RUN_ID is not");
         }
         if (m.includes("\n") || m.includes("\r")) {
-            return deny("GUARD_RUN_MANIFEST names more than one path");
+            return deny("AGENT_RUN_MANIFEST names more than one path");
         }
-        const at = `manifest ${rawPath(m)} (GUARD_RUN_MANIFEST)`;
+        const at = `manifest ${rawPath(m)} (AGENT_RUN_MANIFEST)`;
         const vet = vetTrustedFile(m, ".json", vetOpts);
         if (!("path" in vet))
             return deny(`${at}: ${vet.why}`);
@@ -139,16 +139,16 @@ export function loadRegistration(env, opts = {}) {
         if (rawChecker !== undefined) {
             const c = vetTrustedFile(rawChecker, ".mjs", vetOpts);
             if (!("path" in c)) {
-                return deny(`result.checker ${rawPath(rawChecker)} (GUARD_RUN_MANIFEST): ${c.why}`);
+                return deny(`result.checker ${rawPath(rawChecker)} (AGENT_RUN_MANIFEST): ${c.why}`);
             }
             checker = c.path;
         }
         if (opts.dataDir && opts.sessionId) {
-            const rawMode = env.GUARD_RUN_MODE ?? "";
+            const rawMode = env.AGENT_RUN_MODE ?? "";
             const vars = {
-                run_id: env.GUARD_RUN_ID ?? "",
+                run_id: env.AGENT_RUN_ID ?? "",
                 mode: rawMode === "" ? "unattended" : rawMode,
-                ticket: env.GUARD_RUN_TICKET ?? "",
+                ticket: env.AGENT_RUN_TICKET ?? "",
             };
             const file = pinFile(opts.dataDir, opts.sessionId);
             const read = () => {
@@ -181,14 +181,14 @@ export function loadRegistration(env, opts = {}) {
                     return pinDeny("cannot pin the registration (missing)");
             }
             if (r.pin.manifest !== real) {
-                return pinDeny("GUARD_RUN_MANIFEST names more than one path (another manifest is pinned for this session)");
+                return pinDeny("AGENT_RUN_MANIFEST names more than one path (another manifest is pinned for this session)");
             }
             if (r.pin.sha256 !== sha256) {
                 return pinDeny(`manifest changed during the session (sha256 ${r.pin.sha256.slice(0, 16)}… was pinned)`);
             }
             const changed = ["run_id", "mode", "ticket"].filter((k) => r.pin?.[k] !== vars[k]);
             if (changed.length > 0) {
-                return pinDeny(`run variables changed during the session (${changed.map((k) => `GUARD_RUN_${k === "run_id" ? "ID" : k.toUpperCase()}`).join(", ")})`);
+                return pinDeny(`run variables changed during the session (${changed.map((k) => `AGENT_RUN_${k === "run_id" ? "ID" : k.toUpperCase()}`).join(", ")})`);
             }
         }
         return {

@@ -2107,7 +2107,7 @@ export function shellEdit(command, env = {}) {
     return false;
 }
 // A shell write, in a registered run, to a protected path (#213): `protect.globs` (the floor `rules.run.protectedPaths`
-// plus GUARD_RUN_PROTECTED_PATHS, never waived) and `protect.registered` (the registration's globs), each over paths relative to the repo root (`protect.root`; the cwd when unknown). Writes are output redirections of any command, `tee`, `sed -i`/`perl -pi`, Set-Content, Add-Content,
+// plus AGENT_RUN_PROTECTED_PATHS, never waived) and `protect.registered` (the registration's globs), each over paths relative to the repo root (`protect.root`; the cwd when unknown). Writes are output redirections of any command, `tee`, `sed -i`/`perl -pi`, Set-Content, Add-Content,
 // Out-File and Tee-Object, the operands of rm, Remove-Item and their aliases, the sources and destination of mv and
 // Move-Item, and the destination of cp and Copy-Item (a destination also as `<dest>/<source name>`, a directory it may
 // be). Removing or moving away a directory above a protected path counts (`rm -rf .github`, `rm -rf .`), along a
@@ -2116,7 +2116,7 @@ export function shellEdit(command, env = {}) {
 // a dot file), a brace list is expanded (one group a level, 64 words at most), and one whose start is a variable or a
 // `cd` not followed is matched by the rest of its path anywhere (`$ROOT/.github/x`). A registered glob is waived for
 // `protect.exempt` (the registration's exemptions, e.g. files inside a run directory) when the normalised path is spelled out;
-// a glob in `protect.globs` (the floor, GUARD_RUN_PROTECTED_PATHS) is never waived. A command that may write fails
+// a glob in `protect.globs` (the floor, AGENT_RUN_PROTECTED_PATHS) is never waived. A command that may write fails
 // closed past the limits (`rules.run.protectedLimits`: targets, characters, milliseconds) or when the check throws,
 // since a hook that times out or emits nothing lets the command through; globs past the limits are ignored. Returns { target } (the first protected target as written), { unsure } (a limit it hit) or null.
 const PROTECT_RM = /^(?:rm|rmdir|unlink|remove-item|ri|del|erase|rd)$/;
@@ -2275,7 +2275,7 @@ const MAY_WRITE = /[>]|(?:^|[^\w-])(?:tee|sed|perl|rm|rmdir|unlink|mv|cp|move|co
 export function protectedWrite(command, protect, env = {}, limits = { globs: 256, targets: 512, chars: 1024, ms: 2000 }) {
     // A setting past the limits is cut, not failed: globs over `chars` are dropped, then all past `globs` (the floor first,
     // so it is never cut). `protect.registered` (the registration's globs) come after and may be exempted
-    // (`protect.exempt`); `protect.globs` (the floor and GUARD_RUN_PROTECTED_PATHS) never are.
+    // (`protect.exempt`); `protect.globs` (the floor and AGENT_RUN_PROTECTED_PATHS) never are.
     const segsOf = (g) => normalizeSegments(posixPath(g).replace(/\/$/, "/**"));
     const tagged = [
         ...protect.globs.map((g) => ({ g, base: false })),
@@ -3085,7 +3085,7 @@ function evaluateRunLabels(command, run, rules) {
 function evaluateProtectedPaths(command, run, env, rules) {
     if (!run)
         return null;
-    // Nor a protected path (the floor, the registration's globs, GUARD_RUN_PROTECTED_PATHS) through a shell write.
+    // Nor a protected path (the floor, the registration's globs, AGENT_RUN_PROTECTED_PATHS) through a shell write.
     const shielded = protectedWrite(command, {
         ...run.protect,
         globs: [...rules.run.protectedPaths, ...(run.protect?.extra ?? [])],

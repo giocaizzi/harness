@@ -18,7 +18,7 @@ import { contractProbe } from "./contract.mjs";
 import { appendDataFile, pluginDataDir, readDataFile } from "./data.mjs";
 import { editedPaths } from "./lint.mjs";
 import { OFF, sweepNotice, startSessionSweep, takeAgentNotes, } from "./lifecycle.mjs";
-import { denyReason, legacySet, recordUnregistered, runContext, runFacts, } from "./run.mjs";
+import { denyReason, runContext, runFacts } from "./run.mjs";
 import { isEditTool, isReadTool, isShellTool, isTaskTool, } from "./harnesses.mjs";
 import { installedVersions, staleCheck } from "./stale.mjs";
 import { EVENT_DEADLINE_MS, PRE_TOOL_DEADLINE_MS, readStdin, } from "./stdin.mjs";
@@ -358,9 +358,8 @@ export const crashRisky = (command, rules) => isRisky(command, rules) || command
 // allowed.
 export function crashResult(input, env, harness) {
     return input.hook_event_name === "PreToolUse" &&
-        (legacySet(env) ||
-            (env.GUARD_RUN_ID ?? "").trim() !== "" ||
-            env.GUARD_RUN_MANIFEST !== undefined)
+        ((env.AGENT_RUN_ID ?? "").trim() !== "" ||
+            env.AGENT_RUN_MANIFEST !== undefined)
         ? preToolUse("deny", "The command guard failed in a registered run, so this tool call was not run.", harness)
         : {};
 }
@@ -1076,9 +1075,7 @@ export async function handlePreToolUse(input, deps, session, state) {
     });
     let out = {};
     if (ctx.state === "deny") {
-        // A run whose registration failed, or that set only legacy variables: every tool call guard sees is denied.
-        if (ctx.rule === "run-unregistered")
-            recordUnregistered(deps.env ?? {}, deps.dataDir ?? pluginDataDir(deps.env ?? process.env), session);
+        // A run whose registration failed: every tool call guard sees is denied.
         const cmd = isShellTool(tool) && typeof t.command === "string" ? t.command : null;
         appendDecision(deps.env, {
             decision: "deny",

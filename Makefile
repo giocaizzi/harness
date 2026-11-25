@@ -40,16 +40,15 @@ else
 endif
 
 # Tests and probes never post to a real collector, whatever the shell exports (GUARD_OTEL=off, core/otel.mjs),
-# nor append fake decisions to a runner's run events file (GUARD_RUN_EVENTS_FILE), nor see a run's registration or
-# legacy run variables from the caller's shell (RUN_ENV): hooks spawned with the inherited env would read them.
+# nor append fake decisions to a runner's run events file (AGENT_RUN_EVENTS_FILE),
+# nor see a run's registration variables from the caller's shell (RUN_ENV): hooks spawned with the inherited env would read them.
 # GNU make 3.81 (macOS) has no target-specific unexport, so the unexport is makefile-wide.
-RUN_ENV := GUARD_RUN_MANIFEST GUARD_RUN_ID GUARD_RUN_MODE GUARD_RUN_TICKET GUARD_RUN_FILE GUARD_RUN_PROTECTED_PATHS \
-	FACTORY_RUN_ID FACTORY_ATTENDED_RUN_ID FACTORY_TICKET FACTORY_ATTENDED_TICKET FACTORY_RUN_FILE FACTORY_PROTECTED_PATHS FACTORY_EVENTS_FILE FACTORY_RESULT_CHECKER
+RUN_ENV := AGENT_RUN_MANIFEST AGENT_RUN_ID AGENT_RUN_MODE AGENT_RUN_TICKET AGENT_RUN_FILE AGENT_RUN_PROTECTED_PATHS
 unexport $(RUN_ENV)
 test: export GUARD_OTEL := off
 test: export GUARD_LIFECYCLE := off
 test: export GUARD_PUSH_SCAN := off
-test: export GUARD_RUN_EVENTS_FILE :=
+test: export AGENT_RUN_EVENTS_FILE :=
 test: ## Run the plugins' hook tests (Node 22+), their mod tests (`claude plugin test`), then the skill script tests.
 	@node --test $(wildcard plugins/*/core/*.test.mjs plugins/*/hooks/*.test.mjs plugins/*/pi/*.test.mjs tests/*.test.mjs tests/contract/*.test.mjs)
 ifneq ($(WIN_CMD),)
@@ -72,8 +71,8 @@ contract-test: export GUARD_OTEL := off
 contract-test: export GUARD_LIFECYCLE := off
 contract-test: export GUARD_PUSH_SCAN := off
 contract-test: export GUARD_STOP_CHECK := off
-contract-test: export GUARD_RUN_EVENTS_FILE :=
-contract-test: ## Run contract v2 kit against a runner's manifest (docs/guard.md).  Usage: make contract-test MANIFEST=<absolute path>
+contract-test: export AGENT_RUN_EVENTS_FILE :=
+contract-test: ## Run contract v3 kit against a runner's manifest (docs/guard.md).  Usage: make contract-test MANIFEST=<absolute path>
 	@test -n "$(MANIFEST)" || { echo "Usage: make contract-test MANIFEST=<absolute path>"; exit 2; }
 	@CONTRACT_MANIFEST="$(MANIFEST)" node --test $(wildcard tests/contract/*.test.mjs)
 

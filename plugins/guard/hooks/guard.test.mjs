@@ -58,20 +58,20 @@ const writeManifest = (reg) => {
     ];
     const file = join(REG_DIR, `m${String(regCount++)}.json`);
     writeFileSync(file, JSON.stringify({
-        contract: 2,
+        contract: 3,
         runner: "acme-runner",
         ...reg,
         requires: [...new Set(requires)].sort(),
     }));
     return file;
 };
-// A registered unattended run (override GUARD_RUN_MODE for an attended one): `reg` is the registration, `env` adds to
+// A registered unattended run (override AGENT_RUN_MODE for an attended one): `reg` is the registration, `env` adds to
 // the run's variables, `deps` to the hook's.
 const registered = (reg = DEFAULT_REG, env = {}, deps = {}) => setup({
     env: {
-        GUARD_RUN_ID: "r1",
-        GUARD_RUN_TICKET: "acme/app#7",
-        GUARD_RUN_MANIFEST: writeManifest(reg),
+        AGENT_RUN_ID: "r1",
+        AGENT_RUN_TICKET: "acme/app#7",
+        AGENT_RUN_MANIFEST: writeManifest(reg),
         ...env,
     },
     runVet: RO,
@@ -604,9 +604,9 @@ void test("telemetry: a deny emits a decision record with its class; an allow on
     assert.deepEqual([event, attrs.action, attrs.via, attrs.sample_rate, attrs.cmd_class], ["guard.decision", "allow", undefined, 10, "list"]);
     assert.ok(!JSON.stringify(sent).includes("ls -la"));
 });
-void test("GUARD_RUN_EVENTS_FILE: one JSON line per deny or ask with ts, decision, rule and cmd_hash, never the command", async () => {
+void test("AGENT_RUN_EVENTS_FILE: one JSON line per deny or ask with ts, decision, rule and cmd_hash, never the command", async () => {
     const file = join(mkdtempSync(join(tmpdir(), "guard-events-")), "events.jsonl");
-    const run = setup({ env: { GUARD_RUN_EVENTS_FILE: file } });
+    const run = setup({ env: { AGENT_RUN_EVENTS_FILE: file } });
     await run(pre("Bash", 'git commit -m "bad title"'));
     await run(pre("Bash", "ls"));
     const lines = readFileSync(file, "utf8")
@@ -622,13 +622,13 @@ void test("GUARD_RUN_EVENTS_FILE: one JSON line per deny or ask with ts, decisio
     assert.ok(!Number.isNaN(Date.parse(first.ts ?? "")));
     assert.doesNotMatch(readFileSync(file, "utf8"), /bad title|git commit/);
 });
-void test("GUARD_RUN_EVENTS_FILE: a well-formed GUARD_TRACEPARENT adds trace_id and span_id to each line, a malformed one adds neither", async () => {
+void test("AGENT_RUN_EVENTS_FILE: a well-formed GUARD_TRACEPARENT adds trace_id and span_id to each line, a malformed one adds neither", async () => {
     const tp = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
     const getLines = async (guardTraceParent) => {
         const file = join(mkdtempSync(join(tmpdir(), "guard-events-")), "events.jsonl");
         const out = await setup({
             env: {
-                GUARD_RUN_EVENTS_FILE: file,
+                AGENT_RUN_EVENTS_FILE: file,
                 GUARD_TRACEPARENT: guardTraceParent,
             },
         })(pre("Bash", 'git commit -m "bad title"'));
@@ -711,8 +711,8 @@ void test("through the real hook and its real emit, the OTLP guard.decision reco
                 OTEL_EXPORTER_OTLP_ENDPOINT: "",
                 GUARD_OTEL_EXPORTER_OTLP_ENDPOINT: `http://127.0.0.1:${String(port)}`,
                 GUARD_UNATTENDED: "",
-                GUARD_RUN_ID: "",
-                GUARD_RUN_EVENTS_FILE: "",
+                AGENT_RUN_ID: "",
+                AGENT_RUN_EVENTS_FILE: "",
                 GUARD_TRACEPARENT: "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
                 CLAUDE_PLUGIN_DATA: mkdtempSync(join(tmpdir(), "guard-test-")),
             },
@@ -760,8 +760,8 @@ void test("through the real hook (Claude, Copilot CLI, VS Code; Codex with --har
                 ...process.env,
                 GUARD_OTEL: "off",
                 GUARD_UNATTENDED: "",
-                GUARD_RUN_ID: "",
-                GUARD_RUN_EVENTS_FILE: file,
+                AGENT_RUN_ID: "",
+                AGENT_RUN_EVENTS_FILE: file,
                 GUARD_TRACEPARENT: "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
                 CLAUDE_PLUGIN_DATA: mkdtempSync(join(tmpdir(), "guard-test-")),
             },
@@ -777,10 +777,10 @@ void test("through the real hook (Claude, Copilot CLI, VS Code; Codex with --har
         assert.deepEqual([line.trace_id, line.span_id], ["4bf92f3577b34da6a3ce929d0e0e4736", "00f067aa0ba902b7"], args.join(" "));
     }
 });
-void test("GUARD_RUN_EVENTS_FILE: a crashing guard logs its fail-closed deny as guard-error", async () => {
+void test("AGENT_RUN_EVENTS_FILE: a crashing guard logs its fail-closed deny as guard-error", async () => {
     const file = join(mkdtempSync(join(tmpdir(), "guard-events-")), "events.jsonl");
     const h = setup({
-        env: { GUARD_RUN_EVENTS_FILE: file },
+        env: { AGENT_RUN_EVENTS_FILE: file },
         hostFacts: async () => {
             await Promise.resolve();
             throw new Error("boom");
@@ -796,10 +796,10 @@ void test("GUARD_RUN_EVENTS_FILE: a crashing guard logs its fail-closed deny as 
     assert.ok(line);
     assert.deepEqual([line.decision, line.rule], ["deny", "guard-error"]);
 });
-void test("GUARD_RUN_EVENTS_FILE: unset writes nothing, an unwritable path leaves the decision standing", async () => {
+void test("AGENT_RUN_EVENTS_FILE: unset writes nothing, an unwritable path leaves the decision standing", async () => {
     const dir = mkdtempSync(join(tmpdir(), "guard-events-"));
     assert.equal(decision(await setup({
-        env: { GUARD_RUN_EVENTS_FILE: join(dir, "missing", "events.jsonl") },
+        env: { AGENT_RUN_EVENTS_FILE: join(dir, "missing", "events.jsonl") },
     })(pre("Bash", 'git commit -m "bad"')))?.permissionDecision, "deny");
     assert.equal(decision(await setup()(pre("Bash", 'git commit -m "bad"')))
         ?.permissionDecision, "deny");
@@ -1320,7 +1320,7 @@ void test("VS Code task tools are judged by the command they run", async () => {
     })), undefined);
     assert.match(decision(await task("run_task", { id: "shell: missing", workspaceFolder: ws }))?.additionalContext ?? "", /could not read the command/);
 });
-void test("a registered run: a shell write to a protected path is denied; GUARD_RUN_PROTECTED_PATHS adds globs (#213)", async () => {
+void test("a registered run: a shell write to a protected path is denied; AGENT_RUN_PROTECTED_PATHS adds globs (#213)", async () => {
     const testRepo = mkdtempSync(join(tmpdir(), "guard-protect-"));
     mkdirSync(join(testRepo, ".git"));
     mkdirSync(join(testRepo, "src"));
@@ -1331,7 +1331,7 @@ void test("a registered run: a shell write to a protected path is denied; GUARD_
         ...pre("Bash", command),
         cwd,
     });
-    const inRun = (paths) => registered(DEFAULT_REG, paths === undefined ? {} : { GUARD_RUN_PROTECTED_PATHS: paths });
+    const inRun = (paths) => registered(DEFAULT_REG, paths === undefined ? {} : { AGENT_RUN_PROTECTED_PATHS: paths });
     for (const paths of [undefined, "", "infra/**"]) {
         const d = decision(await inRun(paths)(write("echo x > .github/workflows/ci.yml")));
         assert.ok(d);
@@ -1440,18 +1440,17 @@ void test("crashResult: a crash denies a tool call in a run, whatever its mode, 
     const tool = { hook_event_name: "PreToolUse" };
     const stop = { hook_event_name: "Stop" };
     for (const env of [
-        { GUARD_RUN_ID: "r1" },
-        { GUARD_RUN_MANIFEST: "/m.json" },
-        { GUARD_RUN_MANIFEST: "" },
-        { GUARD_RUN_MANIFEST: "  " },
-        { FACTORY_RUN_ID: "r1" },
-        { GUARD_RUN_ID: "r1", GUARD_RUN_MODE: "attended" },
+        { AGENT_RUN_ID: "r1" },
+        { AGENT_RUN_MANIFEST: "/m.json" },
+        { AGENT_RUN_MANIFEST: "" },
+        { AGENT_RUN_MANIFEST: "  " },
+        { AGENT_RUN_ID: "r1", AGENT_RUN_MODE: "attended" },
     ]) {
         const out = crashResult(tool, env, "claude");
         assert.match(out.stdout ?? "", /"permissionDecision":"deny".*The command guard failed in a registered run/, JSON.stringify(env));
         assert.deepEqual(crashResult(stop, env), {}, "only a tool call is denied");
     }
-    for (const env of [{}, { GUARD_RUN_ID: " " }, { FACTORY_RUN_ID: "" }]) {
+    for (const env of [{}, { AGENT_RUN_ID: " " }]) {
         assert.deepEqual(crashResult(tool, env), {}, JSON.stringify(env));
     }
 });
@@ -1462,19 +1461,19 @@ void test("a registered run: a run variable changed mid-session denies every too
         dataDir,
         runVet: RO,
         env: {
-            GUARD_RUN_ID: "r1",
-            GUARD_RUN_TICKET: "acme/app#7",
-            GUARD_RUN_MANIFEST: manifest,
+            AGENT_RUN_ID: "r1",
+            AGENT_RUN_TICKET: "acme/app#7",
+            AGENT_RUN_MANIFEST: manifest,
             ...extra,
         },
     })({ ...pre("Bash", "echo a > .github/ci.yml"), cwd: "/" });
     assert.ok(denied(await call({})), "the first call pins the run");
-    const attended = decision(await call({ GUARD_RUN_MODE: "attended" }));
+    const attended = decision(await call({ AGENT_RUN_MODE: "attended" }));
     assert.equal(attended?.permissionDecision, "deny");
-    assert.match(attended.permissionDecisionReason ?? "", /run variables changed during the session \(GUARD_RUN_MODE\)/);
+    assert.match(attended.permissionDecisionReason ?? "", /run variables changed during the session \(AGENT_RUN_MODE\)/);
     assert.doesNotMatch(attended.permissionDecisionReason ?? "", /attended/);
-    assert.match(decision(await call({ GUARD_RUN_TICKET: "acme/app#8" }))
-        ?.permissionDecisionReason ?? "", /changed during the session \(GUARD_RUN_TICKET\)/);
+    assert.match(decision(await call({ AGENT_RUN_TICKET: "acme/app#8" }))
+        ?.permissionDecisionReason ?? "", /changed during the session \(AGENT_RUN_TICKET\)/);
 });
 void test("a registered run: the protected-path check denies within the hook budget on worst cases (#213 review)", async () => {
     const testRepo = mkdtempSync(join(tmpdir(), "guard-protect-"));
@@ -1518,8 +1517,8 @@ void test("a registered run: the protected-path check denies within the hook bud
         const command = `${plain}; echo x > .github/workflows/ci.yml`;
         const started = Date.now();
         const out = await registered(DEFAULT_REG, {
-            GUARD_RUN_PROTECTED_PATHS: globs(n),
-            GUARD_RUN_EVENTS_FILE: "",
+            AGENT_RUN_PROTECTED_PATHS: globs(n),
+            AGENT_RUN_EVENTS_FILE: "",
         })({ ...pre("Bash", command), cwd: testRepo });
         assert.ok(Date.now() - started < 10000, `${String(Date.now() - started)} ms: ${command.slice(0, 40)}`);
         assert.equal(decision(out)?.permissionDecision, "deny", `no deny: ${command.slice(0, 40)}`);
@@ -1540,8 +1539,8 @@ void test("through the real hook, a risky command behind a wrapper option asks; 
                 ...process.env,
                 GUARD_OTEL: "off",
                 GUARD_UNATTENDED: "",
-                GUARD_RUN_ID: "",
-                GUARD_RUN_EVENTS_FILE: "",
+                AGENT_RUN_ID: "",
+                AGENT_RUN_EVENTS_FILE: "",
                 CLAUDE_PLUGIN_DATA: mkdtempSync(join(tmpdir(), "guard-test-")),
             },
         });
@@ -1577,7 +1576,7 @@ void test("time before a reserved word and chrt without a priority hide no comma
     mkdirSync(join(testRepo, ".git"));
     const run = async (command, inRun) => {
         const h = inRun
-            ? registered(DEFAULT_REG, { GUARD_RUN_PROTECTED_PATHS: "" })
+            ? registered(DEFAULT_REG, { AGENT_RUN_PROTECTED_PATHS: "" })
             : setup({ env: {} });
         const out = await h({ ...pre("Bash", command), cwd: testRepo });
         return decision(out)?.permissionDecision ?? "allow";
@@ -1632,7 +1631,7 @@ void test("a long chain of commands is judged in linear time, and the decision i
             env: {
                 ...process.env,
                 GUARD_OTEL: "off",
-                GUARD_RUN_EVENTS_FILE: "",
+                AGENT_RUN_EVENTS_FILE: "",
                 CLAUDE_PLUGIN_DATA: mkdtempSync(join(tmpdir(), "guard-test-")),
             },
         });
@@ -1693,7 +1692,7 @@ void test("a registered run: the approval, takeover and protected labels cannot 
         ...pre("Bash", "gh issue view 70 --json labels"),
         cwd,
     })), undefined, "reads still pass");
-    assert.equal(decision(await registered(DEFAULT_REG, { GUARD_RUN_MODE: "attended" })(add("agent-ok"))), undefined, "attended: the shell rules do not apply");
+    assert.equal(decision(await registered(DEFAULT_REG, { AGENT_RUN_MODE: "attended" })(add("agent-ok"))), undefined, "attended: the shell rules do not apply");
     assert.equal(decision(await setup({ env: {} })(add("agent-ok"))), undefined, "no run active: allowed");
     assert.equal(decision(await setup({ env: {} })(add("factory-takeover"))), undefined, "an attended run removes or adds it freely");
 });
@@ -1788,7 +1787,7 @@ void test("a registered run: an edit tool never changes a protected path; the re
     });
     const inRun = registered(DEFAULT_REG, {
         CLAUDE_PLUGIN_DATA: mkdtempSync(join(tmpdir(), "guard-data-")),
-        GUARD_RUN_PROTECTED_PATHS: "infra/**\n.factory/runs/*/*/secret/**",
+        AGENT_RUN_PROTECTED_PATHS: "infra/**\n.factory/runs/*/*/secret/**",
     });
     for (const [tool, path] of [
         ["Write", file(".github", "workflows", "ci.yml")],
@@ -1817,7 +1816,7 @@ void test("a registered run: an edit tool never changes a protected path; the re
     ]) {
         assert.notEqual(decision(await inRun(edit("Write", path)))?.permissionDecision, "deny", path);
     }
-    const attended = registered(DEFAULT_REG, { GUARD_RUN_MODE: "attended" });
+    const attended = registered(DEFAULT_REG, { AGENT_RUN_MODE: "attended" });
     assert.equal(decision(await attended(edit("Write", file(".github", "x.yml")))), undefined, "attended");
     assert.equal(decision(await setup()(edit("Write", file(".github", "x.yml")))), undefined, "no run");
 });
@@ -1825,7 +1824,7 @@ void test("a registered run: a protected edit and a protected shell write are co
     const repo = mkdtempSync(join(tmpdir(), "guard-repo-"));
     mkdirSync(join(repo, ".git"));
     const events = join(mkdtempSync(join(tmpdir(), "guard-events-")), "events.jsonl");
-    const inRun = registered(DEFAULT_REG, { GUARD_RUN_EVENTS_FILE: events });
+    const inRun = registered(DEFAULT_REG, { AGENT_RUN_EVENTS_FILE: events });
     await inRun({
         hook_event_name: "PreToolUse",
         tool_name: "Write",
@@ -1855,9 +1854,9 @@ void test("a registration that fails denies every tool with run-registration, wh
     const sent = [];
     const h = setup({
         env: {
-            GUARD_RUN_ID: "r1",
-            GUARD_RUN_MANIFEST: join(dir, "missing.json"),
-            GUARD_RUN_EVENTS_FILE: events,
+            AGENT_RUN_ID: "r1",
+            AGENT_RUN_MANIFEST: join(dir, "missing.json"),
+            AGENT_RUN_EVENTS_FILE: events,
         },
         runVet: RO,
         emit: (e, a) => {
@@ -1898,57 +1897,25 @@ void test("a registration that fails denies every tool with run-registration, wh
     assert.equal(lines.filter((l) => l.cmd_hash !== undefined).length, 1);
     assert.ok(sent.every((a) => a.rule === "run-registration" && a.action === "deny"));
     assert.equal(sent.length, 4);
-    // GUARD_RUN_ID alone, and the manifest alone, are registration failures too.
+    // AGENT_RUN_ID alone, and the manifest alone, are registration failures too.
     for (const env of [
-        { GUARD_RUN_ID: "r1" },
-        { GUARD_RUN_MANIFEST: "/x/m.json" },
+        { AGENT_RUN_ID: "r1" },
+        { AGENT_RUN_MANIFEST: "/x/m.json" },
     ]) {
         const d = decision(await setup({ env, runVet: RO })(pre("Bash", "ls")));
         assert.equal(d?.permissionDecision, "deny", JSON.stringify(env));
     }
 });
-void test("legacy run variables without a registration deny every tool with run-unregistered and write one line per session", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "guard-run-"));
-    const legacyEvents = join(dir, "legacy.jsonl");
-    const dataDir = mkdtempSync(join(tmpdir(), "guard-test-"));
+void test("a session with only FACTORY_* variables is an ordinary unregistered session: no deny", async () => {
     const h = setup({
-        dataDir,
-        env: { FACTORY_RUN_ID: "r1", FACTORY_EVENTS_FILE: legacyEvents },
+        env: { FACTORY_RUN_ID: "r1", FACTORY_EVENTS_FILE: "/x/events.jsonl" },
     });
-    for (const input of [
-        pre("Bash", "ls"),
-        {
-            hook_event_name: "PreToolUse",
-            tool_name: "Edit",
-            tool_input: { file_path: "/x/a.ts" },
-        },
-        {
-            hook_event_name: "PreToolUse",
-            tool_name: "Read",
-            tool_input: { file_path: "/x/a.ts" },
-        },
-    ]) {
-        const d = decision(await h(input));
-        assert.equal(d?.permissionDecision, "deny", String(input.tool_name));
-        assert.match(d.permissionDecisionReason ?? "", /GUARD_RUN_MANIFEST/);
-        assert.doesNotMatch(d.permissionDecisionReason ?? "", /FACTORY_RUN_ID/);
-    }
-    const lines = readFileSync(legacyEvents, "utf8").trim().split("\n");
-    assert.equal(lines.length, 1, "one line for the session");
-    const line = JSON.parse(lines[0] ?? "");
-    assert.deepEqual(Object.keys(line), [
-        "ts",
-        "event",
-        "decision",
-        "rule",
-        "reason",
-    ]);
-    assert.equal(line.rule, "run-unregistered");
-    assert.equal(readFileSync(join(dataDir, "run-unregistered.jsonl"), "utf8")
-        .trim()
-        .split("\n").length, 1);
-    // Blank legacy values do not trip it, and a registered run reads no legacy variable.
-    assert.equal(decision(await setup({ env: { FACTORY_RUN_ID: "", FACTORY_TICKET: " " } })(pre("Bash", "ls"))), undefined);
+    assert.equal(decision(await h(pre("Bash", "ls"))), undefined);
+    assert.equal(decision(await h({
+        hook_event_name: "PreToolUse",
+        tool_name: "Edit",
+        tool_input: { file_path: "/x/a.ts" },
+    })), undefined);
 });
 void test("a registered unattended run: a crash in the shell check denies every command, an attended one only the risky", async () => {
     const boom = async () => {
@@ -1958,7 +1925,7 @@ void test("a registered unattended run: a crash in the shell check denies every 
     const build = pre("Bash", "npm run build");
     assert.equal(decision(await registered(DEFAULT_REG, {}, { hostFacts: boom })(build))
         ?.permissionDecision, "deny");
-    assert.equal(decision(await registered(DEFAULT_REG, { GUARD_RUN_MODE: "attended" }, { hostFacts: boom })(build)), undefined);
+    assert.equal(decision(await registered(DEFAULT_REG, { AGENT_RUN_MODE: "attended" }, { hostFacts: boom })(build)), undefined);
     assert.equal(decision(await setup({ hostFacts: boom })(build)), undefined, "no run");
 });
 void test("SessionStart: guard.session says whether a run is registered and which runner, never a path", async () => {
@@ -1979,25 +1946,25 @@ void test("SessionStart: guard.session says whether a run is registered and whic
     assert.equal((await attrsOf({}))["run.registered"], false);
     const file = writeManifest(DEFAULT_REG);
     const reg = await attrsOf({
-        GUARD_RUN_ID: "r1",
-        GUARD_RUN_TICKET: "acme/app#7",
-        GUARD_RUN_MANIFEST: file,
+        AGENT_RUN_ID: "r1",
+        AGENT_RUN_TICKET: "acme/app#7",
+        AGENT_RUN_MANIFEST: file,
     });
     assert.equal(reg["run.registered"], true);
     assert.equal(reg["runner.name"], "acme-runner");
-    assert.equal(reg["runner.contract"], 2);
+    assert.equal(reg["runner.contract"], 3);
     assert.match(String(reg["runner.manifest_sha16"]), /^[0-9a-f]{16}$/);
     assert.doesNotMatch(JSON.stringify(reg), new RegExp(file.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&")));
     assert.equal((await attrsOf({
-        GUARD_RUN_ID: "r1",
-        GUARD_RUN_MANIFEST: join(REG_DIR, "missing.json"),
+        AGENT_RUN_ID: "r1",
+        AGENT_RUN_MANIFEST: join(REG_DIR, "missing.json"),
     }))["run.registered"], false, "a failed registration is not registered");
 });
-void test("through the real hook: the legacy-only tripwire and a run id without a manifest deny; the contract probe says enforced", () => {
+void test("through the real hook: a run id without a manifest denies; the contract probe says enforced", () => {
     const script = fileURLToPath(new URL("./guard.mjs", import.meta.url));
     // An empty manifest variable is itself a registration failure, so the child gets none.
     const inherited = { ...process.env };
-    delete inherited.GUARD_RUN_MANIFEST;
+    delete inherited.AGENT_RUN_MANIFEST;
     const run = (env, args = ["PreToolUse"]) => hookSync(script, args, JSON.stringify({
         hook_event_name: "PreToolUse",
         tool_name: "Read",
@@ -2010,24 +1977,16 @@ void test("through the real hook: the legacy-only tripwire and a run id without 
             ...inherited,
             GUARD_OTEL: "off",
             GUARD_UNATTENDED: "",
-            GUARD_RUN_ID: "",
-            GUARD_RUN_EVENTS_FILE: "",
-            FACTORY_RUN_ID: "",
-            FACTORY_EVENTS_FILE: "",
+            AGENT_RUN_ID: "",
+            AGENT_RUN_EVENTS_FILE: "",
             CLAUDE_PLUGIN_DATA: mkdtempSync(join(tmpdir(), "guard-test-")),
             ...env,
         },
     });
-    const legacy = join(mkdtempSync(join(tmpdir(), "guard-events-")), "e.jsonl");
-    const tripped = run({ FACTORY_RUN_ID: "r1", FACTORY_EVENTS_FILE: legacy });
-    assert.equal(tripped.status, 0, tripped.stderr);
-    assert.match(tripped.stdout, /"permissionDecision":"deny"/);
-    assert.match(tripped.stdout, /GUARD_RUN_MANIFEST/);
-    assert.equal(readFileSync(legacy, "utf8").trim().split("\n").length, 1);
-    const noManifest = run({ GUARD_RUN_ID: "r1" });
+    const noManifest = run({ AGENT_RUN_ID: "r1" });
     assert.equal(noManifest.status, 0, noManifest.stderr);
     assert.match(noManifest.stdout, /"permissionDecision":"deny"/);
-    assert.match(noManifest.stdout, /GUARD_RUN_MANIFEST is not/);
+    assert.match(noManifest.stdout, /AGENT_RUN_MANIFEST is not/);
     const plain = run({});
     assert.equal(plain.stdout, "");
     const probe = spawnSync(process.execPath, [script, "--contract"], {
@@ -2076,9 +2035,9 @@ void test("SessionStart: the repo sweep starts once per session; GUARD_LIFECYCLE
         runVet: RO,
         env: {
             GUARD_LIFECYCLE: "on",
-            GUARD_RUN_ID: "r1",
-            GUARD_RUN_TICKET: "acme/app#7",
-            GUARD_RUN_MANIFEST: file,
+            AGENT_RUN_ID: "r1",
+            AGENT_RUN_TICKET: "acme/app#7",
+            AGENT_RUN_MANIFEST: file,
         },
     })(start());
     assert.deepEqual(spawned, [{ cwd: "/r", registered: true }]);

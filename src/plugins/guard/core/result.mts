@@ -39,12 +39,12 @@ export const coreErrors = (result: unknown, env: Env = {}): string[] => {
   }
   const r = result as Record<string, unknown>;
   const errors: string[] = [];
-  const wantRun = (env.GUARD_RUN_ID ?? "").trim();
+  const wantRun = (env.AGENT_RUN_ID ?? "").trim();
   if (typeof r.run_id !== "string" || r.run_id.trim() === "") {
     errors.push(`run_id must be a non-empty string, got ${show(r.run_id)}`);
   } else if (wantRun && r.run_id !== wantRun) {
     errors.push(
-      `run_id ${show(r.run_id)} differs from GUARD_RUN_ID ${show(wantRun)}`,
+      `run_id ${show(r.run_id)} differs from AGENT_RUN_ID ${show(wantRun)}`,
     );
   }
   if (typeof r.ticket !== "string" || !TICKET.test(r.ticket)) {
@@ -52,10 +52,10 @@ export const coreErrors = (result: unknown, env: Env = {}): string[] => {
       `ticket must be a string of the form "<owner>/<repo>#<number>", got ${show(r.ticket)}`,
     );
   } else {
-    const wantTicket = (env.GUARD_RUN_TICKET ?? "").trim();
+    const wantTicket = (env.AGENT_RUN_TICKET ?? "").trim();
     if (wantTicket && r.ticket !== wantTicket) {
       errors.push(
-        `ticket ${show(r.ticket)} differs from GUARD_RUN_TICKET ${show(wantTicket)}`,
+        `ticket ${show(r.ticket)} differs from AGENT_RUN_TICKET ${show(wantTicket)}`,
       );
     }
   }

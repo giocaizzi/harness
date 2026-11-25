@@ -1,4 +1,4 @@
-// Run contract v2 loader. Tests needing POSIX permissions or FIFOs are named `posix registration:` and skip on Windows.
+// Run contract v3 loader. Tests needing POSIX permissions or FIFOs are named `posix registration:` and skip on Windows.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -17,7 +17,7 @@ const fresh = (name) => {
     return p;
 };
 const MANIFEST = JSON.stringify({
-    contract: 2,
+    contract: 3,
     runner: "acme-runner",
     requires: ["result-gate"],
     result: { file: ".acme/runs/{ticket_number}/result.json" },
@@ -33,9 +33,9 @@ const ro = {
     readOnlyMount: () => false,
 };
 const envFor = (m, extra = {}) => ({
-    GUARD_RUN_ID: "r1",
-    GUARD_RUN_TICKET: "acme/app#7",
-    ...(m === undefined ? {} : { GUARD_RUN_MANIFEST: m }),
+    AGENT_RUN_ID: "r1",
+    AGENT_RUN_TICKET: "acme/app#7",
+    ...(m === undefined ? {} : { AGENT_RUN_MANIFEST: m }),
     ...extra,
 });
 const posixOnly = { skip: process.platform === "win32" };
@@ -44,30 +44,30 @@ const denyWhy = (r) => {
     return r.why;
 };
 const sha = (s) => createHash("sha256").update(s).digest("hex");
-void test("registration: no GUARD_RUN variable is none", () => {
+void test("registration: no AGENT_RUN variable is none", () => {
     assert.deepEqual(loadRegistration({}, { vet: ro }), { state: "none" });
-    assert.deepEqual(loadRegistration({ GUARD_RUN_ID: "  " }, { vet: ro }), {
+    assert.deepEqual(loadRegistration({ AGENT_RUN_ID: "  " }, { vet: ro }), {
         state: "none",
     });
 });
 void test("registration: id and manifest must be set together", () => {
-    assert.equal(denyWhy(loadRegistration({ GUARD_RUN_ID: "r1" }, { vet: ro })), "GUARD_RUN_ID is set but GUARD_RUN_MANIFEST is not");
-    assert.equal(denyWhy(loadRegistration({ GUARD_RUN_ID: "r1", GUARD_RUN_MANIFEST: "  " }, { vet: ro })), "GUARD_RUN_ID is set but GUARD_RUN_MANIFEST is not");
-    assert.equal(denyWhy(loadRegistration({ GUARD_RUN_MANIFEST: "/x.json" }, { vet: ro })), "GUARD_RUN_MANIFEST is set but GUARD_RUN_ID is not");
-    assert.equal(denyWhy(loadRegistration({ GUARD_RUN_MANIFEST: "" }, { vet: ro })), "GUARD_RUN_MANIFEST is set but GUARD_RUN_ID is not");
-    assert.equal(loadRegistration({ GUARD_RUN_MANIFEST: "/x.json" }, { vet: ro }).state, "deny");
+    assert.equal(denyWhy(loadRegistration({ AGENT_RUN_ID: "r1" }, { vet: ro })), "AGENT_RUN_ID is set but AGENT_RUN_MANIFEST is not");
+    assert.equal(denyWhy(loadRegistration({ AGENT_RUN_ID: "r1", AGENT_RUN_MANIFEST: "  " }, { vet: ro })), "AGENT_RUN_ID is set but AGENT_RUN_MANIFEST is not");
+    assert.equal(denyWhy(loadRegistration({ AGENT_RUN_MANIFEST: "/x.json" }, { vet: ro })), "AGENT_RUN_MANIFEST is set but AGENT_RUN_ID is not");
+    assert.equal(denyWhy(loadRegistration({ AGENT_RUN_MANIFEST: "" }, { vet: ro })), "AGENT_RUN_MANIFEST is set but AGENT_RUN_ID is not");
+    assert.equal(loadRegistration({ AGENT_RUN_MANIFEST: "/x.json" }, { vet: ro }).state, "deny");
 });
 void test("registration: a manifest naming more than one path is refused", () => {
-    assert.equal(denyWhy(loadRegistration(envFor("/a.json\n/b.json"), { vet: ro })), "GUARD_RUN_MANIFEST names more than one path");
-    assert.equal(denyWhy(loadRegistration(envFor("/a.json\r/b.json"), { vet: ro })), "GUARD_RUN_MANIFEST names more than one path");
+    assert.equal(denyWhy(loadRegistration(envFor("/a.json\n/b.json"), { vet: ro })), "AGENT_RUN_MANIFEST names more than one path");
+    assert.equal(denyWhy(loadRegistration(envFor("/a.json\r/b.json"), { vet: ro })), "AGENT_RUN_MANIFEST names more than one path");
 });
 void test("registration: a missing, mistyped or redirected manifest is refused", () => {
     const missing = join(root, "missing.json");
-    assert.equal(denyWhy(loadRegistration(envFor(missing), { vet: ro })), `manifest ${missing} (GUARD_RUN_MANIFEST): no such file`);
-    assert.match(denyWhy(loadRegistration(envFor(manifest(MANIFEST, "m.txt")), { vet: ro })), /\(GUARD_RUN_MANIFEST\): not a \.json file$/);
+    assert.equal(denyWhy(loadRegistration(envFor(missing), { vet: ro })), `manifest ${missing} (AGENT_RUN_MANIFEST): no such file`);
+    assert.match(denyWhy(loadRegistration(envFor(manifest(MANIFEST, "m.txt")), { vet: ro })), /\(AGENT_RUN_MANIFEST\): not a \.json file$/);
     const dir = fresh("x.json");
     mkdirSync(dir);
-    assert.match(denyWhy(loadRegistration(envFor(dir), { vet: ro })), /\(GUARD_RUN_MANIFEST\): not a regular file$/);
+    assert.match(denyWhy(loadRegistration(envFor(dir), { vet: ro })), /\(AGENT_RUN_MANIFEST\): not a regular file$/);
     const txt = manifest(MANIFEST, "t.txt");
     const link = fresh("l.json");
     try {
@@ -80,11 +80,11 @@ void test("registration: a missing, mistyped or redirected manifest is refused",
 });
 void test("registration: the raw value is printed cut and with control characters replaced", () => {
     const why = denyWhy(loadRegistration(envFor(`/${"a".repeat(300)}\t.json`), { vet: ro }));
-    assert.match(why, /^manifest \/a{199}… \(GUARD_RUN_MANIFEST\): /);
+    assert.match(why, /^manifest \/a{199}… \(AGENT_RUN_MANIFEST\): /);
 });
 void test("posix registration: the real vet refuses a manifest this user can write", posixOnly, () => {
     const m = manifest();
-    assert.match(denyWhy(loadRegistration(envFor(m))), /\(GUARD_RUN_MANIFEST\): writable by this user/);
+    assert.match(denyWhy(loadRegistration(envFor(m))), /\(AGENT_RUN_MANIFEST\): writable by this user/);
 });
 void test("posix registration: a FIFO is not a regular file and does not block", posixOnly, () => {
     const p = fresh("fifo.json");
@@ -93,17 +93,17 @@ void test("posix registration: a FIFO is not a regular file and does not block",
 });
 void test("registration: a manifest over 64 KiB is refused", () => {
     const m = manifest(" ".repeat(65537));
-    assert.match(denyWhy(loadRegistration(envFor(m), { vet: ro })), /\(GUARD_RUN_MANIFEST\): too large \(over 64 KiB\)$/);
+    assert.match(denyWhy(loadRegistration(envFor(m), { vet: ro })), /\(AGENT_RUN_MANIFEST\): too large \(over 64 KiB\)$/);
 });
 void test("registration: invalid JSON and unknown capabilities are refused", () => {
-    assert.match(denyWhy(loadRegistration(envFor(manifest("{nope")), { vet: ro })), /\(GUARD_RUN_MANIFEST\): invalid: not valid JSON/);
-    const bad = manifest(JSON.stringify({ contract: 2, runner: "acme-runner", requires: ["warp"] }));
-    assert.match(denyWhy(loadRegistration(envFor(bad), { vet: ro })), /\(GUARD_RUN_MANIFEST\): invalid: /);
+    assert.match(denyWhy(loadRegistration(envFor(manifest("{nope")), { vet: ro })), /\(AGENT_RUN_MANIFEST\): invalid: not valid JSON/);
+    const bad = manifest(JSON.stringify({ contract: 3, runner: "acme-runner", requires: ["warp"] }));
+    assert.match(denyWhy(loadRegistration(envFor(bad), { vet: ro })), /\(AGENT_RUN_MANIFEST\): invalid: /);
 });
 void test("registration: bad run variables are refused", () => {
-    assert.match(denyWhy(loadRegistration(envFor(manifest(), { GUARD_RUN_MODE: "wild" }), {
+    assert.match(denyWhy(loadRegistration(envFor(manifest(), { AGENT_RUN_MODE: "wild" }), {
         vet: ro,
-    })), /^run variables: GUARD_RUN_MODE /);
+    })), /^run variables: AGENT_RUN_MODE /);
 });
 void test("registration: a valid manifest registers with its realpath and sha256", () => {
     const m = manifest();
@@ -118,7 +118,7 @@ void test("posix registration: a checker this user can write is refused", posixO
     const checker = fresh("c.mjs");
     writeFileSync(checker, "export default () => [];");
     const body = JSON.stringify({
-        contract: 2,
+        contract: 3,
         runner: "acme-runner",
         requires: ["result-gate"],
         result: { file: "r.json", checker },
@@ -127,13 +127,13 @@ void test("posix registration: a checker this user can write is refused", posixO
     const why = denyWhy(loadRegistration(envFor(m), {
         vet: { ...ro, writable: (t) => t === checker },
     }));
-    assert.match(why, new RegExp(`^result\\.checker ${checker.replace(/[.\\/]/g, "\\$&")} \\(GUARD_RUN_MANIFEST\\): writable by this user`));
+    assert.match(why, new RegExp(`^result\\.checker ${checker.replace(/[.\\/]/g, "\\$&")} \\(AGENT_RUN_MANIFEST\\): writable by this user`));
 });
 void test("registration: a trusted checker is returned", () => {
     const checker = fresh("c.mjs");
     writeFileSync(checker, "export default () => [];");
     const m = manifest(JSON.stringify({
-        contract: 2,
+        contract: 3,
         runner: "acme-runner",
         requires: ["result-gate"],
         result: { file: "r.json", checker },
@@ -178,21 +178,21 @@ void test("registration: a run variable that changed during the session is refus
     const m = manifest();
     const opts = { vet: ro, dataDir, sessionId: "s3b" };
     assert.equal(loadRegistration(envFor(m), opts).state, "registered");
-    assert.equal(loadRegistration(envFor(m, { GUARD_RUN_MODE: "" }), opts).state, "registered", "a blank mode is the unattended default");
+    assert.equal(loadRegistration(envFor(m, { AGENT_RUN_MODE: "" }), opts).state, "registered", "a blank mode is the unattended default");
     for (const [extra, which] of [
-        [{ GUARD_RUN_MODE: "attended" }, "GUARD_RUN_MODE"],
-        [{ GUARD_RUN_ID: "r2-secret" }, "GUARD_RUN_ID"],
-        [{ GUARD_RUN_TICKET: "acme/app#8" }, "GUARD_RUN_TICKET"],
+        [{ AGENT_RUN_MODE: "attended" }, "AGENT_RUN_MODE"],
+        [{ AGENT_RUN_ID: "r2-secret" }, "AGENT_RUN_ID"],
+        [{ AGENT_RUN_TICKET: "acme/app#8" }, "AGENT_RUN_TICKET"],
     ]) {
         assert.equal(denyWhy(loadRegistration(envFor(m, extra), opts)), `run variables changed during the session (${which})`);
     }
-    assert.equal(denyWhy(loadRegistration(envFor(m, { GUARD_RUN_MODE: "attended", GUARD_RUN_ID: "r9" }), opts)), "run variables changed during the session (GUARD_RUN_ID, GUARD_RUN_MODE)");
+    assert.equal(denyWhy(loadRegistration(envFor(m, { AGENT_RUN_MODE: "attended", AGENT_RUN_ID: "r9" }), opts)), "run variables changed during the session (AGENT_RUN_ID, AGENT_RUN_MODE)");
 });
 void test("registration: a second manifest path in one session is refused", () => {
     const dataDir = fresh("data");
     const opts = { vet: ro, dataDir, sessionId: "s3" };
     assert.equal(loadRegistration(envFor(manifest()), opts).state, "registered");
-    assert.equal(denyWhy(loadRegistration(envFor(manifest()), opts)), "GUARD_RUN_MANIFEST names more than one path (another manifest is pinned for this session)");
+    assert.equal(denyWhy(loadRegistration(envFor(manifest()), opts)), "AGENT_RUN_MANIFEST names more than one path (another manifest is pinned for this session)");
 });
 void test("registration: garbage pin lines are ignored and the first valid one is used", () => {
     const dataDir = fresh("data");
@@ -305,8 +305,8 @@ void test("posix registration: a failed pin write is refused", { skip: process.p
 });
 void test("registration: an unusable env value does not throw", () => {
     const env = {
-        GUARD_RUN_ID: "r1",
-        GUARD_RUN_MANIFEST: { toString: 1 },
+        AGENT_RUN_ID: "r1",
+        AGENT_RUN_MANIFEST: { toString: 1 },
     };
     assert.equal(loadRegistration(env, { vet: ro }).state, "deny");
     assert.equal(loadRegistration(null).state, "deny");

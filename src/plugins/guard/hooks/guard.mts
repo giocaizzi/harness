@@ -84,13 +84,7 @@ import {
   takeAgentNotes,
 } from "./lifecycle.mjs";
 import type { RunContext } from "./run.mjs";
-import {
-  denyReason,
-  legacySet,
-  recordUnregistered,
-  runContext,
-  runFacts,
-} from "./run.mjs";
+import { denyReason, runContext, runFacts } from "./run.mjs";
 import {
   isEditTool,
   isReadTool,
@@ -555,9 +549,8 @@ export function crashResult(
   harness?: string,
 ): HandleResult {
   return input.hook_event_name === "PreToolUse" &&
-    (legacySet(env) ||
-      (env.GUARD_RUN_ID ?? "").trim() !== "" ||
-      env.GUARD_RUN_MANIFEST !== undefined)
+    ((env.AGENT_RUN_ID ?? "").trim() !== "" ||
+      env.AGENT_RUN_MANIFEST !== undefined)
     ? preToolUse(
         "deny",
         "The command guard failed in a registered run, so this tool call was not run.",
@@ -1571,13 +1564,7 @@ export async function handlePreToolUse(
   let out: HandleResult = {};
 
   if (ctx.state === "deny") {
-    // A run whose registration failed, or that set only legacy variables: every tool call guard sees is denied.
-    if (ctx.rule === "run-unregistered")
-      recordUnregistered(
-        deps.env ?? {},
-        deps.dataDir ?? pluginDataDir(deps.env ?? process.env),
-        session,
-      );
+    // A run whose registration failed: every tool call guard sees is denied.
     const cmd =
       isShellTool(tool) && typeof t.command === "string" ? t.command : null;
     appendDecision(deps.env, {
