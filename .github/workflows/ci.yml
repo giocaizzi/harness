@@ -153,7 +153,7 @@ jobs:
           AGENT_RUN_EVENTS_FILE: ""
         run: |
           node --test --test-reporter=tap --test-name-pattern='^result check:' plugins/guard/core/result.test.mjs plugins/guard/hooks/checker.test.mjs plugins/guard/hooks/session.test.mjs | tee tap.txt
-          if ! grep -qx '# tests 26' tap.txt || ! grep -qx '# pass 26' tap.txt; then echo "::error::expected 26 guard result check tests to pass"; exit 1; fi
+          if ! grep -qx '# tests 29' tap.txt || ! grep -qx '# pass 29' tap.txt; then echo "::error::expected 29 guard result check tests to pass"; exit 1; fi
       # Run contract v3: the registration validator, loader and contract-test kit with Windows path rules (POSIX-only
       # and trusted-MANIFEST tests skip here, so the step checks for no failure and a floor of passing tests).
       - shell: bash
