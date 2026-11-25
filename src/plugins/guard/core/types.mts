@@ -188,6 +188,9 @@ export interface RoutingRules {
 }
 
 export interface StackRule {
+  branch: string;
+  deny: string;
+  push: string;
   match: string;
   why: string;
 }
@@ -377,9 +380,30 @@ export interface StackBelow {
   number: number;
 }
 
+// An early stack hint: a branch created from an open PR's head (`kind: branch`), or the first push of a branch that
+// carries one (`kind: push`). `key` is the once-per-agent reminder key.
+export interface StackEarlyTarget {
+  dir: string;
+  kind: "branch" | "push";
+  name: string | null;
+  refspec: string | null;
+  start: string | null;
+}
+
+export interface StackEarlyFact {
+  base: string;
+  below: StackBelow;
+  branch: string;
+  key: string;
+  kind: "branch" | "push";
+  start?: string;
+}
+
 export interface StackFact {
   base?: string;
   below?: StackBelow;
+  head?: string;
+  verb?: string;
 }
 
 export interface ProtectConfig {
@@ -445,6 +469,7 @@ export interface CommandEvaluationInput {
   rules: GuardRules;
   run?: RunFacts | null;
   stack?: StackFact | null;
+  early?: StackEarlyFact | null;
   state: SessionState;
   tags?: Record<string, TagFact | undefined>;
   // Rules switched off (core/toggles): a missing id is on.
@@ -594,6 +619,8 @@ export interface CorpusOptions {
   hints?: boolean;
   run?: "registered" | "configured" | "unsure" | "protected" | null;
   stack?: StackFact | null;
+  early?: StackEarlyFact | null;
+  prBatch?: Record<string, PrBatchFact | undefined>;
   read?: boolean;
   leak?: boolean;
   squashed?: boolean;

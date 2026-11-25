@@ -50,6 +50,8 @@ import {
   refFacts,
   regenFacts,
   remoteDeleteFacts,
+  stackEarlyFacts,
+  stackEarlyTargets,
   stackFacts,
   stackTargets,
   tagFacts,
@@ -73,6 +75,7 @@ import type {
   PushFact,
   PushScanFact,
   SafeFact,
+  StackEarlyFact,
   StackFact,
   TagFact,
 } from "../core/types.mjs";
@@ -753,6 +756,7 @@ async function onShell(
       remoteDeletes?: Record<string, SafeFact | undefined>;
       regenerable?: Record<string, boolean | undefined>;
       stack?: StackFact | null;
+      early?: StackEarlyFact | null;
       tags?: Record<string, TagFact | undefined>;
       worktrees?: Record<string, SafeFact | undefined>;
     }
@@ -820,25 +824,13 @@ async function onShell(
 
     if (pushing) facts.pushes = (await pushing) ?? {};
 
-    // A new PR that overlaps another open PR of the author: reads fail open.
-    if (
-      toggles["pr-batch"] &&
-      rules.prBatch &&
-      new RegExp(rules.prBatch.match, "i").test(command)
-    ) {
-      facts.prBatch = await within(
-        prBatchFacts(command, rules, inCwd, facts.env, (path, cwd) =>
-          readText(resolve(input.cwd ?? ".", cwd ?? ".", path)),
-        ),
-        left(),
-        {},
-      );
-    }
-
+    // Stack facts come first: a create on a branch that builds on an open PR is denied before the pr-batch check.
     if (
       toggles["stack-hint"] &&
-      !state.reminded.includes("stack") &&
-      stackTargets(command, rules, facts.env).length
+      (stackTargets(command, rules, facts.env).some(
+        (t) => t.verb === "create" || !state.reminded.includes("stack"),
+      ) ||
+        stackEarlyTargets(command, facts.env).length)
     ) {
       const budget = Math.min(deps.factsMs ?? STACK_MS, left());
       const stackDeadline = Date.now() + budget;
@@ -852,6 +844,29 @@ async function onShell(
       facts.stack = await within(
         stackFacts(command, rules, stackRun, facts.env),
         budget,
+        {},
+      );
+      if (stackEarlyTargets(command, facts.env).length)
+        facts.early = await within(
+          stackEarlyFacts(command, stackRun, facts.env, (key) =>
+            state.reminded.includes(key),
+          ),
+          Math.max(0, stackDeadline - Date.now()),
+          null,
+        );
+    }
+
+    // A new PR that overlaps another open PR of the author: reads fail open.
+    if (
+      toggles["pr-batch"] &&
+      rules.prBatch &&
+      new RegExp(rules.prBatch.match, "i").test(command)
+    ) {
+      facts.prBatch = await within(
+        prBatchFacts(command, rules, inCwd, facts.env, (path, cwd) =>
+          readText(resolve(input.cwd ?? ".", cwd ?? ".", path)),
+        ),
+        left(),
         {},
       );
     }

@@ -10,6 +10,10 @@ The scripts interoperate with any other tool that uses the same paths, so these 
 |---|---|---|
 | Heavy slot `n` (1..`HOST_HEAVY_SLOTS`) | `$HOST_LOCK_DIR/heavy.lock.<n>/` made with `mkdir` | `pid` (holder pid), `cmd` (owner and command, informational) |
 | Waiter | `$HOST_LOCK_DIR/heavy.wait.<pid>` | owner and command |
+| Medium slot `n` (1..`HOST_MEDIUM_SLOTS`) | `$HOST_LOCK_DIR/medium.lock.<n>/` made with `mkdir` (Windows: mutex `Global\host-medium<lock dir>-<n>`, info `medium.slot.<n>`) | `pid`, `cmd`, `cap` |
+| Medium waiter | `$HOST_LOCK_DIR/medium.wait.<pid>` | owner and command |
+| Descendant record | `$HOST_LOCK_DIR/heavy.tree.<pid>` (Windows: none, a Job Object) | `pid` and start time of each process the command started |
+| Weights | repo `.heavy-weights` (at the git toplevel), then `scripts/weights.default` | one `<class> <glob>` rule per line, first match wins; `#` comments |
 | Device lease | `$HOST_LOCK_DIR/<class>.lease` made with noclobber | `<owner> <pid> [device]` |
 | Service entry | `$HOST_LOCK_DIR/host-services/<wrapper pid>` | `owner=`, `name=`, `pid=` (service), `started=`, `cmd=` lines |
 
@@ -19,6 +23,10 @@ The scripts interoperate with any other tool that uses the same paths, so these 
 | `HOST_HEAVY_SLOTS` | 2 | Concurrent heavy jobs |
 | `HOST_LOAD_CAP` | 30 | One-minute load to wait under (the guard's default cap; configures `heavy.sh` only, see below) |
 | `HOST_CPU_CAP` | 75 | Windows only: CPU percent to wait under |
+| `HOST_MEDIUM_SLOTS` | 4 | Concurrent medium jobs |
+| `HOST_CRITICAL_LOAD_CAP` | twice `HOST_LOAD_CAP` | Load that stops light and medium commands |
+| `HOST_CRITICAL_CPU_CAP` | 95 | Windows only: CPU percent that stops light and medium commands |
+| `HOST_METRICS_FILE` | unset | Append one logfmt line per call; unset writes nothing |
 | `HOST_DISK_FLOOR_GB` | 20 | Free space below which a run is refused (`heavy.sh` only, see below) |
 | `HOST_LOCK_TIMEOUT_SECONDS` | 1800 | Give up waiting (exit 124) |
 | `HOST_POLL_SECONDS` | 30 | Load poll interval |
@@ -28,6 +36,8 @@ The scripts interoperate with any other tool that uses the same paths, so these 
 `HOST_LOAD_CAP` and `HOST_DISK_FLOOR_GB` configure the scripts only (when one waits or refuses) and do not change the guard plugin's deny, which reads `GUARD_HOST_LOAD_CAP`, `GUARD_HOST_CPU_CAP`, `GUARD_HOST_DISK_FLOOR_GB` and `GUARD_HOST_CHECK=off` from the hook's environment (guard.md, Decisions). Keep both at the same values.
 
 Exit codes: the command's own, 1 on low disk, 2 on usage, 124 on timeout.
+
+Metrics line (`HOST_METRICS_FILE`, every call including a timeout): `ts=<UTC RFC 3339> weight=<class> source=<source> waited_s=<n> wait=<none|load|slot|load+slot> ran_s=<n> exit=<code> owner=<HOST_OWNER> cmd="<first two words>"`. Only the first two words are logged, never arguments, which may carry secrets.
 
 Device command examples (set them in the repo's runbook or env, not in the scripts):
 
@@ -45,6 +55,14 @@ Device command examples (set them in the repo's runbook or env, not in the scrip
 - **Stale reclaim is atomic.** Check-then-`rm` races: between reading a dead pid and deleting, another session may have reclaimed and re-taken the lock, and the `rm` frees a live holder. Instead `mv` the lock aside, re-read the pid from the moved copy, and delete only if it is still the dead one. Otherwise put it back, but only if nothing took its place: `mv` into an existing directory nests, and `mv` over an existing file replaces it.
 - **Release only what you hold.** A waiter that timed out ran its exit cleanup and deleted the holder's lease; a second run then started a full suite on the same device mid-run. Every release compares the recorded pid to its own.
 - **Windows:** slots are named mutexes (`Global\host-heavy<lock dir>-<n>`), which the OS hands to the next waiter when the holder dies; holder info is in `heavy.slot.<n>`. Leases and service entries use the same files as above. `%ProgramData%` survives reboots, so a lease counts as alive only if its pid started before the lease file was written. `sweep-stale.ps1` has no `lsof`: it tells a busy worktree by renaming it and back, which Windows refuses while any process has a file or its cwd inside. Killing a wrapper hard (`Stop-Process`) skips its cleanup and leaves an orphan service entry.
+
+## Weight classes
+
+- **Incident.** On one shared laptop, over 7 days, 18 % of 4110 foreground calls waited for a slot or for load: 18 wall-hours. Cheap commands queued behind expensive ones: a `go vet` took a median 31 s when it waited against 3 s when it did not, a single-package `go test` 40 s against 5 s. The host was truly overloaded, but by the genuinely heavy jobs (full `-race` suites, whole-module lint, envtest, image builds).
+- **Classes.** Light commands take no slot and wait only on critical load; medium ones have their own pool and queue; heavy keeps the original two slots and load cap. Most measured waits were load waits, and a load wait costs at least one 30 s poll, so light and medium stop only at the critical cap.
+- **The default stays heavy.** An unknown command may be the next full suite; a wrong guess toward light overloads the host, a wrong guess toward heavy only queues.
+- **No per-call override.** No flag or env sets the class: an agent could talk its own command down. The class comes from the reviewed `.heavy-weights` file or the built-in table; `--classify` shows the result. A repo raises a class the same way (a package whose tests start envtest is heavy though the table says light).
+- **Orphans.** envtest's `kube-apiserver` and `etcd` run in their own process groups (`Setpgid`), so a group kill misses them, and once the test binary dies they are reparented to init, out of reach of a tree kill. The bash side records the command's descendants (`heavy.tree.<pid>`) and, when the command fails, is signalled or heavy.sh is killed, stops those still alive with the same start time. A success keeps what it left (a build daemon). Windows puts heavy.ps1 in a Job Object with kill-on-close, so a failure or a killed wrapper ends every process the command started.
 
 ## Devices
 

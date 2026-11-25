@@ -108,10 +108,11 @@ void test("risky: the ask and its unattended deny go with -risky", async () => {
       JSON.stringify(env),
     );
   }
-  // the lease-push lookup is part of the rule: no facts, no ask
+  // the lease-push lookup is part of the rule: no facts, no ask (the stack rule, which reads the branch of a push too,
+  // is switched off so only the risky rule's lookups could show)
   const calls: string[] = [];
   await setup({
-    env: OFF_ENV("-risky"),
+    env: OFF_ENV("-risky,-stack-hint"),
     run: async (argv) => {
       await Promise.resolve();
       calls.push(argv.join(" "));
@@ -318,15 +319,14 @@ const stacked = (calls: string[]) => async (argv: readonly string[]) => {
   return null;
 };
 
-void test("stack-hint: the stacked-PR hint goes with -stack-hint and GUARD_STACK_HINT=off", async () => {
+void test("stack-hint: the stack rule (the deny of a stacked create and its hints) goes with -stack-hint and GUARD_STACK_HINT=off", async () => {
   const create = "SPLIT_REASON=other-owner gh pr create --fill";
   const base = { GUARD_PUSH_SCAN: "off" };
   const on = setup({ env: base, run: stacked([]) });
   await on(prompt("/ship"));
-  assert.match(
-    decision(await on(shell(create)))?.additionalContext ?? "",
-    /#7/,
-  );
+  const denied = decision(await on(shell(create)));
+  assert.equal(denied?.permissionDecision, "deny");
+  assert.match(denied.permissionDecisionReason ?? "", /#7/);
   for (const env of [
     { ...base, GUARD_RULES: "-stack-hint" },
     { ...base, GUARD_STACK_HINT: "off" },

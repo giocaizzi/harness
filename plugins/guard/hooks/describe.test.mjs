@@ -9,7 +9,8 @@ import { fileURLToPath } from "node:url";
 import { install } from "../../../scripts/install.mjs";
 import { CONTRACT } from "../core/registration.mjs";
 import { guardVersion } from "./contract.mjs";
-import { RUN_ENV, antigravityHooks, buildDescriptor, commandToArgv, describeInstalled, flattenHooks, } from "./describe.mjs";
+import { RULE_IDS } from "../core/toggles.mjs";
+import { RUN_ENV, SWITCH_ENV, antigravityHooks, buildDescriptor, commandToArgv, describeInstalled, flattenHooks, } from "./describe.mjs";
 // The emitted test sits in plugins/guard/hooks, so ".." is the plugin root.
 const guardDir = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const hooksFile = (file) => JSON.parse(readFileSync(join(guardDir, file), "utf8"));
@@ -33,7 +34,9 @@ void test("describe: top-level shape", () => {
         "pi",
         "vscode-copilot",
     ]);
-    assert.deepEqual(d.env, { run: RUN_ENV });
+    assert.deepEqual(d.env, { run: RUN_ENV, switches: SWITCH_ENV });
+    assert.ok(SWITCH_ENV.includes("GUARD_RULES"));
+    assert.deepEqual(Object.keys(d.rules).sort(), [...RULE_IDS].sort());
     assert.ok(RUN_ENV.includes("AGENT_RUN_MANIFEST_SHA256"));
     assert.deepEqual(d.harnesses.opencode, {
         kind: "module",
@@ -135,4 +138,20 @@ void test("describe: guard.mjs --describe prints one JSON line and exits 0 with 
     assert.equal(r.stderr, "");
     assert.match(r.stdout, /^[^\n]+\n$/);
     assert.deepEqual(JSON.parse(r.stdout), JSON.parse(JSON.stringify(d)));
+});
+void test("describe: rules are the effective toggles of the probe's environment", () => {
+    const read = (relative) => readFileSync(join(guardDir, relative), "utf8");
+    const on = buildDescriptor(guardDir, read, "x");
+    assert.ok(RULE_IDS.every((id) => on.rules[id]));
+    const some = buildDescriptor(guardDir, read, "x", {
+        GUARD_RULES: "none,risky,result-gate",
+    });
+    assert.deepEqual(RULE_IDS.filter((id) => some.rules[id]), ["risky", "result-gate"]);
+    // an invalid value keeps every rule on
+    const bad = buildDescriptor(guardDir, read, "x", {
+        GUARD_RULES: "none,nope",
+    });
+    assert.ok(RULE_IDS.every((id) => bad.rules[id]));
+    // an older switch still turns its rule off
+    assert.equal(buildDescriptor(guardDir, read, "x", { GUARD_STOP_CHECK: "off" }).rules["stop-check"], false);
 });

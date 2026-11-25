@@ -21,12 +21,13 @@ void test("parseRange", () => {
     assert.equal(parseRange("2w"), 14);
     assert.throws(() => parseRange("x"));
 });
-void test("open-together overlap is a should-have-been-stacked pair", () => {
+void test("open-together overlap is an overlapping pair", () => {
     const a = pr({
         head: "a",
         paths: ["src/a.js"],
         created: t("01"),
         closed: t("05"),
+        merged: t("05"),
     });
     const b = pr({ head: "b", paths: ["src/a.js", "x"], created: t("03") });
     const g = graph([a, b], NOW);
@@ -268,4 +269,112 @@ void test("the top-level error line withholds a gh command line", () => {
     assert.equal(errorLine(new Error('bad --range "x" (use Nd or Nw)')), 'bad --range "x" (use Nd or Nw)');
     const line = errorLine(new Error("Command failed: gh api graphql --hostname h -f q=repo:acme/app"));
     assert.ok(!line.includes("acme") && line.startsWith("PR graph: failed"));
+});
+void test("a retargeted PR counts as stacked, and pairs with the layer below as stacked", () => {
+    const a = pr({ head: "a", paths: ["f"], created: t("01") });
+    const b = pr({
+        head: "b",
+        base: "main",
+        prevBases: ["a"],
+        paths: ["f"],
+        created: t("02"),
+    });
+    const g = graph([a, b], NOW);
+    assert.equal(g.stacked, 1);
+    assert.equal(g.stackedPairs, 1);
+    assert.equal(g.overlapPairs, 0);
+    const plain = pr({ head: "c", prevBases: ["main"] });
+    assert.equal(graph([plain], NOW).stacked, 0);
+});
+void test("layers 1 and 3 of one chain sharing a file are stacked, not overlapping", () => {
+    const l1 = pr({ head: "l1", paths: ["f"], created: t("01") });
+    const l2 = pr({ head: "l2", base: "l1", paths: ["g"], created: t("02") });
+    const l3 = pr({ head: "l3", base: "l2", paths: ["f"], created: t("03") });
+    const g = graph([l1, l2, l3], NOW);
+    assert.equal(g.stackedPairs, 3);
+    assert.equal(g.overlapPairs, 0);
+});
+void test("a closed-unmerged PR replaced by a new one is superseded, not overlapping", () => {
+    const a = pr({ head: "a", paths: ["f"], created: t("01"), closed: t("05") });
+    const b = pr({ head: "b", paths: ["f"], created: t("03") });
+    const c = pr({
+        head: "c",
+        paths: ["h"],
+        created: t("01"),
+        closed: t("05"),
+        merged: t("05"),
+    });
+    const d = pr({ head: "d", paths: ["h"], created: t("03") });
+    const g = graph([a, b, c, d], NOW);
+    assert.equal(g.supersededPairs, 1);
+    assert.equal(g.overlapPairs, 1);
+    assert.equal(g.refinedPairs, 1);
+    assert.match(report(g, "30d"), /Superseded pairs[^\n]*\| 1 \|/);
+});
+// `gh stack link` retargets an open PR from the default branch onto the layer below, so its first base is the
+// default branch and only the current base names the chain.
+void test("a PR retargeted onto the layer below pairs with it as stacked", () => {
+    const a = pr({ head: "a", paths: ["f"], created: t("01") });
+    const b = pr({
+        head: "b",
+        base: "a",
+        prevBases: ["main"],
+        paths: ["f"],
+        created: t("02"),
+    });
+    const g = graph([a, b], NOW);
+    assert.equal(g.stackedPairs, 1);
+    assert.equal(g.overlapPairs, 0);
+});
+void test("siblings on one base sharing a file overlap, while each stays stacked with the base", () => {
+    const a = pr({ head: "a", paths: ["x"], created: t("01") });
+    const b = pr({ head: "b", base: "a", paths: ["f"], created: t("02") });
+    const c = pr({ head: "c", base: "a", paths: ["f"], created: t("03") });
+    const g = graph([a, b, c], NOW);
+    assert.equal(g.stackedPairs, 2);
+    assert.equal(g.overlapPairs, 1);
+    assert.equal(g.refinedPairs, 1);
+});
+void test("headline share and clusters come from refined pairs", () => {
+    const open = { created: t("01") };
+    const list = [
+        pr({ ...open, head: "a", paths: ["s"] }),
+        pr({ ...open, head: "b", paths: ["s"] }),
+        pr({ ...open, head: "c", paths: ["s"] }),
+        pr({ ...open, head: "d", paths: ["hot"] }),
+        pr({ ...open, head: "e", paths: ["hot"] }),
+        pr({ ...open, head: "f", paths: ["hot"] }),
+    ];
+    const g = graph(list, NOW);
+    assert.equal(g.hotFiles, 2);
+    assert.equal(g.overlapPairs, 6);
+    assert.equal(g.refinedPairs, 0);
+    assert.equal(g.overlapPrs, 0);
+    assert.equal(g.overlapClusters, 0);
+    const filler = Array.from({ length: 14 }, (_, i) => pr({ head: `u${String(i)}`, paths: [`u${String(i)}`] }));
+    const g3 = graph([...list.slice(0, 3), ...filler], NOW);
+    assert.equal(g3.refinedPairs, 3);
+    assert.equal(g3.overlapClusters, 1);
+    assert.equal(g3.overlapPrs, 3);
+    assert.match(report(g3, "30d"), /Overlap clusters[^\n]*\| 1 \|/);
+    assert.match(report(g3, "30d"), /in an overlapping pair[^\n]*\| 18% \|/);
+    assert.ok(!report(g3, "30d").includes("should-have-been-stacked"));
+});
+void test("the query asks for base ref changes, and collect reads them", async () => {
+    const n = {
+        ...node(1),
+        timelineItems: {
+            nodes: [{ previousRefName: "a", currentRefName: "main" }],
+        },
+    };
+    const { runner, calls } = fakeRunner({ first: [n], c1: [] });
+    const prs = (await collect(runner, 7, NOW)) ?? [];
+    assert.deepEqual(prs[0]?.prevBases, ["a"]);
+    const q = calls
+        .find((c) => c[0] === "api")
+        ?.find((a) => a.startsWith("query="));
+    assert.match(q ?? "", /timelineItems\(itemTypes:\[BASE_REF_CHANGED_EVENT\]/);
+    assert.match(q ?? "", /previousRefName currentRefName/);
+    const bare = await collect(fakeRunner({ first: [node(2)], c1: [] }).runner, 7, NOW);
+    assert.deepEqual(bare?.[0]?.prevBases, []);
 });

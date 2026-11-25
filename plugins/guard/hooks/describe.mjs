@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { CONTRACT } from "../core/registration.mjs";
+import { effectiveRules } from "../core/toggles.mjs";
 import { guardVersion } from "./contract.mjs";
 // The descriptor's own schema version: additions are minor, a changed meaning bumps it.
 export const DESCRIPTOR = 1;
@@ -17,6 +18,18 @@ export const RUN_ENV = [
     "AGENT_RUN_MANIFEST_SHA256",
     "AGENT_RUN_EVENTS_FILE",
     "AGENT_RUN_PROTECTED_PATHS",
+];
+// The switches a launcher may set: GUARD_RULES, the one rule surface, and the older single switches it layers over.
+export const SWITCH_ENV = [
+    "GUARD_RULES",
+    "GUARD_HOST_CHECK",
+    "GUARD_PUSH_SCAN",
+    "GUARD_STACK_HINT",
+    "GUARD_LIFECYCLE",
+    "GUARD_STOP_CHECK",
+    "GUARD_RESULT_GATE",
+    "GUARD_UNATTENDED",
+    "GUARD_OTEL",
 ];
 const PLUGIN_ROOT_VAR = "${CLAUDE_PLUGIN_ROOT}";
 // The Antigravity hooks `scripts/install.mjs` writes under "giocaizzi-guard", for a guard installed at `root`.
@@ -80,7 +93,7 @@ export function flattenHooks(hooks, root) {
     return out;
 }
 // `read` returns a file under the plugin root, given relative to it, as text.
-export function buildDescriptor(root, read, version) {
+export function buildDescriptor(root, read, version, env = {}) {
     const hooksOf = (file) => JSON.parse(read(file)).hooks;
     const claude = flattenHooks(hooksOf(join("hooks", "hooks.json")), root);
     return {
@@ -103,11 +116,12 @@ export function buildDescriptor(root, read, version) {
             opencode: { kind: "module", module: join(root, "hooks", "opencode.mjs") },
             pi: { kind: "module", module: join(root, "hooks", "pi.mjs") },
         },
-        env: { run: [...RUN_ENV] },
+        env: { run: [...RUN_ENV], switches: [...SWITCH_ENV] },
+        rules: effectiveRules(env),
     };
 }
 // The descriptor of the installed copy this module belongs to.
 export function describeInstalled(pluginRoot = fileURLToPath(new URL("..", import.meta.url))) {
     const root = resolve(pluginRoot);
-    return buildDescriptor(root, (relative) => readFileSync(join(root, relative), "utf8"), guardVersion(root));
+    return buildDescriptor(root, (relative) => readFileSync(join(root, relative), "utf8"), guardVersion(root), process.env);
 }

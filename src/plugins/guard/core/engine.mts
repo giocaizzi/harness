@@ -50,6 +50,8 @@ import type {
   SkillRule,
   SpawnDecision,
   SpawnEvaluationInput,
+  StackEarlyFact,
+  StackEarlyTarget,
   StackFact,
   StackTarget,
   StringValue,
@@ -1749,24 +1751,37 @@ export async function prBatchFacts(
   const re = rule && new RegExp(rule.match, "i");
   if (!rule || !re) return {};
   const out: Record<string, PrBatchFact | undefined> = {};
+  const creates = stackTargets(command, rules, env).filter(
+    (t) => t.verb === "create",
+  );
   for (const { seg, dir, remote } of segments(command, env)) {
     if (remote || !re.test(seg)) continue;
     const reason = splitReason(command, seg, dir, rule.reasons, read);
+    // Which open PRs below this one are no overlap: a `gh stack submit` bases each layer on the one below; a
+    // `gh pr create` only when its base already holds the layer; glab and az never.
+    const layer: LayerExempt = /\bgh\s+stack\s+submit\b/.test(seg)
+      ? "any"
+      : /\bgh\s+pr\s+create\b/.test(seg)
+        ? { base: creates.find((t) => t.dir === dir)?.base ?? null }
+        : "none";
     out[dir] = {
       reason,
       overlaps:
         reason.kind === "none" && PLAIN_PATH.test(dir || ".")
-          ? await openOverlaps(dir, rule.ignore, run)
+          ? await openOverlaps(dir, rule.ignore, run, layer)
           : [],
     };
   }
   return out;
 }
 
+type LayerExempt = "any" | "none" | { base: string | null };
+
 async function openOverlaps(
   dir: string,
   ignore: string[],
   run: RunnerFn,
+  layer: LayerExempt,
 ): Promise<PrOverlap[]> {
   const sh = (argv: string[]) =>
     Promise.resolve()
@@ -1815,7 +1830,12 @@ async function openOverlaps(
       else if (line.startsWith("branch refs/heads/"))
         checkedOut.set(line.slice(18), path);
     }
-    const overlaps: PrOverlap[] = [];
+    const candidates: {
+      files: string[];
+      head: string;
+      number: number;
+      all: string[];
+    }[] = [];
     for (const pr of parsed as unknown[]) {
       if (typeof pr !== "object" || pr === null) continue;
       const { number, headRefName, files } = pr as Record<string, unknown>;
@@ -1827,22 +1847,68 @@ async function openOverlaps(
         !Array.isArray(files)
       )
         continue;
-      const shared = (files as unknown[])
+      const all = (files as unknown[])
         .map((f) =>
           typeof f === "object" && f !== null
             ? (f as Record<string, unknown>).path
             : undefined,
         )
-        .filter((f): f is string => typeof f === "string" && mine.has(f));
-      if (!shared.length) continue;
-      const where = checkedOut.get(headRefName);
+        .filter((f): f is string => typeof f === "string");
+      const shared = all.filter((f) => mine.has(f));
+      if (shared.length)
+        candidates.push({ files: shared, head: headRefName, number, all });
+    }
+    // A PR whose head is an ancestor of HEAD and not yet in the default branch is a layer below this one (the
+    // `stackFacts` test): it is no overlap, and this PR's own files are the diff from it, but only when the
+    // create's base already holds it (the base is its head, or `origin/<head>` is an ancestor of `origin/<base>`).
+    const target = (
+      typeof layer === "object" ? (layer.base ?? def.trim()) : ""
+    ).replace(/^origin\//, "");
+    const safeTarget = /^[\w./@+-]+$/.test(target) && !target.startsWith("-");
+    const lower = await Promise.all(
+      candidates.map(async (c) => {
+        if (layer === "none") return null;
+        if (typeof layer === "object" && !safeTarget) return null;
+        const ref = `origin/${c.head}`;
+        const [onTop, inDefault] = await Promise.all([
+          git("merge-base", "--is-ancestor", ref, "HEAD"),
+          git("merge-base", "--is-ancestor", ref, def.trim()),
+        ]);
+        if (onTop == null || inDefault != null) return null;
+        if (
+          typeof layer === "object" &&
+          target !== c.head &&
+          (await git("merge-base", "--is-ancestor", ref, `origin/${target}`)) ==
+            null
+        )
+          return null;
+        const diff = await git("diff", "--name-only", `${ref}..HEAD`);
+        return diff == null
+          ? null
+          : new Set(
+              diff
+                .split(/\r?\n/)
+                .filter((f) => f && !skip.some((g) => g.test(f))),
+            );
+      }),
+    );
+    const diffs = lower.filter((d): d is Set<string> => d !== null);
+    const own = diffs.length
+      ? new Set([...mine].filter((f) => diffs.every((d) => d.has(f))))
+      : mine;
+    const overlaps: PrOverlap[] = [];
+    candidates.forEach((c, i) => {
+      if (lower[i]) return;
+      const shared = c.all.filter((f) => own.has(f));
+      if (!shared.length) return;
+      const where = checkedOut.get(c.head);
       overlaps.push({
         files: shared,
-        head: headRefName,
-        number,
+        head: c.head,
+        number: c.number,
         ...(where && where !== top?.trim() ? { worktree: where } : {}),
       });
-    }
+    });
     return overlaps;
   } catch {
     return [];
@@ -1888,7 +1954,7 @@ function evaluatePrBatch(
           decision: {
             action: "deny",
             rule: rule.id,
-            reason: `PR #${String(o.number)} already touches ${list(o.files)} and no running session owns its branch \`${o.head}\`: commit to that branch instead (one PR per coherent deliverable, \`github-pull-requests\` rule 1). Only if the split is one of ${rule.reasons.join(", ")}, add \`Split-Reason: <value>\` to the PR body (or \`SPLIT_REASON=<value>\` before \`gh stack submit\`) and retry.`,
+            reason: `PR #${String(o.number)} already touches ${list(o.files)} and no running session owns its branch \`${o.head}\`: commit to that branch instead (one PR per coherent deliverable, \`github-pull-requests\` rule 1). If this work depends on #${String(o.number)}, it is a stack layer: rebuild it on \`${o.head}\` and open it with \`gh pr create --base ${o.head}\` (no Split-Reason needed). Only if the split is one of ${rule.reasons.join(", ")}, add \`Split-Reason: <value>\` to the PR body (or \`SPLIT_REASON=<value>\` before \`gh stack submit\`) and retry.`,
             attrs: { reason: "none" },
           },
         };
@@ -2113,9 +2179,220 @@ export async function stackFacts(
             branch: defined(others[i]).headRefName,
           },
           base: def,
+          verb: t.verb,
+          head,
         };
   } catch {
     return {};
+  }
+}
+
+// The early stack hints read `git` commands: a new branch (`switch -c`, `checkout -b`, `branch <new>`, `worktree add -b`)
+// or a push. One target per command (the first); no lookup happens here.
+export function stackEarlyTargets(
+  command: string,
+  env: GuardEnv = {},
+): StackEarlyTarget[] {
+  return segments(command, env)
+    .filter(({ remote }) => !remote)
+    .flatMap(({ words, dir }) => {
+      const vals = commandWords(words).map((w) => w.val);
+      if (vals[0] !== "git") return [];
+      const sub = vals[1];
+      const rest = vals.slice(2);
+      const target = (
+        kind: "branch" | "push",
+        name: string | null,
+        start: string | null,
+        refspec: string | null = null,
+      ): StackEarlyTarget[] => [{ dir, kind, name, refspec, start }];
+      const pos = (a: string[]) => a.filter((v) => !v.startsWith("-"));
+      if (sub === "switch" || sub === "checkout") {
+        const flag = sub === "switch" ? ["-c", "-C"] : ["-b", "-B"];
+        const i = rest.findIndex((v) => flag.includes(v));
+        if (i < 0) return [];
+        const after = rest.slice(i + 1);
+        const [name, start] = after[0]?.startsWith("-") ? [] : after;
+        return name == null || start?.startsWith("-")
+          ? []
+          : target("branch", name, start ?? null);
+      }
+      if (sub === "branch") {
+        if (rest.some((v) => v.startsWith("-"))) return [];
+        const [name, start, extra] = rest;
+        return name == null || extra != null
+          ? []
+          : target("branch", name, start ?? null);
+      }
+      if (sub === "worktree" && rest[0] === "add") {
+        const args = rest.slice(1);
+        const i = args.findIndex((v) => v === "-b" || v === "-B");
+        if (i < 0) return [];
+        const name = args[i + 1];
+        const others = pos([...args.slice(0, i), ...args.slice(i + 2)]);
+        return name == null || name.startsWith("-") || others.length < 1
+          ? []
+          : target("branch", name, others[1] ?? null);
+      }
+      if (sub === "push") {
+        const skipFlag = new Set([
+          "--all",
+          "--mirror",
+          "--tags",
+          "--delete",
+          "-d",
+          "--prune",
+        ]);
+        if (rest.some((v) => skipFlag.has(v))) return [];
+        const p = pos(rest);
+        if (p.length > 2) return [];
+        return target("push", null, null, p[1] ?? null);
+      }
+      return [];
+    })
+    .slice(0, 1);
+}
+
+// Facts for the early stack hints, first target only: the open PR a new branch starts from, or the open PR a branch
+// being pushed for the first time already carries. Hints, so any failure or a skipped case is null. `spent` tells
+// whether the once-per-agent key was already shown, so a repeat costs no further lookup.
+export async function stackEarlyFacts(
+  command: string,
+  run: RunnerFn,
+  env: GuardEnv = {},
+  spent: (key: string) => boolean = () => false,
+): Promise<StackEarlyFact | null> {
+  try {
+    const t = stackEarlyTargets(command, env).find((x) =>
+      PLAIN_PATH.test(x.dir || "."),
+    );
+    if (!t) return null;
+    const plain = (v: unknown): v is string =>
+      typeof v === "string" && /^[\w./@+-]+$/.test(v) && !v.startsWith("-");
+    const sha = (v: string) => /^[0-9a-f]{7,40}$/i.test(v);
+    const sh = (argv: string[]) =>
+      Promise.resolve()
+        .then(() => run(argv, t.dir || undefined))
+        .catch(() => null);
+    const current = () =>
+      sh(["git", "rev-parse", "--abbrev-ref", "HEAD"]).then((v) => v?.trim());
+    const defBranch = async () =>
+      (
+        (await sh([
+          "git",
+          "symbolic-ref",
+          "--short",
+          "refs/remotes/origin/HEAD",
+        ])) ??
+        (await sh([
+          "gh",
+          "repo",
+          "view",
+          "--json",
+          "defaultBranchRef",
+          "-q",
+          ".defaultBranchRef.name",
+        ]))
+      )
+        ?.trim()
+        .replace(/^origin\//, "");
+    const openPrs = async (skip: string) => {
+      const listed = await sh([
+        "gh",
+        "pr",
+        "list",
+        "--author",
+        "@me",
+        "--state",
+        "open",
+        "--json",
+        "number,headRefName",
+        "--limit",
+        "30",
+      ]);
+      const parsed: unknown = listed ? JSON.parse(listed) : [];
+      return Array.isArray(parsed)
+        ? parsed
+            .filter(isOpenPr)
+            .filter(
+              (p) =>
+                p.headRefName !== skip &&
+                plain(p.headRefName) &&
+                Number.isInteger(p.number),
+            )
+        : [];
+    };
+    if (t.kind === "branch") {
+      const name = t.name;
+      if (!plain(name) || spent(`stack-branch:${name}`)) return null;
+      let start = t.start ?? (await current());
+      if (start == null || !plain(start)) return null;
+      start = start.replace(/^origin\//, "");
+      if (start === "HEAD" || sha(start) || start === name) return null;
+      const def = await defBranch();
+      if (!plain(def) || start === def) return null;
+      const hit = (await openPrs(name)).find((p) => p.headRefName === start);
+      return hit
+        ? {
+            base: def,
+            below: { number: hit.number, branch: hit.headRefName },
+            branch: name,
+            key: `stack-branch:${name}`,
+            kind: "branch",
+            start,
+          }
+        : null;
+    }
+    // A first push: the branch has no upstream, the push is of that branch, and it carries an open PR's commits.
+    const branch = await current();
+    if (!plain(branch) || branch === "HEAD") return null;
+    const key = `stack-push:${branch}`;
+    if (spent(key)) return null;
+    if (t.refspec != null && t.refspec !== "HEAD" && t.refspec !== branch)
+      return null;
+    const upstream = await sh([
+      "git",
+      "rev-parse",
+      "--abbrev-ref",
+      "--symbolic-full-name",
+      "@{u}",
+    ]);
+    if (upstream != null) return null;
+    const def = await defBranch();
+    if (!plain(def) || branch === def) return null;
+    const others = (await openPrs(branch)).slice(0, 10);
+    const hits = await Promise.all(
+      others.map(
+        async (p) =>
+          (await sh([
+            "git",
+            "merge-base",
+            "--is-ancestor",
+            `origin/${p.headRefName}`,
+            "HEAD",
+          ])) != null &&
+          (await sh([
+            "git",
+            "merge-base",
+            "--is-ancestor",
+            `origin/${p.headRefName}`,
+            `origin/${def}`,
+          ])) == null,
+      ),
+    );
+    const i = hits.indexOf(true);
+    const below = others[i];
+    return below
+      ? {
+          base: def,
+          below: { number: below.number, branch: below.headRefName },
+          branch,
+          key,
+          kind: "push",
+        }
+      : null;
+  } catch {
+    return null;
   }
 }
 
@@ -3909,6 +4186,7 @@ interface SkillAndToolAdviceInput {
   readTool: boolean;
   rules: GuardRules;
   stack: StackFact | null;
+  early: StackEarlyFact | null;
   state: SessionState;
   tags: Record<string, TagFact | undefined>;
   toggles: Partial<Record<RuleId, boolean>>;
@@ -3923,6 +4201,7 @@ function evaluateSkillAndToolAdvice({
   readTool,
   rules,
   stack,
+  early,
   state,
   tags,
   toggles,
@@ -3962,6 +4241,7 @@ function evaluateSkillAndToolAdvice({
     !note &&
     on("stack-hint") &&
     stack?.below &&
+    stack.verb !== "create" &&
     !state.reminded.has("stack")
   ) {
     state.reminded.add("stack");
@@ -3971,6 +4251,24 @@ function evaluateSkillAndToolAdvice({
       .replaceAll("<below>", branch)
       .replaceAll("<default>", stack.base ?? "");
     return { action: "allow", rule: "stack", remind: true, context };
+  }
+  if (!note && on("stack-hint") && early && !state.reminded.has(early.key)) {
+    state.reminded.add(early.key);
+    const text =
+      early.kind === "branch" ? rules.stack.branch : rules.stack.push;
+    const context = `Stack hint: ${text}`
+      .replaceAll("<n>", String(early.below.number))
+      .replaceAll("<below>", early.below.branch)
+      .replaceAll("<start>", early.start ?? "")
+      .replaceAll("<new>", early.branch)
+      .replaceAll("<branch>", early.branch)
+      .replaceAll("<default>", early.base);
+    return {
+      action: "allow",
+      rule: early.kind === "branch" ? "stack-branch" : "stack-push",
+      remind: true,
+      context,
+    };
   }
   if (
     !note &&
@@ -4034,6 +4332,7 @@ export function evaluateCommand({
   prBatch = {},
   tags = {},
   stack = null,
+  early = null,
   python = null,
   readTool = false,
   run = null,
@@ -4088,6 +4387,21 @@ export function evaluateCommand({
 
   if (scanDecision) return scanDecision;
 
+  // A create that carries an open PR's commits to the default branch is denied before the pr-batch check: the stack
+  // message names the fix.
+  if (on("stack-hint") && stack?.below && stack.verb === "create") {
+    const { number, branch } = stack.below;
+    return {
+      action: "deny",
+      rule: "stack",
+      reason: rules.stack.deny
+        .replaceAll("<n>", String(number))
+        .replaceAll("<below>", branch)
+        .replaceAll("<default>", stack.base ?? "")
+        .replaceAll("<head>", stack.head ?? "HEAD"),
+    };
+  }
+
   const batch = on("pr-batch") ? evaluatePrBatch(rules, prBatch) : {};
   if (batch.decision) return batch.decision;
 
@@ -4116,6 +4430,7 @@ export function evaluateCommand({
     readTool,
     rules,
     stack,
+    early,
     state,
     tags,
     toggles,
@@ -4413,6 +4728,8 @@ const RULE_FAMILY: Record<string, string | undefined> = {
   release: "skill",
   "pr-fix": "hint",
   stack: "hint",
+  "stack-branch": "hint",
+  "stack-push": "hint",
   pytest: "hint",
   "go-test": "hint",
   "go-lint": "hint",

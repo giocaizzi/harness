@@ -1,6 +1,6 @@
 # Plan: guard decoupled, optional and configurable (guard 2.0.0, run contract 3)
 
-Status: in progress on `feat/guard-decouple`, one PR. Delete this note when the PR merges; the lasting text lives in [guard.md](../guard.md).
+Status: implemented on `feat/guard-decouple`, one PR. Delete this note when the PR merges; the lasting text lives in [guard.md](../guard.md).
 
 ## Goal
 
@@ -62,7 +62,7 @@ Grammar: comma- or space-separated tokens applied left to right over the default
 | `host` | Host-strain deny (also `GUARD_HOST_CHECK=off`) | on |
 | `push-scan` | gitleaks before push (also `GUARD_PUSH_SCAN=off`) | on |
 | `pr-batch` | PR batching deny | on |
-| `stack-hint` | Stacked-PR hint (also `GUARD_STACK_HINT=off`) | on |
+| `stack-hint` | Stack rule: stacked-create deny and stacked-PR hints (also `GUARD_STACK_HINT=off`) | on |
 | `stale-plugins` | Stale-plugins note | on |
 | `lifecycle` | Repo sweep and branch-lifecycle reminder (also `GUARD_LIFECYCLE=off`) | on |
 | `stop-check` | `make check` on stop (also `GUARD_STOP_CHECK=off`) | on |
@@ -112,4 +112,4 @@ Groundwork first, on the branch: (A) renames, contract 3, tripwire removal. Then
 
 - `GUARD_RUN_PROTECTED_PATHS`: renamed to `AGENT_RUN_PROTECTED_PATHS` (recommended, keeps the feature) or dropped (manifest globs only).
 - Old switches (`GUARD_STOP_CHECK`, `GUARD_LIFECYCLE`, ...): kept beside `GUARD_RULES` (recommended now) or folded into it in a later major.
-- A runner still setting `GUARD_RUN_*`: no tripwire, so such a session runs unregistered; the runner's `--contract` probe (contract 3) is what stops it (recommended), or guard denies when `GUARD_RUN_*` is set.
+- Resolved in review: a runner still setting `GUARD_RUN_*` fails closed (`run-registration`) unless each old name equals its `AGENT_RUN_*` twin, and the probe rule is a MUST (contract equals the runner's major).

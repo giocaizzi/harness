@@ -202,7 +202,9 @@ void test("describe: rules are the effective toggles of the probe's environment"
     ["risky", "result-gate"],
   );
   // an invalid value keeps every rule on
-  const bad = buildDescriptor(guardDir, read, "x", { GUARD_RULES: "none,nope" });
+  const bad = buildDescriptor(guardDir, read, "x", {
+    GUARD_RULES: "none,nope",
+  });
   assert.ok(RULE_IDS.every((id) => bad.rules[id]));
   // an older switch still turns its rule off
   assert.equal(

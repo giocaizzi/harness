@@ -1,0 +1,23 @@
+# Built-in weight classes for heavy.sh and heavy.ps1. One rule per line: "<class> <glob>", the glob matched
+# against the whole command line (argv joined by single spaces) with * and ? only. First match wins; a repo's
+# .heavy-weights is read before this file; a command no rule matches is heavy.
+# light: no slot, waits only on critical load. medium: its own wider pool. heavy: the heavy slots and load cap.
+heavy go test*./...*
+heavy go test* all*
+medium go test*-race*
+medium go test*...*
+light go test*
+medium go build*...*
+light go build*
+medium go vet*...*
+light go vet*
+light go fmt*
+light gofmt*
+light shellcheck*
+light actionlint*
+light hadolint*
+heavy git gc*
+heavy git repack*
+heavy git fsck*
+light git *
+light gh *
