@@ -43,7 +43,8 @@ endif
 # nor append fake decisions to a runner's run events file (AGENT_RUN_EVENTS_FILE),
 # nor see a run's registration variables from the caller's shell (RUN_ENV): hooks spawned with the inherited env would read them.
 # GNU make 3.81 (macOS) has no target-specific unexport, so the unexport is makefile-wide.
-RUN_ENV := AGENT_RUN_MANIFEST AGENT_RUN_ID AGENT_RUN_MODE AGENT_RUN_TICKET AGENT_RUN_FILE AGENT_RUN_PROTECTED_PATHS
+RUN_ENV := AGENT_RUN_MANIFEST AGENT_RUN_ID AGENT_RUN_MODE AGENT_RUN_TICKET AGENT_RUN_FILE AGENT_RUN_PROTECTED_PATHS \
+	GUARD_RUN_MANIFEST GUARD_RUN_ID GUARD_RUN_MODE GUARD_RUN_TICKET GUARD_RUN_FILE
 unexport $(RUN_ENV)
 test: export GUARD_OTEL := off
 test: export GUARD_LIFECYCLE := off

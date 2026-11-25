@@ -23,7 +23,7 @@ import { sessionStore } from "./guard.mjs";
 import { detectHarnessName } from "./harnesses.mjs";
 import { lifecycleReminder, queueAgentNote } from "./lifecycle.mjs";
 import { STOP_DEADLINE_MS, readStdin } from "./stdin.mjs";
-import { denyReason, runContext } from "./run.mjs";
+import { denyReason, runContext, runIdentified } from "./run.mjs";
 import { emitAntigravityUsage, failedTarget, harnessName, recordAttrs, resolveAntigravityTranscriptPath, scrub, } from "./telemetry.mjs";
 import { isRecord, } from "./types.mjs";
 const DEFAULT_TIMEOUT_MS = 300_000;
@@ -322,9 +322,7 @@ export function gateFailClosed(env, input, why, opts = {}) {
         // the gate's own failure must not open a run
         try {
             const raw = plainInput(input);
-            const set = (k) => (env[k] ?? "").trim() !== "";
-            return !isSubagentStop(raw) &&
-                (set("AGENT_RUN_ID") || set("AGENT_RUN_MANIFEST"))
+            return !isSubagentStop(raw) && runIdentified(env)
                 ? "Run result gate: could not check the result for this run (internal error); the stop stays blocked."
                 : null;
         }

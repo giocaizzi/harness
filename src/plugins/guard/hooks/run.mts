@@ -39,9 +39,38 @@ export interface RunDeny {
 
 export type RunContext = { state: "none" } | RunDeny | RegisteredRun;
 
+// Run contract 2 named the run variables GUARD_RUN_*. Guard reads them for no decision, only to fail closed: a runner
+// still on contract 2 after a plugin update must not get an ordinary unregistered session with no run rules. Each
+// old name set (not blank) without its AGENT_RUN_* twin set to the same value is returned.
+const OLD_RUN_VARS = ["ID", "TICKET", "MODE", "FILE", "MANIFEST"] as const;
+
+export function staleRunVars(env: Env): string[] {
+  return OLD_RUN_VARS.filter((k) => {
+    const old = env[`GUARD_RUN_${k}`];
+    return (
+      old !== undefined && old.trim() !== "" && env[`AGENT_RUN_${k}`] !== old
+    );
+  }).map((k) => `GUARD_RUN_${k}`);
+}
+
+// Whether the environment names a run at all (registered, failing or on the old names): a guard crash then fails
+// closed. The manifest variable counts as set when defined, even blank, as the loader reads it.
+export const runIdentified = (env: Env): boolean =>
+  (env.AGENT_RUN_ID ?? "").trim() !== "" ||
+  env.AGENT_RUN_MANIFEST !== undefined ||
+  staleRunVars(env).length > 0;
+
 // The run this hook call belongs to. `opts` as for loadRegistration (dataDir and sessionId pin the manifest).
 export function runContext(env: Env, opts: LoadOptions = {}): RunContext {
   try {
+    const stale = staleRunVars(env);
+    if (stale.length > 0) {
+      return {
+        state: "deny",
+        rule: RULE,
+        why: `run contract 2 variables are set (${stale.join(", ")}) without the same value in AGENT_RUN_*: this guard speaks run contract 3 only, so the runner must set AGENT_RUN_* and register a contract 3 manifest`,
+      };
+    }
     const loaded = loadRegistration(env, opts);
     if (loaded.state === "deny") {
       return {

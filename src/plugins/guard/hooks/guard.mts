@@ -84,7 +84,7 @@ import {
   takeAgentNotes,
 } from "./lifecycle.mjs";
 import type { RunContext } from "./run.mjs";
-import { denyReason, runContext, runFacts } from "./run.mjs";
+import { denyReason, runContext, runFacts, runIdentified } from "./run.mjs";
 import {
   isEditTool,
   isReadTool,
@@ -548,9 +548,7 @@ export function crashResult(
   env: Readonly<Record<string, string | undefined>>,
   harness?: string,
 ): HandleResult {
-  return input.hook_event_name === "PreToolUse" &&
-    ((env.AGENT_RUN_ID ?? "").trim() !== "" ||
-      env.AGENT_RUN_MANIFEST !== undefined)
+  return input.hook_event_name === "PreToolUse" && runIdentified(env)
     ? preToolUse(
         "deny",
         "The command guard failed in a registered run, so this tool call was not run.",

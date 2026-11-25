@@ -18,7 +18,7 @@ import { contractProbe } from "./contract.mjs";
 import { appendDataFile, pluginDataDir, readDataFile } from "./data.mjs";
 import { editedPaths } from "./lint.mjs";
 import { OFF, sweepNotice, startSessionSweep, takeAgentNotes, } from "./lifecycle.mjs";
-import { denyReason, runContext, runFacts } from "./run.mjs";
+import { denyReason, runContext, runFacts, runIdentified } from "./run.mjs";
 import { isEditTool, isReadTool, isShellTool, isTaskTool, } from "./harnesses.mjs";
 import { installedVersions, staleCheck } from "./stale.mjs";
 import { EVENT_DEADLINE_MS, PRE_TOOL_DEADLINE_MS, readStdin, } from "./stdin.mjs";
@@ -357,9 +357,7 @@ export const crashRisky = (command, rules) => isRisky(command, rules) || command
 // every mode; the manifest variable counts as set when defined, even blank, as the loader reads it. Anything else is
 // allowed.
 export function crashResult(input, env, harness) {
-    return input.hook_event_name === "PreToolUse" &&
-        ((env.AGENT_RUN_ID ?? "").trim() !== "" ||
-            env.AGENT_RUN_MANIFEST !== undefined)
+    return input.hook_event_name === "PreToolUse" && runIdentified(env)
         ? preToolUse("deny", "The command guard failed in a registered run, so this tool call was not run.", harness)
         : {};
 }

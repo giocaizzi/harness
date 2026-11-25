@@ -17,7 +17,13 @@ import { after, test } from "node:test";
 
 import { pinFile } from "./registration.mjs";
 import type { RegisteredRun, RunContext, RunDeny } from "./run.mjs";
-import { denyReason, runContext, runFacts } from "./run.mjs";
+import {
+  denyReason,
+  runContext,
+  runFacts,
+  runIdentified,
+  staleRunVars,
+} from "./run.mjs";
 
 const root = realpathSync(mkdtempSync(join(tmpdir(), "guard-run-ctx-")));
 after(() => {
@@ -195,4 +201,39 @@ void test("denyReason: the texts say what to do and carry no env value", () => {
       `${bad.rule} ${at}`,
     );
   }
+});
+
+void test("run contract 2 variables fail closed unless AGENT_RUN_* holds the same value", () => {
+  for (const env of [
+    { GUARD_RUN_ID: "r1" },
+    { GUARD_RUN_MANIFEST: "/x/m.json" },
+    { GUARD_RUN_TICKET: "o/r#1" },
+    { GUARD_RUN_MODE: "attended" },
+    { GUARD_RUN_FILE: "run.json" },
+    { GUARD_RUN_ID: "r1", AGENT_RUN_ID: "r2" },
+  ]) {
+    const ctx = runContext(env);
+    assert.equal(ctx.state, "deny", JSON.stringify(env));
+    assert.equal(ctx.rule, "run-registration");
+    assert.match(ctx.why, /run contract 2 variables are set/);
+    assert.ok(runIdentified(env), JSON.stringify(env));
+  }
+  assert.deepEqual(staleRunVars({ GUARD_RUN_ID: "r1", GUARD_RUN_MODE: "x" }), [
+    "GUARD_RUN_ID",
+    "GUARD_RUN_MODE",
+  ]);
+  // blank old names, the same values in both, and the names contract 2 had no twin check for pass
+  for (const env of [
+    { GUARD_RUN_ID: " " },
+    { GUARD_RUN_ID: "" },
+    { GUARD_RUN_EVENTS_FILE: "/tmp/e.jsonl" },
+    { GUARD_RUN_PROTECTED_PATHS: "x/**" },
+  ]) {
+    assert.deepEqual(runContext(env), { state: "none" }, JSON.stringify(env));
+    assert.equal(runIdentified(env), false);
+  }
+  assert.deepEqual(
+    staleRunVars({ GUARD_RUN_ID: "r1", AGENT_RUN_ID: "r1" }),
+    [],
+  );
 });

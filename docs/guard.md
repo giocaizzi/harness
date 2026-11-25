@@ -105,7 +105,7 @@ Codex runs the same command hooks (`.generated/codex/hooks.json`) with Claude's 
 
 What a runner (any program that starts a harness for a ticket) registers and sets, and what guard enforces. Public and versioned: additions are minor; changing the meaning of a variable, key or path is a new contract major, noted here. The `GUARD_*` switches that are not `AGENT_RUN_*` are not part of it: [usage.md](usage.md#guard-what-it-does-to-the-agent).
 
-**Status.** Enforced from guard 1.0.0. Contract 3 (guard 2.0.0) renamed the run variables from `GUARD_RUN_*` to `AGENT_RUN_*`: a hard cut, with no alias and no deprecation window. Contract v1 is gone: guard reads no other run variable and no run config file for any decision, so a session that sets none of the `AGENT_RUN_*` variables is an ordinary unregistered session. A runner registers its own labels, globs and exemptions in its manifest.
+**Status.** Enforced from guard 1.0.0. Contract 3 (guard 2.0.0) renamed the run variables from `GUARD_RUN_*` to `AGENT_RUN_*`: a hard cut, with no alias and no deprecation window. Contract v1 is gone: guard reads no other run variable and no run config file for any decision. The one exception fails closed: a contract 2 name (`GUARD_RUN_ID`, `GUARD_RUN_TICKET`, `GUARD_RUN_MODE`, `GUARD_RUN_FILE`, `GUARD_RUN_MANIFEST`) set to a non-blank value without its `AGENT_RUN_*` twin set to the same value is a registration failure (rule `run-registration`, Failures), so a contract 2 runner meeting this guard after a plugin update gets every tool call denied and the stop blocked instead of an unprotected session. A runner may set both names to the same values while it moves. A session that sets none of these variables is an ordinary unregistered session. A runner registers its own labels, globs and exemptions in its manifest.
 
 | Variable | Set by the runner to | Guard does |
 |---|---|---|
@@ -212,6 +212,7 @@ Not seen (best effort; the forge diff stays the runner's other signal): a path b
 | Failure | Cases |
 |---|---|
 | Variables out of step | `AGENT_RUN_ID` set without `AGENT_RUN_MANIFEST`; `AGENT_RUN_MANIFEST` set (even empty) without `AGENT_RUN_ID`. |
+| Contract 2 names | A `GUARD_RUN_ID`, `GUARD_RUN_TICKET`, `GUARD_RUN_MODE`, `GUARD_RUN_FILE` or `GUARD_RUN_MANIFEST` set (not blank) without the same value in its `AGENT_RUN_*` twin. |
 | More than one manifest path | A newline in the value, or a realpath other than the one pinned for the session. |
 | Unusable file | Missing, not a regular file, unreadable, not `.json`, writable (the file, its directory or an ancestor), too large. |
 | Bad content | Not UTF-8, a BOM, not JSON; a schema error, an unknown key, an unknown capability, a contract other than 2. |
@@ -282,7 +283,7 @@ Not seen (best effort; the forge diff stays the runner's other signal): a path b
 {"contract": 3, "capabilities": ["events", "gh-visibility", "labels", "modes", "protected-paths", "result-gate"], "enforced": true, "guard": "<version>"}
 ```
 
-A runner refuses to start unless `enforced` is true, `contract` is at least 2 and every capability it requires is listed; it never trusts `contract` alone.
+A runner MUST refuse to start unless `enforced` is true, `contract` equals the contract major the runner speaks (3 for the `AGENT_RUN_*` names; a higher or lower major is a different contract) and every capability it requires is listed; it never trusts `contract` alone.
 
 **Soft limits.** The events file and the stop-block cap are hints, not proof. The runner must re-check `result.json` itself (schema and `run_id`) before acting on a run, and must set a run timeout: it is what ends an unattended run whose result never passes the gate.
 
