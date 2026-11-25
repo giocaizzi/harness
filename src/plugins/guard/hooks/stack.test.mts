@@ -1,4 +1,4 @@
-// The stacked-PR hint through the hook: shown once per agent, off with GUARD_STACK_HINT, and the same in opencode and pi.
+// The stacked-PR check through the hook: a create is denied every time, a merge gets the hint once per agent, off with GUARD_STACK_HINT, and the same in opencode and pi.
 
 import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
@@ -121,25 +121,41 @@ const load = (
   ...extra,
 });
 
-void test("the stack hint comes once per agent, each agent getting its own", async () => {
+void test("a create on a branch built on an open PR is denied every time; a merge gets the hint once per agent", async () => {
   const { h } = setup();
   await h(load());
-  const first = decision(await h(pre("gh pr create --fill")));
+  for (let i = 0; i < 2; i++) {
+    const denied = decision(await h(pre("gh pr create --fill")));
+    assert.equal(denied?.permissionDecision, "deny");
+    assert.match(
+      denied.permissionDecisionReason ?? "",
+      /#7 \(`feat\/a`\).*targets `main`.*--base feat\/a/,
+    );
+  }
+  const first = decision(await h(pre("gh pr merge 9 --squash")));
   assert.match(
     first?.additionalContext ?? "",
     /#7 \(`feat\/a`\).*targets `main`/,
   );
   assert.equal(first?.permissionDecision, undefined);
-  assert.equal(decision(await h(pre("gh pr create --fill"))), undefined);
+  assert.equal(decision(await h(pre("gh pr merge 9 --squash"))), undefined);
   assert.match(
     decision(await h(pre("gh pr merge 9 --squash", { agent_id: "a2" })))
       ?.additionalContext ?? "",
     /#7/,
   );
-  assert.equal(
-    decision(await h(pre("gh pr merge 9 --squash", { agent_id: "a2" }))),
-    undefined,
-  );
+});
+
+void test("the stack deny comes before pr-batch, and its facts are gathered for a create after the merge hint was spent", async () => {
+  const { h, calls } = setup();
+  await h(load());
+  await h(pre("gh pr merge 9 --squash"));
+  const n = calls.length;
+  const denied = decision(await h(pre("gh pr create --fill")));
+  assert.equal(denied?.permissionDecision, "deny");
+  assert.ok(calls.length > n, "lookups ran for the create");
+  assert.match(denied.permissionDecisionReason ?? "", /Retry .*--base/);
+  assert.doesNotMatch(denied.permissionDecisionReason ?? "", /already touches/);
 });
 
 void test("GUARD_STACK_HINT off (also 0, false) gathers nothing and shows nothing", async () => {
@@ -151,15 +167,15 @@ void test("GUARD_STACK_HINT off (also 0, false) gathers nothing and shows nothin
   }
 });
 
-void test("other commands and a spent hint cost no lookups", async () => {
+void test("other commands and a spent merge hint cost no lookups", async () => {
   const { h, calls } = setup();
   await h(load());
   await h(pre("gh pr view 3"));
   await h(pre("git status"));
   assert.deepEqual(stackCalls(calls), []);
-  await h(pre(SPLIT_CREATE));
+  await h(pre("gh pr merge 9 --squash"));
   const n = calls.length;
-  await h(pre(SPLIT_CREATE));
+  await h(pre("gh pr merge 9 --squash"));
   assert.equal(calls.length, n);
 });
 
@@ -200,10 +216,13 @@ void test("opencode and pi: the hint reaches the model through the tool output, 
   await assert.rejects(
     hooks["tool.execute.before"](
       { tool: "bash", sessionID: "e", callID: "c0" },
-      { args: { command: "gh pr create --fill" } },
+      { args: { command: "gh pr merge 9 --squash" } },
     ),
   );
-  const output = { args: { command: "gh pr create --fill" }, output: "done" };
+  const output = {
+    args: { command: "gh pr merge 9 --squash" },
+    output: "done",
+  };
   await hooks["tool.execute.before"](
     { tool: "bash", sessionID: "e", callID: "c1" },
     output,
@@ -244,7 +263,7 @@ void test("opencode and pi: the hint reaches the model through the tool output, 
       {
         toolName: "bash",
         toolCallId: id,
-        input: { command: "gh pr create --fill" },
+        input: { command: "gh pr merge 9 --squash" },
       },
       ctx,
     )) as { block?: boolean } | undefined;
@@ -307,4 +326,33 @@ void test("the hint lookups share one deadline: no call starts after it, and eac
   const n = seen.length;
   await new Promise((r) => setTimeout(r, 200));
   assert.equal(seen.length, n, "no call starts after the deadline");
+});
+
+void test("the early branch hint comes once per branch, costs no lookup for other git commands and obeys GUARD_STACK_HINT", async () => {
+  const { h, calls } = setup();
+  await h(load());
+  await h(pre("git status"));
+  assert.deepEqual(stackCalls(calls), []);
+  const first = decision(await h(pre("git switch -c feat/n origin/feat/a")));
+  assert.match(
+    first?.additionalContext ?? "",
+    /^Stack hint: `feat\/n` starts from your open PR #7 \(`feat\/a`\)/,
+  );
+  assert.equal(first?.permissionDecision, undefined);
+  assert.equal(
+    decision(await h(pre("git switch -c feat/n origin/feat/a"))),
+    undefined,
+  );
+  assert.match(
+    decision(await h(pre("git checkout -b feat/m feat/a")))
+      ?.additionalContext ?? "",
+    /`feat\/m`/,
+  );
+  const off = setup({ GUARD_STACK_HINT: "off" });
+  await off.h(load());
+  assert.equal(
+    decision(await off.h(pre("git switch -c feat/n feat/a"))),
+    undefined,
+  );
+  assert.deepEqual(stackCalls(off.calls), []);
 });

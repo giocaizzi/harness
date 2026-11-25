@@ -242,9 +242,13 @@ export const rules: GuardRules = {
     judgementModel: "opus|fable|\\bsol\\b|\\bastra\\b",
     skill: "subagent-orchestration",
   },
-  // The stacked-PR hint on `gh pr create|merge`: the engine builds the text from the facts (the open PR below, the default branch).
+  // The stacked-PR check on `gh pr create|merge`: a create is denied (`deny`), a merge gets the once-per-agent hint (`why`); the engine fills the placeholders from the facts (the open PR below, the default branch, the head).
   stack: {
+    branch:
+      "`<new>` starts from your open PR #<n> (`<start>`), so it builds on it: make it a stack layer. Where the repo has stacked PRs enabled use `gh stack add` from `<start>` instead; otherwise open its PR with `gh pr create --base <start>` (a stack layer needs no Split-Reason). If the work does not depend on #<n>, branch from `origin/<default>` instead.",
+    push: "this branch carries the commits of your open PR #<n> (`<below>`): it is a stack layer. Open its PR with `gh pr create --base <below>`, then, where stacked PRs are enabled, `gh stack link <below> <branch>`; a create against `<default>` will be denied.",
     match: "\\bgh\\s+pr\\s+(create|merge)\\b",
+    deny: "This branch builds on your open PR #<n> (`<below>`) but this PR targets `<default>`, so it would carry #<n>'s commits. Dependent work is a stack: open it as the next layer. Retry with the same command plus `--base <below>`; where the repo has stacked PRs enabled, then run `gh stack link <below> <head>` to register both as a native stack (no push or rewrite). A stack layer needs no Split-Reason. Only if this work does not depend on #<n>: rebuild the branch from `<default>` without #<n>'s commits (github-pull-requests rule 4).",
     why: "this branch builds on your open PR #<n> (`<below>`) but this PR targets `<default>`, so it carries #<n>'s commits. Build dependent work as a stack: `gh stack init`/`add`/`submit` where the repo has stacked PRs enabled (one small buildable PR per layer, the bottom layer on `<default>`, merged bottom-up with `gh stack merge`), otherwise base this PR on `<below>` and follow github-pull-requests, Stacks without `gh stack`.",
   },
   // A push, or a command that may push, is scanned for secrets first (pushScanFacts); a finding denies, a scan that
