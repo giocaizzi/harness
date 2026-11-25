@@ -1,0 +1,7 @@
+# Weight classes for this repo's make targets (read before weights.default).
+light make validate*
+light make format-check*
+light make format
+medium make build*
+medium make typecheck*
+medium make lint*

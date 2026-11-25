@@ -15,7 +15,7 @@
 #      HOST_LOAD_CAP (30), HOST_DISK_FLOOR_GB (20), HOST_LOCK_TIMEOUT_SECONDS (1800),
 #      HOST_POLL_SECONDS (30), HOST_OWNER (user@dir), HOST_MEDIUM_SLOTS (4),
 #      HOST_CRITICAL_LOAD_CAP (twice HOST_LOAD_CAP: the cap light and medium commands wait on),
-#      HOST_METRICS_FILE (unset: no metrics; else heavy.sh appends one logfmt line per call).
+#      HOST_METRICS_FILE (default ${XDG_STATE_HOME:-~/.local/state}/host-hygiene/heavy.log; 'off' or empty disables it).
 # A holder is alive only if `ps` finds its pid, not a zombie, started before it wrote the lock; a lock left
 # without a pid for 60 s is abandoned.
 # shellcheck shell=bash
@@ -31,7 +31,11 @@ HOST_OWNER=${HOST_OWNER// /_}
 HOST_MEDIUM_SLOTS=${HOST_MEDIUM_SLOTS:-4}
 # Caps may be decimals, so the default is computed by awk.
 HOST_CRITICAL_LOAD_CAP=${HOST_CRITICAL_LOAD_CAP:-$(awk -v c="$HOST_LOAD_CAP" 'BEGIN { printf "%.10g", c * 2 }')}
-HOST_METRICS_FILE=${HOST_METRICS_FILE:-}
+if [ -z "${HOST_METRICS_FILE+x}" ]; then
+  host_state=${XDG_STATE_HOME:-${HOME:+$HOME/.local/state}}
+  HOST_METRICS_FILE=${host_state:+$host_state/host-hygiene/heavy.log}
+fi
+[ "$HOST_METRICS_FILE" = off ] && HOST_METRICS_FILE=''
 host_lib_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 mkdir -p "$HOST_LOCK_DIR"
 host_slot=''
@@ -60,6 +64,18 @@ host_set_pool heavy
 # first match wins, no match is heavy. The glob is matched against argv joined by single spaces.
 host_classify() {
   local cmd top src file n class glob
+  if [ "${1:-}" = env ] && [ $# -gt 1 ]; then
+    shift
+    [ "${1:-}" = -- ] && [ $# -gt 1 ] && shift
+  fi
+  while [ $# -gt 1 ]; do
+    case $1 in
+      [A-Za-z_]*=*)
+        case ${1%%=*} in *[!A-Za-z0-9_]*) break ;; esac
+        shift ;;
+      *) break ;;
+    esac
+  done
   cmd=$(IFS=' '; printf '%s' "$*")
   host_weight=heavy host_weight_source=default
   top=$(git rev-parse --show-toplevel 2>/dev/null)

@@ -14,6 +14,7 @@ $env:HOST_DISK_FLOOR_GB = '0'
 $env:HOST_HEAVY_SLOTS = '1'
 $env:HOST_CPU_CAP = '100'
 $env:HOST_CRITICAL_CPU_CAP = '100'
+$env:HOST_METRICS_FILE = 'off'
 $shell = (Get-Process -Id $PID).Path
 $windowStyle = if ($env:OS -eq 'Windows_NT') { @{ WindowStyle = 'Hidden' } } else { @{} }
 function Invoke-Heavy([string]$Command) {
@@ -198,6 +199,8 @@ try { Enter-HostSlot job; Set-Content $env:TEST_GOT (Get-Date).ToString('o') } f
     Test-Equal -Name 'classify: npx vitest run --coverage is heavy' -Got (Get-Class 'npx', 'vitest', 'run', '--coverage', 'src/a.test.ts') -Want 'heavy builtin:N'
     Test-Equal -Name 'classify: integration jest is heavy' -Got (Get-Class 'npx', 'jest', '--config', 'jest.integration.config.js', 'a.test.ts') -Want 'heavy builtin:N'
     Test-Equal -Name 'classify: pnpm run lint is heavy' -Got (Get-Class 'pnpm', 'run', 'lint') -Want 'heavy default'
+    Test-Equal -Name 'classify: leading env and VAR=val are stripped' -Got (Get-Class 'env', 'GOFLAGS=-trimpath', 'go', 'vet', './pkg') -Want 'light builtin:N'
+    Test-Equal -Name 'classify: env-wrapped heavy command stays heavy' -Got (Get-Class 'env', 'GOOS=linux', 'golangci-lint', 'run') -Want 'heavy default'
 
     $repo = Join-Path $tmp 'repo'
     New-Item -ItemType Directory -Path $repo | Out-Null
@@ -246,7 +249,14 @@ try { Enter-HostSlot job; Set-Content $env:TEST_GOT (Get-Date).ToString('o') } f
         $env:HOST_METRICS_FILE = $tmp
         & $shell -NoProfile -File $heavy $shell -NoProfile -Command 'exit(5)#lightcmd' 2>$null
         Test-Equal -Name 'metrics: a failing write never changes the exit code' -Got $LASTEXITCODE -Want 5
+        $savedLocalAppData = $env:LOCALAPPDATA
+        $env:LOCALAPPDATA = Join-Path $tmp 'appdata'
         Remove-Item Env:HOST_METRICS_FILE
+        & $shell -NoProfile -File $heavy $shell -NoProfile -Command 'exit(0)#lightcmd' 2>$null
+        $defaultMetrics = Join-Path $tmp 'appdata\host-hygiene\heavy.log'
+        Test-Equal -Name 'metrics: default on under LOCALAPPDATA when unset' -Got (Test-Path -LiteralPath $defaultMetrics) -Want $true
+        $env:LOCALAPPDATA = $savedLocalAppData
+        $env:HOST_METRICS_FILE = 'off'
     } finally {
         Pop-Location
     }

@@ -26,7 +26,7 @@ The scripts interoperate with any other tool that uses the same paths, so these 
 | `HOST_MEDIUM_SLOTS` | 4 | Concurrent medium jobs |
 | `HOST_CRITICAL_LOAD_CAP` | twice `HOST_LOAD_CAP` | Load that stops light and medium commands |
 | `HOST_CRITICAL_CPU_CAP` | 95 | Windows only: CPU percent that stops light and medium commands |
-| `HOST_METRICS_FILE` | unset | Append one logfmt line per call; unset writes nothing |
+| `HOST_METRICS_FILE` | `${XDG_STATE_HOME:-~/.local/state}/host-hygiene/heavy.log` (`%LOCALAPPDATA%\host-hygiene\heavy.log` on Windows) | Append one logfmt line per call; `off` or empty writes nothing |
 | `HOST_DISK_FLOOR_GB` | 20 | Free space below which a run is refused (`heavy.sh` only, see below) |
 | `HOST_LOCK_TIMEOUT_SECONDS` | 1800 | Give up waiting (exit 124) |
 | `HOST_POLL_SECONDS` | 30 | Load poll interval |

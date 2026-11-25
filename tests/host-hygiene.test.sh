@@ -6,7 +6,7 @@ case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) echo "Windows: host-hygiene .sh test
 scripts="$(cd "$(dirname "$0")/.." && pwd)/plugins/dev-tools/skills/host-hygiene/scripts"
 heavy=$scripts/heavy.sh lease=$scripts/lease.sh reg=$scripts/register-service.sh sweep=$scripts/sweep-stale.sh
 tmp=$(cd "$(mktemp -d)" && pwd -P); trap 'rm -rf "$tmp"' EXIT
-export HOST_LOCK_DIR="$tmp/locks" HOST_LOAD_CAP=100000 HOST_DISK_FLOOR_GB=0 HOST_HEAVY_SLOTS=1
+export HOST_LOCK_DIR="$tmp/locks" HOST_LOAD_CAP=100000 HOST_DISK_FLOOR_GB=0 HOST_HEAVY_SLOTS=1 HOST_METRICS_FILE=off
 L=$HOST_LOCK_DIR
 fails=0
 count() { local n=0 f; for f in "$@"; do [ -e "$f" ] && n=$((n + 1)); done; echo "$n"; }
@@ -465,6 +465,10 @@ check "classify: integration jest is heavy" "$(classify npx jest --config jest.i
 check "classify: npm run lint is heavy" "$(classify npm run lint)" "heavy default"
 check "classify: pnpm run typecheck is heavy" "$(classify pnpm run typecheck)" "heavy default"
 check "classify: playwright test is heavy" "$(classify playwright test)" "heavy default"
+check "classify: leading env and VAR=val are stripped" "$(classify env GOFLAGS=-trimpath go vet ./pkg | cut -d: -f1)" "light builtin"
+check "classify: leading env -- VAR=val is stripped" "$(classify env -- GOFLAGS=-trimpath go test ./pkg | cut -d: -f1)" "light builtin"
+check "classify: env-wrapped heavy command stays heavy" "$(classify env GOOS=linux golangci-lint run)" "heavy default"
+check "classify: bare env stays heavy" "$(classify env)" "heavy default"
 
 repo=$tmp/repo
 mkdir -p "$repo" && git -C "$repo" init -q 2>/dev/null
@@ -527,6 +531,10 @@ check "metrics line for a light call, and for a timeout" \
   "$(grep -c 'weight=light source=builtin:[0-9]* waited_s=0 wait=none .* exit=0 ' "$mf")$(HOST_METRICS_FILE=$mf HOST_LOAD_CAP=-1 HOST_LOCK_TIMEOUT_SECONDS=0 "$heavy" true 2>/dev/null; grep -c 'wait=load ran_s=0 exit=124 ' "$mf")" 11
 HOST_METRICS_FILE=/dev/null/nope/m.log "$heavy" sh -c 'exit 5' 2>/dev/null
 check "a metrics write failure never changes the exit code" "$?" 5
+(unset HOST_METRICS_FILE; XDG_STATE_HOME=$tmp/xdg "$heavy" git --version >/dev/null)
+check "metrics default on under XDG_STATE_HOME when unset" "$(wc -l <"$tmp/xdg/host-hygiene/heavy.log" | tr -d ' ')" 1
+(HOST_METRICS_FILE=off XDG_STATE_HOME=$tmp/xdg-off "$heavy" git --version >/dev/null)
+check "HOST_METRICS_FILE=off writes no default file" "$([ -e "$tmp/xdg-off/host-hygiene/heavy.log" ] && echo exists)" ""
 
 # Orphan cleanup: a failed command's child in its own process group is stopped, a successful command's is kept.
 rm -f "$tmp/orphan"
