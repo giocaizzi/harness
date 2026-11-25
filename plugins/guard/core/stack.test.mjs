@@ -142,7 +142,7 @@ void test("evaluateCommand: a create to the default branch carrying an open PR i
     for (let i = 0; i < 2; i++) {
         const d = decide("gh pr create --fill", state);
         assert.deepEqual([d.action, d.rule], ["deny", "stack"]);
-        assert.match(defined(d.reason), /open PR #7 \(`feat\/a`\) but this PR targets `main`.*plus `--base feat\/a`.*`gh stack link feat\/a feat\/b`.*needs no Split-Reason/);
+        assert.match(defined(d.reason), /open PR #7 \(`feat\/a`\) but this PR targets `main`.*plus `--base feat\/a`.*`gh stack link feat\/a feat\/b`.*needs no Split-Reason.*close it first \(`gh pr close 7`\) and retry/);
     }
     assert.ok(!state.reminded.has("stack"));
     assert.deepEqual(decide("gh pr create --fill", { reminded: new Set() }, {}), { action: "allow" });
@@ -183,7 +183,7 @@ void test("evaluateCommand: a deny, an ask or a skill deny wins over the merge h
     assert.equal(skill.action, "deny");
     assert.ok(!state.reminded.has("stack"));
 });
-const early = ({ upstream = null, current = "feat/b", fail, } = {}) => {
+const early = ({ upstream = null, current = "feat/b", fail, repoView, } = {}) => {
     const calls = [];
     const run = (argv) => {
         const a = argv.join(" ");
@@ -191,7 +191,9 @@ const early = ({ upstream = null, current = "feat/b", fail, } = {}) => {
         if (fail && a.includes(fail))
             return null;
         if (argv[1] === "symbolic-ref")
-            return "origin/main\n";
+            return repoView ? null : "origin/main\n";
+        if (a.startsWith("gh repo view"))
+            return repoView ?? null;
         if (a === "git rev-parse --abbrev-ref HEAD")
             return `${current}\n`;
         if (a.includes("@{u}"))
@@ -249,6 +251,13 @@ void test("stackEarlyFacts: a branch from an open PR's head gives the hint facts
     });
     const cur = await stackEarlyFacts("git checkout -b feat/n", run, env);
     assert.equal(cur, null, "the current branch feat/b has no open PR");
+});
+void test("stackEarlyFacts: without origin/HEAD the default branch comes from gh repo view, and fails open without it", async () => {
+    const w = early({ repoView: "main\n" });
+    const f = await stackEarlyFacts("git switch -c feat/n feat/a", w.run, env);
+    assert.equal(f?.base, "main");
+    assert.ok(w.calls.includes("gh repo view --json defaultBranchRef -q .defaultBranchRef.name"));
+    assert.equal(await stackEarlyFacts("git switch -c feat/n feat/a", early({ repoView: "main\n", fail: "gh repo view" }).run, env), null);
 });
 void test("stackEarlyFacts: default branch, a sha, an unknown start, a spent key and no match cost nothing or give null", async () => {
     const w = early();

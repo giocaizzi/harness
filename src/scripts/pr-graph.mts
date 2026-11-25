@@ -291,7 +291,7 @@ const isStacked = (p: CollectedPr): boolean =>
   Boolean(p.defaultBranch) &&
   (p.base !== p.defaultBranch ||
     (p.prevBases ?? []).some((x) => x !== p.defaultBranch));
-const origBase = (p: CollectedPr): string => p.prevBases?.[0] ?? p.base;
+const bases = (p: CollectedPr): string[] => [p.base, ...(p.prevBases ?? [])];
 
 // Union-find over indexes; `find` gives a component id.
 function components(n: number): {
@@ -368,16 +368,27 @@ export function graph(
     const hot = hotFiles(list);
     agg.hotFiles += hot.size;
     const sorted = [...list].sort((a, b) => a.created - b.created);
-    // Chains: base/head links on the original base, transitively.
-    const chain = components(sorted.length);
+    // Chains: a PR links to another when any base it ever had is that PR's head; a pair is stacked when one is an
+    // ancestor layer of the other, so siblings on one base are not stacked with each other.
     const byHead = new Map<string, number[]>();
     sorted.forEach((p, i) => {
       byHead.set(p.head, [...(byHead.get(p.head) ?? []), i]);
     });
-    sorted.forEach((p, i) => {
-      for (const k of byHead.get(origBase(p)) ?? []) {
-        if (k !== i) chain.union(i, k);
+    const ancestors = sorted.map((_, i) => {
+      const seen = new Set<number>();
+      const todo = [i];
+      while (todo.length) {
+        const cur = sorted[todo.pop() ?? i];
+        if (!cur) continue;
+        for (const base of bases(cur)) {
+          for (const k of byHead.get(base) ?? []) {
+            if (k === i || seen.has(k)) continue;
+            seen.add(k);
+            todo.push(k);
+          }
+        }
       }
+      return seen;
     });
     const cluster = components(sorted.length);
     const clustered = new Set<number>();
@@ -388,7 +399,7 @@ export function graph(
         if (!a || !b) continue;
         if (!(a.created <= b.created && b.created < (a.closed ?? now)))
           continue;
-        if (chain.find(i) === chain.find(j)) {
+        if (ancestors[i]?.has(j) || ancestors[j]?.has(i)) {
           r.stackedPairs++;
           continue;
         }

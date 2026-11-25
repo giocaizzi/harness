@@ -4822,6 +4822,7 @@ void test("push scan: --all and --branches scan local branches, --mirror every l
 
 interface BatchWorld {
   below?: string[];
+  contains?: Record<string, string[]>;
   diffs?: Record<string, string>;
   branch?: string;
   changed?: string;
@@ -4841,7 +4842,9 @@ const fakeBatch =
     if (line === "git rev-parse --show-toplevel") return "/r\n";
     if (argv[1] === "merge-base" && argv[2] === "--is-ancestor") {
       const head = defined(argv[3]).replace("origin/", "");
-      return argv[4] === "HEAD" && world.below?.includes(head) ? "" : null;
+      if (argv[4] === "HEAD") return world.below?.includes(head) ? "" : null;
+      const into = defined(argv[4]).replace("origin/", "");
+      return world.contains?.[into]?.includes(head) ? "" : null;
     }
     if (argv[1] === "merge-base") return "base\n";
     if (argv[1] === "diff") {
@@ -4970,39 +4973,43 @@ void test("pr-batch: a stack layer needs no Split-Reason: the layer below is no 
   );
 });
 
-// Strict x-failure: passes while the body throws (the open bug), fails once the body passes, so the fix drops the
-// wrapper and keeps the body as a plain test.
-const xfail = (name: string, body: () => Promise<void>) =>
-  test(`xfail: ${name}`, async () => {
-    try {
-      await body();
-    } catch {
-      return;
-    }
-    assert.fail(`XPASS: ${name}; drop the xfail wrapper`);
-  });
-
-// The layer-below exemption must depend on the create's base: only a base that already holds the PR below keeps its
-// commits out of the new PR. Against the default branch (stack facts off with GUARD_STACK_HINT, timed out, or past
-// their 10-PR cap) or an unrelated branch, the new PR carries #7's files and pr-batch must still deny.
+// The layer-below exemption depends on the create's base: only a base that already holds the PR below keeps its
+// commits out of the new PR. Against the default branch or an unrelated branch the new PR carries #7's files and
+// pr-batch must still deny, with no stack facts involved.
 for (const command of [
   "gh pr create --fill",
   "gh pr create --base main --fill",
   "gh pr create --base feat/unrelated --fill",
+  "glab mr create --fill",
+  'az repos pr create --title "feat: x"',
 ])
-  void xfail(
-    `pr-batch: \`${command}\` on a branch built on #7 still overlaps #7`,
-    async () => {
-      const d = await batch(command, {
-        below: ["feat/a"],
-        changed: "src/a.ts\nsrc/b.ts\n",
-        diffs: { "origin/feat/a": "src/b.ts\n" },
-        prs: [pr(7, "feat/a", "src/a.ts")],
-      });
-      assert.equal(d.rule, "pr-batch");
-      assert.match(defined(d.reason), /PR #7/);
-    },
-  );
+  void test(`pr-batch: \`${command}\` on a branch built on #7 still overlaps #7`, async () => {
+    const d = await batch(command, {
+      below: ["feat/a"],
+      changed: "src/a.ts\nsrc/b.ts\n",
+      diffs: { "origin/feat/a": "src/b.ts\n" },
+      prs: [pr(7, "feat/a", "src/a.ts")],
+    });
+    assert.equal(d.rule, "pr-batch");
+    assert.match(defined(d.reason), /PR #7/);
+  });
+
+void test("pr-batch: a create whose base holds the layer below (its head, or a descendant of it) is no overlap; gh stack submit is exempt", async () => {
+  const world = {
+    below: ["feat/a"],
+    changed: "src/a.ts\nsrc/b.ts\n",
+    contains: { "feat/d": ["feat/a"] },
+    diffs: { "origin/feat/a": "src/b.ts\n" },
+    prs: [pr(7, "feat/a", "src/a.ts")],
+  };
+  for (const c of [
+    "gh pr create --base feat/a --fill",
+    "gh pr create -B feat/a --fill",
+    "gh pr create --base feat/d --fill",
+    "gh stack submit",
+  ])
+    assert.equal((await batch(c, world)).action, "allow", c);
+});
 
 void test("pr-batch: lockfiles, CHANGELOG and plugin manifests never count; no overlap, bot branches, the own branch and read errors pass", async () => {
   const shared = [

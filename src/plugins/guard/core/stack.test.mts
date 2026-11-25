@@ -270,7 +270,7 @@ void test("evaluateCommand: a create to the default branch carrying an open PR i
     assert.deepEqual([d.action, d.rule], ["deny", "stack"]);
     assert.match(
       defined(d.reason),
-      /open PR #7 \(`feat\/a`\) but this PR targets `main`.*plus `--base feat\/a`.*`gh stack link feat\/a feat\/b`.*needs no Split-Reason/,
+      /open PR #7 \(`feat\/a`\) but this PR targets `main`.*plus `--base feat\/a`.*`gh stack link feat\/a feat\/b`.*needs no Split-Reason.*close it first \(`gh pr close 7`\) and retry/,
     );
   }
   assert.ok(!state.reminded.has("stack"));
@@ -330,18 +330,21 @@ interface EarlyWorld {
   upstream?: string | null;
   current?: string;
   fail?: string;
+  repoView?: string;
 }
 const early = ({
   upstream = null,
   current = "feat/b",
   fail,
+  repoView,
 }: EarlyWorld = {}) => {
   const calls: string[] = [];
   const run = (argv: string[]) => {
     const a = argv.join(" ");
     calls.push(a);
     if (fail && a.includes(fail)) return null;
-    if (argv[1] === "symbolic-ref") return "origin/main\n";
+    if (argv[1] === "symbolic-ref") return repoView ? null : "origin/main\n";
+    if (a.startsWith("gh repo view")) return repoView ?? null;
     if (a === "git rev-parse --abbrev-ref HEAD") return `${current}\n`;
     if (a.includes("@{u}")) return upstream;
     if (argv[0] === "gh" && argv[2] === "list")
@@ -406,6 +409,25 @@ void test("stackEarlyFacts: a branch from an open PR's head gives the hint facts
   });
   const cur = await stackEarlyFacts("git checkout -b feat/n", run, env);
   assert.equal(cur, null, "the current branch feat/b has no open PR");
+});
+
+void test("stackEarlyFacts: without origin/HEAD the default branch comes from gh repo view, and fails open without it", async () => {
+  const w = early({ repoView: "main\n" });
+  const f = await stackEarlyFacts("git switch -c feat/n feat/a", w.run, env);
+  assert.equal(f?.base, "main");
+  assert.ok(
+    w.calls.includes(
+      "gh repo view --json defaultBranchRef -q .defaultBranchRef.name",
+    ),
+  );
+  assert.equal(
+    await stackEarlyFacts(
+      "git switch -c feat/n feat/a",
+      early({ repoView: "main\n", fail: "gh repo view" }).run,
+      env,
+    ),
+    null,
+  );
 });
 
 void test("stackEarlyFacts: default branch, a sha, an unknown start, a spent key and no match cost nothing or give null", async () => {

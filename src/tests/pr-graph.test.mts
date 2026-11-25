@@ -395,9 +395,9 @@ void test("a closed-unmerged PR replaced by a new one is superseded, not overlap
   assert.match(report(g, "30d"), /Superseded pairs[^\n]*\| 1 \|/);
 });
 
-// Strict x-failure: `gh stack link` retargets an open PR from the default branch onto the layer below, so its first
-// base is the default branch and only the current base names the chain. Chains must link on every base the PR had.
-void test("xfail: a PR retargeted onto the layer below pairs with it as stacked", () => {
+// `gh stack link` retargets an open PR from the default branch onto the layer below, so its first base is the
+// default branch and only the current base names the chain.
+void test("a PR retargeted onto the layer below pairs with it as stacked", () => {
   const a = pr({ head: "a", paths: ["f"], created: t("01") });
   const b = pr({
     head: "b",
@@ -407,11 +407,18 @@ void test("xfail: a PR retargeted onto the layer below pairs with it as stacked"
     created: t("02"),
   });
   const g = graph([a, b], NOW);
-  const holds = g.stackedPairs === 1 && g.overlapPairs === 0;
-  assert.ok(
-    !holds,
-    "XPASS: retargeted-onto-a-layer pairs now count as stacked; drop the xfail",
-  );
+  assert.equal(g.stackedPairs, 1);
+  assert.equal(g.overlapPairs, 0);
+});
+
+void test("siblings on one base sharing a file overlap, while each stays stacked with the base", () => {
+  const a = pr({ head: "a", paths: ["x"], created: t("01") });
+  const b = pr({ head: "b", base: "a", paths: ["f"], created: t("02") });
+  const c = pr({ head: "c", base: "a", paths: ["f"], created: t("03") });
+  const g = graph([a, b, c], NOW);
+  assert.equal(g.stackedPairs, 2);
+  assert.equal(g.overlapPairs, 1);
+  assert.equal(g.refinedPairs, 1);
 });
 
 void test("headline share and clusters come from refined pairs", () => {

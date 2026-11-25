@@ -1750,24 +1750,37 @@ export async function prBatchFacts(
   const re = rule && new RegExp(rule.match, "i");
   if (!rule || !re) return {};
   const out: Record<string, PrBatchFact | undefined> = {};
+  const creates = stackTargets(command, rules, env).filter(
+    (t) => t.verb === "create",
+  );
   for (const { seg, dir, remote } of segments(command, env)) {
     if (remote || !re.test(seg)) continue;
     const reason = splitReason(command, seg, dir, rule.reasons, read);
+    // Which open PRs below this one are no overlap: a `gh stack submit` bases each layer on the one below; a
+    // `gh pr create` only when its base already holds the layer; glab and az never.
+    const layer: LayerExempt = /\bgh\s+stack\s+submit\b/.test(seg)
+      ? "any"
+      : /\bgh\s+pr\s+create\b/.test(seg)
+        ? { base: creates.find((t) => t.dir === dir)?.base ?? null }
+        : "none";
     out[dir] = {
       reason,
       overlaps:
         reason.kind === "none" && PLAIN_PATH.test(dir || ".")
-          ? await openOverlaps(dir, rule.ignore, run)
+          ? await openOverlaps(dir, rule.ignore, run, layer)
           : [],
     };
   }
   return out;
 }
 
+type LayerExempt = "any" | "none" | { base: string | null };
+
 async function openOverlaps(
   dir: string,
   ignore: string[],
   run: RunnerFn,
+  layer: LayerExempt,
 ): Promise<PrOverlap[]> {
   const sh = (argv: string[]) =>
     Promise.resolve()
@@ -1845,15 +1858,29 @@ async function openOverlaps(
         candidates.push({ files: shared, head: headRefName, number, all });
     }
     // A PR whose head is an ancestor of HEAD and not yet in the default branch is a layer below this one (the
-    // `stackFacts` test): it is no overlap, and this PR's own files are the diff from it.
+    // `stackFacts` test): it is no overlap, and this PR's own files are the diff from it, but only when the
+    // create's base already holds it (the base is its head, or `origin/<head>` is an ancestor of `origin/<base>`).
+    const target = (
+      typeof layer === "object" ? (layer.base ?? def.trim()) : ""
+    ).replace(/^origin\//, "");
+    const safeTarget = /^[\w./@+-]+$/.test(target) && !target.startsWith("-");
     const lower = await Promise.all(
       candidates.map(async (c) => {
+        if (layer === "none") return null;
+        if (typeof layer === "object" && !safeTarget) return null;
         const ref = `origin/${c.head}`;
         const [onTop, inDefault] = await Promise.all([
           git("merge-base", "--is-ancestor", ref, "HEAD"),
           git("merge-base", "--is-ancestor", ref, def.trim()),
         ]);
         if (onTop == null || inDefault != null) return null;
+        if (
+          typeof layer === "object" &&
+          target !== c.head &&
+          (await git("merge-base", "--is-ancestor", ref, `origin/${target}`)) ==
+            null
+        )
+          return null;
         const diff = await git("diff", "--name-only", `${ref}..HEAD`);
         return diff == null
           ? null
@@ -2249,7 +2276,23 @@ export async function stackEarlyFacts(
     const current = () =>
       sh(["git", "rev-parse", "--abbrev-ref", "HEAD"]).then((v) => v?.trim());
     const defBranch = async () =>
-      (await sh(["git", "symbolic-ref", "--short", "refs/remotes/origin/HEAD"]))
+      (
+        (await sh([
+          "git",
+          "symbolic-ref",
+          "--short",
+          "refs/remotes/origin/HEAD",
+        ])) ??
+        (await sh([
+          "gh",
+          "repo",
+          "view",
+          "--json",
+          "defaultBranchRef",
+          "-q",
+          ".defaultBranchRef.name",
+        ]))
+      )
         ?.trim()
         .replace(/^origin\//, "");
     const openPrs = async (skip: string) => {
