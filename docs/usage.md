@@ -65,7 +65,7 @@ These load by themselves when the work touches their subject; call them by name 
 | `subagent-orchestration` | start work that needs a plan, design, investigation, fix or review (to route it); spawn subagents, pick a model or effort, coordinate with other running sessions |
 | `unattended-runs` | start an overnight, headless or auto-approve run |
 
-`host-hygiene` also ships scripts the agent runs for you: `heavy.sh` (one heavy command at a time), `lease.sh` (exclusive use of a device or port), `register-service.sh`, `memory-lint.mjs` (report-only memory lint), `repo-sweep.mjs` (the branch lifecycle applied to a repo's worktrees, branches and stashes; dry run by default, [repo-cleanup](repo-cleanup.md)), `sweep-stale.sh --plugins` (outdated Claude Code plugin versions), with `.ps1` twins for the shell scripts on Windows. Where they live per harness, so a brief names the right path: [compatibility](compatibility.md).
+`host-hygiene` also ships scripts the agent runs for you: `heavy.sh` (admits each command by weight: light, medium or heavy), `lease.sh` (exclusive use of a device or port), `register-service.sh`, `memory-lint.mjs` (report-only memory lint), `repo-sweep.mjs` (the branch lifecycle applied to a repo's worktrees, branches and stashes; dry run by default, [repo-cleanup](repo-cleanup.md)), `sweep-stale.sh --plugins` (outdated Claude Code plugin versions), with `.ps1` twins for the shell scripts on Windows. Where they live per harness, so a brief names the right path: [compatibility](compatibility.md).
 
 ### Language skills
 

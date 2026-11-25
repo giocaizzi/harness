@@ -11,7 +11,7 @@ Agents share one machine. Let its load and your plan's quota set how much runs a
 
 In this skill's `scripts/`, `.sh` on macOS/Linux and `.ps1` on Windows. Env, defaults and the lock-path contract are in the header of `lib.sh` / `lib.ps1`. In a brief, name them by `${CLAUDE_PLUGIN_ROOT}/skills/host-hygiene/scripts/` as rendered here (unrendered: the path this skill was loaded from), never a remembered cache path: upgrades prune old versions.
 
-- `heavy.sh <cmd...>`: run a build, precommit or full suite in a machine-wide heavy slot; `--status` shows slots, waiters, leases and services.
+- `heavy.sh <cmd...>`: run a build, precommit or full suite under weight-aware admission; `--status` shows slots, waiters, leases and services. Each command is classed `light` (no slot, no queue; waits only while load is critical), `medium` (its own pool of 4 slots; waits while load is critical) or `heavy` (2 slots, queue, waits under the load cap). The class comes from the repo's `.heavy-weights` (read first), then the built-in `scripts/weights.default`; an unmatched command is `heavy`. `heavy.sh --classify <cmd...>` prints its class and source and runs nothing. `HOST_METRICS_FILE` logs every call's wait for measuring.
 - `lease.sh <class> [--device <id>] -- <cmd...>`: heavy slot, then the one lease for a device class (simulator, emulator); shuts down a device it booted.
 - `register-service.sh <name> -- <cmd...>`: run a database, dev server or watcher registered under its owner, unregistered on exit; `--list` shows them.
 - `node memory-lint.mjs [--repo <path>] [<dir>...]`: report-only lint of Claude Code auto-memory (all projects by default).
@@ -22,7 +22,8 @@ In this skill's `scripts/`, `.sh` on macOS/Linux and `.ps1` on Windows. Env, def
 ## Rules
 
 - **Disk first.** Below the floor (20 GB) don't start: clean your own leftovers. Never delete another session's files.
-- **Heavy work goes through the semaphore** and waits for a slot and for load; don't wrap it in your own retry loop. One heavy job per agent.
+- **Builds and tests go through `heavy.sh`**; the script picks the class and the wait, so never label or split a command to dodge it, and don't wrap it in your own retry loop. One heavy job per agent.
+- **A repo declares its weights** in `.heavy-weights` (`<class> <glob>` per line): cheap repo-local commands as `light`, heavier-than-they-look ones (a package whose tests start envtest) as `heavy`. Say in one line of the repo's `AGENTS.md` that the file exists.
 - **Read the gated command's own exit status.** Piping a gated command through `tail` or `grep` reports the filter's status: capture the status of the command itself (`set -o pipefail`, `PIPESTATUS`, or run it once into a log file and read `$?` before you tail the log), and report or push only on that.
 - **Don't verify twice.** When CI runs the same suites on every PR, run the build, the type check or `vet`, and the tests that cover the change locally, and let CI be the full gate: many full-suite runs queued in one heavy slot become the throughput limit. Run the full suite locally when CI does not cover it (a local-only or platform-specific path, a repo without CI, a stop hook that needs it) or before a release. Run lint only when the change touches what it covers: a docs-only change needs no shell or PowerShell linter. CI is the gate for full suites.
 - **Cap fan-out by load.** Size a fan-out by the host's load and free heavy slots (`heavy.sh --status` prints both), not a fixed count.
