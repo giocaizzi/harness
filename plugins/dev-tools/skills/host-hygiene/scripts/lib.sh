@@ -179,12 +179,14 @@ host_ahead() {
 
 # host_queue_msg <position> <busy>: the slot-wait line, naming each holder and how long it has held its slot.
 host_queue_msg() {
-  local i d who='' c
+  local i d who='' c a
   for i in $(seq 1 "$host_pool_slots"); do
     d=$HOST_LOCK_DIR/$host_pool.lock.$i
     [ -d "$d" ] || continue
+    # A holder between its mkdir and its cmd file, or one just released, has nothing to show yet.
     c=$(head -n 1 "$d/cmd" 2>/dev/null | cut -c1-60)
-    who="${who:+$who; }$c $(host_age "$d")s"
+    a=$(host_age "$d")
+    who="${who:+$who; }${c:-starting} ${a:-0}s"
   done
   host_say "waiting for a $host_pool slot: position $1 in queue, $2/$host_pool_slots slots busy ($who)"
 }
