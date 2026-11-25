@@ -8,6 +8,8 @@
 // { read: false } the command must not get the plain-read allow (`pureRead`), so the harness's own prompt decides.
 // { run: 'registered' | 'configured' | 'unsure' | 'protected' } a registered unattended run: example labels and protected paths, other label names (for 'configured'), a registration that requires labels but names none, or one protecting only a label.
 // { branch: 'main' } the current branch the fake git reports for a bare lease push (default 'feat/x'; null: unreadable).
+// { prBatch: <facts> } the pr-batch facts keyed by directory (openOverlaps is unit-tested in engine.test).
+// { early: <facts> } the early stack-hint facts (a branch from an open PR's head, a first push that carries one).
 // { stack: <facts> } the stacked-PR facts `stackFacts` gathered: { below: { number, branch }, base }, or {} for none.
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -136,7 +138,7 @@ const RUN = {
     protected: { labels: { protected: ["acme-parked"] }, protect: PROTECT },
     unsure: { unsure: true },
 };
-const decide = async (command, { branch = "feat/x", python = null, hints = false, run: runOption = null, stack = null, leak, squashed, pr, } = {}) => {
+const decide = async (command, { branch = "feat/x", python = null, hints = false, run: runOption = null, stack = null, prBatch = {}, early = null, leak, squashed, pr, } = {}) => {
     const base = squashed ? squashedRun : pr ? prRun(pr) : run;
     // The current branch the fake git reports for a bare lease push (`branch`, a feature branch unless a row says so).
     const pushRun = (argv) => argv.includes("--abbrev-ref") && argv.includes("HEAD")
@@ -168,6 +170,8 @@ const decide = async (command, { branch = "feat/x", python = null, hints = false
         pushScan,
         python,
         stack,
+        early,
+        prBatch,
         run: runOption ? RUN[runOption] : null,
         rules,
     });
@@ -199,6 +203,8 @@ function isList(value) {
 function isStack(value) {
     return (isRecord(value) &&
         (value.base === undefined || typeof value.base === "string") &&
+        (value.head === undefined || typeof value.head === "string") &&
+        (value.verb === undefined || typeof value.verb === "string") &&
         (value.below === undefined ||
             (isRecord(value.below) &&
                 typeof value.below.number === "number" &&
@@ -225,7 +231,11 @@ function isOptions(value) {
             value.run === "configured" ||
             value.run === "protected" ||
             value.run === "unsure") &&
-        (value.stack === undefined || value.stack === null || isStack(value.stack)));
+        (value.stack === undefined ||
+            value.stack === null ||
+            isStack(value.stack)) &&
+        (value.prBatch === undefined || isRecord(value.prBatch)) &&
+        (value.early === undefined || value.early === null || isRecord(value.early)));
 }
 function readCorpus(value) {
     assert.ok(isList(value));

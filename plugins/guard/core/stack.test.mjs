@@ -7,7 +7,7 @@ function defined(value) {
 // runner, and the once-per-agent hint evaluateCommand returns.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { evaluateCommand, stackFacts, stackTargets } from "./engine.mjs";
+import { evaluateCommand, stackEarlyFacts, stackEarlyTargets, stackFacts, stackTargets, } from "./engine.mjs";
 import { rules } from "./rules.mjs";
 const env = { HOME: "/Users/me", dirs: { has: () => true } };
 void test("stackTargets reads create and merge units: base, operand, repo, cd", () => {
@@ -81,6 +81,8 @@ void test("stackFacts: a create that builds on an open PR not in the default bra
     assert.deepEqual(await stackFacts("gh pr create --fill", rules, run, env), {
         below: { number: 7, branch: "feat/a" },
         base: "main",
+        verb: "create",
+        head: "feat/b",
     });
     assert.ok(calls.includes("git merge-base --is-ancestor origin/feat/a HEAD"));
     assert.ok(!calls.some((c) => c.includes("origin/feat/b ")), "the head itself is skipped");
@@ -113,7 +115,13 @@ void test("stackFacts: failures and odd names give {}", async () => {
     assert.deepEqual(await stackFacts('gh pr create --base "$B" --fill', rules, fake().run, env), {});
     assert.deepEqual(await stackFacts("gh pr list", rules, fake().run, env), {});
 });
-const below = { below: { number: 7, branch: "feat/a" }, base: "main" };
+const below = {
+    below: { number: 7, branch: "feat/a" },
+    base: "main",
+    head: "feat/b",
+    verb: "create",
+};
+const mergeBelow = { ...below, verb: "merge" };
 const skills = ["pr", "ship", "github-pull-requests", "conventional-commits"];
 const decide = (command, state, stack = below, loaded = skills) => evaluateCommand({
     command,
@@ -123,21 +131,183 @@ const decide = (command, state, stack = below, loaded = skills) => evaluateComma
     loadedSkills: new Set(loaded),
     rules,
 });
-void test("evaluateCommand: the hint names the PR and the default branch, once", () => {
+void test("stackFacts: carries the verb and the head", async () => {
+    const f = await stackFacts("gh pr create --fill", rules, fake().run, env);
+    assert.deepEqual([f.verb, f.head], ["create", "feat/b"]);
+    const m = await stackFacts("gh pr merge 9", rules, fake().run, env);
+    assert.equal(m.verb, "merge");
+});
+void test("evaluateCommand: a create to the default branch carrying an open PR is denied every time", () => {
     const state = { reminded: new Set() };
-    const d = decide("gh pr create --fill", state);
+    for (let i = 0; i < 2; i++) {
+        const d = decide("gh pr create --fill", state);
+        assert.deepEqual([d.action, d.rule], ["deny", "stack"]);
+        assert.match(defined(d.reason), /open PR #7 \(`feat\/a`\) but this PR targets `main`.*plus `--base feat\/a`.*`gh stack link feat\/a feat\/b`.*needs no Split-Reason.*close it first \(`gh pr close 7`\) and retry/);
+    }
+    assert.ok(!state.reminded.has("stack"));
+    assert.deepEqual(decide("gh pr create --fill", { reminded: new Set() }, {}), { action: "allow" });
+});
+void test("evaluateCommand: a merge gets the hint, once", () => {
+    const state = { reminded: new Set() };
+    const d = decide("gh pr merge 9 --squash", state, mergeBelow);
     assert.deepEqual([d.action, d.rule, d.remind], ["allow", "stack", true]);
     assert.match(defined(d.context), /#7 \(`feat\/a`\).*targets `main`/);
     assert.match(defined(d.context), /gh stack init.*Stacks without `gh stack`/);
     assert.ok(state.reminded.has("stack"));
-    assert.deepEqual(decide("gh pr create --fill", state), { action: "allow" });
-    assert.deepEqual(decide("gh pr create --fill", { reminded: new Set() }, {}), { action: "allow" });
+    assert.deepEqual(decide("gh pr merge 9 --squash", state, mergeBelow), {
+        action: "allow",
+    });
 });
-void test("evaluateCommand: a deny, an ask or a skill deny wins over the hint", () => {
+void test("evaluateCommand: the stack deny wins over a pr-batch deny", () => {
+    const d = evaluateCommand({
+        command: "gh pr create --fill",
+        state: { reminded: new Set() },
+        env,
+        stack: below,
+        prBatch: {
+            "": {
+                reason: { kind: "none" },
+                overlaps: [{ files: ["src/a.ts"], head: "feat/a", number: 7 }],
+            },
+        },
+        loadedSkills: new Set(skills),
+        rules,
+    });
+    assert.deepEqual([d.action, d.rule], ["deny", "stack"]);
+});
+void test("evaluateCommand: a deny, an ask or a skill deny wins over the merge hint", () => {
     const state = { reminded: new Set() };
-    assert.equal(decide('gh pr create --title "bad title"', state).rule, "title");
-    assert.equal(decide("gh pr merge 9 && rm -rf src", state).action, "ask");
-    const skill = decide("gh pr create --fill", state, below, []);
+    assert.equal(decide('gh pr create --title "bad title"', state, {}).rule, "title");
+    assert.equal(decide("gh pr merge 9 && rm -rf src", state, mergeBelow).action, "ask");
+    const skill = decide("gh pr merge 9", state, mergeBelow, []);
     assert.equal(skill.action, "deny");
     assert.ok(!state.reminded.has("stack"));
+});
+const early = ({ upstream = null, current = "feat/b", fail, repoView, } = {}) => {
+    const calls = [];
+    const run = (argv) => {
+        const a = argv.join(" ");
+        calls.push(a);
+        if (fail && a.includes(fail))
+            return null;
+        if (argv[1] === "symbolic-ref")
+            return repoView ? null : "origin/main\n";
+        if (a.startsWith("gh repo view"))
+            return repoView ?? null;
+        if (a === "git rev-parse --abbrev-ref HEAD")
+            return `${current}\n`;
+        if (a.includes("@{u}"))
+            return upstream;
+        if (argv[0] === "gh" && argv[2] === "list")
+            return JSON.stringify([{ number: 7, headRefName: "feat/a" }]);
+        if (argv[1] === "merge-base")
+            return argv[4] === "origin/main" ? null : "";
+        throw new Error(`unexpected ${a}`);
+    };
+    return { run, calls };
+};
+void test("stackEarlyTargets: new-branch and push forms, nothing else", () => {
+    const t = (c) => stackEarlyTargets(c, env)[0];
+    for (const c of [
+        "git switch -c feat/n feat/a",
+        "git switch -C feat/n feat/a",
+        "git checkout -b feat/n feat/a",
+        "git checkout -B feat/n feat/a",
+        "git branch feat/n feat/a",
+        "git worktree add -b feat/n ../w feat/a",
+        "git worktree add ../w -B feat/n feat/a",
+    ])
+        assert.deepEqual([t(c)?.kind, t(c)?.name, t(c)?.start], ["branch", "feat/n", "feat/a"], c);
+    assert.equal(t("git switch -c feat/n")?.start, null);
+    assert.equal(t("git push -u origin feat/b")?.kind, "push");
+    assert.equal(t("git push")?.kind, "push");
+    for (const c of [
+        "git branch -d x",
+        "git branch -m a b",
+        "git branch --list",
+        "git branch",
+        "git checkout feat/a",
+        "git switch feat/a",
+        "git worktree add ../w feat/a",
+        "git push --all",
+        "git push --tags",
+        "git push origin --delete x",
+        "git push --mirror",
+        "git status",
+        "echo git push",
+    ])
+        assert.deepEqual(stackEarlyTargets(c, env), [], c);
+});
+void test("stackEarlyFacts: a branch from an open PR's head gives the hint facts, once per branch", async () => {
+    const { run } = early();
+    const f = await stackEarlyFacts("git switch -c feat/n origin/feat/a", run, env);
+    assert.deepEqual(f, {
+        base: "main",
+        below: { number: 7, branch: "feat/a" },
+        branch: "feat/n",
+        key: "stack-branch:feat/n",
+        kind: "branch",
+        start: "feat/a",
+    });
+    const cur = await stackEarlyFacts("git checkout -b feat/n", run, env);
+    assert.equal(cur, null, "the current branch feat/b has no open PR");
+});
+void test("stackEarlyFacts: without origin/HEAD the default branch comes from gh repo view, and fails open without it", async () => {
+    const w = early({ repoView: "main\n" });
+    const f = await stackEarlyFacts("git switch -c feat/n feat/a", w.run, env);
+    assert.equal(f?.base, "main");
+    assert.ok(w.calls.includes("gh repo view --json defaultBranchRef -q .defaultBranchRef.name"));
+    assert.equal(await stackEarlyFacts("git switch -c feat/n feat/a", early({ repoView: "main\n", fail: "gh repo view" }).run, env), null);
+});
+void test("stackEarlyFacts: default branch, a sha, an unknown start, a spent key and no match cost nothing or give null", async () => {
+    const w = early();
+    const f = (c, spent) => stackEarlyFacts(c, w.run, env, spent);
+    assert.equal(await f("git switch -c feat/n main"), null);
+    assert.equal(await f("git switch -c feat/n origin/main"), null);
+    assert.equal(await f("git switch -c feat/n abc1234"), null);
+    assert.equal(await f("git switch -c feat/n feat/zzz"), null);
+    const n = w.calls.length;
+    assert.equal(await f("git switch -c feat/n feat/a", (k) => k === "stack-branch:feat/n"), null);
+    assert.equal(await f("git status"), null);
+    assert.equal(w.calls.length, n, "no lookups");
+    for (const fail of ["symbolic-ref", "gh pr list"])
+        assert.equal(await stackEarlyFacts("git switch -c feat/n feat/a", early({ fail }).run, env), null, fail);
+    assert.equal(await stackEarlyFacts("git switch -c feat/n feat/a", () => {
+        throw new Error("boom");
+    }, env), null);
+});
+void test("stackEarlyFacts: a first push of a branch that carries an open PR; not with an upstream, another ref or the default branch", async () => {
+    const f = (c, world) => stackEarlyFacts(c, early(world).run, env);
+    const hit = await f("git push -u origin feat/b");
+    assert.deepEqual([hit?.kind, hit?.key, hit?.below.number, hit?.branch], ["push", "stack-push:feat/b", 7, "feat/b"]);
+    assert.equal((await f("git push"))?.kind, "push");
+    assert.equal(await f("git push", { upstream: "origin/feat/b\n" }), null);
+    assert.equal(await f("git push origin other"), null);
+    assert.equal((await f("git push origin HEAD"))?.kind, "push");
+    assert.equal(await f("git push", { current: "main" }), null);
+    assert.equal(await f("git push", { fail: "merge-base" }), null);
+    assert.equal(await f("git push", { fail: "gh pr list" }), null);
+});
+const advise = (command, state, e) => evaluateCommand({
+    command,
+    state,
+    env,
+    early: e,
+    loadedSkills: new Set([...skills, "wt"]),
+    rules,
+});
+void test("evaluateCommand: the early hints are once per key, remind, and never deny", async () => {
+    const state = { reminded: new Set() };
+    const b = await stackEarlyFacts("git switch -c feat/n feat/a", early().run, env);
+    const d = advise("git switch -c feat/n feat/a", state, b);
+    assert.deepEqual([d.action, d.rule, d.remind], ["allow", "stack-branch", true]);
+    assert.match(defined(d.context), /^Stack hint: `feat\/n` starts from your open PR #7 \(`feat\/a`\).*gh pr create --base feat\/a.*origin\/main/);
+    assert.deepEqual(advise("git switch -c feat/n feat/a", state, b), {
+        action: "allow",
+    });
+    const p = await stackEarlyFacts("git push -u origin feat/b", early().run, env);
+    const e = advise("git push -u origin feat/b", state, p);
+    assert.equal(e.rule, "stack-push");
+    assert.match(defined(e.context), /^Stack hint: this branch carries the commits of your open PR #7 \(`feat\/a`\).*gh stack link feat\/a feat\/b.*against `main` will be denied/);
+    assert.equal(advise("git push -u origin feat/b", state, p).rule, undefined);
 });

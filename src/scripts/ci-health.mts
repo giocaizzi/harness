@@ -17,7 +17,7 @@ const DAY = 86400000;
 const SKIPPED =
   "CI health: skipped (gh is not installed or not authenticated).";
 const READING =
-  "How to read each figure: .agents/skills/agent-review/references/reading.md (CI health).";
+  "How to read each figure: docs/agent-review.md (Reading the figures: CI health).";
 
 // Flags compare a repo's current window to its previous one; run time p50 stands in for the critical path.
 export const MIN_RUNS = 5;
