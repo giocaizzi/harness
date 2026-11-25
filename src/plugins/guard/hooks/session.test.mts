@@ -2402,3 +2402,85 @@ void test("stop: the strain check reads its caps and off switch from the given e
     );
   }
 });
+
+// Digest mode and result.checker_sha256: the stop gate verifies the checker's bytes and runs those.
+const sum = (s: string): string => createHash("sha256").update(s).digest("hex");
+const digestEnv = (
+  checker: string,
+  checkerSum: string,
+): Record<string, string> => {
+  const p = join(tmp(), "run.json");
+  const body = JSON.stringify({
+    contract: 3,
+    runner: "acme-runner",
+    requires: ["result-gate"],
+    result: { file: TEMPLATE, checker, checker_sha256: checkerSum },
+  });
+  writeFileSync(p, body);
+  return envFor(p, { AGENT_RUN_MANIFEST_SHA256: sum(body) });
+};
+
+void test("result gate: a checker whose bytes match checker_sha256 runs, in ownership and digest mode", async () => {
+  try {
+    const body = "export const resultErrors = () => ['custom']";
+    const c = checkerFile(body);
+    const owner = envFor(
+      manifest({ file: TEMPLATE, checker: c, checker_sha256: sum(body) }),
+    );
+    for (const env of [owner, digestEnv(c, sum(body))]) {
+      const out = await gate({ cwd: gateRepo(validResult()) }, env);
+      assert.match(
+        out ?? "",
+        /block 1; the registration names a result checker[\s\S]*\ncustom\n/,
+      );
+    }
+  } finally {
+    delete process.env.CLAUDE_PLUGIN_DATA;
+  }
+});
+
+void test("result gate: a checker that does not match checker_sha256 blocks the stop with the reason", async () => {
+  try {
+    const c = checkerFile(passes);
+    const owner = envFor(
+      manifest({ file: TEMPLATE, checker: c, checker_sha256: "0".repeat(64) }),
+    );
+    const out = await gate({ cwd: gateRepo(validResult()) }, owner);
+    assert.match(
+      out ?? "",
+      /^Run registration failed: result\.checker .*sha256 does not match result\.checker_sha256/,
+    );
+    // a checker swapped after the manifest was written: caught by the hash
+    const body = "export const resultErrors = () => []";
+    const swapped = checkerFile(body);
+    const env = digestEnv(swapped, sum(body));
+    writeFileSync(swapped, "export const resultErrors = () => ['evil']");
+    const out2 = await gate({ cwd: gateRepo(validResult()) }, env);
+    assert.match(out2 ?? "", /sha256 does not match result\.checker_sha256/);
+  } finally {
+    delete process.env.CLAUDE_PLUGIN_DATA;
+  }
+});
+
+void test("result gate: a digest-trusted manifest whose checker has no checker_sha256 blocks the stop", async () => {
+  try {
+    const p = join(tmp(), "run.json");
+    const body = JSON.stringify({
+      contract: 3,
+      runner: "acme-runner",
+      requires: ["result-gate"],
+      result: { file: TEMPLATE, checker: checkerFile(passes) },
+    });
+    writeFileSync(p, body);
+    const out = await gate(
+      { cwd: gateRepo(validResult()) },
+      envFor(p, { AGENT_RUN_MANIFEST_SHA256: sum(body) }),
+    );
+    assert.match(
+      out ?? "",
+      /^Run registration failed: result\.checker needs result\.checker_sha256/,
+    );
+  } finally {
+    delete process.env.CLAUDE_PLUGIN_DATA;
+  }
+});

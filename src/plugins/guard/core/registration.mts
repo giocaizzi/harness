@@ -40,7 +40,12 @@ export interface Registration {
   modes?: Mode[];
   protected_paths?: { exempt?: string[]; globs?: string[] };
   requires: Capability[];
-  result?: { checker?: string; file: string; hint?: string };
+  result?: {
+    checker?: string;
+    checker_sha256?: string;
+    file: string;
+    hint?: string;
+  };
   runner: string;
 }
 
@@ -240,7 +245,12 @@ const checkResult = (
     errors.push(`result must be an object, got ${show(v)}`);
     return undefined;
   }
-  unknownKeys(v, ["checker", "file", "hint"], "result", errors);
+  unknownKeys(
+    v,
+    ["checker", "checker_sha256", "file", "hint"],
+    "result",
+    errors,
+  );
   const out: Partial<NonNullable<Registration["result"]>> = {};
   const file = get(v, "file");
   if (!isStr(file)) {
@@ -286,6 +296,16 @@ const checkResult = (
       if (why) errors.push(`result.checker: ${why}, got ${show(checker)}`);
       else out.checker = checker;
     }
+  }
+  const sum = get(v, "checker_sha256");
+  if (sum !== undefined) {
+    if (!isStr(sum) || !/^[0-9a-f]{64}$/.test(sum)) {
+      errors.push(
+        `result.checker_sha256 must be 64 lowercase hex characters, got ${show(sum)}`,
+      );
+    } else if (checker === undefined) {
+      errors.push("result.checker_sha256 is only allowed with result.checker");
+    } else out.checker_sha256 = sum;
   }
   const hint = get(v, "hint");
   if (hint !== undefined) {

@@ -12,6 +12,7 @@ process.env.AGENT_RUN_EVENTS_FILE = "";
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync, } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -136,6 +137,32 @@ void test("contract: a manifest this user can write is refused", () => {
     copyFileSync(subject, copy);
     const loaded = loadRegistration({ AGENT_RUN_MANIFEST: copy, AGENT_RUN_ID: "contract-test-1" }, { dataDir, sessionId: "contract-writable" });
     assert.match(denied(loaded).why, /writable by this user/);
+});
+void test("contract: a manifest in this user's reach is accepted with the right AGENT_RUN_MANIFEST_SHA256 and denied with a wrong one", () => {
+    const body = JSON.stringify({
+        contract: 3,
+        runner: "acme-runner",
+        requires: ["result-gate"],
+        result: { file: "result.json" },
+    });
+    const copy = path.join(dataDir, "digest-manifest.json");
+    writeFileSync(copy, body);
+    const env = (digest) => ({
+        AGENT_RUN_MANIFEST: copy,
+        AGENT_RUN_ID: "contract-test-1",
+        AGENT_RUN_MANIFEST_SHA256: digest,
+    });
+    const right = createHash("sha256").update(body).digest("hex");
+    const ok = loadRegistration(env(right), {
+        dataDir,
+        sessionId: "contract-digest-ok",
+    });
+    assert.equal(ok.state, "registered", JSON.stringify(ok));
+    const wrong = loadRegistration(env("0".repeat(64)), {
+        dataDir,
+        sessionId: "contract-digest-wrong",
+    });
+    assert.match(denied(wrong).why, /sha256 does not match AGENT_RUN_MANIFEST_SHA256/);
 });
 void test("contract: a checker this user can write is refused", () => {
     const checker = path.join(dataDir, "writable-checker.mjs");

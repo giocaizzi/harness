@@ -585,7 +585,11 @@ export async function resultGate(
     const checker: Prepared | null =
       spec.checker === undefined
         ? null
-        : prepareChecker(spec.checker, checkerOpts);
+        : prepareChecker(spec.checker, {
+            ...checkerOpts,
+            trust: ctx.trust,
+            checkerSha256: spec.checker_sha256,
+          });
     const checkerShown = checker?.shown ?? "";
 
     const git = run(
@@ -656,6 +660,7 @@ export async function resultGate(
       errors.push(...couldNotRun(checkerShown, checker.why));
     } else if (checker && parsedOk) {
       const r = await runChecker(checker.path, parsed, checkEnv, {
+        source: checker.source,
         timeoutMs: checkerOpts.timeoutMs,
       });
       errors.push(

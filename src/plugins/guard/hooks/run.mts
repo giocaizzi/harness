@@ -5,6 +5,7 @@
 import type { Mode, Registration } from "../core/registration.mjs";
 import { RULE } from "../core/registration.mjs";
 import type { RunFacts } from "../core/types.mjs";
+import type { Trust } from "./checker.mjs";
 import type { LoadOptions } from "./registration.mjs";
 import { loadRegistration } from "./registration.mjs";
 
@@ -24,6 +25,8 @@ export interface RegisteredRun {
   runId: string;
   sha256: string;
   state: "registered";
+  // how the manifest is trusted: owner (out of the user's reach) or digest (AGENT_RUN_MANIFEST_SHA256)
+  trust: Trust;
   // AGENT_RUN_TICKET, `<owner>/<repo>#<number>`, and its number
   ticket?: string;
   ticketNumber?: string;
@@ -91,6 +94,7 @@ export function runContext(env: Env, opts: LoadOptions = {}): RunContext {
       registration: loaded.registration,
       path: loaded.path,
       sha256: loaded.sha256,
+      trust: loaded.trust,
       ...(loaded.checker === undefined ? {} : { checker: loaded.checker }),
       runId: env.AGENT_RUN_ID ?? "",
       mode: env.AGENT_RUN_MODE === "attended" ? "attended" : "unattended",

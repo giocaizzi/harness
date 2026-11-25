@@ -49,6 +49,7 @@ export function runContext(env, opts = {}) {
             registration: loaded.registration,
             path: loaded.path,
             sha256: loaded.sha256,
+            trust: loaded.trust,
             ...(loaded.checker === undefined ? {} : { checker: loaded.checker }),
             runId: env.AGENT_RUN_ID ?? "",
             mode: env.AGENT_RUN_MODE === "attended" ? "attended" : "unattended",

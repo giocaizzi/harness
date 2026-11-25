@@ -588,3 +588,26 @@ void test("registration: sessionAttrs", () => {
     });
   }
 });
+
+void test("registration: result.checker_sha256 is 64 lowercase hex and needs result.checker", () => {
+  const sum = "a".repeat(64);
+  const ok = validateRegistration(
+    mod((m) => ((m.result as M).checker_sha256 = sum)),
+  );
+  assert.ok("registration" in ok);
+  assert.equal(
+    ok.registration.result?.checker_sha256,
+    sum,
+    "kept on the registration",
+  );
+  for (const v of ["A".repeat(64), "a".repeat(63), "", ` ${sum}`, 7]) {
+    bad(
+      (m) => ((m.result as M).checker_sha256 = v),
+      /^result\.checker_sha256 must be 64 lowercase hex characters, got /,
+    );
+  }
+  bad((m) => {
+    delete (m.result as M).checker;
+    (m.result as M).checker_sha256 = sum;
+  }, /^result\.checker_sha256 is only allowed with result\.checker$/);
+});

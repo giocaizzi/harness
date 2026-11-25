@@ -457,7 +457,11 @@ export async function resultGate(input, run = defaultSyncRunner, env = process.e
         // Resolved once, before the result is read.
         const checker = spec.checker === undefined
             ? null
-            : prepareChecker(spec.checker, checkerOpts);
+            : prepareChecker(spec.checker, {
+                ...checkerOpts,
+                trust: ctx.trust,
+                checkerSha256: spec.checker_sha256,
+            });
         const checkerShown = checker?.shown ?? "";
         const git = run("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], { cwd, encoding: "utf8", windowsHide: true });
         if (git.status !== 0 || !git.stdout.trim()) {
@@ -524,6 +528,7 @@ export async function resultGate(input, run = defaultSyncRunner, env = process.e
         }
         else if (checker && parsedOk) {
             const r = await runChecker(checker.path, parsed, checkEnv, {
+                source: checker.source,
                 timeoutMs: checkerOpts.timeoutMs,
             });
             errors.push(...("errors" in r ? r.errors : couldNotRun(checkerShown, r.why)));
