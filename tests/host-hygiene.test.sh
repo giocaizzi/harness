@@ -421,4 +421,89 @@ codes=$codes$(msweep --marketplace 2>/dev/null; echo $?)$("$sweep" --marketplace
 check "an empty, path-like, option-like or missing marketplace, or one without --plugins, is a usage error" "$codes" 2222222222
 { kill_tree "$pbusy" "$pargv"; wait "$pbusy" "$pargv"; } 2>/dev/null
 
+# Weight classes: heavy.sh --classify through the built-in table, then a repo's .heavy-weights.
+classify() { "$heavy" --classify "$@"; }
+check "classify: go vet of a package is light" "$(classify go vet ./internal/x | cut -d: -f1)" "light builtin"
+check "classify: go vet ./... is medium" "$(classify go vet ./... | cut -d' ' -f1)" medium
+check "classify: go test ./... is heavy" "$(classify go test ./... | cut -d' ' -f1)" heavy
+check "classify: go test -race of a package is medium" "$(classify go test -race ./pkg | cut -d' ' -f1)" medium
+check "classify: go test of a subtree is medium" "$(classify go test ./pkg/... | cut -d' ' -f1)" medium
+check "classify: git status is light" "$(classify git status | cut -d' ' -f1)" light
+check "classify: git gc is heavy" "$(classify git gc | cut -d' ' -f1)" heavy
+check "classify: an unknown command is heavy by default" "$(classify make check)" "heavy default"
+check "classify takes -- and runs nothing" "$(classify -- touch "$tmp/ran-classify")$([ -e "$tmp/ran-classify" ] && echo ran)" "heavy default"
+
+repo=$tmp/repo
+mkdir -p "$repo" && git -C "$repo" init -q 2>/dev/null
+printf '%s\n' '# overrides' '' 'light make lint*' 'bogus make nope*' 'heavy go vet*' 'medium sh -c*  ' >"$repo/.heavy-weights"
+rclassify() { (cd "$repo" && "$heavy" --classify "$@"); }
+check "repo rule wins over the built-in table, with its line as source" "$(rclassify go vet ./x 2>/dev/null)" "heavy repo:5"
+check "repo rule, trailing space trimmed" "$(rclassify sh -c 'echo hi' 2>/dev/null)" "medium repo:6"
+check "repo rule, a command only the repo names" "$(rclassify make lint 2>/dev/null)" "light repo:3"
+check "an unknown class warns once and is skipped" "$(rclassify make nope 2>&1 | head -n 1)" "host: ignoring $repo/.heavy-weights:4: unknown class 'bogus'"
+check "a command no repo rule matches falls to the built-in table" "$(rclassify git status 2>/dev/null)" "light builtin:22"
+
+# Light: no slot, no queue place, even while the heavy slot is held; refused only past the critical load cap.
+sleep 5 & holder=$!
+mkdir -p "$L/heavy.lock.1"; echo "$holder" >"$L/heavy.lock.1/pid"
+HOST_LOCK_TIMEOUT_SECONDS=3 "$heavy" git --version >/dev/null 2>"$tmp/err"
+check "light runs while the heavy slots are full: no wait, no lock" \
+  "$?:$(count "$L"/medium.lock.* "$L"/*.wait.*):$(count "$L"/heavy.lock.*):$(grep -c 'host:' "$tmp/err")" "0:0:1:0"
+# Medium has its own pool: the full heavy slot does not hold it.
+(cd "$repo" && HOST_LOCK_TIMEOUT_SECONDS=3 "$heavy" sh -c "touch '$tmp/medium-ran'" 2>/dev/null)
+check "medium runs while the heavy slots are full" "$?:$([ -e "$tmp/medium-ran" ] && echo ran):$(count "$L"/medium.lock.*)" "0:ran:0"
+{ kill "$holder"; wait "$holder"; } 2>/dev/null; rm -rf "$L"/heavy.lock.*
+
+rm -f "$tmp/log"
+(cd "$repo" && HOST_MEDIUM_SLOTS=1 "$heavy" sh -c "echo start >>'$tmp/log'; sleep 1; echo end >>'$tmp/log'" 2>/dev/null) &
+sleep 0.3
+(cd "$repo" && HOST_MEDIUM_SLOTS=1 "$heavy" sh -c "echo start >>'$tmp/log'; echo end >>'$tmp/log'" 2>/dev/null)
+wait
+check "HOST_MEDIUM_SLOTS=1: medium runs serialize" "$(tr '\n' ' ' <"$tmp/log")" "start end start end "
+(cd "$repo" && "$heavy" sh -c "sleep 2" 2>/dev/null) & sleep 0.5
+check "--status shows medium slots and both caps" \
+  "$("$heavy" --status | grep -c -e '^medium slot 1: pid .* sh -c sleep 2 (load cap 200000, 4 slots, [0-9]*s)' -e '^load .* (cap 100000, critical 200000), slots 1, medium slots 4$')" 2
+wait
+
+HOST_CRITICAL_LOAD_CAP=-1 HOST_LOCK_TIMEOUT_SECONDS=1 HOST_POLL_SECONDS=1 "$heavy" git --version >/dev/null 2>"$tmp/err"
+check "light waits on the critical cap, then times out" "$?" 124
+check "the critical wait line names the cap and the class" "$(grep -c '^host: waiting for load .* to drop under -1 (HOST_CRITICAL_LOAD_CAP, light)$' "$tmp/err")" 1
+check "a light timeout says it gave up" "$(grep -c '^host: gave up waiting for load to drop under -1 after 1s$' "$tmp/err")" 1
+(cd "$repo" && HOST_CRITICAL_LOAD_CAP=-1 HOST_LOCK_TIMEOUT_SECONDS=1 HOST_POLL_SECONDS=1 "$heavy" sh -c true 2>"$tmp/err")
+check "a medium load wait names its class" "$(grep -c '(HOST_CRITICAL_LOAD_CAP, medium)$' "$tmp/err")" 1
+
+# Slot wait message, waited line and the metrics file.
+sleep 5 & holder=$!
+mkdir -p "$L/heavy.lock.1"; echo "$holder" >"$L/heavy.lock.1/pid"; echo "me make test" >"$L/heavy.lock.1/cmd"
+HOST_LOCK_TIMEOUT_SECONDS=1 "$heavy" true 2>"$tmp/err"
+check "the slot wait names the position, the busy slots and the holder" \
+  "$(grep -c '^host: waiting for a heavy slot: position 1 in queue, 1/1 slots busy (me make test [0-9]*s)$' "$tmp/err")" 1
+check "a slot timeout says which pool" "$(grep -c '^host: gave up waiting for a heavy slot after 1s$' "$tmp/err")" 1
+{ kill "$holder"; wait "$holder"; } 2>/dev/null; rm -rf "$L"/heavy.lock.*
+
+mf=$tmp/metrics/m.log
+HOST_METRICS_FILE=$mf "$heavy" sleep 2 2>/dev/null & sleep 0.5
+HOST_METRICS_FILE=$mf HOST_POLL_SECONDS=1 "$heavy" sh -c 'echo SECRET-ARG; exit 4' >/dev/null 2>"$tmp/err"
+wait
+check "a call that waited reports it" "$(grep -c '^host: waited [0-9]*s (slot) for a heavy slot$' "$tmp/err")" 1
+line=$(grep 'cmd="sh -c"' "$mf")
+check "metrics line: every field, in order" "$(echo "$line" | grep -Ec '^ts=[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z weight=heavy source=default waited_s=[0-9]+ wait=slot ran_s=[0-9]+ exit=4 owner=[^ ]+ cmd="sh -c"$')" 1
+check "metrics log only the first two words" "$(grep -c SECRET-ARG "$mf")" 0
+HOST_METRICS_FILE=$mf "$heavy" git --version >/dev/null
+check "metrics line for a light call, and for a timeout" \
+  "$(grep -c 'weight=light source=builtin:[0-9]* waited_s=0 wait=none .* exit=0 ' "$mf")$(HOST_METRICS_FILE=$mf HOST_LOAD_CAP=-1 HOST_LOCK_TIMEOUT_SECONDS=0 "$heavy" true 2>/dev/null; grep -c 'wait=load ran_s=0 exit=124 ' "$mf")" 11
+HOST_METRICS_FILE=/dev/null/nope/m.log "$heavy" sh -c 'exit 5' 2>/dev/null
+check "a metrics write failure never changes the exit code" "$?" 5
+
+# Orphan cleanup: a failed command's child in its own process group is stopped, a successful command's is kept.
+rm -f "$tmp/orphan"
+"$heavy" sh -c "set -m; sleep 30 & echo \$! >'$tmp/orphan'; sleep 3; exit 3" 2>"$tmp/err"
+check "failed command: exit code kept, the left-behind process reported" "$?:$(grep -c '^host: stopped 1 processes the command left behind$' "$tmp/err")" "3:1"
+check "failed command: the child in its own group is gone" "$(ps -o stat= -p "$(cat "$tmp/orphan")" | grep -v Z | sed 's/.*/alive/')" ""
+check "the descendant record is removed" "$(count "$L"/heavy.tree.*)" 0
+kill "$(cat "$tmp/orphan")" 2>/dev/null
+"$heavy" sh -c "set -m; sleep 30 & echo \$! >'$tmp/orphan'; sleep 3; exit 0" 2>"$tmp/err"
+check "successful command: nothing stopped, the child survives" "$?:$(grep -c 'stopped' "$tmp/err"):$(ps -o stat= -p "$(cat "$tmp/orphan")" | grep -v Z | sed 's/.*/alive/')" "0:0:alive"
+kill "$(cat "$tmp/orphan")" 2>/dev/null
+
 exit "$fails"
