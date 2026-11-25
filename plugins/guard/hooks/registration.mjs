@@ -9,7 +9,7 @@ import path from "node:path";
 import { DEFAULT_PROTECTED_LIMITS } from "../core/constants.mjs";
 import { MAX_MANIFEST_BYTES, parseRegistration, RULE, runEnvErrors, } from "../core/registration.mjs";
 import { rawPath } from "../core/result.mjs";
-import { vetTrustedFile } from "./checker.mjs";
+import { prepareChecker, vetTrustedFile } from "./checker.mjs";
 import { appendDataFile, readDataFileStrict } from "./data.mjs";
 import { scrub } from "./telemetry.mjs";
 const PIN_MAX_BYTES = 65536;
@@ -77,7 +77,10 @@ export function loadRegistration(env, opts = {}) {
     try {
         const platform = opts.platform ?? process.platform;
         const pathApi = platform === "win32" ? path.win32 : path;
-        const vetOpts = { platform, ...opts.vet };
+        // AGENT_RUN_MANIFEST_SHA256 unset: ownership; set (even empty): the manifest's bytes must hash to it
+        const digest = env.AGENT_RUN_MANIFEST_SHA256;
+        const trust = digest === undefined ? "owner" : "digest";
+        const vetOpts = { platform, ...opts.vet, trust };
         const m = env.AGENT_RUN_MANIFEST;
         const idSet = (env.AGENT_RUN_ID ?? "").trim() !== "";
         if (m === undefined && !idSet)
@@ -94,6 +97,9 @@ export function loadRegistration(env, opts = {}) {
             return deny("AGENT_RUN_MANIFEST names more than one path");
         }
         const at = `manifest ${rawPath(m)} (AGENT_RUN_MANIFEST)`;
+        if (digest !== undefined && !SHA.test(digest)) {
+            return deny(`AGENT_RUN_MANIFEST_SHA256 must be 64 lowercase hex characters, got ${JSON.stringify(digest.length > 200 ? `${digest.slice(0, 200)}…` : digest)}`);
+        }
         const vet = vetTrustedFile(m, ".json", vetOpts);
         if (!("path" in vet))
             return deny(`${at}: ${vet.why}`);
@@ -112,6 +118,9 @@ export function loadRegistration(env, opts = {}) {
             if (!bytes)
                 return deny(`${at}: too large (over 64 KiB)`);
             sha256 = createHash("sha256").update(bytes).digest("hex");
+            if (digest !== undefined && sha256 !== digest) {
+                return deny(`${at}: sha256 does not match AGENT_RUN_MANIFEST_SHA256`);
+            }
             const key = `${real}\0${sha256}`;
             const hit = opts.cache?.entry;
             if (hit?.key === key) {
@@ -137,7 +146,14 @@ export function loadRegistration(env, opts = {}) {
         let checker;
         const rawChecker = registration.result?.checker;
         if (rawChecker !== undefined) {
-            const c = vetTrustedFile(rawChecker, ".mjs", vetOpts);
+            if (trust === "digest" &&
+                registration.result?.checker_sha256 === undefined) {
+                return deny("result.checker needs result.checker_sha256 when the manifest is trusted by AGENT_RUN_MANIFEST_SHA256");
+            }
+            const c = prepareChecker(rawChecker, {
+                ...vetOpts,
+                checkerSha256: registration.result?.checker_sha256,
+            });
             if (!("path" in c)) {
                 return deny(`result.checker ${rawPath(rawChecker)} (AGENT_RUN_MANIFEST): ${c.why}`);
             }
@@ -196,6 +212,7 @@ export function loadRegistration(env, opts = {}) {
             registration,
             path: real,
             sha256,
+            trust,
             ...(checker === undefined ? {} : { checker }),
         };
     }

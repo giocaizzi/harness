@@ -171,7 +171,7 @@ const checkResult = (v, limits, pathApi, errors) => {
         errors.push(`result must be an object, got ${show(v)}`);
         return undefined;
     }
-    unknownKeys(v, ["checker", "file", "hint"], "result", errors);
+    unknownKeys(v, ["checker", "checker_sha256", "file", "hint"], "result", errors);
     const out = {};
     const file = get(v, "file");
     if (!isStr(file)) {
@@ -219,6 +219,17 @@ const checkResult = (v, limits, pathApi, errors) => {
             else
                 out.checker = checker;
         }
+    }
+    const sum = get(v, "checker_sha256");
+    if (sum !== undefined) {
+        if (!isStr(sum) || !/^[0-9a-f]{64}$/.test(sum)) {
+            errors.push(`result.checker_sha256 must be 64 lowercase hex characters, got ${show(sum)}`);
+        }
+        else if (checker === undefined) {
+            errors.push("result.checker_sha256 is only allowed with result.checker");
+        }
+        else
+            out.checker_sha256 = sum;
     }
     const hint = get(v, "hint");
     if (hint !== undefined) {

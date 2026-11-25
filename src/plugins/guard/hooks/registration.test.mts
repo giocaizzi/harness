@@ -540,3 +540,118 @@ void test(
     assert.match(why, /writable by this user \(the file\)/);
   },
 );
+
+// Digest mode: AGENT_RUN_MANIFEST_SHA256 set. The manifest is trusted by its bytes, not by who owns it.
+
+void test("registration: with the right digest a manifest the user owns and can write is accepted", () => {
+  const m = manifest();
+  const r = loadRegistration(
+    envFor(m, { AGENT_RUN_MANIFEST_SHA256: sha(MANIFEST) }),
+  );
+  assert.equal(r.state, "registered", JSON.stringify(r));
+  assert.equal((r as { trust: string }).trust, "digest");
+});
+
+void test(
+  "posix registration: ownership mode is unchanged, an owned writable manifest is refused without the digest",
+  posixOnly,
+  () => {
+    const m = manifest();
+    assert.match(denyWhy(loadRegistration(envFor(m))), /writable by this user/);
+    const out = loadRegistration(envFor(m), { vet: ro });
+    assert.equal(out.state, "registered");
+    assert.equal((out as { trust: string }).trust, "owner");
+  },
+);
+
+void test("registration: a digest that does not match denies", () => {
+  const m = manifest();
+  const why = denyWhy(
+    loadRegistration(envFor(m, { AGENT_RUN_MANIFEST_SHA256: sha("other") })),
+  );
+  assert.match(
+    why,
+    /^manifest .*\(AGENT_RUN_MANIFEST\): sha256 does not match AGENT_RUN_MANIFEST_SHA256$/,
+  );
+});
+
+void test("registration: a manifest changed after launch no longer matches its digest", () => {
+  const m = manifest();
+  const launched = sha(MANIFEST);
+  writeFileSync(m, MANIFEST.replace("acme-runner", "evil-runner"));
+  assert.match(
+    denyWhy(
+      loadRegistration(envFor(m, { AGENT_RUN_MANIFEST_SHA256: launched })),
+    ),
+    /sha256 does not match AGENT_RUN_MANIFEST_SHA256/,
+  );
+});
+
+void test("registration: a malformed digest denies, uppercase, short, empty, padded or long", () => {
+  const m = manifest();
+  const good = sha(MANIFEST);
+  for (const value of [
+    good.toUpperCase(),
+    good.slice(1),
+    "",
+    ` ${good}`,
+    `${good}\n`,
+    good.repeat(10),
+  ]) {
+    const why = denyWhy(
+      loadRegistration(envFor(m, { AGENT_RUN_MANIFEST_SHA256: value })),
+    );
+    assert.match(
+      why,
+      /^AGENT_RUN_MANIFEST_SHA256 must be 64 lowercase hex characters, got /,
+    );
+    assert.ok(why.length < 400, "the offending value is cut");
+  }
+});
+
+void test("registration: a digest-trusted manifest with a checker needs result.checker_sha256", () => {
+  const checker = fresh("c.mjs");
+  writeFileSync(checker, "export const resultErrors = () => [];");
+  const body = JSON.stringify({
+    ...JSON.parse(MANIFEST),
+    result: { file: "r.json", checker },
+  });
+  const m = manifest(body);
+  assert.match(
+    denyWhy(
+      loadRegistration(envFor(m, { AGENT_RUN_MANIFEST_SHA256: sha(body) })),
+    ),
+    /^result\.checker needs result\.checker_sha256 when the manifest is trusted by AGENT_RUN_MANIFEST_SHA256$/,
+  );
+});
+
+void test("registration: result.checker_sha256 must match the checker's bytes, in both modes", () => {
+  const src = "export const resultErrors = () => [];";
+  const checker = fresh("c.mjs");
+  writeFileSync(checker, src);
+  const withSum = (s: string): string =>
+    JSON.stringify({
+      ...JSON.parse(MANIFEST),
+      result: { file: "r.json", checker, checker_sha256: s },
+    });
+  const goodBody = withSum(sha(src));
+  const good = manifest(goodBody);
+  const d = loadRegistration(
+    envFor(good, { AGENT_RUN_MANIFEST_SHA256: sha(goodBody) }),
+  );
+  assert.equal(d.state, "registered", JSON.stringify(d));
+  // ownership mode: the checker is also vetted for reach, and the hash adds a check
+  const o = loadRegistration(envFor(good), { vet: ro });
+  assert.equal(o.state, "registered", JSON.stringify(o));
+  const badBody = withSum(sha("other"));
+  const badM = manifest(badBody);
+  for (const r of [
+    loadRegistration(envFor(badM, { AGENT_RUN_MANIFEST_SHA256: sha(badBody) })),
+    loadRegistration(envFor(badM), { vet: ro }),
+  ]) {
+    assert.match(
+      denyWhy(r),
+      /^result\.checker .*\(AGENT_RUN_MANIFEST\): sha256 does not match result\.checker_sha256$/,
+    );
+  }
+});
