@@ -3817,10 +3817,16 @@ const fakeBatch = (world = {}, calls = []) => (argv) => {
         return "origin/main\n";
     if (line === "git rev-parse --show-toplevel")
         return "/r\n";
+    if (argv[1] === "merge-base" && argv[2] === "--is-ancestor") {
+        const head = defined(argv[3]).replace("origin/", "");
+        return argv[4] === "HEAD" && world.below?.includes(head) ? "" : null;
+    }
     if (argv[1] === "merge-base")
         return "base\n";
-    if (argv[1] === "diff")
-        return world.changed ?? "src/a.ts\n";
+    if (argv[1] === "diff") {
+        const from = defined(argv[3]).split("..")[0] ?? "";
+        return world.diffs?.[from] ?? world.changed ?? "src/a.ts\n";
+    }
     if (argv[1] === "worktree")
         return world.trees ?? "worktree /r\nbranch refs/heads/feat/new\n";
     if (argv[0] === "gh")
@@ -3855,6 +3861,48 @@ void test("pr-batch: a file shared with another open PR of yours denies, listing
             prs: [pr(7, "feat/old", "src/a.ts")],
             changed: "src/a.ts\n",
         })).action, "deny", c);
+});
+void test("pr-batch: a stack layer needs no Split-Reason: the layer below is no overlap and own files are diffed from it", async () => {
+    const layer = {
+        below: ["feat/a"],
+        changed: "src/a.ts\nsrc/b.ts\n",
+        diffs: { "origin/feat/a": "src/b.ts\n" },
+    };
+    const d = await batch("gh pr create --base feat/a --fill", {
+        ...layer,
+        prs: [pr(7, "feat/a", "src/a.ts", "src/b.ts")],
+    });
+    assert.equal(d.action, "allow");
+    assert.equal(d.rule, undefined);
+    // A third PR (not below) on the layer's own file still denies.
+    const third = await batch("gh pr create --base feat/a --fill", {
+        ...layer,
+        prs: [pr(7, "feat/a", "src/a.ts"), pr(8, "feat/c", "src/b.ts")],
+    });
+    assert.equal(third.action, "deny");
+    assert.equal(third.rule, "pr-batch");
+    assert.deepEqual(third.attrs, { reason: "none" });
+    assert.match(defined(third.reason), /PR #8/);
+    assert.match(defined(third.reason), /stack layer: rebuild it on `feat\/c` and open it with `gh pr create --base feat\/c` \(no Split-Reason needed\)/);
+    // A file changed only in the layer below does not count against a third PR.
+    assert.equal((await batch("gh pr create --base feat/a --fill", {
+        ...layer,
+        prs: [pr(7, "feat/a", "src/a.ts"), pr(8, "feat/c", "src/a.ts")],
+    })).action, "allow");
+    // gh stack submit from the top layer, the lower layers open.
+    assert.equal((await batch("gh stack submit", {
+        below: ["feat/a", "feat/m"],
+        changed: "src/a.ts\nsrc/m.ts\nsrc/t.ts\n",
+        diffs: {
+            "origin/feat/a": "src/m.ts\nsrc/t.ts\n",
+            "origin/feat/m": "src/t.ts\n",
+        },
+        prs: [pr(7, "feat/a", "src/a.ts"), pr(8, "feat/m", "src/m.ts")],
+    })).action, "allow");
+    // A PR that is not an ancestor stays an overlap.
+    assert.equal((await batch("gh pr create --fill", {
+        prs: [pr(7, "feat/a", "src/a.ts")],
+    })).rule, "pr-batch");
 });
 void test("pr-batch: lockfiles, CHANGELOG and plugin manifests never count; no overlap, bot branches, the own branch and read errors pass", async () => {
     const shared = [
