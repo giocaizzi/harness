@@ -395,6 +395,25 @@ void test("a closed-unmerged PR replaced by a new one is superseded, not overlap
   assert.match(report(g, "30d"), /Superseded pairs[^\n]*\| 1 \|/);
 });
 
+// Strict x-failure: `gh stack link` retargets an open PR from the default branch onto the layer below, so its first
+// base is the default branch and only the current base names the chain. Chains must link on every base the PR had.
+void test("xfail: a PR retargeted onto the layer below pairs with it as stacked", () => {
+  const a = pr({ head: "a", paths: ["f"], created: t("01") });
+  const b = pr({
+    head: "b",
+    base: "a",
+    prevBases: ["main"],
+    paths: ["f"],
+    created: t("02"),
+  });
+  const g = graph([a, b], NOW);
+  const holds = g.stackedPairs === 1 && g.overlapPairs === 0;
+  assert.ok(
+    !holds,
+    "XPASS: retargeted-onto-a-layer pairs now count as stacked; drop the xfail",
+  );
+});
+
 void test("headline share and clusters come from refined pairs", () => {
   const open = { created: t("01") };
   const list = [

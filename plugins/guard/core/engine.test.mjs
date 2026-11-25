@@ -3904,6 +3904,35 @@ void test("pr-batch: a stack layer needs no Split-Reason: the layer below is no 
         prs: [pr(7, "feat/a", "src/a.ts")],
     })).rule, "pr-batch");
 });
+// Strict x-failure: passes while the body throws (the open bug), fails once the body passes, so the fix drops the
+// wrapper and keeps the body as a plain test.
+const xfail = (name, body) => test(`xfail: ${name}`, async () => {
+    try {
+        await body();
+    }
+    catch {
+        return;
+    }
+    assert.fail(`XPASS: ${name}; drop the xfail wrapper`);
+});
+// The layer-below exemption must depend on the create's base: only a base that already holds the PR below keeps its
+// commits out of the new PR. Against the default branch (stack facts off with GUARD_STACK_HINT, timed out, or past
+// their 10-PR cap) or an unrelated branch, the new PR carries #7's files and pr-batch must still deny.
+for (const command of [
+    "gh pr create --fill",
+    "gh pr create --base main --fill",
+    "gh pr create --base feat/unrelated --fill",
+])
+    void xfail(`pr-batch: \`${command}\` on a branch built on #7 still overlaps #7`, async () => {
+        const d = await batch(command, {
+            below: ["feat/a"],
+            changed: "src/a.ts\nsrc/b.ts\n",
+            diffs: { "origin/feat/a": "src/b.ts\n" },
+            prs: [pr(7, "feat/a", "src/a.ts")],
+        });
+        assert.equal(d.rule, "pr-batch");
+        assert.match(defined(d.reason), /PR #7/);
+    });
 void test("pr-batch: lockfiles, CHANGELOG and plugin manifests never count; no overlap, bot branches, the own branch and read errors pass", async () => {
     const shared = [
         "package-lock.json",
