@@ -1,6 +1,6 @@
 # Usage guide
 
-Every feature this marketplace ships, how to call it and how to tune it. New here: [quickstart.md](quickstart.md). Install and update: [install.md](install.md). What each harness supports and why: [compatibility.md](compatibility.md). Internals of each plugin: [guard.md](guard.md), [hud.md](hud.md), [sounds.md](sounds.md).
+Every feature this marketplace ships, how to call it and how to tune it. New here: [quickstart.md](quickstart.md). Install and update: [install.md](install.md). What each harness supports and why: [compatibility.md](compatibility.md). Internals of each plugin: [guard.md](guard.md) (what it writes: [guard-events.md](guard-events.md)), [hud.md](hud.md), [sounds.md](sounds.md).
 
 ## How you call things
 
