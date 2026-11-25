@@ -304,6 +304,8 @@ A runner MUST refuse to start unless `enforced` is true, `contract` equals the c
 | `guard`, `contract`, `root` | The guard version, the run contract, the absolute plugin root of the copy that answered. |
 | `harnesses.<name>` | `claude-code`, `copilot-cli`, `vscode-copilot` (the same hooks), `codex-cli`, `antigravity`: `{"kind": "command", "hooks": {<Event>: [{"matcher"?, "argv", "timeout"?}]}}`, one entry per command. `opencode`, `pi`: `{"kind": "module", "module": "<absolute path>"}`. |
 | `env.run` | The `AGENT_RUN_*` variables a launcher sets for a registered run. |
+| `env.switches` | The switches a launcher may set: `GUARD_RULES` ([Rule toggles](#rule-toggles)) and the older single switches it layers over. |
+| `rules` | Each rule id of [Rule toggles](#rule-toggles) and whether it runs in the environment the probe ran in (`GUARD_RULES` and the older switches; a registered run's floor is not applied here). Run the probe with the run's environment to see what the run gets. |
 
 `argv` is an argument vector: it needs no shell and no `${CLAUDE_PLUGIN_ROOT}` (the paths are absolute), and `timeout` is in seconds. An orchestrator reads the descriptor from the installed copy it will run, instead of embedding a copy of `hooks.json` or versioned paths. A hook command that is not `node "<path>" plain args` makes `--describe` fail, and a test checks that every shipped command parses.
 

@@ -6,6 +6,8 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { CONTRACT } from "../core/registration.mjs";
+import type { RuleSet } from "../core/toggles.mjs";
+import { effectiveRules } from "../core/toggles.mjs";
 import { guardVersion } from "./contract.mjs";
 
 // The descriptor's own schema version: additions are minor, a changed meaning bumps it.
@@ -23,6 +25,19 @@ export const RUN_ENV = [
   "AGENT_RUN_PROTECTED_PATHS",
 ];
 
+// The switches a launcher may set: GUARD_RULES, the one rule surface, and the older single switches it layers over.
+export const SWITCH_ENV = [
+  "GUARD_RULES",
+  "GUARD_HOST_CHECK",
+  "GUARD_PUSH_SCAN",
+  "GUARD_STACK_HINT",
+  "GUARD_LIFECYCLE",
+  "GUARD_STOP_CHECK",
+  "GUARD_RESULT_GATE",
+  "GUARD_UNATTENDED",
+  "GUARD_OTEL",
+];
+
 const PLUGIN_ROOT_VAR = "${CLAUDE_PLUGIN_ROOT}";
 
 export interface HookEntry {
@@ -35,13 +50,15 @@ export type HookMap = Record<string, HookEntry[]>;
 export interface Descriptor {
   contract: typeof CONTRACT;
   descriptor: typeof DESCRIPTOR;
-  env: { run: string[] };
+  env: { run: string[]; switches: string[] };
   guard: string;
   harnesses: Record<
     string,
     { hooks: HookMap; kind: "command" } | { kind: "module"; module: string }
   >;
   root: string;
+  // the effective rule toggles in the environment the probe ran in (no run floor)
+  rules: RuleSet;
 }
 
 // The Antigravity hooks `scripts/install.mjs` writes under "giocaizzi-guard", for a guard installed at `root`.
@@ -121,6 +138,7 @@ export function buildDescriptor(
   root: string,
   read: (relative: string) => string,
   version: string,
+  env: Readonly<Record<string, string | undefined>> = {},
 ): Descriptor {
   const hooksOf = (file: string): unknown =>
     (JSON.parse(read(file)) as { hooks?: unknown }).hooks;
@@ -148,7 +166,8 @@ export function buildDescriptor(
       opencode: { kind: "module", module: join(root, "hooks", "opencode.mjs") },
       pi: { kind: "module", module: join(root, "hooks", "pi.mjs") },
     },
-    env: { run: [...RUN_ENV] },
+    env: { run: [...RUN_ENV], switches: [...SWITCH_ENV] },
+    rules: effectiveRules(env),
   };
 }
 
@@ -161,5 +180,6 @@ export function describeInstalled(
     root,
     (relative) => readFileSync(join(root, relative), "utf8"),
     guardVersion(root),
+    process.env,
   );
 }
