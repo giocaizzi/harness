@@ -62,7 +62,7 @@ Along the way `guard` steps in:
 - `git commit -m "fixed stuff"` is denied: the subject must be a Conventional Commit (`fix: ...`).
 - The first `git commit` or `gh pr create` of a session is denied once until the agent loads the matching skill, so it follows the rules.
 - `rm -rf build`, `git push --force` and `git reset --hard` ask you first, showing what they would touch.
-- Before the agent stops, `make check` runs if the repo changed; a failure sends it back to fix.
+- Before the agent stops, `make check-fast` (when the Makefile defines it) or `make check` runs if the repo changed; a failure sends it back to fix.
 
 ## 5. Ask for an agent
 

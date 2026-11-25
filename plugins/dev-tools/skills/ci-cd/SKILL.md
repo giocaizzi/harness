@@ -42,7 +42,7 @@ Anything else with shared state (Terraform state, a release, a database migratio
 ## Doing less work
 
 - **One full run per tree.** Count every time the same commit is tested (change request, queue, mainline push, nightly) and drop the repeats the gate already covers. Whatever must see the landed commit stays: secret scan, release, deploy.
-- **Two tiers.** Light checks on every change-request push (lint, the touched packages' tests); the slow suites (integration, end-to-end, full matrix) where the merge is gated, plus nightly. The trade-off is a later signal: record it in the change that moves a suite.
+- **Two tiers.** Light checks on every change-request push (lint, the touched packages' tests); the slow suites (integration, end-to-end, full matrix) where the merge is gated, plus nightly. The trade-off is a later signal: record it in the change that moves a suite. Locally an agent runs only the fast gate (`repo-standard`, Local gate), never the slow suites.
 - **Change detection at the job level.** A detection job computes what changed; heavy jobs skip on its output; one aggregate gate job always runs and accepts a skip only when detection said "not needed". Detection fails closed (an unknown diff means run everything), and gate and mainline runs run everything.
 - **Caches** are keyed on the lockfile hash, toolchain version and OS; restored by every run, written only by trusted mainline or scheduled runs; never hold a secret. Cache what is expensive to make and cheap to restore (dependency downloads, compiler caches, image layers: `docker` skill), and watch the hit rate.
 - **Fewer runs.** Push a review round as one commit, batch dependency updates weekly, skip CI on draft changes.
