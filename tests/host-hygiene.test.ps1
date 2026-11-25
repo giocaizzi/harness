@@ -183,6 +183,21 @@ try { Enter-HostSlot job; Set-Content $env:TEST_GOT (Get-Date).ToString('o') } f
     Test-Equal -Name 'classify: git gc is heavy' -Got (Get-Class 'git', 'gc') -Want 'heavy builtin:N'
     Test-Equal -Name 'classify: an unknown command is heavy by default' -Got (Get-Class 'make', 'check') -Want 'heavy default'
     Test-Equal -Name 'classify runs nothing' -Got (Test-Path (Join-Path $tmp 'ran')) -Want $false
+    Test-Equal -Name 'classify: ruff check is light' -Got (Get-Class 'ruff', 'check', '.') -Want 'light builtin:N'
+    Test-Equal -Name 'classify: uv run ruff format --check is light' -Got (Get-Class 'uv', 'run', 'ruff', 'format', '--check', '.') -Want 'light builtin:N'
+    Test-Equal -Name 'classify: uv run mypy is medium' -Got (Get-Class 'uv', 'run', 'mypy') -Want 'medium builtin:N'
+    Test-Equal -Name 'classify: targeted uv run pytest is medium' -Got (Get-Class 'uv', 'run', 'pytest', 'tests/test_foo.py') -Want 'medium builtin:N'
+    Test-Equal -Name 'classify: uv run pytest -n auto is heavy' -Got (Get-Class 'uv', 'run', 'pytest', '-n', 'auto', 'tests/test_foo.py') -Want 'heavy builtin:N'
+    Test-Equal -Name 'classify: whole-suite uv run pytest is heavy' -Got (Get-Class 'uv', 'run', 'pytest') -Want 'heavy default'
+    Test-Equal -Name 'classify: npx prettier --check is light' -Got (Get-Class 'npx', 'prettier', '--check', '.') -Want 'light builtin:N'
+    Test-Equal -Name 'classify: pnpm exec eslint is medium' -Got (Get-Class 'pnpm', 'exec', 'eslint', '.') -Want 'medium builtin:N'
+    Test-Equal -Name 'classify: npx tsc --noEmit is medium' -Got (Get-Class 'npx', 'tsc', '--noEmit') -Want 'medium builtin:N'
+    Test-Equal -Name 'classify: targeted node --test is medium' -Got (Get-Class 'node', '--test', 'a.test.mjs') -Want 'medium builtin:N'
+    Test-Equal -Name 'classify: multi-file node --test is heavy' -Got (Get-Class 'node', '--test', 'a.test.mjs', 'b.test.mjs') -Want 'heavy builtin:N'
+    Test-Equal -Name 'classify: targeted pnpm vitest run is medium' -Got (Get-Class 'pnpm', 'vitest', 'run', 'src/a.test.ts') -Want 'medium builtin:N'
+    Test-Equal -Name 'classify: npx vitest run --coverage is heavy' -Got (Get-Class 'npx', 'vitest', 'run', '--coverage', 'src/a.test.ts') -Want 'heavy builtin:N'
+    Test-Equal -Name 'classify: integration jest is heavy' -Got (Get-Class 'npx', 'jest', '--config', 'jest.integration.config.js', 'a.test.ts') -Want 'heavy builtin:N'
+    Test-Equal -Name 'classify: pnpm run lint is heavy' -Got (Get-Class 'pnpm', 'run', 'lint') -Want 'heavy default'
 
     $repo = Join-Path $tmp 'repo'
     New-Item -ItemType Directory -Path $repo | Out-Null

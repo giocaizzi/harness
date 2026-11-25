@@ -12,9 +12,9 @@ Status: implemented in this PR; open questions pending. Owner skill: `dev-tools`
 
 | Class | Admission | Examples (built-in table) |
 |---|---|---|
-| `light` | No slot, no queue. Refused below the disk floor; waits only while load is over the critical cap. | `go build`/`go vet`/`go test` of named packages without `-race`, `gofmt`, `shellcheck`, `actionlint`, `hadolint`, `git` (not `gc`/`repack`/`fsck`), `gh` |
-| `medium` | Its own pool of `HOST_MEDIUM_SLOTS` (4) slots and its own FIFO queue; waits while load is over the critical cap. | whole-module `go build ./...`/`go vet ./...`, `go test` of a subtree (`./pkg/...`) or with `-race` on named packages |
-| `heavy` | Unchanged: `HOST_HEAVY_SLOTS` (2) slots, FIFO queue, waits while load is over `HOST_LOAD_CAP`. | everything else: `go test ./...`, any `-race` over `./...`, linters over the module, envtest, image builds, emulators, unknown commands |
+| `light` | No slot, no queue. Refused below the disk floor; waits only while load is over the critical cap. | `go build`/`go vet`/`go test` of named packages without `-race`, `gofmt`, `shellcheck`, `actionlint`, `hadolint`, `git` (not `gc`/`repack`/`fsck`), `gh`; Python `ruff check`/`ruff format` (direct or `uv run`); Node `prettier` (direct, `npx`, `pnpm`/`pnpm exec`) |
+| `medium` | Its own pool of `HOST_MEDIUM_SLOTS` (4) slots and its own FIFO queue; waits while load is over the critical cap. | whole-module `go build ./...`/`go vet ./...`, `go test` of a subtree (`./pkg/...`) or with `-race` on named packages; Python `mypy`/`pyright` and targeted `pytest` (`*.py` or `-k`, without `-n`/`--cov`/`-m`); Node `eslint`/`tsc`/`tsgo`/`knip` and targeted single-file/`-t` `node --test`/`vitest run`/`jest` |
+| `heavy` | Unchanged: `HOST_HEAVY_SLOTS` (2) slots, FIFO queue, waits while load is over `HOST_LOAD_CAP`. | everything else: `go test ./...`, any `-race` over `./...`, whole-suite `pytest`/`vitest`/`jest`/`node --test` (or `-n`/`--cov`/`-m`/`integration`), linters over the module, envtest, image builds, emulators, opaque repo aliases (`make`, `npm run`, `pnpm run`) unless lowered in `.heavy-weights`, and unknown commands |
 
 The critical cap is `HOST_CRITICAL_LOAD_CAP` (default twice `HOST_LOAD_CAP`, so 60) on macOS/Linux and `HOST_CRITICAL_CPU_CAP` (default 95 %) on Windows. Heavy keeps `HOST_LOAD_CAP`/`HOST_CPU_CAP`. Medium and light stop only on critical load because the measured waits were mostly load waits (a load wait costs at least one 30 s poll), and the slot pool already bounds medium.
 
