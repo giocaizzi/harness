@@ -1,5 +1,7 @@
 // Type definitions for the guard core engine, shell parser, host probes and OTel telemetry.
 
+import type { RuleId } from "./toggles.mjs";
+
 export type EnvMap = Record<string, string | undefined>;
 
 export interface DirSet {
@@ -445,6 +447,8 @@ export interface CommandEvaluationInput {
   stack?: StackFact | null;
   state: SessionState;
   tags?: Record<string, TagFact | undefined>;
+  // Rules switched off (core/toggles): a missing id is on.
+  toggles?: Partial<Record<RuleId, boolean>>;
   worktrees?: Record<string, SafeFact | undefined>;
 }
 
@@ -467,6 +471,7 @@ export interface EditEvaluationInput {
   path?: unknown;
   rules: GuardRules;
   state: SessionState;
+  toggles?: Partial<Record<RuleId, boolean>>;
 }
 
 export interface RoutingEvaluationInput {
@@ -475,6 +480,7 @@ export interface RoutingEvaluationInput {
   rules: GuardRules;
   state: SessionState;
   tool?: string;
+  toggles?: Partial<Record<RuleId, boolean>>;
   type?: unknown;
 }
 

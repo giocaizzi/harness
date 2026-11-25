@@ -4,6 +4,7 @@
 // per session ("remind once, then let it through").
 
 import { analyze, commandWords, scan, units, wrapped } from "./shell.mjs";
+import type { RuleId } from "./toggles.mjs";
 import type {
   BranchTarget,
   CommandDecision,
@@ -3910,6 +3911,7 @@ interface SkillAndToolAdviceInput {
   stack: StackFact | null;
   state: SessionState;
   tags: Record<string, TagFact | undefined>;
+  toggles: Partial<Record<RuleId, boolean>>;
 }
 
 function evaluateSkillAndToolAdvice({
@@ -3923,14 +3925,18 @@ function evaluateSkillAndToolAdvice({
   stack,
   state,
   tags,
+  toggles,
 }: SkillAndToolAdviceInput): CommandDecision {
+  const on = (id: RuleId): boolean => toggles[id] !== false;
   const loaded = new Set([...loadedSkills].map(bare));
   // Moving or deleting a tag no remote has is local bookkeeping, not a release.
-  const rule = rules.skills.find(
-    (r) =>
-      new RegExp(r.match, "i").test(matchable(command)) &&
-      !(r.id === "release" && localTagsOnly(command, rules, tags, env)),
-  );
+  const rule = on("skills")
+    ? rules.skills.find(
+        (r) =>
+          new RegExp(r.match, "i").test(matchable(command)) &&
+          !(r.id === "release" && localTagsOnly(command, rules, tags, env)),
+      )
+    : undefined;
   if (
     rule &&
     !rule.skills.some((s) => loaded.has(s)) &&
@@ -3952,7 +3958,12 @@ function evaluateSkillAndToolAdvice({
         "first, then retry the same command.",
     };
   }
-  if (!note && stack?.below && !state.reminded.has("stack")) {
+  if (
+    !note &&
+    on("stack-hint") &&
+    stack?.below &&
+    !state.reminded.has("stack")
+  ) {
     state.reminded.add("stack");
     const { number, branch } = stack.below;
     const context = `Stack hint: ${rules.stack.why}`
@@ -3963,6 +3974,7 @@ function evaluateSkillAndToolAdvice({
   }
   if (
     !note &&
+    on("hints") &&
     readTool &&
     !state.reminded.has("read") &&
     SHELL_READ.test(command)
@@ -3976,7 +3988,12 @@ function evaluateSkillAndToolAdvice({
         "Read files with the harness's read tool, not cat/head/tail/sed: it shows line numbers, pages large files and a wrong path is a plain error, not a failed shell command.",
     };
   }
-  if (!note && !state.reminded.has("edit") && shellEdit(command, env)) {
+  if (
+    !note &&
+    on("hints") &&
+    !state.reminded.has("edit") &&
+    shellEdit(command, env)
+  ) {
     state.reminded.add("edit");
     return {
       action: "allow",
@@ -4021,51 +4038,60 @@ export function evaluateCommand({
   readTool = false,
   run = null,
   rules,
+  toggles = {},
 }: CommandEvaluationInput): CommandDecision {
-  const runLabelDecision = evaluateRunLabels(command, run, rules);
+  // A rule switched off is skipped where it is evaluated, so it never hides an enabled one on the same command.
+  const on = (id: RuleId): boolean => toggles[id] !== false;
+
+  const runLabelDecision = on("run-labels")
+    ? evaluateRunLabels(command, run, rules)
+    : null;
   if (runLabelDecision) return runLabelDecision;
 
-  const protectedPathDecision = evaluateProtectedPaths(
-    command,
-    run,
-    env,
-    rules,
-  );
+  const protectedPathDecision = on("protected-paths")
+    ? evaluateProtectedPaths(command, run, env, rules)
+    : null;
   if (protectedPathDecision) return protectedPathDecision;
 
-  const runConfigDecision = evaluateRunConfig(command, run, rules);
+  const runConfigDecision = on("run-labels")
+    ? evaluateRunConfig(command, run, rules)
+    : null;
   if (runConfigDecision) return runConfigDecision;
 
   // Hard denies come first and fire every time, like the title guard. A `when` rule denies only in a repo
   // that adopted that manager; elsewhere it lets the command through with a once-per-session note.
-  const denied = deniedBy(command, rules);
+  const denied = on("python") ? deniedBy(command, rules) : undefined;
   if (denied && (!denied.when || denied.when === python))
     return { action: "deny", rule: denied.id, reason: denied.why };
   const note = denied && !state.reminded.has(denied.id) ? denied.id : null;
 
   // A secret in the push is a deny that no risky ask on the same command may hide: approving that ask would send it.
-  const scanDecision = evaluatePushScan(command, rules, pushScan);
+  const scanDecision = on("push-scan")
+    ? evaluatePushScan(command, rules, pushScan)
+    : null;
   if (scanDecision?.action === "deny") return scanDecision;
 
-  const riskyDecision = evaluateRiskyCommand(
-    command,
-    rules,
-    env,
-    worktrees,
-    regenerable,
-    branches,
-    refs,
-    pushes,
-    remoteDeletes,
-  );
+  const riskyDecision = on("risky")
+    ? evaluateRiskyCommand(
+        command,
+        rules,
+        env,
+        worktrees,
+        regenerable,
+        branches,
+        refs,
+        pushes,
+        remoteDeletes,
+      )
+    : null;
   if (riskyDecision) return riskyDecision;
 
   if (scanDecision) return scanDecision;
 
-  const batch = evaluatePrBatch(rules, prBatch);
+  const batch = on("pr-batch") ? evaluatePrBatch(rules, prBatch) : {};
   if (batch.decision) return batch.decision;
 
-  const title = badTitle(command, rules);
+  const title = on("title") ? badTitle(command, rules) : null;
   if (title !== null) {
     return {
       action: "deny",
@@ -4076,7 +4102,9 @@ export function evaluateCommand({
     };
   }
 
-  const hostDecision = evaluateHostStrain(command, host, rules, state);
+  const hostDecision = on("host")
+    ? evaluateHostStrain(command, host, rules, state)
+    : null;
   if (hostDecision) return hostDecision;
 
   const advice = evaluateSkillAndToolAdvice({
@@ -4090,6 +4118,7 @@ export function evaluateCommand({
     stack,
     state,
     tags,
+    toggles,
   });
   const context = [batch.hint, advice.context].filter(Boolean).join("\n");
   return {
@@ -4105,7 +4134,9 @@ export function evaluateEdit({
   loadedSkills = new Set<string>(),
   state,
   rules,
+  toggles = {},
 }: EditEvaluationInput): CommandDecision {
+  if (toggles.skills === false) return { action: "allow" };
   const p = inputText(path ?? "").replace(/\\/g, "/");
   const rule = (rules.files ?? []).find((r) =>
     new RegExp(r.match, "i").test(p),
@@ -4131,7 +4162,9 @@ export function evaluateRouting({
   tool,
   state,
   rules,
+  toggles = {},
 }: RoutingEvaluationInput): CommandDecision {
+  if (toggles.hints === false) return { action: "allow" };
   const r = rules.routing;
   const t = inputText(type ?? "")
     .trim()

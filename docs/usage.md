@@ -132,6 +132,7 @@ Settings are env vars, set in the shell that starts the harness (or the `env` bl
 | Variable | Default | Effect |
 |---|---|---|
 | `GUARD_UNATTENDED=1` | off | Every risky ask becomes a deny, and Claude Code parks its permission asks at once. Use for overnight and headless runs (`unattended-runs` skill). Set it in the launching shell or Claude Code's settings `env`; a command that exports it in the session holds for the rest of the session ([guard.md](guard.md#unattended-and-auto-approve-runs)). |
+| `GUARD_RULES` | every rule on | Switches rules on and off by id, e.g. `-awake,-lint` or `none,risky,run-labels,protected-paths,result-gate`; the older switches below still work. A registered run keeps the rules its manifest requires ([guard.md](guard.md#rule-toggles)). |
 | `GUARD_STOP_CHECK=off` | on | Turns off `make check` on stop; `force` runs it even on a strained host (CI). |
 | `GUARD_LIFECYCLE=off` | on | Turns off the session repo sweep and the branch-lifecycle reminder on stop ([repo-cleanup](repo-cleanup.md)). |
 | `GUARD_PUSH_SCAN=off` | on | Turns off the secret scan before a push; for tests and probes only ([repo-cleanup](repo-cleanup.md#push-safety)). |

@@ -7,6 +7,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
+import { ruleOn } from "../core/toggles.mjs";
 import { pluginDataDir } from "./data.mjs";
 import type { ProcessInfo, ProcessLookup } from "./types.mjs";
 
@@ -97,6 +98,7 @@ const alive = (pid: number): boolean => {
 
 export interface KeepAwakeParams {
   dataDir: string;
+  env?: NodeJS.ProcessEnv;
   isAlive?: (pid: number) => boolean;
   launch: (argv: string[]) => number | null | undefined;
   lookup?: ProcessLookup;
@@ -118,7 +120,9 @@ export function keepAwake({
   platform = process.platform,
   launch,
   isAlive = alive,
+  env = process.env,
 }: KeepAwakeParams): KeepAwakeResult | null {
+  if (!ruleOn(env, "awake")) return null;
   const pid = harnessPid(start, (p) => lookup(p, platform));
   const argv = keeperArgv(pid, platform);
   if (!argv) return null;

@@ -3197,11 +3197,14 @@ function evaluateHostStrain(command, host, rules, state) {
     }
     return null;
 }
-function evaluateSkillAndToolAdvice({ command, env, loadedSkills, note, python, readTool, rules, stack, state, tags, }) {
+function evaluateSkillAndToolAdvice({ command, env, loadedSkills, note, python, readTool, rules, stack, state, tags, toggles, }) {
+    const on = (id) => toggles[id] !== false;
     const loaded = new Set([...loadedSkills].map(bare));
     // Moving or deleting a tag no remote has is local bookkeeping, not a release.
-    const rule = rules.skills.find((r) => new RegExp(r.match, "i").test(matchable(command)) &&
-        !(r.id === "release" && localTagsOnly(command, rules, tags, env)));
+    const rule = on("skills")
+        ? rules.skills.find((r) => new RegExp(r.match, "i").test(matchable(command)) &&
+            !(r.id === "release" && localTagsOnly(command, rules, tags, env)))
+        : undefined;
     if (rule &&
         !rule.skills.some((s) => loaded.has(s)) &&
         !state.reminded.has(rule.id)) {
@@ -3220,7 +3223,10 @@ function evaluateSkillAndToolAdvice({ command, env, loadedSkills, note, python, 
                 "first, then retry the same command.",
         };
     }
-    if (!note && stack?.below && !state.reminded.has("stack")) {
+    if (!note &&
+        on("stack-hint") &&
+        stack?.below &&
+        !state.reminded.has("stack")) {
         state.reminded.add("stack");
         const { number, branch } = stack.below;
         const context = `Stack hint: ${rules.stack.why}`
@@ -3230,6 +3236,7 @@ function evaluateSkillAndToolAdvice({ command, env, loadedSkills, note, python, 
         return { action: "allow", rule: "stack", remind: true, context };
     }
     if (!note &&
+        on("hints") &&
         readTool &&
         !state.reminded.has("read") &&
         SHELL_READ.test(command)) {
@@ -3241,7 +3248,10 @@ function evaluateSkillAndToolAdvice({ command, env, loadedSkills, note, python, 
             context: "Read files with the harness's read tool, not cat/head/tail/sed: it shows line numbers, pages large files and a wrong path is a plain error, not a failed shell command.",
         };
     }
-    if (!note && !state.reminded.has("edit") && shellEdit(command, env)) {
+    if (!note &&
+        on("hints") &&
+        !state.reminded.has("edit") &&
+        shellEdit(command, env)) {
         state.reminded.add("edit");
         return {
             action: "allow",
@@ -3265,35 +3275,47 @@ function evaluateSkillAndToolAdvice({ command, env, loadedSkills, note, python, 
 // `readTool`: the harness has a file-read tool (all but Codex), so a shell read gets a once-per-session hint.
 // `worktrees`, `branches`, `pushes`, `regenerable`: facts the adapters gather (worktreeFacts, branchFacts, pushFacts,
 // regenFacts).
-export function evaluateCommand({ command, loadedSkills = new Set(), state, host = {}, env = {}, worktrees = {}, branches = {}, pushes = {}, regenerable = {}, refs = {}, remoteDeletes = {}, pushScan = {}, prBatch = {}, tags = {}, stack = null, python = null, readTool = false, run = null, rules, }) {
-    const runLabelDecision = evaluateRunLabels(command, run, rules);
+export function evaluateCommand({ command, loadedSkills = new Set(), state, host = {}, env = {}, worktrees = {}, branches = {}, pushes = {}, regenerable = {}, refs = {}, remoteDeletes = {}, pushScan = {}, prBatch = {}, tags = {}, stack = null, python = null, readTool = false, run = null, rules, toggles = {}, }) {
+    // A rule switched off is skipped where it is evaluated, so it never hides an enabled one on the same command.
+    const on = (id) => toggles[id] !== false;
+    const runLabelDecision = on("run-labels")
+        ? evaluateRunLabels(command, run, rules)
+        : null;
     if (runLabelDecision)
         return runLabelDecision;
-    const protectedPathDecision = evaluateProtectedPaths(command, run, env, rules);
+    const protectedPathDecision = on("protected-paths")
+        ? evaluateProtectedPaths(command, run, env, rules)
+        : null;
     if (protectedPathDecision)
         return protectedPathDecision;
-    const runConfigDecision = evaluateRunConfig(command, run, rules);
+    const runConfigDecision = on("run-labels")
+        ? evaluateRunConfig(command, run, rules)
+        : null;
     if (runConfigDecision)
         return runConfigDecision;
     // Hard denies come first and fire every time, like the title guard. A `when` rule denies only in a repo
     // that adopted that manager; elsewhere it lets the command through with a once-per-session note.
-    const denied = deniedBy(command, rules);
+    const denied = on("python") ? deniedBy(command, rules) : undefined;
     if (denied && (!denied.when || denied.when === python))
         return { action: "deny", rule: denied.id, reason: denied.why };
     const note = denied && !state.reminded.has(denied.id) ? denied.id : null;
     // A secret in the push is a deny that no risky ask on the same command may hide: approving that ask would send it.
-    const scanDecision = evaluatePushScan(command, rules, pushScan);
+    const scanDecision = on("push-scan")
+        ? evaluatePushScan(command, rules, pushScan)
+        : null;
     if (scanDecision?.action === "deny")
         return scanDecision;
-    const riskyDecision = evaluateRiskyCommand(command, rules, env, worktrees, regenerable, branches, refs, pushes, remoteDeletes);
+    const riskyDecision = on("risky")
+        ? evaluateRiskyCommand(command, rules, env, worktrees, regenerable, branches, refs, pushes, remoteDeletes)
+        : null;
     if (riskyDecision)
         return riskyDecision;
     if (scanDecision)
         return scanDecision;
-    const batch = evaluatePrBatch(rules, prBatch);
+    const batch = on("pr-batch") ? evaluatePrBatch(rules, prBatch) : {};
     if (batch.decision)
         return batch.decision;
-    const title = badTitle(command, rules);
+    const title = on("title") ? badTitle(command, rules) : null;
     if (title !== null) {
         return {
             action: "deny",
@@ -3302,7 +3324,9 @@ export function evaluateCommand({ command, loadedSkills = new Set(), state, host
                 `Use \`type(scope): lowercase description\` with type in ${rules.titles.types.join(", ")}; footers (BREAKING CHANGE, Co-Authored-By) go in the body/PR description. Then retry.`,
         };
     }
-    const hostDecision = evaluateHostStrain(command, host, rules, state);
+    const hostDecision = on("host")
+        ? evaluateHostStrain(command, host, rules, state)
+        : null;
     if (hostDecision)
         return hostDecision;
     const advice = evaluateSkillAndToolAdvice({
@@ -3316,6 +3340,7 @@ export function evaluateCommand({ command, loadedSkills = new Set(), state, host
         stack,
         state,
         tags,
+        toggles,
     });
     const context = [batch.hint, advice.context].filter(Boolean).join("\n");
     return {
@@ -3325,7 +3350,9 @@ export function evaluateCommand({ command, loadedSkills = new Set(), state, host
     };
 }
 // An edit (any harness's edit or write tool) to a path a `files` rule watches: a once-per-session skill hint.
-export function evaluateEdit({ path, loadedSkills = new Set(), state, rules, }) {
+export function evaluateEdit({ path, loadedSkills = new Set(), state, rules, toggles = {}, }) {
+    if (toggles.skills === false)
+        return { action: "allow" };
     const p = inputText(path ?? "").replace(/\\/g, "/");
     const rule = (rules.files ?? []).find((r) => new RegExp(r.match, "i").test(p));
     const loaded = new Set([...loadedSkills].map(bare));
@@ -3339,7 +3366,9 @@ export function evaluateEdit({ path, loadedSkills = new Set(), state, rules, }) 
 // A subagent spawn that bypasses the typed agents: the built-in Plan agent, an untyped spawn on a judgement-tier model,
 // or a typed agent whose model the spawn overrides. A once-per-session hint per case, never a deny.
 // `tool`: the spawn tool, lower-cased (`spawn_agent` is Codex, whose built-in roles share bare names with ours).
-export function evaluateRouting({ type, model, effort, tool, state, rules, }) {
+export function evaluateRouting({ type, model, effort, tool, state, rules, toggles = {}, }) {
+    if (toggles.hints === false)
+        return { action: "allow" };
     const r = rules.routing;
     const t = inputText(type ?? "")
         .trim()

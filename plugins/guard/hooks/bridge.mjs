@@ -127,7 +127,7 @@ export function createGuard({ harness, noAsk = false, dataDir = DATA_DIR, deps =
         // Lint findings for an edit, or null.
         postTool({ cwd, tool, input, }) {
             try {
-                const res = lintFile({ cwd, tool_name: tool, tool_input: input }, d.spawnSync);
+                const res = lintFile({ cwd, tool_name: tool, tool_input: input }, d.spawnSync, undefined, d.env);
                 return res?.additionalContext ?? null;
             }
             catch {
@@ -195,6 +195,7 @@ export function createGuard({ harness, noAsk = false, dataDir = DATA_DIR, deps =
                 return keepAwake({
                     dataDir,
                     start: process.pid,
+                    env: d.env,
                     launch: d.launch ?? launchDetached,
                 });
             }

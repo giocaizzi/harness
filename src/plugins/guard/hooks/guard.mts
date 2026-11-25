@@ -63,6 +63,8 @@ import { emit } from "../core/otel.mjs";
 import { sessionAttrs } from "../core/registration.mjs";
 import { rules } from "../core/rules.mjs";
 import { commandWords, units } from "../core/shell.mjs";
+import type { RuleSet } from "../core/toggles.mjs";
+import { effectiveRules, parseRules } from "../core/toggles.mjs";
 import type {
   GuardEnv,
   GuardRules,
@@ -78,7 +80,6 @@ import { contractProbe } from "./contract.mjs";
 import { appendDataFile, pluginDataDir, readDataFile } from "./data.mjs";
 import { editedPaths } from "./lint.mjs";
 import {
-  OFF,
   sweepNotice,
   startSessionSweep,
   takeAgentNotes,
@@ -628,6 +629,20 @@ const flag = (
   deps: { env?: Record<string, string | undefined> },
   name: string,
 ) => deps.env?.[name] ?? process.env[name] ?? "";
+// Which rules run for this call: GUARD_RULES and each rule's older switch from the hook's environment (the process's
+// for the switches a test run exports), with the capabilities a registered run requires kept on (core/toggles).
+const togglesOf = (
+  deps: { env?: Record<string, string | undefined> },
+  ctx: RunContext,
+): RuleSet =>
+  effectiveRules(
+    {
+      ...deps.env,
+      GUARD_PUSH_SCAN: flag(deps, "GUARD_PUSH_SCAN"),
+      GUARD_LIFECYCLE: flag(deps, "GUARD_LIFECYCLE"),
+    },
+    ctx.state === "registered" ? ctx.registration.requires : [],
+  );
 const ALLOW_SAMPLE = 10;
 const PREVIEW_MS = 3_000;
 const STACK_MS = 5_000;
@@ -705,11 +720,13 @@ async function onShell(
   const set = unattendedSet(command);
   const fromEnv = ON.test(deps.env?.GUARD_UNATTENDED ?? "");
   const unattended = fromEnv || (set ?? state.unattended) === true;
+  const toggles = togglesOf(deps, ctx);
 
   try {
     const caps = hostCaps(deps.env, rules.host);
+    const hostOff = !toggles.host;
     const host =
-      !caps.off && isHeavy(command, rules)
+      !hostOff && isHeavy(command, rules)
         ? await (deps.hostFacts ?? hostFacts)(input.cwd)
         : {};
     let unfinished = false;
@@ -757,7 +774,7 @@ async function onShell(
 
     // Every push is scanned for secrets first; a scan that cannot finish in its budget asks (unavailable).
     if (
-      !OFF.test(flag(deps, "GUARD_PUSH_SCAN")) &&
+      toggles["push-scan"] &&
       rules.pushScan &&
       new RegExp(rules.pushScan.match, "i").test(command)
     ) {
@@ -770,11 +787,12 @@ async function onShell(
 
     // A bare lease push is no risky match by itself: its facts are gathered for it, and none (timeout) asks. Started
     // with the risky lookups so both share one budget, keeping the hook under its timeout.
-    const pushing = command.includes("--force-w")
-      ? within(pushFacts(command, rules, inCwd, facts.env), left(), null)
-      : null;
+    const pushing =
+      toggles.risky && command.includes("--force-w")
+        ? within(pushFacts(command, rules, inCwd, facts.env), left(), null)
+        : null;
 
-    if (isRisky(command, rules)) {
+    if (toggles.risky && isRisky(command, rules)) {
       const gathered = await within(
         Promise.all([
           worktreeFacts(command, facts.env, rules, inCwd),
@@ -802,7 +820,11 @@ async function onShell(
     if (pushing) facts.pushes = (await pushing) ?? {};
 
     // A new PR that overlaps another open PR of the author: reads fail open.
-    if (rules.prBatch && new RegExp(rules.prBatch.match, "i").test(command)) {
+    if (
+      toggles["pr-batch"] &&
+      rules.prBatch &&
+      new RegExp(rules.prBatch.match, "i").test(command)
+    ) {
       facts.prBatch = await within(
         prBatchFacts(command, rules, inCwd, facts.env, (path, cwd) =>
           readText(resolve(input.cwd ?? ".", cwd ?? ".", path)),
@@ -813,7 +835,7 @@ async function onShell(
     }
 
     if (
-      !/^(0|false|off)$/i.test(deps.env?.GUARD_STACK_HINT ?? "") &&
+      toggles["stack-hint"] &&
       !state.reminded.includes("stack") &&
       stackTargets(command, rules, facts.env).length
     ) {
@@ -849,7 +871,7 @@ async function onShell(
         )) ?? {};
     }
 
-    if (deniedBy(command, rules)?.when) {
+    if (toggles.python && deniedBy(command, rules)?.when) {
       const dir = deniedDir(command, rules, facts.env);
       facts.python = (deps.pythonManager ?? pythonManager)(
         dir ? resolve(input.cwd ?? ".", dir) : input.cwd,
@@ -862,7 +884,7 @@ async function onShell(
         ? ["read", "edit"].filter((r) => !state.reminded.includes(r))
         : [];
     const reminded = new Set([...state.reminded, ...held]);
-    const judged = !caps.off && hostJudged(command, rules, reminded);
+    const judged = !hostOff && hostJudged(command, rules, reminded);
 
     const d = evaluateCommand({
       command,
@@ -871,6 +893,7 @@ async function onShell(
       host,
       readTool: deps.readTool ?? true,
       ...facts,
+      toggles,
       run:
         ctx.state === "registered"
           ? runFacts(ctx, protectFacts(input.cwd))
@@ -1064,7 +1087,8 @@ async function onShell(
     const errorObj = err instanceof Error ? err : null;
     // A crash must not let an unattended run's write through: every command is denied there, not only risky ones.
     const strict = ctx.state === "registered" && ctx.mode === "unattended";
-    if (strict || crashRisky(command, rules)) {
+    const risky = toggles.risky && crashRisky(command, rules);
+    if (strict || risky) {
       appendDecision(deps.env, {
         decision: "deny",
         rule: "guard-error",
@@ -1085,7 +1109,7 @@ async function onShell(
         input.cwd,
       );
     }
-    return strict || crashRisky(command, rules)
+    return strict || risky
       ? preToolUse(
           "deny",
           `The command guard failed, so this ${strict ? "" : "risky "}command was not run: ${errorObj ? errorObj.message : String(err)}`,
@@ -1231,8 +1255,9 @@ function onEdit(
 ): HandleResult {
   const facts =
     ctx.state === "registered" ? runFacts(ctx, protectFacts(input.cwd)) : null;
+  const toggles = togglesOf(deps, ctx);
   // In an unattended registered run an edit tool never touches a protected path.
-  if (facts) {
+  if (facts && toggles["protected-paths"]) {
     const denyEdit = (reason: string): HandleResult => {
       appendDecision(deps.env, { decision: "deny", rule: "protected-path" });
       fire(
@@ -1288,6 +1313,7 @@ function onEdit(
     loadedSkills: new Set(state.loaded),
     state: { reminded },
     rules,
+    toggles,
   });
   state.reminded = [...reminded];
   if (!d.remind) return {};
@@ -1310,6 +1336,7 @@ function onSpawn(
   input: HookInput,
   state: StoredSessionState,
   deps: HandleDeps,
+  ctx: RunContext,
 ): HandleResult {
   const t = isRecord(input.tool_input) ? input.tool_input : {};
   const reminded = new Set(state.reminded);
@@ -1322,6 +1349,7 @@ function onSpawn(
     tool: (input.tool_name ?? "").toLowerCase(),
     state: { reminded },
     rules,
+    toggles: togglesOf(deps, ctx),
   });
   state.reminded = [...reminded];
   if (!d.remind) return {};
@@ -1345,8 +1373,10 @@ function onStale(
   state: StoredSessionState,
   deps: GuardDeps,
   out: HandleResult,
+  ctx: RunContext,
   session?: string,
 ): HandleResult {
+  const toggles = togglesOf(deps, ctx);
   const decided =
     out.stdout &&
     (JSON.parse(out.stdout) as HookOutputPayload).hookSpecificOutput
@@ -1355,14 +1385,16 @@ function onStale(
     .filter((r) => r.startsWith("stale:"))
     .map((r) => r.slice(6));
   state.startCwd ??= typeof input.cwd === "string" ? input.cwd : undefined;
-  const s = staleCheck({
-    root: deps.pluginRoot,
-    cwd: state.startCwd,
-    loaded: state.plugins,
-    reminded,
-    harness: deps.harness,
-  });
-  state.plugins = s.loaded;
+  const s = toggles["stale-plugins"]
+    ? staleCheck({
+        root: deps.pluginRoot,
+        cwd: state.startCwd,
+        loaded: state.plugins,
+        reminded,
+        harness: deps.harness,
+      })
+    : null;
+  if (s) state.plugins = s.loaded;
   if (decided || deps.harness === "antigravity") return out;
   const contexts: string[] = [];
   const notices: string[] = [];
@@ -1380,14 +1412,23 @@ function onStale(
       input.cwd,
     );
   };
-  if (s.context) {
+  // An unreadable GUARD_RULES leaves every rule on: say so once per session.
+  const bad = parseRules(deps.env?.GUARD_RULES).invalid;
+  if (bad !== undefined && !state.reminded.includes("guard-rules")) {
+    state.reminded.push("guard-rules");
+    remind("guard-rules");
+    const message = `GUARD_RULES has an unknown token (\`${bad}\`), so every guard rule stays on. Fix the value or unset it.`;
+    contexts.push(message);
+    notices.push(message);
+  }
+  if (s?.context) {
     state.reminded.push(...s.remind.map((r) => `stale:${r}`));
     remind("stale-plugins");
     contexts.push(s.context);
     if (s.notice) notices.push(s.notice);
   }
   // Branch lifecycle: the previous sweep's summary once per session, and the notes other hooks queued for the agent.
-  if (!OFF.test(flag(deps, "GUARD_LIFECYCLE"))) {
+  if (toggles.lifecycle) {
     if (!state.reminded.includes("repo-sweep")) {
       state.reminded.push("repo-sweep");
       const notice = lifecycleOf(deps).sweepNotice(
@@ -1494,7 +1535,7 @@ export function handleSessionStart(
       state.announced = true;
       // The daily repo sweep (github-pull-requests, Branch lifecycle): detached, never throws, off with GUARD_LIFECYCLE=off.
       if (
-        !OFF.test(flag(deps, "GUARD_LIFECYCLE")) &&
+        togglesOf(deps, { state: "none" }).lifecycle &&
         deps.pluginRoot &&
         typeof input.cwd === "string"
       ) {
@@ -1600,7 +1641,7 @@ export async function handlePreToolUse(
   } else if (isEditTool(tool)) {
     out = onEdit(input, state, deps, ctx);
   } else if (rules.routing.tools.includes(tool)) {
-    out = onSpawn(input, state, deps);
+    out = onSpawn(input, state, deps, ctx);
   } else if (isTaskTool(tool)) {
     const taskInput = asTaskInput(input.tool_input);
     const command = taskCommand(tool, taskInput, input.cwd);
@@ -1619,7 +1660,7 @@ export async function handlePreToolUse(
   }
 
   try {
-    out = onStale(input, state, deps, out, session);
+    out = onStale(input, state, deps, out, ctx, session);
   } catch {
     // the note is a nicety: a decision already made stands
   }
