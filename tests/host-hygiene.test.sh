@@ -6,7 +6,7 @@ case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) echo "Windows: host-hygiene .sh test
 scripts="$(cd "$(dirname "$0")/.." && pwd)/plugins/dev-tools/skills/host-hygiene/scripts"
 heavy=$scripts/heavy.sh lease=$scripts/lease.sh reg=$scripts/register-service.sh sweep=$scripts/sweep-stale.sh
 tmp=$(cd "$(mktemp -d)" && pwd -P); trap 'rm -rf "$tmp"' EXIT
-export HOST_LOCK_DIR="$tmp/locks" HOST_LOAD_CAP=100000 HOST_DISK_FLOOR_GB=0 HOST_HEAVY_SLOTS=1
+export HOST_LOCK_DIR="$tmp/locks" HOST_LOAD_CAP=100000 HOST_DISK_FLOOR_GB=0 HOST_HEAVY_SLOTS=1 HOST_METRICS_FILE=off
 L=$HOST_LOCK_DIR
 fails=0
 count() { local n=0 f; for f in "$@"; do [ -e "$f" ] && n=$((n + 1)); done; echo "$n"; }
@@ -432,6 +432,43 @@ check "classify: git status is light" "$(classify git status | cut -d' ' -f1)" l
 check "classify: git gc is heavy" "$(classify git gc | cut -d' ' -f1)" heavy
 check "classify: an unknown command is heavy by default" "$(classify make check)" "heavy default"
 check "classify takes -- and runs nothing" "$(classify -- touch "$tmp/ran-classify")$([ -e "$tmp/ran-classify" ] && echo ran)" "heavy default"
+check "classify: ruff check is light" "$(classify ruff check . | cut -d: -f1)" "light builtin"
+check "classify: uv run ruff format --check is light" "$(classify uv run ruff format --check . | cut -d: -f1)" "light builtin"
+check "classify: mypy is medium" "$(classify mypy | cut -d: -f1)" "medium builtin"
+check "classify: uv run mypy src is medium" "$(classify uv run mypy src | cut -d: -f1)" "medium builtin"
+check "classify: uv run pyright is medium" "$(classify uv run pyright | cut -d: -f1)" "medium builtin"
+check "classify: targeted pytest file is medium" "$(classify pytest tests/test_foo.py | cut -d: -f1)" "medium builtin"
+check "classify: uv run pytest file::test is medium" "$(classify uv run pytest -q tests/test_foo.py::test_x | cut -d: -f1)" "medium builtin"
+check "classify: uv run pytest -k is medium" "$(classify uv run pytest -k foo | cut -d: -f1)" "medium builtin"
+check "classify: whole-suite uv run pytest is heavy" "$(classify uv run pytest)" "heavy default"
+check "classify: whole-suite uv run pytest -q is heavy" "$(classify uv run pytest -q)" "heavy default"
+check "classify: uv run pytest -n auto is heavy" "$(classify uv run pytest -n auto tests/test_foo.py | cut -d: -f1)" "heavy builtin"
+check "classify: uv run pytest --cov is heavy" "$(classify uv run pytest --cov tests/test_foo.py | cut -d: -f1)" "heavy builtin"
+check "classify: uv run pytest -m integration is heavy" "$(classify uv run pytest -m integration tests/test_foo.py | cut -d: -f1)" "heavy builtin"
+check "classify: prettier --check is light" "$(classify prettier --check . | cut -d: -f1)" "light builtin"
+check "classify: npx prettier --write is light" "$(classify npx prettier --write a.ts | cut -d: -f1)" "light builtin"
+check "classify: pnpm exec prettier --check is light" "$(classify pnpm exec prettier --check . | cut -d: -f1)" "light builtin"
+check "classify: eslint is medium" "$(classify eslint . | cut -d: -f1)" "medium builtin"
+check "classify: npx tsc --noEmit is medium" "$(classify npx tsc --noEmit | cut -d: -f1)" "medium builtin"
+check "classify: pnpm exec tsgo --noEmit is medium" "$(classify pnpm exec tsgo --noEmit | cut -d: -f1)" "medium builtin"
+check "classify: pnpm knip is medium" "$(classify pnpm knip | cut -d: -f1)" "medium builtin"
+check "classify: targeted node --test is medium" "$(classify node --test foo.test.mjs | cut -d: -f1)" "medium builtin"
+check "classify: targeted npx vitest run is medium" "$(classify npx vitest run src/a.test.ts | cut -d: -f1)" "medium builtin"
+check "classify: pnpm vitest run -t is medium" "$(classify pnpm vitest run -t "adds" | cut -d: -f1)" "medium builtin"
+check "classify: targeted pnpm exec jest is medium" "$(classify pnpm exec jest src/a.spec.ts | cut -d: -f1)" "medium builtin"
+check "classify: whole-suite node --test is heavy" "$(classify node --test)" "heavy default"
+check "classify: multi-file node --test is heavy" "$(classify node --test a.test.mjs b.test.mjs | cut -d: -f1)" "heavy builtin"
+check "classify: whole-suite vitest run is heavy" "$(classify vitest run)" "heavy default"
+check "classify: npx vitest run --coverage is heavy" "$(classify npx vitest run --coverage src/a.test.ts | cut -d: -f1)" "heavy builtin"
+check "classify: whole-suite jest is heavy" "$(classify jest)" "heavy default"
+check "classify: integration jest is heavy" "$(classify npx jest --config jest.integration.config.js a.test.ts | cut -d: -f1)" "heavy builtin"
+check "classify: npm run lint is heavy" "$(classify npm run lint)" "heavy default"
+check "classify: pnpm run typecheck is heavy" "$(classify pnpm run typecheck)" "heavy default"
+check "classify: playwright test is heavy" "$(classify playwright test)" "heavy default"
+check "classify: leading env and VAR=val are stripped" "$(classify env GOFLAGS=-trimpath go vet ./pkg | cut -d: -f1)" "light builtin"
+check "classify: leading env -- VAR=val is stripped" "$(classify env -- GOFLAGS=-trimpath go test ./pkg | cut -d: -f1)" "light builtin"
+check "classify: env-wrapped heavy command stays heavy" "$(classify env GOOS=linux golangci-lint run)" "heavy default"
+check "classify: bare env stays heavy" "$(classify env)" "heavy default"
 
 repo=$tmp/repo
 mkdir -p "$repo" && git -C "$repo" init -q 2>/dev/null
@@ -494,6 +531,10 @@ check "metrics line for a light call, and for a timeout" \
   "$(grep -c 'weight=light source=builtin:[0-9]* waited_s=0 wait=none .* exit=0 ' "$mf")$(HOST_METRICS_FILE=$mf HOST_LOAD_CAP=-1 HOST_LOCK_TIMEOUT_SECONDS=0 "$heavy" true 2>/dev/null; grep -c 'wait=load ran_s=0 exit=124 ' "$mf")" 11
 HOST_METRICS_FILE=/dev/null/nope/m.log "$heavy" sh -c 'exit 5' 2>/dev/null
 check "a metrics write failure never changes the exit code" "$?" 5
+(unset HOST_METRICS_FILE; XDG_STATE_HOME=$tmp/xdg "$heavy" git --version >/dev/null)
+check "metrics default on under XDG_STATE_HOME when unset" "$(wc -l <"$tmp/xdg/host-hygiene/heavy.log" | tr -d ' ')" 1
+(HOST_METRICS_FILE=off XDG_STATE_HOME=$tmp/xdg-off "$heavy" git --version >/dev/null)
+check "HOST_METRICS_FILE=off writes no default file" "$([ -e "$tmp/xdg-off/host-hygiene/heavy.log" ] && echo exists)" ""
 
 # Orphan cleanup: a failed command's child in its own process group is stopped, a successful command's is kept.
 rm -f "$tmp/orphan"

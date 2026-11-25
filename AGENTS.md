@@ -115,6 +115,8 @@ The other four harnesses read the same sources differently (details in [docs/com
 
 **Always run `make validate` before committing.** It catches drift between sources, generated agent files, Copilot manifests, the marketplace, and the README.
 
+Repo weight classes for `heavy.sh` live in `.heavy-weights` (`make validate`/`format*` light; `make build`/`typecheck`/`lint` medium; `make check`/`test`/`e2e` heavy).
+
 If `make validate` fails, check the common drift points first:
 - version mismatch between `plugins/<plugin>/.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json`, or between `package.json` (the repo version authority) and `.claude-plugin/marketplace.json`'s `metadata.version`
 - missing or stale README table rows after adding or renaming a skill or agent
