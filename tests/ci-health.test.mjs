@@ -495,7 +495,7 @@ void test("report has no repo names; repoTable does", () => {
     assert.match(out, /\| Queue wait p50 \/ p90 \(sampled jobs\) \| - \/ - \| 30s \/ 30s \|/);
     assert.match(out, /\| Jobs with timeout-minutes \| 100% \(1\/1\) \|/);
     assert.match(out, /\| Repos with a merge queue and no merge_group trigger \| 1 \|/);
-    assert.match(out, /How to read each figure: \.agents\/skills\/agent-review\/references\/reading\.md \(CI health\)\./);
+    assert.match(out, /How to read each figure: docs\/agent-review\.md \(Reading the figures: CI health\)\./);
     assert.match(repoTable(agg), /Local detail: never paste[\s\S]*github\.com\/acme\/app \| 2 \| 2 \|[^\n]*queue without merge_group/);
 });
 const quiet = async (fn) => {

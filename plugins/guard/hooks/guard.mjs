@@ -8,7 +8,7 @@ import { statfs } from "node:fs/promises";
 import { cpus, homedir, loadavg, platform } from "node:os";
 import { dirname, isAbsolute, join, parse, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { analysis, branchFacts, cdDirs, cmdClass, codexRules, deniedBy, deniedDir, evaluateCommand, evaluateEdit, evaluateRouting, hostJudged, isHeavy, isRisky, nativeAsk, previewCommand, protectedPathHit, prBatchFacts, pureRead, pushFacts, pushScanFacts, refFacts, regenFacts, remoteDeleteFacts, stackFacts, stackTargets, tagFacts, tagTargets, unattendedSet, withPreview, worktreeFacts, } from "../core/engine.mjs";
+import { analysis, branchFacts, cdDirs, cmdClass, codexRules, deniedBy, deniedDir, evaluateCommand, evaluateEdit, evaluateRouting, hostJudged, isHeavy, isRisky, nativeAsk, previewCommand, protectedPathHit, prBatchFacts, pureRead, pushFacts, pushScanFacts, refFacts, regenFacts, remoteDeleteFacts, stackEarlyFacts, stackEarlyTargets, stackFacts, stackTargets, tagFacts, tagTargets, unattendedSet, withPreview, worktreeFacts, } from "../core/engine.mjs";
 import { cpuPercentFrom, hostCaps } from "../core/host.mjs";
 import { emit } from "../core/otel.mjs";
 import { sessionAttrs } from "../core/registration.mjs";
@@ -526,13 +526,10 @@ async function onShell(input, state, deps, ctx) {
         }
         if (pushing)
             facts.pushes = (await pushing) ?? {};
-        // A new PR that overlaps another open PR of the author: reads fail open.
-        if (rules.prBatch && new RegExp(rules.prBatch.match, "i").test(command)) {
-            facts.prBatch = await within(prBatchFacts(command, rules, inCwd, facts.env, (path, cwd) => readText(resolve(input.cwd ?? ".", cwd ?? ".", path))), left(), {});
-        }
+        // Stack facts come first: a create on a branch that builds on an open PR is denied before the pr-batch check.
         if (!/^(0|false|off)$/i.test(deps.env?.GUARD_STACK_HINT ?? "") &&
-            !state.reminded.includes("stack") &&
-            stackTargets(command, rules, facts.env).length) {
+            (stackTargets(command, rules, facts.env).some((t) => t.verb === "create" || !state.reminded.includes("stack")) ||
+                stackEarlyTargets(command, facts.env).length)) {
             const budget = Math.min(deps.factsMs ?? STACK_MS, left());
             const stackDeadline = Date.now() + budget;
             const stackRun = (argv, cwd) => {
@@ -540,6 +537,12 @@ async function onShell(input, state, deps, ctx) {
                 return rest <= 0 ? Promise.resolve(null) : inCwd(argv, cwd, rest);
             };
             facts.stack = await within(stackFacts(command, rules, stackRun, facts.env), budget, {});
+            if (stackEarlyTargets(command, facts.env).length)
+                facts.early = await within(stackEarlyFacts(command, stackRun, facts.env, (key) => state.reminded.includes(key)), Math.max(0, stackDeadline - Date.now()), null);
+        }
+        // A new PR that overlaps another open PR of the author: reads fail open.
+        if (rules.prBatch && new RegExp(rules.prBatch.match, "i").test(command)) {
+            facts.prBatch = await within(prBatchFacts(command, rules, inCwd, facts.env, (path, cwd) => readText(resolve(input.cwd ?? ".", cwd ?? ".", path))), left(), {});
         }
         if (tagTargets(command, rules, facts.env).some((t) => !t.name.startsWith("<"))) {
             facts.tags =

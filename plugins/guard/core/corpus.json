@@ -568,9 +568,9 @@
   ["env -i -- - A=1 GH api repos/o/r/issues/1/labels --input b.json", "deny:run-label", "G33", "#282 review: env -i -- - and an assignment", {"run": "registered"}],
   ["time env -- - GH api repos/o/r/issues/1/labels --input b.json", "deny:run-label", "G33", "#282 review: env -- - behind time", {"run": "registered"}],
   ["env -- - bash -c 'rm -rf x'", "ask:rm", "G33", "#282 review: a shell payload behind env -- -"],
-  ["gh pr create --fill", "allow:stack", "CTRL", "control: the head builds on an open PR but targets the default branch", {"stack": {"below": {"number": 7, "branch": "feat/a"}, "base": "main"}}],
+  ["gh pr create --fill", "deny:stack", "CTRL", "control: the head builds on an open PR but targets the default branch", {"stack": {"below": {"number": 7, "branch": "feat/a"}, "base": "main", "verb": "create"}}],
   ["gh pr create --base feat/a --fill", "allow", "CTRL", "control: already stacked, no facts", {"stack": {}}],
-  ["gh pr merge 12 --auto --squash", "allow:stack", "CTRL", "control: merging a PR that carries an open PR's commits", {"stack": {"below": {"number": 7, "branch": "feat/a"}, "base": "main"}}],
+  ["gh pr merge 12 --auto --squash", "allow:stack", "CTRL", "control: merging a PR that carries an open PR's commits", {"stack": {"below": {"number": 7, "branch": "feat/a"}, "base": "main", "verb": "merge"}}],
   ["gh issue edit 12 --add-label agent-ok", "deny:run-label", "G35", "code audit: the default approval label stays protected beside a configured one", {"run": "configured"}],
   ["gh issue edit 12 --remove-label factory-takeover", "deny:run-label", "G35", "code audit: the default takeover label stays protected beside a configured one", {"run": "configured"}],
   ["gh issue edit 12 --add-label go-ahead", "deny:run-label", "G35", "code audit: the configured approval label", {"run": "configured"}],
@@ -640,5 +640,10 @@
   ["git push origin --delete feat/open-pr", "ask:push-delete", "G24", "control (open PR head)", {"pr": "open"}],
   ["git push origin --delete feat/closed-pr", "ask:push-delete", "G24", "control (closed three days ago)", {"pr": "closed-3d"}],
   ["git push origin feat/x", "deny:push-scan", "G24", "control (planted test key)", {"leak": true}],
-  ["git push -u origin feat/x", "allow", "G24", "control (clean push)"]
+  ["git push -u origin feat/x", "allow", "G24", "control (clean push)"],
+  ["gh pr create --fill --assignee @me", "deny:stack", "G46", "agent-review 7d: a create to the default branch carrying an open PR's commits", {"stack": {"below": {"number": 7, "branch": "feat/a"}, "base": "main", "verb": "create", "head": "feat/b"}}],
+  ["gh pr create --fill --draft", "deny:stack", "G46", "agent-review 7d: the stack message wins over the pr-batch deny", {"stack": {"below": {"number": 7, "branch": "feat/a"}, "base": "main", "verb": "create", "head": "feat/b"}, "prBatch": {"": {"reason": {"kind": "none"}, "overlaps": [{"files": ["src/a.ts"], "head": "feat/a", "number": 7}]}}}],
+  ["gh pr create --base feat/a --fill --draft", "allow", "G47", "agent-review 7d: a stack layer whose only overlap is the layer below needs no Split-Reason", {"prBatch": {"": {"reason": {"kind": "none"}, "overlaps": []}}}],
+  ["git switch -c feat/n feat/a", "allow:stack-branch", "G48", "agent-review 7d: a branch started from an open PR's head is a stack layer", {"early": {"base": "main", "below": {"number": 7, "branch": "feat/a"}, "branch": "feat/n", "key": "stack-branch:feat/n", "kind": "branch", "start": "feat/a"}}],
+  ["git push -u origin feat/b", "allow:stack-push", "G49", "agent-review 7d: the first push of a branch that carries an open PR's commits", {"early": {"base": "main", "below": {"number": 7, "branch": "feat/a"}, "branch": "feat/b", "key": "stack-push:feat/b", "kind": "push"}}]
 ]

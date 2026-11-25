@@ -719,7 +719,7 @@ void test("report has no repo names; repoTable does", () => {
   );
   assert.match(
     out,
-    /How to read each figure: \.agents\/skills\/agent-review\/references\/reading\.md \(CI health\)\./,
+    /How to read each figure: docs\/agent-review\.md \(Reading the figures: CI health\)\./,
   );
   assert.match(
     repoTable(agg),
