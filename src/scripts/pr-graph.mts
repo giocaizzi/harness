@@ -23,7 +23,7 @@ const MANIFESTS = new Set([
 export const HOT_SHARE = 0.2;
 export const HOT_MIN = 3;
 
-const QUERY = `query($q:String!,$cursor:String){search(query:$q,type:ISSUE,first:50,after:$cursor){pageInfo{hasNextPage endCursor} nodes{... on PullRequest{number baseRefName headRefName createdAt closedAt mergedAt additions deletions repository{nameWithOwner defaultBranchRef{name}} files(first:100){totalCount nodes{path}}}}}}`;
+const QUERY = `query($q:String!,$cursor:String){search(query:$q,type:ISSUE,first:50,after:$cursor){pageInfo{hasNextPage endCursor} nodes{... on PullRequest{number baseRefName headRefName createdAt closedAt mergedAt additions deletions repository{nameWithOwner defaultBranchRef{name}} files(first:100){totalCount nodes{path}} timelineItems(itemTypes:[BASE_REF_CHANGED_EVENT],first:10){nodes{... on BaseRefChangedEvent{previousRefName currentRefName}}}}}}}`;
 
 export type GhRunner = (args: string[]) => Promise<string>;
 
@@ -44,11 +44,16 @@ export interface GraphQLPrNode {
     totalCount: number;
     nodes: { path: string }[];
   };
+  timelineItems?: {
+    nodes?: ({ previousRefName?: string; currentRefName?: string } | null)[];
+  };
 }
 
 export interface CollectedPr {
   repo: string;
   base: string;
+  // Refs the PR was based on before the current base, oldest first (retargets).
+  prevBases?: string[];
   head: string;
   defaultBranch?: string;
   created: number;
@@ -72,6 +77,8 @@ export interface RepoPrGraph {
   stackedPairs: number;
   overlapPairs: number;
   refinedPairs: number;
+  supersededPairs: number;
+  overlapClusters: number;
 }
 
 export interface AggregatedPrGraph {
@@ -81,6 +88,8 @@ export interface AggregatedPrGraph {
   manifestOnlyPrs: number;
   openToMergeP50: number | null;
   refinedPairs: number;
+  supersededPairs: number;
+  overlapClusters: number;
   hotFiles: number;
   prs: number;
   repos: number;
@@ -230,6 +239,9 @@ export async function collect(
   return [...seen.values()].map((p) => ({
     repo: `${p.host}/${p.repository.nameWithOwner}`,
     base: p.baseRefName,
+    prevBases: (p.timelineItems?.nodes ?? []).flatMap((e) =>
+      e && typeof e.previousRefName === "string" ? [e.previousRefName] : [],
+    ),
     head: p.headRefName,
     defaultBranch: p.repository.defaultBranchRef?.name,
     created: Date.parse(p.createdAt),
@@ -274,8 +286,32 @@ const hotFiles = (list: CollectedPr[]): Set<string> => {
       .map(([x]) => x),
   );
 };
+// Stacked now, or ever based on a non-default ref (upper layers are retargeted to the default branch as lower ones merge).
 const isStacked = (p: CollectedPr): boolean =>
-  Boolean(p.defaultBranch) && p.base !== p.defaultBranch;
+  Boolean(p.defaultBranch) &&
+  (p.base !== p.defaultBranch ||
+    (p.prevBases ?? []).some((x) => x !== p.defaultBranch));
+const origBase = (p: CollectedPr): string => p.prevBases?.[0] ?? p.base;
+
+// Union-find over indexes; `find` gives a component id.
+function components(n: number): {
+  union: (a: number, b: number) => void;
+  find: (a: number) => number;
+} {
+  const parent = Array.from({ length: n }, (_, i) => i);
+  const find = (a: number): number => {
+    let r = a;
+    while ((parent[r] ?? r) !== r) r = parent[r] ?? r;
+    parent[a] = r;
+    return r;
+  };
+  return {
+    union: (a, b) => {
+      parent[find(a)] = find(b);
+    },
+    find,
+  };
+}
 
 export function graph(
   prs: CollectedPr[],
@@ -305,6 +341,8 @@ export function graph(
     manifestOnlyPrs: prs.filter((p) => manifestOnly(p.paths)).length,
     openToMergeP50: nearest(mergeMs, 0.5),
     refinedPairs: 0,
+    supersededPairs: 0,
+    overlapClusters: 0,
     hotFiles: 0,
     prs: prs.length,
     repos: byRepo.size,
@@ -324,10 +362,25 @@ export function graph(
       stackedPairs: 0,
       overlapPairs: 0,
       refinedPairs: 0,
+      supersededPairs: 0,
+      overlapClusters: 0,
     };
     const hot = hotFiles(list);
     agg.hotFiles += hot.size;
     const sorted = [...list].sort((a, b) => a.created - b.created);
+    // Chains: base/head links on the original base, transitively.
+    const chain = components(sorted.length);
+    const byHead = new Map<string, number[]>();
+    sorted.forEach((p, i) => {
+      byHead.set(p.head, [...(byHead.get(p.head) ?? []), i]);
+    });
+    sorted.forEach((p, i) => {
+      for (const k of byHead.get(origBase(p)) ?? []) {
+        if (k !== i) chain.union(i, k);
+      }
+    });
+    const cluster = components(sorted.length);
+    const clustered = new Set<number>();
     for (let i = 0; i < sorted.length; i++) {
       for (let j = i + 1; j < sorted.length; j++) {
         const a = sorted[i];
@@ -335,20 +388,34 @@ export function graph(
         if (!a || !b) continue;
         if (!(a.created <= b.created && b.created < (a.closed ?? now)))
           continue;
-        if (b.base === a.head || a.base === b.head) {
+        if (chain.find(i) === chain.find(j)) {
           r.stackedPairs++;
           continue;
         }
         const bp = new Set(b.paths);
         const shared = a.paths.filter((x) => bp.has(x));
         if (!shared.length) continue;
+        if (a.closed != null && a.merged == null) {
+          r.supersededPairs++;
+          continue;
+        }
         r.overlapPairs++;
-        if (shared.some((x) => !hot.has(x))) r.refinedPairs++;
+        if (shared.some((x) => !hot.has(x))) {
+          r.refinedPairs++;
+          cluster.union(i, j);
+          clustered.add(i);
+          clustered.add(j);
+          inOverlap.add(a);
+          inOverlap.add(b);
+        }
         if (manifestOnly(shared)) agg.manifestOnly++;
-        inOverlap.add(a);
-        inOverlap.add(b);
       }
     }
+    r.overlapClusters = new Set(
+      [...clustered].map((i) => cluster.find(i)),
+    ).size;
+    agg.overlapClusters += r.overlapClusters;
+    agg.supersededPairs += r.supersededPairs;
     agg.stackedPairs += r.stackedPairs;
     agg.overlapPairs += r.overlapPairs;
     agg.refinedPairs += r.refinedPairs;
@@ -379,25 +446,33 @@ export function report(agg: AggregatedPrGraph, range: string): string {
     ],
     ["Median open-to-merge", fmtDuration(agg.openToMergeP50)],
     [
-      "Stacked share (base is not the default branch)",
+      "Stacked share (based on a non-default branch, now or ever)",
       `${pct(agg.stacked, agg.prs)} (${String(agg.stacked)})`,
     ],
     ["Open-together pairs already stacked", String(agg.stackedPairs)],
     [
-      "Should-have-been-stacked pairs, hot files dropped (share a file that is not hot)",
+      "Overlapping open PRs (fold into one, or stack if dependent): pairs, hot files dropped (share a file that is not hot)",
       String(agg.refinedPairs),
+    ],
+    [
+      "Overlap clusters (connected groups of those pairs)",
+      String(agg.overlapClusters),
     ],
     [
       "Hot files dropped (touched by more than 20% of a repo's PRs, at least 3)",
       String(agg.hotFiles),
     ],
     [
-      "Should-have-been-stacked pairs, any shared file (secondary)",
+      "Overlapping open PRs, any shared file (secondary)",
       String(agg.overlapPairs),
+    ],
+    [
+      "Superseded pairs (an earlier PR closed unmerged, replaced by a new one; not counted above)",
+      String(agg.supersededPairs),
     ],
     ["of which overlap only on version manifests", String(agg.manifestOnly)],
     [
-      "Share of PRs in a should-have-been-stacked pair",
+      "Share of PRs in an overlapping pair (hot files dropped)",
       pct(agg.overlapPrs, agg.prs),
     ],
     [
@@ -412,7 +487,7 @@ export function report(agg: AggregatedPrGraph, range: string): string {
     "|---|---|",
     ...rows.map(([k, v]) => `| ${k} | ${v} |`),
     "",
-    "Target: hot-file-free should-have-been-stacked pairs trend to 0 and the stacked share rises (github-pull-requests, Landing a change). How to read each figure: .agents/skills/agent-review/references/reading.md (PR graph).",
+    "Target: refined overlapping pairs trend to 0 by folding same-deliverable work into one PR and stacking dependent work; the stacked share of dependent work rises (github-pull-requests, Landing a change). How to read each figure: .agents/skills/agent-review/references/reading.md (PR graph).",
     "",
   ].join("\n");
 }
