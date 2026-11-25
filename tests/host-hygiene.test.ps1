@@ -13,6 +13,7 @@ $env:HOST_LOCK_DIR = $L
 $env:HOST_DISK_FLOOR_GB = '0'
 $env:HOST_HEAVY_SLOTS = '1'
 $env:HOST_CPU_CAP = '100'
+$env:HOST_CRITICAL_CPU_CAP = '100'
 $shell = (Get-Process -Id $PID).Path
 $windowStyle = if ($env:OS -eq 'Windows_NT') { @{ WindowStyle = 'Hidden' } } else { @{} }
 function Invoke-Heavy([string]$Command) {
@@ -69,8 +70,11 @@ try {
     $env:HOST_LOCK_TIMEOUT_SECONDS = '1'
     $h = Invoke-SlotHolder
     Set-Content (Join-Path $L 'heavy.slot.1') "other $($h.Id) cmd"
-    & $shell -NoProfile -File $heavy $shell -NoProfile -Command 'exit 0' 2>$null
+    $slotErr = Join-Path $tmp 'slot-err'
+    & $shell -NoProfile -File $heavy $shell -NoProfile -Command 'exit 0' 2>$slotErr
     Test-Equal -Name 'timed-out waiter exits 124 and keeps the holder''s slot' -Got "$LASTEXITCODE $(Get-Content (Join-Path $L 'heavy.slot.1'))" -Want "124 other $($h.Id) cmd"
+    Test-Equal -Name 'slot wait says its position and who holds the slots' -Got @(Select-String -Path $slotErr -Pattern '^host: waiting for a heavy slot: position 1 in queue, 1/1 slots busy \(other cmd \d+s\)$').Count -Want 1
+    Test-Equal -Name 'a timed-out slot wait says it gave up' -Got @(Select-String -Path $slotErr -Pattern '^host: gave up waiting for a heavy slot after 1s$').Count -Want 1
 
     # lease.ps1: slot first, then lease.
     & $shell -NoProfile -File $lease sim -- $shell -NoProfile -Command "Test-Path '$L/sim.lease'" 2>$null
@@ -168,6 +172,93 @@ try { Enter-HostSlot job; Set-Content $env:TEST_GOT (Get-Date).ToString('o') } f
     Set-Content (Join-Path $L 'heavy.slot.1') "other $(Get-DeadPid) make"
     Test-Equal -Name '--status flags a dead holder' -Got @(& $shell -NoProfile -File $heavy --status | Where-Object { $_ -match '^slot 1: other \d+ make \(\d+s, holder dead\)$' }).Count -Want 1
     Remove-Item (Join-Path $L 'heavy.slot.1')
+
+    # Weight classes: --classify, the repo's .heavy-weights, and admission per class.
+    function Get-Class([string[]]$Words) { (@(& $shell -NoProfile -File $heavy --classify @Words 2>$null) -join '') -replace ':\d+$', ':N' }
+    Test-Equal -Name 'classify: go vet of one package is light' -Got (Get-Class 'go', 'vet', './internal/x') -Want 'light builtin:N'
+    Test-Equal -Name 'classify: go vet of the module is medium' -Got (Get-Class 'go', 'vet', './...') -Want 'medium builtin:N'
+    Test-Equal -Name 'classify: go test of the module is heavy' -Got (Get-Class 'go', 'test', './...') -Want 'heavy builtin:N'
+    Test-Equal -Name 'classify: go test -race of a package is medium' -Got (Get-Class 'go', 'test', '-race', './pkg') -Want 'medium builtin:N'
+    Test-Equal -Name 'classify: git status is light' -Got (Get-Class 'git', 'status') -Want 'light builtin:N'
+    Test-Equal -Name 'classify: git gc is heavy' -Got (Get-Class 'git', 'gc') -Want 'heavy builtin:N'
+    Test-Equal -Name 'classify: an unknown command is heavy by default' -Got (Get-Class 'make', 'check') -Want 'heavy default'
+    Test-Equal -Name 'classify runs nothing' -Got (Test-Path (Join-Path $tmp 'ran')) -Want $false
+
+    $repo = Join-Path $tmp 'repo'
+    New-Item -ItemType Directory -Path $repo | Out-Null
+    git -C $repo init -q 2>$null
+    Set-Content (Join-Path $repo '.heavy-weights') @('# raise go vet in this repo', 'bogus go vet*', 'heavy go vet*', 'light *lightcmd*', 'medium *mediumcmd*')
+    Push-Location $repo
+    try {
+        $repoErr = Join-Path $tmp 'repo-err'
+        $got = (@(& $shell -NoProfile -File $heavy --classify go vet ./internal/x 2>$repoErr) -join '')
+        Test-Equal -Name 'classify: the repo rule wins over the built-in table' -Got $got -Want 'heavy repo:3'
+        Test-Equal -Name 'classify: an unknown class warns and is skipped' -Got @(Select-String -Path $repoErr -Pattern "^host: ignoring .*\.heavy-weights:2: unknown class 'bogus'$").Count -Want 1
+
+        # light and medium do not wait for a held heavy slot.
+        $env:HOST_LOCK_TIMEOUT_SECONDS = '5'
+        $h = Invoke-SlotHolder
+        & $shell -NoProfile -File $heavy $shell -NoProfile -Command 'exit(0)#lightcmd' 2>$null
+        Test-Equal -Name 'light runs while the heavy slot is held' -Got $LASTEXITCODE -Want 0
+        & $shell -NoProfile -File $heavy $shell -NoProfile -Command 'exit(0)#mediumcmd' 2>$null
+        Test-Equal -Name 'medium runs while the heavy slot is held' -Got $LASTEXITCODE -Want 0
+        Test-Equal -Name 'light and medium leave no wait or slot files' -Got @(Get-ChildItem $L -Filter 'medium.*').Count -Want 0
+        $h | Wait-Process
+
+        # light waits only on critical load.
+        $env:HOST_LOCK_TIMEOUT_SECONDS = '1'; $env:HOST_POLL_SECONDS = '1'; $env:HOST_CRITICAL_CPU_CAP = '-1'
+        $lightErr = Join-Path $tmp 'light-err'
+        & $shell -NoProfile -File $heavy $shell -NoProfile -Command 'exit(0)#lightcmd' 2>$lightErr
+        Test-Equal -Name 'light over the critical cap times out with 124' -Got "$LASTEXITCODE $(@(Select-String -Path $lightErr -Pattern '^host: waiting for cpu .*% to drop under -1% \(HOST_CRITICAL_CPU_CAP, light\)$').Count) $(@(Select-String -Path $lightErr -Pattern '^host: gave up waiting for cpu to drop under -1% after 1s$').Count)" -Want '124 1 1'
+        & $shell -NoProfile -File $heavy $shell -NoProfile -Command 'exit(0)#mediumcmd' 2>$lightErr
+        Test-Equal -Name 'medium over the critical cap times out with 124' -Got "$LASTEXITCODE $(@(Select-String -Path $lightErr -Pattern '\(HOST_CRITICAL_CPU_CAP, medium\)$').Count)" -Want '124 1'
+        Remove-Item Env:HOST_POLL_SECONDS
+        $env:HOST_CRITICAL_CPU_CAP = '100'; $env:HOST_LOCK_TIMEOUT_SECONDS = '1800'
+
+        # Metrics: one line per call, first two words of the command only, a write failure changes nothing.
+        $metrics = Join-Path $tmp 'metrics/m.log'
+        $env:HOST_METRICS_FILE = $metrics
+        & $shell -NoProfile -File $heavy $shell -NoProfile -Command 'exit(3)#lightcmd' 2>$null
+        $env:HOST_CRITICAL_CPU_CAP = '-1'; $env:HOST_LOCK_TIMEOUT_SECONDS = '1'; $env:HOST_POLL_SECONDS = '1'
+        & $shell -NoProfile -File $heavy $shell -NoProfile -Command 'exit(0)#lightcmd' 2>$null
+        Remove-Item Env:HOST_POLL_SECONDS
+        $env:HOST_CRITICAL_CPU_CAP = '100'; $env:HOST_LOCK_TIMEOUT_SECONDS = '1800'
+        $lines = @(Get-Content $metrics)
+        Test-Equal -Name 'metrics: a run appends one logfmt line' -Got ($lines.Count -eq 2 -and $lines[0] -match '^ts=\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ weight=light source=repo:4 waited_s=0 wait=none ran_s=\d+ exit=3 owner=\S+ cmd="[^"]+ -NoProfile"$') -Want $true
+        Test-Equal -Name 'metrics: a timeout is recorded with exit 124 and the load wait' -Got ($lines[1] -match ' waited_s=\d+ wait=load ran_s=0 exit=124 ') -Want $true
+        Test-Equal -Name 'metrics: arguments beyond the first two words are never logged' -Got (($lines -join '') -match 'lightcmd|Command') -Want $false
+        $env:HOST_METRICS_FILE = $tmp
+        & $shell -NoProfile -File $heavy $shell -NoProfile -Command 'exit(5)#lightcmd' 2>$null
+        Test-Equal -Name 'metrics: a failing write never changes the exit code' -Got $LASTEXITCODE -Want 5
+        Remove-Item Env:HOST_METRICS_FILE
+    } finally {
+        Pop-Location
+    }
+
+    # Job object: a failed run ends the processes the command started, a successful one leaves them.
+    $spawn = Join-Path $tmp 'spawn.ps1'
+    Set-Content $spawn @'
+param($Code)
+$c = Start-Process $env:TEST_SHELL -ArgumentList '-NoProfile', '-Command', 'Start-Sleep 60' -PassThru
+Set-Content $env:TEST_PIDFILE $c.Id
+exit $Code
+'@
+    $env:TEST_SHELL = $shell; $env:TEST_PIDFILE = Join-Path $tmp 'childpid'
+    & $shell -NoProfile -File $heavy $shell -NoProfile -File $spawn 3 2>$null
+    $child = [int](Get-Content $env:TEST_PIDFILE)
+    for ($i = 0; $i -lt 50 -and (Get-Process -Id $child -ErrorAction SilentlyContinue); $i++) { Start-Sleep -Milliseconds 200 }
+    Test-Equal -Name 'job object: a failing command leaves no running child' -Got "$LASTEXITCODE $([bool](Get-Process -Id $child -ErrorAction SilentlyContinue))" -Want '3 False'
+    & $shell -NoProfile -File $heavy $shell -NoProfile -File $spawn 0 2>$null
+    $child = [int](Get-Content $env:TEST_PIDFILE)
+    Start-Sleep 1
+    Test-Equal -Name 'job object: a succeeding command leaves its child running' -Got "$LASTEXITCODE $([bool](Get-Process -Id $child -ErrorAction SilentlyContinue))" -Want '0 True'
+    Stop-Process -Id $child -ErrorAction SilentlyContinue
+
+    # --status lists medium slots and waiters, and both caps.
+    Set-Content (Join-Path $L 'medium.slot.1') "other $PID make"
+    Test-Equal -Name '--status shows a medium slot' -Got @(& $shell -NoProfile -File $heavy --status | Where-Object { $_ -match '^medium slot 1: other \d+ make \(\d+s\)$' }).Count -Want 1
+    Remove-Item (Join-Path $L 'medium.slot.1')
+    Test-Equal -Name '--status ends with both caps and both slot counts' -Got @(& $shell -NoProfile -File $heavy --status | Where-Object { $_ -match '^cpu .*% \(cap 100, critical 100\), slots 1, medium slots 4$' }).Count -Want 1
 
     # register-service.ps1
     $w = Start-Process $shell -ArgumentList "-NoProfile -File `"$reg`" db -- `"$shell`" -NoProfile -Command `"Start-Sleep 3`"" @windowStyle -PassThru
