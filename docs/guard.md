@@ -25,6 +25,7 @@ Agent rules enforced as hooks, from one plugin, for Claude Code, Copilot CLI, VS
 | `core/registration.mjs` | Pure: the v3 run registration's schema, capabilities, modes and result-file template ([Run contract v3](#run-contract-v3)). |
 | `hooks/registration.mjs` | Loads the registration named by `AGENT_RUN_MANIFEST`: trust checks, the session pin, the per-process cache for opencode and pi. Every decision that depends on a run reads it. |
 | `hooks/contract.mjs` | The `--contract` probe: `{contract, capabilities, enforced, guard}`. |
+| `hooks/describe.mjs` | The `--describe` hook descriptor ([Run contract v3](#run-contract-v3)): argv per harness, read from the installed hooks files. Also the one source of the Antigravity hooks `scripts/install.mjs` writes. |
 | `hooks/lint.mjs` | shellcheck / PSScriptAnalyzer after an edit (was the dotfiles `post-edit-lint.sh`/`.ps1`). |
 | `hooks/awake.mjs` | Keep-awake keeper tied to the harness process. |
 | `hooks/mod.mjs` | Claude Code mod (`modules` in `hooks.json`, ignored by Copilot CLI and VS Code): the usage throttle and the ask timeout. The UI (band, pane, status line, spinner) is the `hud` plugin ([docs/hud.md](hud.md)); toasts and sounds are the `sounds` plugin ([docs/sounds.md](sounds.md)). |
@@ -294,6 +295,17 @@ Not seen (best effort; the forge diff stays the runner's other signal): a path b
 ```
 
 A runner MUST refuse to start unless `enforced` is true, `contract` equals the contract major the runner speaks (3 for the `AGENT_RUN_*` names; a higher or lower major is a different contract) and every capability it requires is listed; it never trusts `contract` alone.
+
+**Hook descriptor.** `node <plugin root>/hooks/guard.mjs --describe` prints one JSON line and exits 0 without reading stdin. It is built at run time from the installed `hooks/hooks.json` (its `hooks`, never `modules`), `.generated/codex/hooks.json` and the Antigravity hooks `scripts/install.mjs` writes, so it never drifts from the copy that answers.
+
+| Field | Meaning |
+|---|---|
+| `descriptor` | The descriptor's own schema version (1). Additions are minor; a changed meaning bumps it. |
+| `guard`, `contract`, `root` | The guard version, the run contract, the absolute plugin root of the copy that answered. |
+| `harnesses.<name>` | `claude-code`, `copilot-cli`, `vscode-copilot` (the same hooks), `codex-cli`, `antigravity`: `{"kind": "command", "hooks": {<Event>: [{"matcher"?, "argv", "timeout"?}]}}`, one entry per command. `opencode`, `pi`: `{"kind": "module", "module": "<absolute path>"}`. |
+| `env.run` | The `AGENT_RUN_*` variables a launcher sets for a registered run. |
+
+`argv` is an argument vector: it needs no shell and no `${CLAUDE_PLUGIN_ROOT}` (the paths are absolute), and `timeout` is in seconds. An orchestrator reads the descriptor from the installed copy it will run, instead of embedding a copy of `hooks.json` or versioned paths. A hook command that is not `node "<path>" plain args` makes `--describe` fail, and a test checks that every shipped command parses.
 
 **Soft limits.** The events file and the stop-block cap are hints, not proof. The runner must re-check `result.json` itself (schema and `run_id`) before acting on a run, and must set a run timeout: it is what ends an unattended run whose result never passes the gate.
 

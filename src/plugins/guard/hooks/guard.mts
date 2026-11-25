@@ -75,6 +75,7 @@ import type {
   TagFact,
 } from "../core/types.mjs";
 import { contractProbe } from "./contract.mjs";
+import { describeInstalled } from "./describe.mjs";
 import { appendDataFile, pluginDataDir, readDataFile } from "./data.mjs";
 import { editedPaths } from "./lint.mjs";
 import {
@@ -1793,6 +1794,10 @@ function denyUnreadable(why: string, isAgy: boolean): void {
 async function main(): Promise<void> {
   if (process.argv.includes("--contract")) {
     process.stdout.write(`${JSON.stringify(contractProbe())}\n`);
+    return;
+  }
+  if (process.argv.includes("--describe")) {
+    process.stdout.write(`${JSON.stringify(describeInstalled())}\n`);
     return;
   }
   const flagHarness = process.argv

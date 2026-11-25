@@ -15,6 +15,7 @@ import { sessionAttrs } from "../core/registration.mjs";
 import { rules } from "../core/rules.mjs";
 import { commandWords, units } from "../core/shell.mjs";
 import { contractProbe } from "./contract.mjs";
+import { describeInstalled } from "./describe.mjs";
 import { appendDataFile, pluginDataDir, readDataFile } from "./data.mjs";
 import { editedPaths } from "./lint.mjs";
 import { OFF, sweepNotice, startSessionSweep, takeAgentNotes, } from "./lifecycle.mjs";
@@ -1256,6 +1257,10 @@ function denyUnreadable(why, isAgy) {
 async function main() {
     if (process.argv.includes("--contract")) {
         process.stdout.write(`${JSON.stringify(contractProbe())}\n`);
+        return;
+    }
+    if (process.argv.includes("--describe")) {
+        process.stdout.write(`${JSON.stringify(describeInstalled())}\n`);
         return;
     }
     const flagHarness = process.argv
