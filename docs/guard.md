@@ -106,7 +106,7 @@ Codex runs the same command hooks (`.generated/codex/hooks.json`) with Claude's 
 
 What a runner (any program that starts a harness for a ticket) registers and sets, and what guard enforces. Public and versioned: additions are minor; changing the meaning of a variable, key or path is a new contract major, noted here. The `GUARD_*` switches that are not `AGENT_RUN_*` are not part of it: [usage.md](usage.md#guard-what-it-does-to-the-agent).
 
-**Status.** Enforced from guard 1.0.0. Contract 3 (guard 2.0.0) renamed the run variables from `GUARD_RUN_*` to `AGENT_RUN_*`: a hard cut, with no alias and no deprecation window. Contract v1 is gone: guard reads no other run variable and no run config file for any decision. The one exception fails closed: a contract 2 name (`GUARD_RUN_ID`, `GUARD_RUN_TICKET`, `GUARD_RUN_MODE`, `GUARD_RUN_FILE`, `GUARD_RUN_MANIFEST`) set to a non-blank value without its `AGENT_RUN_*` twin set to the same value is a registration failure (rule `run-registration`, Failures), so a contract 2 runner meeting this guard after a plugin update gets every tool call denied and the stop blocked instead of an unprotected session. A runner may set both names to the same values while it moves. A session that sets none of these variables is an ordinary unregistered session. A runner registers its own labels, globs and exemptions in its manifest.
+**Status.** Enforced from guard 1.0.0. Contract 3 (guard 2.0.0) renamed the run variables from `GUARD_RUN_*` to `AGENT_RUN_*`: a hard cut, with no alias and no deprecation window. Contract v1 is gone: guard reads no other run variable and no run config file for any decision. The one exception fails closed: a contract 2 name (`GUARD_RUN_ID`, `GUARD_RUN_TICKET`, `GUARD_RUN_MODE`, `GUARD_RUN_FILE`, `GUARD_RUN_MANIFEST`, and once the run is identified by any of these or an `AGENT_RUN_*` identity also `GUARD_RUN_PROTECTED_PATHS` and `GUARD_RUN_EVENTS_FILE`) set to a non-blank value without its `AGENT_RUN_*` twin set to the same value is a registration failure (rule `run-registration`, Failures), so a contract 2 runner meeting this guard after a plugin update gets every tool call denied and the stop blocked instead of an unprotected session. A runner may set both names to the same values while it moves. A session that sets none of these variables is an ordinary unregistered session. A runner registers its own labels, globs and exemptions in its manifest.
 
 | Variable | Set by the runner to | Guard does |
 |---|---|---|
@@ -221,12 +221,12 @@ Not seen (best effort; the forge diff stays the runner's other signal): a path b
 
 | Failure | Cases |
 |---|---|
-| Variables out of step | `AGENT_RUN_ID` set without `AGENT_RUN_MANIFEST`; `AGENT_RUN_MANIFEST` set (even empty) without `AGENT_RUN_ID`. |
-| Contract 2 names | A `GUARD_RUN_ID`, `GUARD_RUN_TICKET`, `GUARD_RUN_MODE`, `GUARD_RUN_FILE` or `GUARD_RUN_MANIFEST` set (not blank) without the same value in its `AGENT_RUN_*` twin. |
+| Variables out of step | `AGENT_RUN_ID` set without `AGENT_RUN_MANIFEST`; `AGENT_RUN_MANIFEST` set (even empty) without `AGENT_RUN_ID`; `AGENT_RUN_MANIFEST_SHA256` set (even empty) with neither. |
+| Contract 2 names | A `GUARD_RUN_ID`, `GUARD_RUN_TICKET`, `GUARD_RUN_MODE`, `GUARD_RUN_FILE` or `GUARD_RUN_MANIFEST` set (not blank) without the same value in its `AGENT_RUN_*` twin; in a run identified by one of those or by `AGENT_RUN_ID`, `AGENT_RUN_MANIFEST` or `AGENT_RUN_MANIFEST_SHA256`, also `GUARD_RUN_PROTECTED_PATHS` or `GUARD_RUN_EVENTS_FILE` without an equal twin (so the extra globs and the events file are never dropped in silence). Either of those two alone, with no run named, is an ordinary session. |
 | More than one manifest path | A newline in the value, or a realpath other than the one pinned for the session. |
 | Unusable file | Missing, not a regular file, unreadable, not `.json`, writable (the file, its directory or an ancestor; ownership mode only), too large. |
 | Digest | `AGENT_RUN_MANIFEST_SHA256` set but not 64 lowercase hex; the manifest's sha256 differs from it. |
-| Bad content | Not UTF-8, a BOM, not JSON; a schema error, an unknown key, an unknown capability, a contract other than 2. |
+| Bad content | Not UTF-8, a BOM, not JSON; a schema error, an unknown key, an unknown capability, a contract other than 3. |
 | Checker | `result.checker` refused; in digest mode, no `result.checker_sha256`; the checker's sha256 differs from `result.checker_sha256`. |
 | Bad run variables | `AGENT_RUN_ID` shape, a mode not in `modes`, a ticket shape or a missing ticket. |
 | Changed manifest or run variables | A tool call denies when the sha256 differs from the pin, or `AGENT_RUN_ID`, `AGENT_RUN_MODE` or `AGENT_RUN_TICKET` differs from the values pinned with it for the session. At stop the pin is not the authority: a changed manifest that still passes its trust checks is followed, and the mode, id and ticket come from the environment. |

@@ -238,37 +238,43 @@ void test("run contract 2 variables fail closed unless AGENT_RUN_* holds the sam
   );
 });
 
-// Strict expected failure: the body must fail until the fix lands; once it passes, this test fails, so the fix drops
-// the wrapper.
-const xfail = (name: string, body: () => void): void => {
-  void test(`xfail: ${name}`, () => {
-    try {
-      body();
-    } catch {
-      return;
-    }
-    assert.fail(`xfail passed: drop the xfail wrapper of "${name}"`);
-  });
-};
-
 // A runner moving from contract 2 sets both names, as the docs allow, but misses the twin of
 // GUARD_RUN_PROTECTED_PATHS or GUARD_RUN_EVENTS_FILE. The run registers, and the extra protected globs (or the events
 // file its breaker counts) are dropped without a word: the silent loss the contract 2 check exists to prevent.
-xfail(
-  "an identified run with a contract 2 protected-paths or events-file name and no equal AGENT_RUN_* twin denies",
-  () => {
-    const file = manifest({ requires: ["protected-paths"] });
-    const moving = { GUARD_RUN_ID: "r1", GUARD_RUN_MANIFEST: file };
-    for (const extra of [
-      { GUARD_RUN_PROTECTED_PATHS: "secrets/**" },
-      { GUARD_RUN_EVENTS_FILE: join(root, "events.jsonl") },
-    ]) {
-      const env = envFor(file, { ...moving, ...extra });
-      assert.equal(
-        runContext(env, { vet }).state,
-        "deny",
-        JSON.stringify(extra),
-      );
-    }
-  },
-);
+void test("an identified run with a contract 2 protected-paths or events-file name and no equal AGENT_RUN_* twin denies", () => {
+  const file = manifest({ requires: ["protected-paths"] });
+  const moving = { GUARD_RUN_ID: "r1", GUARD_RUN_MANIFEST: file };
+  for (const extra of [
+    { GUARD_RUN_PROTECTED_PATHS: "secrets/**" },
+    { GUARD_RUN_EVENTS_FILE: join(root, "events.jsonl") },
+  ]) {
+    const env = envFor(file, { ...moving, ...extra });
+    assert.equal(runContext(env, { vet }).state, "deny", JSON.stringify(extra));
+  }
+});
+
+void test("AGENT_RUN_MANIFEST_SHA256 alone denies; the twins of an identified run pass when equal", () => {
+  for (const digest of ["a".repeat(64), ""]) {
+    const env = { AGENT_RUN_MANIFEST_SHA256: digest };
+    const ctx = runContext(env);
+    assert.equal(ctx.state, "deny", JSON.stringify(env));
+    assert.match(ctx.why, /AGENT_RUN_MANIFEST_SHA256 is set but/);
+    assert.ok(runIdentified(env));
+  }
+  const file = manifest({ requires: ["protected-paths"] });
+  const events = join(root, "events.jsonl");
+  const env = envFor(file, {
+    GUARD_RUN_ID: "r1",
+    GUARD_RUN_MANIFEST: file,
+    GUARD_RUN_PROTECTED_PATHS: "secrets/**",
+    AGENT_RUN_PROTECTED_PATHS: "secrets/**",
+    GUARD_RUN_EVENTS_FILE: events,
+    AGENT_RUN_EVENTS_FILE: events,
+  });
+  assert.equal(runContext(env, { vet }).state, "registered");
+  // an AGENT_RUN_* identity alone makes the extras count too
+  assert.deepEqual(
+    staleRunVars({ AGENT_RUN_ID: "r1", GUARD_RUN_EVENTS_FILE: events }),
+    ["GUARD_RUN_EVENTS_FILE"],
+  );
+});

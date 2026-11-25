@@ -5,19 +5,31 @@ import { RULE } from "../core/registration.mjs";
 import { loadRegistration } from "./registration.mjs";
 // Run contract 2 named the run variables GUARD_RUN_*. Guard reads them for no decision, only to fail closed: a runner
 // still on contract 2 after a plugin update must not get an ordinary unregistered session with no run rules. Each
-// old name set (not blank) without its AGENT_RUN_* twin set to the same value is returned.
+// old name set (not blank) without its AGENT_RUN_* twin set to the same value is returned. The five identity names
+// count on their own; the protected-paths and events-file names count once the run is identified (by an identity
+// name or an AGENT_RUN_* one), so a runner moving names cannot lose its extra globs or its events file in silence,
+// while either of the two alone stays an ordinary session.
 const OLD_RUN_VARS = ["ID", "TICKET", "MODE", "FILE", "MANIFEST"];
+const OLD_RUN_EXTRAS = ["PROTECTED_PATHS", "EVENTS_FILE"];
+const staleOf = (env, names) => names
+    .filter((k) => {
+    const old = env[`GUARD_RUN_${k}`];
+    return (old !== undefined && old.trim() !== "" && env[`AGENT_RUN_${k}`] !== old);
+})
+    .map((k) => `GUARD_RUN_${k}`);
+// The AGENT_RUN_* identity: a run id, a manifest variable (defined, even blank, as the loader reads it) or a digest.
+const agentRunNamed = (env) => (env.AGENT_RUN_ID ?? "").trim() !== "" ||
+    env.AGENT_RUN_MANIFEST !== undefined ||
+    env.AGENT_RUN_MANIFEST_SHA256 !== undefined;
 export function staleRunVars(env) {
-    return OLD_RUN_VARS.filter((k) => {
-        const old = env[`GUARD_RUN_${k}`];
-        return (old !== undefined && old.trim() !== "" && env[`AGENT_RUN_${k}`] !== old);
-    }).map((k) => `GUARD_RUN_${k}`);
+    const core = staleOf(env, OLD_RUN_VARS);
+    const identified = agentRunNamed(env) ||
+        OLD_RUN_VARS.some((k) => (env[`GUARD_RUN_${k}`] ?? "").trim() !== "");
+    return identified ? [...core, ...staleOf(env, OLD_RUN_EXTRAS)] : core;
 }
 // Whether the environment names a run at all (registered, failing or on the old names): a guard crash then fails
-// closed. The manifest variable counts as set when defined, even blank, as the loader reads it.
-export const runIdentified = (env) => (env.AGENT_RUN_ID ?? "").trim() !== "" ||
-    env.AGENT_RUN_MANIFEST !== undefined ||
-    staleRunVars(env).length > 0;
+// closed.
+export const runIdentified = (env) => agentRunNamed(env) || staleRunVars(env).length > 0;
 // The run this hook call belongs to. `opts` as for loadRegistration (dataDir and sessionId pin the manifest).
 export function runContext(env, opts = {}) {
     try {

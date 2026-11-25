@@ -83,8 +83,12 @@ export function loadRegistration(env, opts = {}) {
         const vetOpts = { platform, ...opts.vet, trust };
         const m = env.AGENT_RUN_MANIFEST;
         const idSet = (env.AGENT_RUN_ID ?? "").trim() !== "";
-        if (m === undefined && !idSet)
-            return { state: "none" };
+        if (m === undefined && !idSet) {
+            // a digest with nothing to check names a run the launcher meant to register: fail closed
+            return digest === undefined
+                ? { state: "none" }
+                : deny("AGENT_RUN_MANIFEST_SHA256 is set but AGENT_RUN_MANIFEST and AGENT_RUN_ID are not");
+        }
         if (idSet && (m === undefined || m.trim() === "")) {
             return deny("AGENT_RUN_ID is set but AGENT_RUN_MANIFEST is not");
         }
