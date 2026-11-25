@@ -363,7 +363,7 @@ export function report(agg, range) {
         "|---|---|",
         ...rows.map(([k, v]) => `| ${k} | ${v} |`),
         "",
-        "Target: refined overlapping pairs trend to 0 by folding same-deliverable work into one PR and stacking dependent work; the stacked share of dependent work rises (github-pull-requests, Landing a change). How to read each figure: .agents/skills/agent-review/references/reading.md (PR graph).",
+        "Target: refined overlapping pairs trend to 0 by folding same-deliverable work into one PR and stacking dependent work; the stacked share of dependent work rises (github-pull-requests, Landing a change). How to read each figure: docs/agent-review.md (Reading the figures: Review sections, PR graph rows).",
         "",
     ].join("\n");
 }
