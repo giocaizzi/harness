@@ -1,6 +1,6 @@
 # Plan: weight classes for heavy.sh and heavy.ps1
 
-Status: in progress. Owner skill: `dev-tools` `host-hygiene`.
+Status: implemented in this PR; open questions pending. Owner skill: `dev-tools` `host-hygiene`.
 
 ## Problem
 
