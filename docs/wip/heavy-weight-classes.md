@@ -31,7 +31,7 @@ The critical cap is `HOST_CRITICAL_LOAD_CAP` (default twice `HOST_LOAD_CAP`, so 
 One line per state change on stderr, `host:` prefix kept:
 
 - `host: waiting for load 34.2 to drop under 30 (HOST_LOAD_CAP)` for heavy, `... under 60 (HOST_CRITICAL_LOAD_CAP, medium)` for light and medium (Windows: cpu and `%`).
-- `host: waiting for a heavy slot: 3rd in queue, 2/2 slots busy (alice@app go test ./... 120s; bob@app make lint 30s)`, printed again whenever the position changes. Each command is cut at 60 characters.
+- `host: waiting for a heavy slot: position 3 in queue, 2/2 slots busy (alice@app go test ./... 120s; bob@app make lint 30s)`, printed again whenever the position changes. Each command is cut at 60 characters.
 
 ### Metrics
 
