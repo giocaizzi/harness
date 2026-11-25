@@ -156,6 +156,8 @@ function Write-HostMetric([int]$Code) {
     if (-not $m -or $m.Done) { return }
     $m.Done = $true
     $reason = if ($script:HostWaitLoad -and $script:HostWaitSlot) { 'load+slot' } elseif ($script:HostWaitLoad) { 'load' } elseif ($script:HostWaitSlot) { 'slot' } else { 'none' }
+    # Time spent sampling CPU (a slow first CIM query) is not a wait.
+    if ($reason -eq 'none') { $script:HostWaited = 0 }
     if ($script:HostWaited -ge 1) {
         Write-HostSay "waited $($script:HostWaited)s ($reason) for $(if ($m.Class -eq 'light') { 'load' } else { "a $($m.Class) slot" })"
     }
@@ -355,8 +357,8 @@ function Get-HostPoolStatus($Pl, [string]$SlotLabel, [string]$WaitLabel) {
 }
 
 function Get-HostStatus {
-    Get-HostPoolStatus (Get-HostPool 'heavy') 'slot' 'waiting'
-    Get-HostPoolStatus (Get-HostPool 'medium') 'medium slot' 'waiting medium'
+    Get-HostPoolStatus -Pl (Get-HostPool 'heavy') -SlotLabel 'slot' -WaitLabel 'waiting'
+    Get-HostPoolStatus -Pl (Get-HostPool 'medium') -SlotLabel 'medium slot' -WaitLabel 'waiting medium'
     Get-ChildItem -LiteralPath $script:HostLockDir -Filter '*.lease' | ForEach-Object {
         "lease $($_.Name): $((Get-Content $_.FullName -Raw).Trim())$(if (-not (Test-HostLeaseAlive $_.FullName)) { ' (stale)' })"
     }

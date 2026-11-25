@@ -224,7 +224,8 @@ try { Enter-HostSlot job; Set-Content $env:TEST_GOT (Get-Date).ToString('o') } f
         Remove-Item Env:HOST_POLL_SECONDS
         $env:HOST_CRITICAL_CPU_CAP = '100'; $env:HOST_LOCK_TIMEOUT_SECONDS = '1800'
         $lines = @(Get-Content $metrics)
-        Test-Equal -Name 'metrics: a run appends one logfmt line' -Got ($lines.Count -eq 2 -and $lines[0] -match '^ts=\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ weight=light source=repo:4 waited_s=0 wait=none ran_s=\d+ exit=3 owner=\S+ cmd="[^"]+ -NoProfile"$') -Want $true
+        $ok = $lines.Count -eq 2 -and $lines[0] -match '^ts=\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ weight=light source=repo:4 waited_s=0 wait=none ran_s=\d+ exit=3 owner=\S+ cmd="[^"]+ -NoProfile"$'
+        Test-Equal -Name 'metrics: a run appends one logfmt line' -Got $(if ($ok) { 'match' } else { "$($lines.Count) lines: $($lines -join ' | ')" }) -Want 'match'
         Test-Equal -Name 'metrics: a timeout is recorded with exit 124 and the load wait' -Got ($lines[1] -match ' waited_s=\d+ wait=load ran_s=0 exit=124 ') -Want $true
         Test-Equal -Name 'metrics: arguments beyond the first two words are never logged' -Got (($lines -join '') -match 'lightcmd|Command') -Want $false
         $env:HOST_METRICS_FILE = $tmp
