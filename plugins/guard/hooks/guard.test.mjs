@@ -1917,6 +1917,36 @@ void test("a session with only FACTORY_* variables is an ordinary unregistered s
         tool_input: { file_path: "/x/a.ts" },
     })), undefined);
 });
+// Strict expected failure: the body must fail until the fix lands; once it passes, this test fails, so the fix drops
+// the wrapper.
+const xfail = (name, body) => {
+    void test(`xfail: ${name}`, async () => {
+        try {
+            await body();
+        }
+        catch {
+            return;
+        }
+        assert.fail(`xfail passed: drop the xfail wrapper of "${name}"`);
+    });
+};
+// A contract-2 runner (GUARD_RUN_*) meeting guard 2.0.0 after a plugin update: guard reads none of its variables, so
+// the run is an ordinary unregistered session (no label, protected-path or result-gate rule), and a runner that follows
+// the documented probe rule (`contract` at least 2) starts it. It must fail closed, not run unprotected.
+xfail("a session that sets the contract-2 GUARD_RUN_* variables denies its tool calls", async () => {
+    const file = join(REG_DIR, "contract-2.json");
+    writeFileSync(file, JSON.stringify({
+        contract: 2,
+        runner: "acme-runner",
+        requires: ["labels"],
+        labels: { approval: "agent-ok" },
+    }));
+    const h = setup({
+        env: { GUARD_RUN_ID: "r1", GUARD_RUN_MANIFEST: file },
+        runVet: RO,
+    });
+    assert.equal(decision(await h(pre("Bash", "ls")))?.permissionDecision, "deny");
+});
 void test("a registered unattended run: a crash in the shell check denies every command, an attended one only the risky", async () => {
     const boom = async () => {
         await Promise.resolve();
