@@ -16,7 +16,7 @@
 # Env: HOST_LOCK_DIR (Windows %ProgramData%\host-locks, machine-wide; elsewhere /tmp),
 #      HOST_HEAVY_SLOTS (2), HOST_CPU_CAP (75 percent; Windows has no load average),
 #      HOST_MEDIUM_SLOTS (4), HOST_CRITICAL_CPU_CAP (95 percent; the cap for medium and light),
-#      HOST_METRICS_FILE (unset: none; heavy.ps1 appends one logfmt line per call),
+#      HOST_METRICS_FILE (default %LOCALAPPDATA%\host-hygiene\heavy.log on Windows, ${XDG_STATE_HOME:-~/.local/state}/host-hygiene/heavy.log elsewhere; 'off' or empty disables it),
 #      HOST_DISK_FLOOR_GB (20), HOST_LOCK_TIMEOUT_SECONDS (1800), HOST_POLL_SECONDS (30), HOST_OWNER.
 # %ProgramData% survives reboots, so a lease counts as alive only if its pid started before the lease was written.
 
@@ -30,6 +30,15 @@ $script:HostDiskFloorGb = if ($env:HOST_DISK_FLOOR_GB) { [double]$env:HOST_DISK_
 $script:HostLockTimeoutSeconds = if ($env:HOST_LOCK_TIMEOUT_SECONDS) { [int]$env:HOST_LOCK_TIMEOUT_SECONDS } else { 1800 }
 $script:HostPollSeconds = if ($env:HOST_POLL_SECONDS) { [int]$env:HOST_POLL_SECONDS } else { 30 }
 $script:HostOwner = $(if ($env:HOST_OWNER) { $env:HOST_OWNER } else { "$([Environment]::UserName)@$(Split-Path -Leaf (Get-Location))" }) -replace '\s', '_'
+$script:HostMetricsFile = if (Test-Path Env:HOST_METRICS_FILE) {
+    if ($env:HOST_METRICS_FILE -in '', 'off') { '' } else { $env:HOST_METRICS_FILE }
+} elseif ($script:OnWindows -and $env:LOCALAPPDATA) {
+    Join-Path $env:LOCALAPPDATA 'host-hygiene\heavy.log'
+} elseif ($env:XDG_STATE_HOME) {
+    Join-Path $env:XDG_STATE_HOME 'host-hygiene/heavy.log'
+} elseif ($env:HOME) {
+    Join-Path $env:HOME '.local/state/host-hygiene/heavy.log'
+} else { '' }
 $script:HostMutexPrefix = 'Global\host-heavy' + ($script:HostLockDir -replace '[^A-Za-z0-9]', '_')
 $script:HostMediumMutexPrefix = 'Global\host-medium' + ($script:HostLockDir -replace '[^A-Za-z0-9]', '_')
 $script:HostDeadline = (Get-Date).AddSeconds($script:HostLockTimeoutSeconds)
@@ -161,13 +170,13 @@ function Write-HostMetric([int]$Code) {
     if ($script:HostWaited -ge 1) {
         Write-HostSay "waited $($script:HostWaited)s ($reason) for $(if ($m.Class -eq 'light') { 'load' } else { "a $($m.Class) slot" })"
     }
-    if (-not $env:HOST_METRICS_FILE) { return }
+    if (-not $script:HostMetricsFile) { return }
     try {
         $ran = if ($script:HostRunStart) { [int][Math]::Floor(((Get-Date) - $script:HostRunStart).TotalSeconds) } else { 0 }
         $ts = [DateTime]::UtcNow.ToString("yyyy-MM-dd'T'HH':'mm':'ss'Z'", [Globalization.CultureInfo]::InvariantCulture)
         $cmd = (@($m.Argv | Select-Object -First 2) -join ' ') -replace '"', "'"
         $line = "ts=$ts weight=$($m.Class) source=$($m.Source) waited_s=$($script:HostWaited) wait=$reason ran_s=$ran exit=$Code owner=$($script:HostOwner) cmd=`"$cmd`""
-        $file = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($env:HOST_METRICS_FILE)
+        $file = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($script:HostMetricsFile)
         $dir = Split-Path -Parent $file
         if ($dir) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
         [IO.File]::AppendAllText($file, "$line`n", (New-Object Text.UTF8Encoding $false))
@@ -254,7 +263,15 @@ function Exit-HostSlot {
 # The class of a command line: first match in the repo's .heavy-weights, then weights.default; none is heavy.
 # Returns Class and Source (repo:<n>, builtin:<n> or default).
 function Get-HostWeight([string[]]$Argv) {
-    $line = $Argv -join ' '
+    $words = @($Argv)
+    if ($words.Count -gt 1 -and $words[0] -ceq 'env') {
+        $words = @($words | Select-Object -Skip 1)
+        if ($words.Count -gt 1 -and $words[0] -eq '--') { $words = @($words | Select-Object -Skip 1) }
+    }
+    while ($words.Count -gt 1 -and $words[0] -cmatch '^[A-Za-z_][A-Za-z0-9_]*=') {
+        $words = @($words | Select-Object -Skip 1)
+    }
+    $line = $words -join ' '
     $top = $null
     if (Get-Command git -ErrorAction SilentlyContinue) {
         try { $top = (& git rev-parse --show-toplevel 2>$null); if ($LASTEXITCODE -ne 0) { $top = $null } } catch { $top = $null }

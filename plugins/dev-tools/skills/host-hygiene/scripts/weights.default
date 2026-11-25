@@ -21,3 +21,83 @@ heavy git repack*
 heavy git fsck*
 light git *
 light gh *
+# Python: direct or via uv run. Full suites, xdist (-n), coverage and marker suites stay heavy.
+light ruff check*
+light ruff format*
+light uv run ruff check*
+light uv run ruff format*
+medium mypy*
+medium uv run mypy*
+medium pyright*
+medium uv run pyright*
+heavy pytest* -n*
+heavy pytest* --cov*
+heavy pytest* -m *
+heavy uv run pytest* -n*
+heavy uv run pytest* --cov*
+heavy uv run pytest* -m *
+medium pytest*.py*
+medium pytest* -k *
+medium uv run pytest*.py*
+medium uv run pytest* -k *
+# Node / TypeScript: direct, npx, pnpm or pnpm exec. Opaque repo aliases (make, npm/pnpm run) stay heavy by default.
+light prettier*
+light npx prettier*
+light pnpm prettier*
+light pnpm exec prettier*
+medium eslint*
+medium npx eslint*
+medium pnpm eslint*
+medium pnpm exec eslint*
+medium tsc*
+medium npx tsc*
+medium pnpm tsc*
+medium pnpm exec tsc*
+medium tsgo*
+medium npx tsgo*
+medium pnpm tsgo*
+medium pnpm exec tsgo*
+medium knip*
+medium npx knip*
+medium pnpm knip*
+medium pnpm exec knip*
+heavy node --test*--experimental-test-coverage*
+heavy node --test * *
+medium node --test *.test.*
+medium node --test *.spec.*
+heavy vitest* --coverage*
+heavy npx vitest* --coverage*
+heavy pnpm vitest* --coverage*
+heavy pnpm exec vitest* --coverage*
+medium vitest run *.test.*
+medium vitest run *.spec.*
+medium vitest run *-t *
+medium npx vitest run *.test.*
+medium npx vitest run *.spec.*
+medium npx vitest run *-t *
+medium pnpm vitest run *.test.*
+medium pnpm vitest run *.spec.*
+medium pnpm vitest run *-t *
+medium pnpm exec vitest run *.test.*
+medium pnpm exec vitest run *.spec.*
+medium pnpm exec vitest run *-t *
+heavy jest* --coverage*
+heavy jest*integration*
+heavy npx jest* --coverage*
+heavy npx jest*integration*
+heavy pnpm jest* --coverage*
+heavy pnpm jest*integration*
+heavy pnpm exec jest* --coverage*
+heavy pnpm exec jest*integration*
+medium jest *.test.*
+medium jest *.spec.*
+medium jest *-t *
+medium npx jest *.test.*
+medium npx jest *.spec.*
+medium npx jest *-t *
+medium pnpm jest *.test.*
+medium pnpm jest *.spec.*
+medium pnpm jest *-t *
+medium pnpm exec jest *.test.*
+medium pnpm exec jest *.spec.*
+medium pnpm exec jest *-t *
